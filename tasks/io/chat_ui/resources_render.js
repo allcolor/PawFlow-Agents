@@ -55,7 +55,12 @@ function _loadResourcesNow() {
 function _renderResourcesFromSSE(data) {
   if (!data) return;
   if (data.user_role) window._userRole = data.user_role;
-  if (data.user_id) window._userId = data.user_id;
+  if (data.user_id && data.user_id !== window._userId) {
+    window._userId = data.user_id;
+    window.dispatchEvent(new CustomEvent('pawflow:userchange', {
+      detail: { userId: data.user_id },
+    }));
+  }
   if (typeof updateAdminSettingsButton === 'function') updateAdminSettingsButton();
   if (data.tools) { window._cachedTools = data.tools; return; }  // tool schemas response
   _lastResourcesData = data;

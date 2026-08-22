@@ -1,0 +1,139 @@
+:root {
+  --pf-atmosphere-dim: .38;
+  --pf-atmosphere-blur: 0px;
+  --pf-atmosphere-saturation: 100%;
+  --pf-atmosphere-panel-opacity: 88%;
+}
+
+#pfAtmosphere { position: fixed; inset: 0; z-index: 0; display: none; overflow: hidden;
+                pointer-events: none; background: var(--pf-bg); }
+#pfAtmosphereImage, #pfAtmosphereVideo { position: absolute; inset: -3%; width: 106%; height: 106%;
+                                       object-fit: cover; object-position: center; display: none;
+                                       filter: blur(var(--pf-atmosphere-blur)) saturate(var(--pf-atmosphere-saturation)); }
+.pf-atmosphere-shade { position: absolute; inset: 0; background: rgb(0 0 0 / var(--pf-atmosphere-dim)); }
+html[data-pf-atmosphere="on"] #pfAtmosphere { display: block; }
+html[data-pf-atmosphere-kind="image"] #pfAtmosphereImage,
+html[data-pf-atmosphere-kind="video"] #pfAtmosphereVideo { display: block; }
+html[data-pf-atmosphere="on"] body > .sidebar,
+html[data-pf-atmosphere="on"] body > .main,
+html[data-pf-atmosphere="on"] body > .tab-bar { position: relative; z-index: 1; }
+
+/* These selectors intentionally outrank theme selectors while atmosphere is
+   active. Without the data attribute every existing theme keeps its exact
+   rendering. */
+html[data-pf-atmosphere="on"] body,
+html[data-pf-atmosphere="on"] .main,
+html[data-pf-atmosphere="on"] .messages-wrap,
+html[data-pf-atmosphere="on"] .tab-content.active { background: transparent !important; }
+html[data-pf-atmosphere="on"] .input-area { background: transparent !important; }
+html[data-pf-atmosphere="on"] .sidebar,
+html[data-pf-atmosphere="on"] .tab-bar,
+html[data-pf-atmosphere="on"] .header,
+html[data-pf-atmosphere="on"] .dialog,
+html[data-pf-atmosphere="on"] .exec-dialog,
+html[data-pf-atmosphere="on"] .active-panel,
+html[data-pf-atmosphere="on"] .prompt-controls-panel,
+html[data-pf-atmosphere="on"] .action-menu,
+html[data-pf-atmosphere="on"] .action-dock-menu,
+html[data-pf-atmosphere="on"] .ctx-menu {
+  background: color-mix(in srgb, var(--pf-panel) var(--pf-atmosphere-panel-opacity), transparent) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+html[data-pf-atmosphere="on"] .sidebar,
+html[data-pf-atmosphere="on"] .tab-bar {
+  background: color-mix(in srgb, var(--pf-sidebar) var(--pf-atmosphere-panel-opacity), transparent) !important;
+}
+html[data-pf-atmosphere="on"] .msg.assistant,
+html[data-pf-atmosphere="on"] .msg.subagent,
+html[data-pf-atmosphere="on"] .msg.agent-result,
+html[data-pf-atmosphere="on"] .msg.btw,
+html[data-pf-atmosphere="on"] .msg.sub_agent_trace,
+html[data-pf-atmosphere="on"] .technical-group,
+html[data-pf-atmosphere="on"] .simple-turn-block {
+  background: color-mix(in srgb, var(--pf-assistant) var(--pf-atmosphere-panel-opacity), transparent) !important;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+html[data-pf-atmosphere="on"] .msg.user {
+  background: color-mix(in srgb, var(--pf-user) var(--pf-atmosphere-panel-opacity), transparent) !important;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+html[data-pf-atmosphere="on"] .msg.tool {
+  background: color-mix(in srgb, var(--pf-code-bg) var(--pf-atmosphere-panel-opacity), transparent) !important;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+html[data-pf-atmosphere="on"] .composer-shell {
+  background: color-mix(in srgb, var(--pf-panel) var(--pf-atmosphere-panel-opacity), transparent) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+  backdrop-filter: blur(16px) saturate(120%);
+}
+html[data-pf-atmosphere-motion="on"] #pfAtmosphereImage,
+html[data-pf-atmosphere-motion="on"] #pfAtmosphereVideo {
+  animation: pf-atmosphere-drift 32s ease-in-out infinite alternate;
+}
+@keyframes pf-atmosphere-drift {
+  from { transform: scale(1.02) translate3d(-.4%, -.3%, 0); }
+  to { transform: scale(1.08) translate3d(.6%, .4%, 0); }
+}
+
+.appearance-dialog { width: min(720px, calc(100vw - 28px)); max-width: 720px; max-height: min(88vh, 820px);
+                     display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.appearance-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 14px;
+                   border-bottom: 1px solid var(--pf-border); }
+.appearance-head > div { min-width: 0; flex: 1; }
+.appearance-head .dialog-title { margin: 0 0 3px; }
+.appearance-head p, .appearance-help { color: var(--pf-muted); font-size: 11px; line-height: 1.45; }
+.appearance-close { flex: none; width: 30px; height: 30px; padding: 0; border: 0; background: transparent !important;
+                    color: var(--pf-muted) !important; font-size: 22px; cursor: pointer; }
+.appearance-body { min-height: 0; overflow-y: auto; padding: 14px 20px; }
+.appearance-section { padding: 12px; border: 1px solid var(--pf-border); border-radius: 10px;
+                      background: color-mix(in srgb, var(--pf-sidebar) 82%, transparent); }
+.appearance-section + .appearance-section { margin-top: 10px; }
+.appearance-scope-row { display: flex; align-items: center; gap: 12px; }
+.appearance-scope-row label { color: var(--pf-text); font-size: 12px; font-weight: 650; }
+.appearance-scope-row select { min-width: 210px; margin-left: auto; }
+.appearance-section-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px;
+                           color: var(--pf-text); font-size: 12px; font-weight: 650; }
+.appearance-section-head output, .appearance-media-name { margin-left: auto; color: var(--pf-muted);
+                                                          font-size: 11px; font-weight: 500; }
+.appearance-scale-row { display: grid; grid-template-columns: 32px minmax(120px, 1fr) 32px auto; gap: 8px; align-items: center; }
+.appearance-scale-row button, .appearance-button-row button, .appearance-url-row button,
+.appearance-actions button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--pf-border);
+                             border-radius: 7px; cursor: pointer; font-size: 12px; }
+.appearance-scale-row > button:not(.appearance-reset-scale) { padding: 0; font-size: 17px; }
+.appearance-help { margin-top: 8px; }
+.appearance-button-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.appearance-url-row { display: grid; grid-template-columns: 90px minmax(0, 1fr) auto; gap: 7px; margin-top: 8px; }
+.appearance-url-row input, .appearance-url-row select { min-width: 0; height: 34px; padding: 5px 8px;
+                                                        border: 1px solid var(--pf-border); border-radius: 7px; }
+.appearance-providers { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 9px;
+                        color: var(--pf-muted); font-size: 11px; }
+.appearance-providers a { color: var(--pf-accent); }
+.appearance-section-title { display: block; margin-bottom: 9px; color: var(--pf-text); font-size: 12px; font-weight: 650; }
+.appearance-effects > label:not(.appearance-check) { display: grid; grid-template-columns: 130px 44px minmax(120px, 1fr);
+                                                     gap: 8px; align-items: center; min-height: 30px;
+                                                     color: var(--pf-muted); font-size: 11px; }
+.appearance-effects output { text-align: right; color: var(--pf-text); font-variant-numeric: tabular-nums; }
+.appearance-effects input[type="range"], .appearance-scale-row input[type="range"] { width: 100%; accent-color: var(--pf-accent); }
+.appearance-check { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--pf-text); font-size: 12px; }
+.appearance-check input { accent-color: var(--pf-accent); }
+.appearance-actions { display: flex; justify-content: space-between; gap: 10px; padding: 12px 20px;
+                      border-top: 1px solid var(--pf-border); }
+
+@media (max-width: 600px) {
+  .appearance-dialog { max-height: calc(100dvh - 20px); }
+  .appearance-head, .appearance-body, .appearance-actions { padding-left: 12px; padding-right: 12px; }
+  .appearance-scale-row { grid-template-columns: 32px minmax(80px, 1fr) 32px; }
+  .appearance-reset-scale { grid-column: 1 / -1; }
+  .appearance-url-row { grid-template-columns: 86px minmax(0, 1fr); }
+  .appearance-url-row button { grid-column: 1 / -1; }
+  .appearance-effects > label:not(.appearance-check) { grid-template-columns: minmax(100px, 1fr) 44px; }
+  .appearance-effects > label:not(.appearance-check) input { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #pfAtmosphereImage, #pfAtmosphereVideo { animation: none !important; }
+}

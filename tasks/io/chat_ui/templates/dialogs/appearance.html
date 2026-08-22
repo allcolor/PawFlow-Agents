@@ -1,0 +1,89 @@
+<div id="pfAtmosphere" aria-hidden="true">
+  <div id="pfAtmosphereImage"></div>
+  <video id="pfAtmosphereVideo" muted loop playsinline preload="metadata"></video>
+  <div class="pf-atmosphere-shade"></div>
+</div>
+<div class="dialog-bg" id="appearanceDialog" style="display:none" role="dialog"
+     aria-modal="true" aria-labelledby="appearanceDialogTitle">
+  <div class="dialog appearance-dialog">
+    <div class="appearance-head">
+      <div>
+        <h2 class="dialog-title" id="appearanceDialogTitle" data-i18n="appearanceTitle">Appearance</h2>
+        <p data-i18n="appearanceDesc">Scale, background and visual effects</p>
+      </div>
+      <button class="appearance-close" type="button" onclick="closeAppearanceDialog()"
+              aria-label="Close" data-i18n-aria-label="close">&times;</button>
+    </div>
+    <div class="appearance-body">
+      <section class="appearance-section appearance-scope-row">
+        <label for="appearanceScope" data-i18n="scope">Scope</label>
+        <select id="appearanceScope" onchange="setAppearanceScope(this.value)">
+          <option value="global" data-i18n="applyGlobally">Apply globally</option>
+          <option value="conversation" data-i18n="applyToConversation">Apply to conversation</option>
+        </select>
+      </section>
+      <section class="appearance-section">
+        <div class="appearance-section-head">
+          <label for="appearanceScale" data-i18n="uiScale">Interface scale</label>
+          <output id="appearanceScaleValue" for="appearanceScale">100%</output>
+        </div>
+        <div class="appearance-scale-row">
+          <button type="button" onclick="stepAppearanceScale(-5)" aria-label="Zoom out">&minus;</button>
+          <input id="appearanceScale" type="range" min="75" max="150" step="5" value="100"
+                 oninput="setAppearanceScale(this.value)">
+          <button type="button" onclick="stepAppearanceScale(5)" aria-label="Zoom in">+</button>
+          <button class="appearance-reset-scale" type="button" onclick="setAppearanceScale(100)">100%</button>
+        </div>
+        <p class="appearance-help" data-i18n="uiScaleHelp">Scales the whole interface, including text and controls.</p>
+      </section>
+
+      <section class="appearance-section">
+        <div class="appearance-section-head">
+          <span data-i18n="personalBackground">Personal background</span>
+          <span class="appearance-media-name" id="appearanceMediaName" data-i18n="backgroundNone">Theme default</span>
+        </div>
+        <div class="appearance-button-row">
+          <button type="button" onclick="document.getElementById('appearanceFile').click()" data-i18n="backgroundUpload">Upload image or video</button>
+          <input id="appearanceFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm" hidden
+                 onchange="setAppearanceFile(this.files && this.files[0])">
+          <button type="button" onclick="removeAppearanceBackground()" data-i18n="backgroundRemove">Remove</button>
+        </div>
+        <div class="appearance-url-row">
+          <select id="appearanceUrlKind" aria-label="Background type" data-i18n-aria-label="backgroundType">
+            <option value="image" data-i18n="image">Image</option>
+            <option value="video" data-i18n="video">Video</option>
+          </select>
+          <input id="appearanceUrl" type="url" inputmode="url" placeholder="https://…"
+                 data-i18n-placeholder="backgroundUrlPlaceholder" onkeydown="if(event.key==='Enter')applyAppearanceUrl()">
+          <button type="button" onclick="applyAppearanceUrl()" data-i18n="apply">Apply</button>
+        </div>
+        <div class="appearance-providers">
+          <span data-i18n="freeBackgrounds">Free libraries:</span>
+          <a href="https://pixabay.com/images/search/background/" target="_blank" rel="noopener">Pixabay</a>
+          <a href="https://www.pexels.com/search/background/" target="_blank" rel="noopener">Pexels</a>
+          <a href="https://unsplash.com/s/photos/background" target="_blank" rel="noopener">Unsplash</a>
+          <a href="https://coverr.co/search?q=nature" target="_blank" rel="noopener">Coverr</a>
+        </div>
+        <p class="appearance-help" data-i18n="backgroundPrivacyHelp">Uploads stay in this browser. Remote URLs contact their host directly.</p>
+      </section>
+
+      <section class="appearance-section appearance-effects">
+        <span class="appearance-section-title" data-i18n="atmosphereEffects">Atmosphere effects</span>
+        <label><span data-i18n="backgroundDim">Dark overlay</span><output id="appearanceDimValue">38%</output>
+          <input id="appearanceDim" type="range" min="0" max="80" step="1" oninput="setAppearanceEffect('dim',this.value)"></label>
+        <label><span data-i18n="backgroundBlur">Background blur</span><output id="appearanceBlurValue">0px</output>
+          <input id="appearanceBlur" type="range" min="0" max="24" step="1" oninput="setAppearanceEffect('blur',this.value)"></label>
+        <label><span data-i18n="backgroundSaturation">Saturation</span><output id="appearanceSaturationValue">100%</output>
+          <input id="appearanceSaturation" type="range" min="50" max="150" step="5" oninput="setAppearanceEffect('saturation',this.value)"></label>
+        <label><span data-i18n="panelOpacity">Panel opacity</span><output id="appearancePanelValue">88%</output>
+          <input id="appearancePanel" type="range" min="55" max="100" step="1" oninput="setAppearanceEffect('panel',this.value)"></label>
+        <label class="appearance-check"><input id="appearanceMotion" type="checkbox" onchange="setAppearanceMotion(this.checked)">
+          <span data-i18n="backgroundMotion">Slow background motion</span></label>
+      </section>
+    </div>
+    <div class="appearance-actions">
+      <button type="button" onclick="resetAppearance()" data-i18n="resetAppearance">Reset appearance</button>
+      <button type="button" onclick="closeAppearanceDialog()" data-i18n="done">Done</button>
+    </div>
+  </div>
+</div>

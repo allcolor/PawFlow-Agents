@@ -30,18 +30,22 @@ def test_grab_module_registered_after_terminal_js():
     assert src.index('"terminal.js"') < src.index('"grab.js"')
 
 
-def test_grab_button_lives_with_reload_in_conversation_controls():
+def test_grab_button_lives_inside_the_unified_composer():
     html = rendered_chat_html()
     controls = html[
         html.index('<div class="prompt-controls-panel"'):
         html.index('<div class="composer-action-mount"')
     ]
+    composer = html[
+        html.index('<div class="input-row composer-shell"'):
+        html.index('</div>\n', html.index('id="sendBtn"')) + len('</div>\n')
+    ]
     assert 'id="grabBtn"' in html
     assert 'onclick="toggleGrab()"' in html
-    assert 'id="grabBtn"' in controls
+    assert 'id="grabBtn"' not in controls
+    assert 'id="grabBtn"' in composer
     assert 'id="refreshConvBtn"' in controls
     # Hidden until the selected agent actually has a tmux.
-    assert html.index('id="grabBtn"') < html.index('id="refreshConvBtn"')
     grab_btn = html[html.index('id="grabBtn"'):]
     assert 'style="display:none"' in grab_btn[:grab_btn.index(">")]
     # Grabbed, the composer must not look like the composer.

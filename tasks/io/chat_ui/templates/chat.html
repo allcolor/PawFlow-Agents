@@ -18,6 +18,8 @@
 {{ theme_block|safe }}
 {{ ext_fragments('head')|safe }}</head>
 <body>
+{% include "dialogs/appearance.html" %}
+{% include "dialogs/search.html" %}
 {% include "sidebar/sidebar.html" %}
 {% include "dialogs/conversation_settings.html" %}
 {% include "header/tab_bar.html" %}

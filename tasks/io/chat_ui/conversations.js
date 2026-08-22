@@ -376,6 +376,7 @@ function resumeConv(cid, force) {
   // 1. CLEAR -- DOM empty, every conv-scoped global reset, SSE closed.
   _clearConvState();
   conversationId = cid;
+  if (typeof refreshAppearanceContext === 'function') refreshAppearanceContext();
   _setInputEnabled(true);
   highlightConv(cid);
   updateDeleteBtn();
@@ -424,6 +425,7 @@ function refreshCurrentConversation() {
 function renderEmptyState() {
   _clearConvState();
   conversationId = null;
+  if (typeof refreshAppearanceContext === 'function') refreshAppearanceContext();
   addMsg('system', t('newConv'));
   document.getElementById('status').textContent = t('ready');
   var fp = document.getElementById('filesPanel'); if (fp) fp.style.display = 'none';

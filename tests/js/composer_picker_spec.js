@@ -1,0 +1,104 @@
+// Behavioural tests for the slash-command and agent-mention composer picker.
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const SOURCE = path.join(
+  __dirname, '..', '..', 'tasks', 'io', 'chat_ui', 'file_mention.js');
+
+let passed = 0;
+const failures = [];
+function test(name, fn) {
+  try { fn(); passed++; }
+  catch (error) { failures.push(name + ': ' + (error.message || error)); }
+}
+function assert(condition, message) {
+  if (!condition) throw new Error(message || 'assertion failed');
+}
+function equal(actual, expected, message) {
+  if (actual !== expected) throw new Error(
+    (message ? message + ': ' : '') + 'expected ' + JSON.stringify(expected)
+    + ' but got ' + JSON.stringify(actual));
+}
+
+function env() {
+  const input = {
+    value: '', selectionStart: 0, selectionEnd: 0,
+    setRangeText(value, start, end) {
+      this.value = this.value.slice(0, start) + value + this.value.slice(end);
+      this.selectionStart = this.selectionEnd = start + value.length;
+    },
+    addEventListener() {}, dispatchEvent() {}, focus() {}, setAttribute() {},
+  };
+  const picker = {
+    hidden: true, innerHTML: '', dataset: {},
+    querySelectorAll() { return []; }, contains() { return false; },
+  };
+  const buttons = { composerSlashBtn: { setAttribute() {} }, composerMentionBtn: { setAttribute() {} } };
+  const context = {
+    console,
+    document: {
+      addEventListener() {},
+      getElementById(id) { return id === 'input' ? input : id === 'composerPicker' ? picker : buttons[id] || null; },
+    },
+    window: {}, Event: function Event() {},
+    HELP_DATA: {
+      '/help': { usage: '/help [command]', short: 'Show help' },
+      '/history': { usage: '/history', short: 'Show history' },
+      '/h': { alias: '/help' },
+    },
+    selectedAgent: 'assistant',
+    nicknameMap: { assistant: 'Helper' },
+    activeInteractions: { one: { name: 'claude' } },
+    _lastResourcesData: { agents: [{ name: 'assistant' }, { name: 'research agent' }] },
+    displayAgentName(name) { return context.nicknameMap[name] || name; },
+    escapeHtml(value) { return String(value); },
+    t(key) { return key; },
+  };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(SOURCE, 'utf8'), context, { filename: 'file_mention.js' });
+  return { context, input, picker };
+}
+
+test('slash choices use real commands, filter them, and hide aliases', () => {
+  const e = env();
+  const rows = e.context._composerSlashChoices('hist');
+  equal(rows.length, 1);
+  equal(rows[0].value, '/history');
+  assert(!e.context._composerSlashChoices('').some(row => row.value === '/h'));
+});
+
+test('mention choices combine configured, active, and selected agents without duplicates', () => {
+  const rows = env().context._composerMentionChoices('');
+  equal(rows.map(row => row.value).join(','), 'assistant,research agent,claude');
+  equal(rows[0].label, 'Helper');
+});
+
+test('trigger parsing follows the token at the caret', () => {
+  const e = env();
+  e.input.value = 'please /his';
+  e.input.selectionStart = e.input.selectionEnd = e.input.value.length;
+  const trigger = e.context._composerTriggerAtCaret(e.input);
+  equal(trigger.kind, 'slash');
+  equal(trigger.query, 'his');
+  equal(trigger.start, 7);
+});
+
+test('selecting a mention replaces the active token and quotes spaces', () => {
+  const e = env();
+  e.input.value = '@rese';
+  e.input.selectionStart = e.input.selectionEnd = 5;
+  e.context._composerPickerState = {
+    kind: 'mention', start: 0, end: 5, selected: 0,
+    items: [{ value: 'research agent', label: 'research agent', description: '' }],
+  };
+  e.context._composerChoose(0);
+  equal(e.input.value, '@"research agent" ');
+});
+
+if (failures.length) {
+  console.error('\n' + failures.length + ' failing, ' + passed + ' passing');
+  failures.forEach(failure => console.error('  - ' + failure));
+  process.exit(1);
+}
+console.log(passed + ' passing');

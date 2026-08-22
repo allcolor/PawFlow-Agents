@@ -34,7 +34,12 @@ function renderMarkdown(text) {
     var cls = lang ? ' class="language-' + lang + '"' : '';
     const copyLabel = escapeHtml(t('copy'));
     _codeBlocks.push('<div class="code-block">'
-      + '<button class="code-block-copy" onclick="copyCodeBlock(this,event)" title="' + copyLabel + '" aria-label="' + copyLabel + '">\u{1F4CB}</button>'
+      + '<div class="code-block-header"><span class="code-block-language">'
+      + escapeHtml(lang || 'code') + '</span>'
+      + '<button class="code-block-copy" data-copy-label="' + copyLabel
+      + '" onclick="copyCodeBlock(this,event)" title="' + copyLabel
+      + '" aria-label="' + copyLabel + '"><span aria-hidden="true">&#x2398;</span> '
+      + copyLabel + '</button></div>'
       + '<pre><code' + cls + '>' + escapeHtml(code) + '</code></pre>'
       + '</div>');
     return '\x00CB' + (_codeBlocks.length - 1) + '\x00';

@@ -37,7 +37,7 @@ _CSS_DIR = _CHAT_UI_DIR / "css"
 _JS_MODULES = [
     "i18n.js", "state.js", "rxbus.js", "semantic_runtime.js", "ext_runtime.js",
     "tooltips.js",
-    "themes.js",
+    "themes.js", "appearance.js", "search.js",
     # conversations.js = list/state/render/history core (loads early);
     # _io = delete/export/import; _menu = context menu + git dialogs;
     # _share = shared/invite sidebar sections + share dialog. _share loads
@@ -111,8 +111,11 @@ _CSS_MODULES: Tuple[str, ...] = (
     "30_mobile.css",          # narrow-viewport overrides
     "40_delegates.css",       # delegate blocks, cancel, ask_parent
     "50_composer.css",        # composer drawer, cognitive panel chrome
+    "55_appearance.css",      # user zoom, background media, atmosphere dialog
+    "58_modern_ui.css",       # search, composer shortcuts, code and memory cards
     "60_openspace.css",       # OpenSpace 3D view
     "70_grab.css",            # terminal grab mode
+    "75_composer_shell.css",  # unified prompt surface and slash/mention picker
     "80_dialogs.css",         # exec approval + generic dialogs
     "85_terminal_files.css",  # terminal output, file explorer
     "90_tabs.css",            # tab bar, tab panels, desktop/audio tabs

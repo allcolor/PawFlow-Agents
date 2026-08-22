@@ -218,18 +218,21 @@ def test_language_selector_renders_catalog_flags():
     assert "lang.flag" in i18n_js
 
 
-def test_view_audio_permissions_and_dictation_live_in_left_prompt_panel():
+def test_view_audio_and_permissions_live_in_left_prompt_panel_but_dictation_does_not():
     header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
     controls = _between(
         '<div class="prompt-controls-panel"', '<div class="composer-action-mount"'
     )
 
-    for element_id in (
-        "permissionMode", "speakToggleBtn", "speechInputBtn", "viewMenuWrap"
-    ):
+    for element_id in ("permissionMode", "speakToggleBtn", "viewMenuWrap"):
         marker = f'id="{element_id}"'
         assert marker in controls
         assert marker not in header
+
+    assert 'id="speechInputBtn"' not in controls
+    composer = _between('<div class="input-row composer-shell"', '</div><!-- /tab-content chat -->')
+    assert 'id="speechInputBtn"' in composer
+    assert 'id="grabBtn"' in composer
 
     assert 'class="composer-context-controls"' not in TEMPLATE_HTML
     assert ".prompt-controls-panel {" in TEMPLATE_HTML
@@ -239,7 +242,7 @@ def test_view_audio_permissions_and_dictation_live_in_left_prompt_panel():
 def test_composer_context_row_orders_controls_and_action_dock():
     input_area = _between('<div class="input-area">', '</div><!-- /tab-content chat -->')
     context_row = _between(
-        '<div class="composer-context-row">', '<div class="input-row">'
+        '<div class="composer-context-row">', '<div class="input-row composer-shell">'
     )
 
     assert 'id="promptControlsPanel"' in context_row
@@ -336,10 +339,10 @@ def test_control_docks_use_an_external_css_tooltip_without_horizontal_scroll():
 
 
 def test_attachment_thumbnails_stack_before_send_and_expand_past_three():
-    input_row = _between('<div class="input-row">', '</div>\n</div>\n</div><!-- /tab-content chat -->')
+    input_row = _between('<div class="input-row composer-shell">', '</div>\n</div>\n</div><!-- /tab-content chat -->')
 
-    assert input_row.index('id="input"') < input_row.index('id="attachPreview"')
-    assert input_row.index('id="attachPreview"') < input_row.index('id="sendBtn"')
+    assert input_row.index('id="attachPreview"') < input_row.index('id="input"')
+    assert input_row.index('id="input"') < input_row.index('id="sendBtn"')
     assert ".attachments-preview { display: flex;" in TEMPLATE_HTML
     assert ".att-item + .att-item { margin-left:" in TEMPLATE_HTML
     assert "pendingFiles.slice(0, 3)" in ATTACHMENTS_JS
@@ -347,23 +350,29 @@ def test_attachment_thumbnails_stack_before_send_and_expand_past_three():
     assert "toggleAttachmentPreview" in ATTACHMENTS_JS
 
 
-def test_composer_keeps_only_attachment_before_prompt():
-    input_row = _between('<div class="input-row">', '</div>\n</div>\n</div><!-- /tab-content chat -->')
+def test_unified_composer_owns_prompt_actions_but_not_conversation_controls():
+    input_row = _between('<div class="input-row composer-shell">', '</div>\n</div>\n</div><!-- /tab-content chat -->')
     before_prompt = input_row[:input_row.index('id="input"')]
 
     assert 'id="promptsBtn"' not in input_row
     assert 'id="fileAttachBtn"' in before_prompt
-    for element_id in ("voiceModeBtn", "grabBtn", "refreshConvBtn"):
+    for element_id in ("composerSlashBtn", "composerMentionBtn"):
+        assert f'id="{element_id}"' in before_prompt
+    for element_id in ("speechInputBtn", "grabBtn", "sendBtn"):
+        assert f'id="{element_id}"' in input_row
+    for element_id in ("voiceModeBtn", "refreshConvBtn"):
         assert f'id="{element_id}"' not in input_row
 
 
-def test_voice_grab_and_refresh_live_in_conversation_controls():
+def test_realtime_voice_and_refresh_remain_in_conversation_controls():
     controls = _between(
         '<div class="prompt-controls-panel"', '<div class="composer-action-mount"'
     )
 
-    for element_id in ("voiceModeBtn", "grabBtn", "refreshConvBtn"):
+    for element_id in ("voiceModeBtn", "refreshConvBtn"):
         assert f'id="{element_id}"' in controls
+    assert 'id="speechInputBtn"' not in controls
+    assert 'id="grabBtn"' not in controls
 
 
 def test_task_dock_stays_fixed_while_action_dock_joins_composer():

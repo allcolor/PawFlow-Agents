@@ -182,19 +182,7 @@ function cmdSearch(text, parts, cmd) {
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
   const query = text.slice(cmd.length).trim();
   if (!query) { addMsg('system', t('usageSearch')); return true; }
-  action$('load_history', { conversation_id: conversationId, limit: 500, offset: 0 })
-    .subscribe(data => {
-      const messages = data.messages || [];
-      const lq = query.toLowerCase();
-      const found = [];
-      for (const m of messages) {
-        const content = m.content || '';
-        if (typeof content === 'string' && content.toLowerCase().includes(lq))
-          found.push('[' + (m.type || m.role || '?') + '] ' + content.slice(0, 100));
-      }
-      if (found.length) addMsg('system', t('matchesFound', { n: found.length }) + '\n' + found.slice(0, 20).join('\n'));
-      else addMsg('system', t('noMatchesFound'));
-    });
+  showConversationSearch(query);
   return true;
 }
 

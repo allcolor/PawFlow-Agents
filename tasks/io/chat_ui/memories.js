@@ -32,7 +32,7 @@ function showMemoryOverlay(memories) {
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
   overlay.id = 'memoryOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
+  overlay.className = 'memory-overlay';
 
   const draftCount = memories.filter(m => !!m.skill_draft).length;
   const visibleMemories = _memoryDraftFilter
@@ -40,62 +40,62 @@ function showMemoryOverlay(memories) {
   _memoryVisibleCache = visibleMemories;
 
   // Filter dropdown
-  let filterHtml = '<select id="memAgentFilter" onchange="memFilterChanged()" style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px">';
+  let filterHtml = '<select class="memory-filter" id="memAgentFilter" onchange="memFilterChanged()">';
   filterHtml += '<option value="__all__"' + (_memoryAgentFilter === null ? ' selected' : '') + '>' + t('all') + '</option>';
   filterHtml += '<option value=""' + (_memoryAgentFilter === '' ? ' selected' : '') + '>' + t('globalOnly') + '</option>';
   for (const a of _memoryAgents) {
-    if (a) filterHtml += '<option value="' + a + '"' + (_memoryAgentFilter === a ? ' selected' : '') + '>' + a + '</option>';
+    if (a) filterHtml += '<option value="' + escapeHtml(a) + '"' + (_memoryAgentFilter === a ? ' selected' : '') + '>' + escapeHtml(a) + '</option>';
   }
   filterHtml += '</select>';
 
   // Build memory rows
   let msgsHtml = '';
   if (visibleMemories.length === 0) {
-    msgsHtml = '<div style="color:#6c6c8a;text-align:center;padding:20px">'
+    msgsHtml = '<div class="memory-empty">'
       + t(_memoryDraftFilter ? 'noSkillDrafts' : 'noMemoriesStored') + '</div>';
   } else {
     visibleMemories.forEach((m, i) => {
       // Scope badge: private (agent+conv), conversation, agent, global
       let scopeBadge;
       if (m.agent && m.conversation_id) {
-        scopeBadge = '<span style="background:#5a1a1a;color:#ff6b6b;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F512} ' + m.agent + '</span>';
+        scopeBadge = '<span class="memory-scope private">\u{1F512} ' + escapeHtml(m.agent) + '</span>';
       } else if (m.conversation_id) {
-        scopeBadge = '<span style="background:#1a3a5a;color:#74b9ff;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F4AC} ' + t('conversationShort') + '</span>';
+        scopeBadge = '<span class="memory-scope conversation">\u{1F4AC} ' + escapeHtml(t('conversationShort')) + '</span>';
       } else if (m.agent) {
-        scopeBadge = '<span style="background:#1e3a5f;color:#4fc3f7;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F916} ' + m.agent + '</span>';
+        scopeBadge = '<span class="memory-scope agent">\u{1F916} ' + escapeHtml(m.agent) + '</span>';
       } else {
-        scopeBadge = '<span style="background:#1b4332;color:#52b788;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F310} ' + t('globalLower') + '</span>';
+        scopeBadge = '<span class="memory-scope global">\u{1F310} ' + escapeHtml(t('globalLower')) + '</span>';
       }
-      const tagsHtml = (m.tags || []).map(t =>
-        '<span style="background:#2a2a4a;color:#a0a0c0;padding:1px 5px;border-radius:4px;font-size:10px;margin-left:3px">' + t + '</span>'
+      const tagsHtml = (m.tags || []).map(tag =>
+        '<span class="memory-tag">' + escapeHtml(tag) + '</span>'
       ).join('');
       const age = _formatAge(m.updated_at || m.created_at);
-      const editBtn = '<button onclick="event.stopPropagation();memEdit(' + i + ')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeHtml(t('contextEdit')) + '">&#9998;</button>';
-      const delBtn = '<button onclick="event.stopPropagation();memDelete(\'' + m.id + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeHtml(t('delete')) + '">&#128465;</button>';
+      const editBtn = '<button class="memory-icon-button edit" onclick="event.stopPropagation();memEdit(' + i + ')" title="' + escapeHtml(t('contextEdit')) + '">&#9998;</button>';
+      const delBtn = '<button class="memory-icon-button delete" onclick="event.stopPropagation();memDelete(\'' + m.id + '\')" title="' + escapeHtml(t('delete')) + '">&#128465;</button>';
       const promoteBtn = m.skill_draft
-        ? '<button onclick="event.stopPropagation();memPromoteDraft(' + i + ')" style="background:#1b4332;color:#52b788;border:1px solid #2d6a4f;border-radius:4px;cursor:pointer;font-size:10px;padding:2px 7px" title="' + escapeHtml(t('promoteSkillDraft')) + '">' + escapeHtml(t('promote')) + '</button>'
+        ? '<button class="memory-icon-button promote" onclick="event.stopPropagation();memPromoteDraft(' + i + ')" title="' + escapeHtml(t('promoteSkillDraft')) + '">' + escapeHtml(t('promote')) + '</button>'
         : '';
-      const text = (m.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      msgsHtml += '<div id="mem-row-' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer' + (m.skill_draft ? ';background:#10271f' : '') + '" onclick="this.querySelector(\'.mem-full\')&&(this.querySelector(\'.mem-full\').style.display=this.querySelector(\'.mem-full\').style.display===\'block\'?\'none\':\'block\')">'
-        + '<div style="display:flex;align-items:center;gap:4px">' + scopeBadge + tagsHtml
-        + '<span style="color:#6c6c8a;font-size:10px;margin-left:auto">' + age + '</span>'
+      const text = escapeHtml(m.text || '');
+      msgsHtml += '<div id="mem-row-' + i + '" class="memory-card' + (m.skill_draft ? ' skill-draft' : '') + '" onclick="this.querySelector(\'.memory-full\')&&(this.querySelector(\'.memory-full\').style.display=this.querySelector(\'.memory-full\').style.display===\'block\'?\'none\':\'block\')">'
+        + '<div class="memory-card-head">' + scopeBadge + tagsHtml
+        + '<span class="memory-age">' + escapeHtml(age) + '</span>'
         + promoteBtn + editBtn + delBtn + '</div>'
-        + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + text.slice(0, 200) + '</div>'
-        + '<div class="mem-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto">' + text + '</div>'
+        + '<div class="memory-preview">' + text.slice(0, 200) + '</div>'
+        + '<div class="memory-full">' + text + '</div>'
         + '</div>';
     });
   }
 
-  overlay.innerHTML = '<div class="cog-dialog" style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
+  overlay.innerHTML = '<div class="cog-dialog memory-dialog">'
     + '<div class="cog-head">'
-    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + escapeHtml(t('memories')) + '</h3>'
-    + '<span style="color:#6c6c8a;font-size:12px">' + escapeHtml(t('entriesCount', { n: visibleMemories.length })) + '</span>'
+    + '<h3 class="memory-dialog-title">' + escapeHtml(t('memories')) + '</h3>'
+    + '<span class="memory-count">' + escapeHtml(t('entriesCount', { n: visibleMemories.length })) + '</span>'
     + filterHtml
-    + '<button onclick="memToggleDraftFilter()" style="background:' + (_memoryDraftFilter ? '#1b4332' : '#2a2a4a') + ';color:' + (_memoryDraftFilter ? '#52b788' : '#a0a0c0') + ';border:1px solid ' + (_memoryDraftFilter ? '#2d6a4f' : '#444') + ';border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">' + escapeHtml(t('skillDrafts')) + ' (' + draftCount + ')</button>'
-    + '<button onclick="memAddNew()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;margin-left:auto">+ ' + escapeHtml(t('add')) + '</button>'
+    + '<button class="memory-toolbar-button' + (_memoryDraftFilter ? ' active' : '') + '" onclick="memToggleDraftFilter()">' + escapeHtml(t('skillDrafts')) + ' (' + draftCount + ')</button>'
+    + '<button class="memory-toolbar-button primary" onclick="memAddNew()">+ ' + escapeHtml(t('add')) + '</button>'
     + '<button class="cog-close" onclick="document.getElementById(\'memoryOverlay\').remove()">&times;</button>'
     + '</div>'
-    + '<div id="mem-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'
+    + '<div class="memory-list" id="mem-list">' + msgsHtml + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
 
@@ -199,16 +199,16 @@ function memEdit(idx) {
   if (!m) return;
   const row = document.getElementById('mem-row-' + idx);
   if (!row) return;
-  row.innerHTML = '<div style="padding:4px">'
-    + '<textarea id="mem-edit-text" style="width:100%;min-height:60px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:4px;font-size:12px;resize:vertical">' + (m.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</textarea>'
-    + '<div style="display:flex;gap:6px;margin-top:4px;align-items:center">'
-    + '<label style="color:#6c6c8a;font-size:11px">' + escapeHtml(t('tags')) + ':</label>'
-    + '<input id="mem-edit-tags" value="' + (m.tags || []).join(', ') + '" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
-    + '<label style="color:#6c6c8a;font-size:11px">' + escapeHtml(t('agent')) + ':</label>'
-    + '<select id="mem-edit-agent" style="background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+  row.innerHTML = '<div class="memory-edit">'
+    + '<textarea class="memory-edit-field" id="mem-edit-text">' + escapeHtml(m.text || '') + '</textarea>'
+    + '<div class="memory-edit-row">'
+    + '<label>' + escapeHtml(t('tags')) + ':</label>'
+    + '<input class="memory-edit-field" id="mem-edit-tags" value="' + escapeHtml((m.tags || []).join(', ')) + '">'
+    + '<label>' + escapeHtml(t('agent')) + ':</label>'
+    + '<select class="memory-edit-field" id="mem-edit-agent">'
     + _memoryAgentOptions(m.agent || '') + '</select>'
-    + '<button onclick="memSaveEdit(\'' + m.id + '\')" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">' + escapeHtml(t('contextSave')) + '</button>'
-    + '<button onclick="cmdShowMemories()" style="background:#333;color:#aaa;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">' + escapeHtml(t('contextCancel')) + '</button>'
+    + '<button class="memory-toolbar-button active" onclick="memSaveEdit(\'' + m.id + '\')">' + escapeHtml(t('contextSave')) + '</button>'
+    + '<button class="memory-toolbar-button" onclick="cmdShowMemories()">' + escapeHtml(t('contextCancel')) + '</button>'
     + '</div></div>';
 }
 
@@ -227,16 +227,16 @@ function memAddNew() {
   const list = document.getElementById('mem-list');
   if (!list) return;
   const form = document.createElement('div');
-  form.style.cssText = 'padding:8px;border-bottom:1px solid #444;background:#1a1a2e';
-  form.innerHTML = '<textarea id="mem-new-text" placeholder="' + t('memoryTextPlaceholder') + '" style="width:100%;min-height:50px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:4px;font-size:12px;resize:vertical"></textarea>'
-    + '<div style="display:flex;gap:6px;margin-top:4px;align-items:center">'
-    + '<label style="color:#6c6c8a;font-size:11px">' + t('tags') + ':</label>'
-    + '<input id="mem-new-tags" placeholder="tag1, tag2" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
-    + '<label style="color:#6c6c8a;font-size:11px">' + t('agent') + ':</label>'
-    + '<select id="mem-new-agent" style="background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+  form.className = 'memory-card memory-edit';
+  form.innerHTML = '<textarea class="memory-edit-field" id="mem-new-text" placeholder="' + escapeHtml(t('memoryTextPlaceholder')) + '"></textarea>'
+    + '<div class="memory-edit-row">'
+    + '<label>' + escapeHtml(t('tags')) + ':</label>'
+    + '<input class="memory-edit-field" id="mem-new-tags" placeholder="tag1, tag2">'
+    + '<label>' + escapeHtml(t('agent')) + ':</label>'
+    + '<select class="memory-edit-field" id="mem-new-agent">'
     + _memoryAgentOptions(_memoryAgentFilter !== null ? _memoryAgentFilter
       : (_memoryAgents.indexOf(selectedAgent) >= 0 ? selectedAgent : '')) + '</select>'
-    + '<button onclick="memSaveNew()" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">' + t('add') + '</button>'
+    + '<button class="memory-toolbar-button active" onclick="memSaveNew()">' + escapeHtml(t('add')) + '</button>'
     + '</div>';
   list.insertBefore(form, list.firstChild);
   document.getElementById('mem-new-text').focus();

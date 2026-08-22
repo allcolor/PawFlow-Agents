@@ -72,6 +72,15 @@ test('Markdown FileStore video link renders an inline player', () => {
   assert(!html.includes('demo.mp4)'), html);
 });
 
+test('fenced code exposes its language in a separate accessible header', () => {
+  const html = env().renderMarkdown('```python\nprint("ok")\n```');
+  assert(html.includes('class="code-block-header"'), html);
+  assert(html.includes('class="code-block-language">python</span>'), html);
+  assert(html.includes('class="code-block-copy"'), html);
+  assert(html.includes('aria-label="copy"'), html);
+  assert(html.includes('<pre><code class="language-python">'), html);
+});
+
 if (failures.length) {
   console.error('\n' + failures.length + ' failing, ' + passed + ' passing');
   for (const failure of failures) console.error('  - ' + failure);

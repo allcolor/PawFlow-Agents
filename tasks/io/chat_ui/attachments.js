@@ -198,7 +198,7 @@ function copyMsg(btn) {
 function messageTextForAction(msg) {
   if (!msg) return '';
   const clone = msg.cloneNode(true);
-  for (const sel of ['.msg-actions', '.source-badge', '.msg-time', '.msg-meta', '.code-block-copy']) {
+  for (const sel of ['.msg-actions', '.source-badge', '.msg-time', '.msg-meta', '.code-block-header']) {
     clone.querySelectorAll(sel).forEach(el => el.remove());
   }
   let text = (clone.textContent || clone.innerText).trim();
@@ -212,8 +212,9 @@ function copyCodeBlock(btn, event) {
   const code = block ? block.querySelector('pre code') : null;
   if (!code) return;
   navigator.clipboard.writeText(code.textContent || '').then(() => {
-    btn.textContent = '\u2705';
-    setTimeout(() => { btn.textContent = '\u{1F4CB}'; }, 1500);
+    const original = btn.innerHTML;
+    btn.textContent = t('copied');
+    setTimeout(() => { btn.innerHTML = original; }, 1500);
   });
 }
 

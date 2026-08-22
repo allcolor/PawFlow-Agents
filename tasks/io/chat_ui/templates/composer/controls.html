@@ -14,9 +14,7 @@
           <option value="auto" data-i18n-permission="permissionAuto">&#x26A1; Auto</option>
         </select>
         <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" aria-label="Speak agent messages live" data-i18n-aria-label="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
-        <button id="speechInputBtn" onclick="toggleConversationSTT()" oncontextmenu="showConversationSTTServiceDialog(); return false;" aria-label="Dictate and send" data-i18n-aria-label="speechInputStartTitle" style="display:none">&#x1F3A4;</button>
         <button class="btn-attach" id="voiceModeBtn" onclick="toggleVoiceMode()" oncontextmenu="showVoiceServiceDialog(); return false;" title="Start realtime voice conversation" data-i18n-title="voiceModeStartTitle" style="display:none">&#x1F399;&#xFE0F;</button>
-        <button class="btn-attach" id="grabBtn" onclick="toggleGrab()" title="Type straight into the agent tmux" data-i18n-title="grabTitle" style="display:none">&#x1F5A5;&#xFE0F;</button>
         <button class="btn-attach" id="refreshConvBtn" onclick="refreshCurrentConversation()" title="Refresh conversation" data-i18n-title="refreshConversationTitle">&#x21BB;</button>
         <div class="view-menu-wrap" id="viewMenuWrap">
           <button id="viewMenuToggle" class="tech-group-toggle" type="button" aria-haspopup="true" aria-expanded="false"

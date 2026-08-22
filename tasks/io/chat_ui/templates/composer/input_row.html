@@ -1,15 +1,47 @@
-  <div class="input-row">
-    <button class="btn-attach" id="fileAttachBtn" onclick="document.getElementById('fileInput').click()" title="Attach files" data-i18n-title="attachTitle">&#x1F4CE;</button>
-    <div data-pf-slot="composer_accessory_ext"{{ ext_hidden('composer_accessory') }}>{{ ext_fragments('composer_accessory')|safe }}</div>
+  <div class="input-row composer-shell">
+    <div class="composer-picker" id="composerPicker" role="listbox" hidden></div>
+    <div class="composer-leading" aria-label="Composer shortcuts"
+         data-i18n-aria-label="composerShortcuts">
+      <button class="composer-icon-button" id="fileAttachBtn" type="button"
+              onclick="document.getElementById('fileInput').click()" title="Attach files"
+              data-i18n-title="attachTitle">
+        <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path d="M12.5 6.5 7 12a3.5 3.5 0 0 0 5 5l6-6a5 5 0 0 0-7-7L4.5 10.5a6.5 6.5 0 0 0 9 9L19 14"></path></svg>
+      </button>
+      <button class="composer-icon-button composer-search-action" type="button"
+              onclick="showConversationSearch('')" title="Search conversation"
+              data-i18n-title="searchConversationTitle">
+        <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 5 5"></path></svg>
+      </button>
+      <button class="composer-icon-button composer-token-button" id="composerSlashBtn" type="button"
+              onclick="openComposerPicker('slash')" title="Insert command"
+              data-i18n-title="insertCommandTitle" aria-haspopup="listbox"
+              aria-expanded="false" aria-controls="composerPicker">/</button>
+      <button class="composer-icon-button composer-token-button" id="composerMentionBtn" type="button"
+              onclick="openComposerPicker('mention')" title="Mention agent"
+              data-i18n-title="mentionAgentTitle" aria-haspopup="listbox"
+              aria-expanded="false" aria-controls="composerPicker">@</button>
+      <div class="composer-extension-slot" data-pf-slot="composer_accessory_ext"{{ ext_hidden('composer_accessory') }}>{{ ext_fragments('composer_accessory')|safe }}</div>
+    </div>
     <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
+    <div class="attachments-preview" id="attachPreview" aria-live="polite"></div>
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" data-i18n-placeholder="placeholder"
               rows="1" onkeydown="handleKey(event)"></textarea>
-    <div class="attachments-preview" id="attachPreview" aria-live="polite"></div>
-    <button id="sendBtn" onclick="send()" aria-label="Send" data-i18n-aria-label="send"
-            title="Send" data-i18n-title="send">
-      <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false" width="18" height="18">
-        <path d="M3 11l18-8-8 18-2.5-7.5z" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round"></path>
-      </svg>
-    </button>
+    <div class="composer-trailing">
+      <button class="composer-icon-button" id="speechInputBtn" type="button"
+              onclick="toggleConversationSTT()"
+              oncontextmenu="showConversationSTTServiceDialog(); return false;"
+              aria-label="Dictate and send" data-i18n-aria-label="speechInputStartTitle"
+              style="display:none">
+        <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path></svg>
+      </button>
+      <button class="composer-icon-button" id="grabBtn" type="button" onclick="toggleGrab()"
+              title="Type straight into the agent tmux" data-i18n-title="grabTitle"
+              style="display:none">
+        <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>
+      </button>
+      <button class="composer-send-button" id="sendBtn" type="button" onclick="send()"
+              aria-label="Send" data-i18n-aria-label="send" title="Send" data-i18n-title="send">
+        <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path d="m5 12 14-7-4 14-3-6-7-1z"></path><path d="m12 13 7-8"></path></svg>
+      </button>
+    </div>
   </div>

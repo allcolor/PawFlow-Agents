@@ -121,8 +121,8 @@ def test_diary_and_memory_panels_use_conversation_agent_selectors():
     assert "action$('diary_add'" in diary
     assert "tool_name: 'diary_" not in diary
     assert 'id="memAgentFilter"' in memories
-    assert '<select id="mem-edit-agent"' in memories
-    assert '<select id="mem-new-agent"' in memories
+    assert 'id="mem-edit-agent"' in memories
+    assert 'id="mem-new-agent"' in memories
 
 
 def test_i18n_catalogs_have_identical_keys():
@@ -146,7 +146,7 @@ def test_panel_dialogs_use_mobile_safe_header_chrome():
     )
     for relative in panels:
         source = _text(relative)
-        assert 'class="cog-dialog"' in source, relative
+        assert 'class="cog-dialog' in source, relative
         assert 'class="cog-head"' in source, relative
         assert "cog-close" in source, relative
     for relative in ("tasks/io/chat_ui/project_wiki.js",

@@ -51,6 +51,8 @@ tasks/io/chat_ui/templates/
   head/vendor.html                  # rxjs UMD, highlight.js + its DOMContentLoaded bootstrap
   sidebar/sidebar.html              # sidebar grip, #sidebar, Conversations section (+ new/import menu)
   sidebar/resources.html            # #resourcesPanel, resources_collection/resources_panel/sidebar_* slot hosts
+  dialogs/appearance.html           # inherited/global or conversation appearance controls
+  dialogs/search.html               # Ctrl/Cmd+K conversation-search overlay
   dialogs/conversation_settings.html# #conversationSettingsDialog (expiry, sharing, controls)
   header/tab_bar.html               # #tabBar, tab_bar slot host, audio tab buttons
   header/header_bar.html            # header grip, #headerBar: logo, status, gauges, active agents, user info
@@ -59,7 +61,7 @@ tasks/io/chat_ui/templates/
   chat/messages.html                # conversation_stage host, #messages, OpenSpace wrap, scroll nav, active agents panel
   chat/task_tabs.html               # #taskTabDock, #taskTabPanel
   composer/controls.html            # composer drawer grip, #promptControlsPanel, view menu, composer action mount
-  composer/input_row.html           # attach button, composer_accessory host, #input, send button
+  composer/input_row.html           # unified attach/search/slash/@/STT/grab/#input/send shell
   ext/hosts.html                    # #pf-ext-modal-host, CSS tooltip portal, #pf-ext-panel-host
   boot/config.html                  # AGENT_PATH / API / SSE_URL / LOGIN_URL constants (tojson)
   boot/scripts.html                 # asset-version guard, i18n block, extensions block, <script defer> loop
@@ -70,8 +72,11 @@ tasks/io/chat_ui/css/               # CSS modules, served by serveAssets at /cha
   30_mobile.css                     # narrow-viewport overrides
   40_delegates.css                  # delegate blocks, cancel, ask_parent
   50_composer.css                   # composer drawer, cognitive panel chrome
+  55_appearance.css                 # scoped appearance, atmosphere media and translucent surfaces
+  58_modern_ui.css                  # composer shortcuts, search, code headers and memory records
   60_openspace.css                  # OpenSpace 3D view
   70_grab.css                       # terminal grab mode
+  75_composer_shell.css             # unified responsive prompt component and picker
   80_dialogs.css                    # exec approval + generic dialogs
   85_terminal_files.css             # terminal output, file explorer
   90_tabs.css                       # tab bar, tab panels, desktop/audio tabs
@@ -86,6 +91,33 @@ theme, then `<style id="custom-theme">` (the user's theme). Adding a module
 means adding the file **and** its entry in `_CSS_MODULES`; the contract test
 checks both. The old single inline `<style>` is gone: a CSS-only change now
 ships one small cacheable file.
+
+## Personal appearance and compact AI surfaces
+
+The header Appearance button opens a user-owned browser preference panel. The
+selected scale (75–150%), background source and atmosphere effects are not part
+of a theme and never modify a conversation or another user's settings.
+`appearance.js` namespaces the small JSON preference record by authenticated
+`user_id` in `localStorage`; uploaded image/video blobs (maximum 80 MiB) are
+stored under the same user identity in IndexedDB. Remote backgrounds require
+HTTPS (same-origin relative URLs are accepted) and contact their host directly.
+Image/video motion is disabled when `prefers-reduced-motion` is active, and
+videos pause while the page is hidden. Removing or resetting a background also
+deletes its stored blob.
+
+The surrounding chat surfaces remain theme-neutral:
+
+- the prompt row exposes compact search, slash-command and agent-mention
+  shortcuts without changing message submission;
+- `Ctrl/Cmd+K` and `/search <query>` share the same overlay over the latest
+  500 conversation messages;
+- fenced Markdown code has a language header and accessible copy action;
+- the memory browser uses tokenized record/card classes rather than a fixed
+  dark inline palette.
+
+All these rules use existing `--pf-*` variables. A custom theme therefore
+continues to work unchanged; atmosphere overrides apply only while a personal
+background is active.
 
 Rules for partials:
 

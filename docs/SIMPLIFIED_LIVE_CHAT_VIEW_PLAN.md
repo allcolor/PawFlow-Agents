@@ -167,15 +167,25 @@ controls:
   every icon labelled without creating a horizontal scrollbar on hover. The
   linked-account and power controls in the header reuse the dock's exact tooltip
   structure and 1.4x hover zoom.
-- View mode, TTS, STT, and tool permission mode occupy the left of that row,
-  while active agents occupy the right. The two side tracks remain equal, so the
-  action dock stays centered on the conversation even when either side panel is
-  hidden. Pasted files render as stacked thumbnails immediately before Send; the
-  first three stay visible and a count expands the full tray. The redundant
-  prompt-library button is omitted; only file attachment remains beside the prompt,
-  while realtime voice, grab, and conversation refresh join the left Conversation
-  controls panel. Keeping all of these inside the main layout makes them move with the
-  conversation when the left sidebar opens instead of overlapping it.
+- View mode, TTS, realtime voice, conversation refresh and tool permission mode
+  occupy the left of that row, while active agents occupy the right. The two side
+  tracks remain equal, so the action dock stays centered on the conversation even
+  when either side panel is hidden. The row below is one unified composer shell:
+  attachment, conversation search, slash command, agent mention, prompt textarea,
+  speech-to-text, terminal grab and Send all live in the same responsive component.
+  Pasted files render as stacked thumbnails inside that shell; the first three stay
+  visible and a count expands the full tray. The slash and mention affordances are
+  functional catalogs rather than decorative buttons: typing or pressing `/`
+  filters the real command list, typing or pressing `@` filters configured and
+  active conversation agents, and arrow keys plus Enter/Tab select an item. Keeping
+  all of these inside the main layout makes them move with the conversation when the
+  left sidebar opens instead of overlapping it.
+- Appearance media fills the complete chat canvas, including the area behind the
+  action dock and composer. When a background is active, those lower surfaces and
+  message blocks use the configured panel opacity and backdrop blur instead of an
+  opaque footer. The authenticated user's global appearance remains the inherited
+  default, and the Appearance scope selector can establish or remove an override for
+  the current conversation.
 - Expiry and the conversation theme no longer consume permanent sidebar height.
   Right-clicking any conversation and choosing Conversation controls activates that
   conversation and opens the existing controls in a modal.

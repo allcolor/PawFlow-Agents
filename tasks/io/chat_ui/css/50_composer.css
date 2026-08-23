@@ -10,14 +10,71 @@
                         align-items: end; gap: 10px; min-width: 0; }
 .prompt-controls-panel { justify-self: start; }
 .composer-action-mount { min-width: 0; justify-self: center; }
-.prompt-controls-panel { display: none; background: rgba(15,22,41,0.9); border: 1px solid #0f3460; border-radius: 8px;
-                         padding: 6px 10px; font-size: 11px; color: #a0a0c0;
+.prompt-controls-panel { display: none; background: color-mix(in srgb, var(--pf-panel) 90%, transparent);
+                         border: 1px solid var(--pf-border); border-radius: 7px;
+                         padding: 2px 4px 3px; font-size: 10px; color: var(--pf-muted);
                          flex: 0 0 auto; max-width: 100%; }
 .prompt-controls-panel.visible { display: block; }
-.prompt-controls-row { display: flex; align-items: center; gap: 6px; }
-.prompt-controls-row #permissionMode { max-width: 170px; height: 30px; }
-.prompt-controls-row button { width: 30px; height: 30px; padding: 0; border-radius: 6px;
-                              display: inline-flex; align-items: center; justify-content: center; }
+.prompt-controls-panel > .active-panel-title { margin-bottom: 1px; font-size: 9px; line-height: 1; }
+.prompt-controls-row { display: flex; align-items: center; gap: 3px; }
+.conversation-quick-theme { position: relative; width: 30px; height: 30px; flex: 0 0 30px;
+                            display: inline-flex; align-items: center; justify-content: center;
+                            border: 1px solid var(--pf-accent) !important; border-radius: 5px;
+                            background: var(--pf-sidebar) !important; color: var(--pf-text) !important;
+                            font-size: 14px; cursor: pointer; overflow: hidden; }
+.conversation-quick-theme:hover, .conversation-quick-theme:focus-within {
+  background: var(--pf-button-hover-bg); border-color: var(--pf-accent);
+}
+.conversation-quick-theme select { position: absolute; inset: 0; width: 100%; height: 100%;
+                                   opacity: 0; cursor: pointer; }
+.conversation-control-button { width: 30px !important; min-width: 30px; height: 30px; padding: 0 !important;
+                               border: 1px solid var(--pf-accent) !important; border-radius: 5px;
+                               background: var(--pf-sidebar) !important; color: var(--pf-text) !important;
+                               display: inline-flex; align-items: center; justify-content: center; }
+.conversation-control-button, .conversation-quick-theme {
+  position: relative; transform-origin: center bottom;
+  transition: transform .18s cubic-bezier(.34, 1.56, .64, 1),
+              background .15s ease, border-color .15s ease, box-shadow .18s ease;
+}
+.conversation-control-button:hover, .conversation-control-button:focus-visible,
+.conversation-control-button[aria-expanded="true"],
+.conversation-quick-theme:hover, .conversation-quick-theme:focus-within {
+  z-index: 3; transform: scale(1.4); border-color: var(--pf-accent) !important;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--pf-shadow) 80%, transparent);
+}
+.conversation-control-button:active { transform: scale(.94); }
+.conversation-quick-btn { background: var(--pf-button-bg); color: var(--pf-button-text);
+                          border: 1px solid var(--pf-button-border); cursor: pointer; }
+.conversation-quick-btn:hover, .conversation-quick-btn:focus-visible {
+  background: var(--pf-button-hover-bg); color: var(--pf-button-hover-text);
+  outline: none; border-color: var(--pf-accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .conversation-control-button, .conversation-quick-theme { transition: none; }
+  .conversation-control-button:hover, .conversation-control-button:focus-visible,
+  .conversation-control-button[aria-expanded="true"],
+  .conversation-quick-theme:hover, .conversation-quick-theme:focus-within,
+  .conversation-control-button:active { transform: none; }
+}
+.permission-menu-wrap { position: relative; display: inline-flex; }
+.permission-menu { position: absolute; left: 0; bottom: calc(100% + 7px); z-index: 5300;
+                   width: max-content; min-width: 180px; padding: 5px;
+                   border: 1px solid var(--pf-border); border-radius: 8px;
+                   background: color-mix(in srgb, var(--pf-panel) 96%, transparent);
+                   box-shadow: 0 12px 30px var(--pf-shadow); }
+.permission-menu[hidden] { display: none; }
+.prompt-controls-row .permission-menu-item { display: flex; align-items: center; gap: 8px;
+                                              width: 100%; min-width: 0; height: auto;
+                                              padding: 7px 9px !important; border: 1px solid transparent !important;
+                                              border-radius: 6px; background: transparent !important;
+                                              color: var(--pf-text) !important; text-align: left; cursor: pointer; }
+.prompt-controls-row .permission-menu-item:hover,
+.prompt-controls-row .permission-menu-item:focus-visible,
+.prompt-controls-row .permission-menu-item[aria-checked="true"] {
+  border-color: color-mix(in srgb, var(--pf-accent) 34%, transparent) !important;
+  background: color-mix(in srgb, var(--pf-accent) 12%, transparent) !important;
+  outline: none;
+}
 /* Cognitive-panel dialog chrome: header wraps on narrow screens and the
    close button is pinned to the dialog's top-right corner so it can never
    be pushed off-screen by the other header controls. */

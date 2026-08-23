@@ -1,6 +1,7 @@
 """Tests for the compact composer, memory cards, code blocks, and search."""
 
 from pathlib import Path
+import re
 import subprocess
 
 from chat_ui_testing import rendered_chat_html
@@ -31,7 +32,71 @@ def test_composer_picker_behavioural_js_suite():
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "4 passing" in result.stdout
+    assert "8 passing" in result.stdout
+
+
+def test_resource_dialogs_behavioural_js_suite():
+    result = subprocess.run(
+        ["node", "tests/js/resource_dialogs_spec.js"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passing" in result.stdout
+
+
+def test_operation_progress_behavioural_js_suite():
+    result = subprocess.run(
+        ["node", "tests/js/progress_dialog_spec.js"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "3 passing" in result.stdout
+
+
+def test_dialogs_share_beautiful_ui_surfaces_buttons_and_tables():
+    css = (UI / "css" / "99_theme_bridge.css").read_text(encoding="utf-8")
+
+    for surface in (
+        ".dialog",
+        ".exec-dialog",
+        ".cog-dialog",
+        "#resourceEditorOverlay > div",
+        ".pf-ext-modal-box",
+    ):
+        assert surface in css
+    assert "cubic-bezier(.34, 1.56, .64, 1)" in css
+    assert "table tbody tr:hover > td" in css
+    assert "prefers-reduced-motion: reduce" in css
+    assert 'body > [id$="Overlay"]' in css
+    assert 'body > [id$="Dialog"]' in css
+
+
+def test_dynamic_dialog_family_has_no_private_color_palette():
+    modules = (
+        "project_wiki.js", "project_graph.js", "knowledge_graph.js",
+        "scratchpad.js", "scratchdir.js", "diary.js", "dialogs.js",
+        "resources_resource_dialogs.js", "resources_service_dialogs.js",
+    )
+    literal = re.compile(r"#[0-9a-fA-F]{3,8}|rgba?\(")
+    for module in modules:
+        source = (UI / module).read_text(encoding="utf-8")
+        assert not literal.search(source), module
+
+
+def test_service_creation_choices_use_shared_dialog_buttons():
+    source = (UI / "resources_service_templates.js").read_text(encoding="utf-8")
+    css = (UI / "css" / "99_theme_bridge.css").read_text(encoding="utf-8")
+
+    assert "resource-create-choice-dialog" in source
+    assert 'class="dialog-choice-button"' in source
+    assert 'class="dialog-choice-button btn-primary"' in source
+    assert ".dialog-choice-button" in css
 
 
 def test_search_overlay_and_unified_composer_are_rendered():

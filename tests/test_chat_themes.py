@@ -247,6 +247,9 @@ def test_theme_ui_selector_and_repository_entries_exist():
     assert header_start < template.index('id="themeSelect"') < dock_start
     assert 'id="themeSelect"' not in template[dock_start:dock_end]
     assert 'id="conversationThemeSelect"' in template
+    assert 'id="conversationQuickThemeSelect"' in template
+    assert template.count('data-conversation-theme-select') == 2
+    assert 'id="conversationAppearanceBtn"' in template
     assert template.index('id="resourcesPanel"') < template.index('id="conversationThemeSelect"')
     assert '"themes.js"' in serve
     assert "Themes Repository" in resources

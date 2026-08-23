@@ -1,7 +1,8 @@
 // User-owned visual preferences: UI scale plus optional image/video atmosphere.
 // A per-user global value is inherited by every conversation unless that
-// conversation owns an override. Uploaded media lives in IndexedDB so large
-// blobs never inflate cookies or conversation files.
+// conversation owns an override. The server is authoritative across devices;
+// localStorage and IndexedDB remain an instant-paint/offline cache and provide
+// a one-shot migration path for preferences created before server sync.
 
 const APPEARANCE_PREFS_VERSION = 1;
 const APPEARANCE_DB_NAME = 'pawflow-appearance';
@@ -13,6 +14,7 @@ const APPEARANCE_DEFAULTS = Object.freeze({
   source: 'none',
   kind: 'image',
   url: '',
+  file_id: '',
   name: '',
   dim: 38,
   blur: 0,
@@ -26,6 +28,11 @@ var _appearanceObjectUrl = '';
 var _appearanceKey = '';
 var _appearanceScope = 'global';
 var _appearanceApplySequence = 0;
+var _appearanceHydrateSequence = 0;
+var _appearanceServerReady = false;
+var _appearanceSyncTimer = 0;
+var _appearanceServerWrite = Promise.resolve();
+var _appearanceSyncErrorShown = false;
 
 function _appearanceUserId() {
   return String(window._userId || (window.PAWFLOW_EXTENSION_CONTEXT || {}).user || 'local').trim() || 'local';
@@ -33,6 +40,10 @@ function _appearanceUserId() {
 
 function _appearanceGlobalStorageKey() {
   return 'pawflow.appearance.v1:' + _appearanceUserId();
+}
+
+function _appearanceMigrationKey() {
+  return 'pawflow.appearance.serverMigrated.v1:' + _appearanceUserId();
 }
 
 function _appearanceConversationId() {
@@ -71,6 +82,7 @@ function _appearanceNormalize(raw) {
   prefs.source = ['none', 'upload', 'url'].includes(prefs.source) ? prefs.source : 'none';
   prefs.kind = prefs.kind === 'video' ? 'video' : 'image';
   prefs.url = typeof prefs.url === 'string' ? prefs.url : '';
+  prefs.file_id = typeof prefs.file_id === 'string' ? prefs.file_id : '';
   prefs.name = typeof prefs.name === 'string' ? prefs.name : '';
   prefs.motion = !!prefs.motion;
   prefs.version = APPEARANCE_PREFS_VERSION;
@@ -91,19 +103,158 @@ async function refreshAppearanceContext() {
   const nextScope = conversationKey && localStorage.getItem(conversationKey) !== null
     ? 'conversation' : 'global';
   const nextKey = _appearanceStorageKey(nextScope);
-  if (nextKey === _appearanceKey && nextScope === _appearanceScope) return;
-  _appearanceSetObjectUrl(null);
-  _appearanceLoadPrefs();
-  await applyAppearance();
+  if (nextKey !== _appearanceKey || nextScope !== _appearanceScope) {
+    _appearanceSetObjectUrl(null);
+    _appearanceLoadPrefs();
+    await applyAppearance();
+  }
+  await _appearanceHydrateServer();
 }
 
 async function refreshAppearanceIdentity() {
+  _appearanceServerReady = false;
   _appearanceKey = '';
   await refreshAppearanceContext();
 }
 
-function _appearanceSavePrefs() {
+function _appearanceSavePrefs(sync) {
   localStorage.setItem(_appearanceKey || _appearanceStorageKey(_appearanceScope), JSON.stringify(_appearancePrefs));
+  if (sync !== false) _appearanceQueueServerSave();
+}
+
+function _appearanceAction(name, body) {
+  if (typeof action$ !== 'function' || typeof rxjs === 'undefined'
+      || typeof rxjs.firstValueFrom !== 'function') {
+    return Promise.reject(new Error('Appearance synchronization is unavailable'));
+  }
+  return rxjs.firstValueFrom(action$(name, body || {}, { silent: true })).then((data) => {
+    if (data && data.error) throw new Error(data.error);
+    return data || {};
+  });
+}
+
+async function _appearanceUploadFile(file) {
+  const headers = typeof getAuthHeaders === 'function'
+    ? Object.assign({}, getAuthHeaders()) : {};
+  headers['Content-Type'] = file.type || 'application/octet-stream';
+  const response = await fetch(
+    '/api/upload?purpose=appearance&filename=' + encodeURIComponent(file.name || 'background'),
+    { method: 'POST', headers, body: file, credentials: 'same-origin' });
+  let payload = {};
+  try { payload = await response.json(); } catch (_err) {}
+  if (!response.ok || payload.error) {
+    throw new Error(payload.error || ('HTTP ' + response.status));
+  }
+  const uploaded = payload.files && payload.files[0];
+  if (!uploaded || !uploaded.file_id) throw new Error('Appearance upload returned no file');
+  return uploaded;
+}
+
+async function _appearancePrepareServerPrefs(rawPrefs, scope) {
+  const prefs = _appearanceNormalize(rawPrefs);
+  if (prefs.source !== 'upload' || prefs.file_id) return prefs;
+  let record = null;
+  try { record = await _appearanceBlob('get', null, scope); } catch (_err) {}
+  if (!record || !record.blob) {
+    return _appearanceNormalize(Object.assign({}, prefs, {
+      source: 'none', url: '', file_id: '', name: '',
+    }));
+  }
+  const file = record.blob;
+  if (!file.name && record.name) {
+    try {
+      Object.defineProperty(file, 'name', { value: record.name, configurable: true });
+    } catch (_err) {}
+  }
+  const uploaded = await _appearanceUploadFile(file);
+  prefs.file_id = uploaded.file_id;
+  prefs.url = uploaded.url || '';
+  prefs.name = uploaded.filename || prefs.name;
+  prefs.kind = String(uploaded.mime_type || '').indexOf('video/') === 0 ? 'video' : 'image';
+  return prefs;
+}
+
+async function _appearancePersistServer(scope, rawPrefs, conversation) {
+  const prefs = await _appearancePrepareServerPrefs(rawPrefs, scope);
+  return _appearanceAction('appearance_save', {
+    scope,
+    conversation_id: conversation === undefined
+      ? _appearanceConversationId() : conversation,
+    prefs,
+  });
+}
+
+function _appearanceCacheServerResult(data, conversation) {
+  const cid = conversation === undefined ? _appearanceConversationId() : conversation;
+  const globalKey = _appearanceGlobalStorageKey();
+  if (data.global) localStorage.setItem(globalKey, JSON.stringify(_appearanceNormalize(data.global)));
+  else localStorage.removeItem(globalKey);
+  const conversationKey = cid ? globalKey + ':conversation:' + cid : '';
+  if (conversationKey) {
+    if (data.conversation) {
+      localStorage.setItem(conversationKey, JSON.stringify(_appearanceNormalize(data.conversation)));
+    } else {
+      localStorage.removeItem(conversationKey);
+    }
+  }
+  _appearanceScope = data.scope === 'conversation' && cid ? 'conversation' : 'global';
+  _appearanceKey = _appearanceStorageKey(_appearanceScope);
+  _appearancePrefs = _appearanceNormalize(data.resolved || {});
+}
+
+async function _appearanceHydrateServer() {
+  const sequence = ++_appearanceHydrateSequence;
+  const cid = _appearanceConversationId();
+  const globalKey = _appearanceGlobalStorageKey();
+  const conversationKey = cid ? globalKey + ':conversation:' + cid : '';
+  const localGlobal = localStorage.getItem(globalKey);
+  const localConversation = conversationKey ? localStorage.getItem(conversationKey) : null;
+  try {
+    let data = await _appearanceAction('appearance_get', { conversation_id: cid });
+    if (sequence !== _appearanceHydrateSequence || cid !== _appearanceConversationId()) return;
+    const migrated = localStorage.getItem(_appearanceMigrationKey()) === '1';
+    if (!migrated && !data.global && localGlobal !== null) {
+      let prefs;
+      try { prefs = JSON.parse(localGlobal); } catch (_err) { prefs = {}; }
+      data = await _appearancePersistServer('global', prefs, cid);
+    }
+    if (!migrated && cid && !data.conversation && localConversation !== null) {
+      let prefs;
+      try { prefs = JSON.parse(localConversation); } catch (_err) { prefs = {}; }
+      data = await _appearancePersistServer('conversation', prefs, cid);
+    }
+    if (sequence !== _appearanceHydrateSequence || cid !== _appearanceConversationId()) return;
+    localStorage.setItem(_appearanceMigrationKey(), '1');
+    _appearanceCacheServerResult(data, cid);
+    _appearanceServerReady = true;
+    _appearanceSyncErrorShown = false;
+    await applyAppearance();
+  } catch (_err) {
+    // Local cache remains fully usable while offline or during a restart.
+    _appearanceServerReady = false;
+  }
+}
+
+function _appearanceReportSyncError(error) {
+  if (_appearanceSyncErrorShown) return;
+  _appearanceSyncErrorShown = true;
+  addMsg('error', t('backgroundSyncFailed', { error: error.message }));
+}
+
+function _appearanceQueueServerSave() {
+  if (!_appearanceServerReady) return;
+  clearTimeout(_appearanceSyncTimer);
+  const scope = _appearanceScope;
+  const cid = _appearanceConversationId();
+  const snapshot = Object.assign({}, _appearancePrefs);
+  _appearanceSyncTimer = setTimeout(() => {
+    _appearanceServerWrite = _appearanceServerWrite.catch(() => {}).then(
+      () => _appearancePersistServer(scope, snapshot, cid)
+    ).then(() => {
+      _appearanceSyncErrorShown = false;
+      localStorage.setItem(_appearanceMigrationKey(), '1');
+    }).catch(_appearanceReportSyncError);
+  }, 350);
 }
 
 function _appearanceDb() {
@@ -181,6 +332,8 @@ async function applyAppearance() {
   _appearanceApplyEffects();
   if (_appearancePrefs.source === 'url' && _appearancePrefs.url) {
     _appearanceSetMedia(_appearancePrefs.kind, _appearancePrefs.url);
+  } else if (_appearancePrefs.source === 'upload' && _appearancePrefs.url) {
+    _appearanceSetMedia(_appearancePrefs.kind, _appearancePrefs.url);
   } else if (_appearancePrefs.source === 'upload') {
     try {
       const record = await _appearanceBlob('get');
@@ -238,6 +391,12 @@ function showAppearanceDialog() {
   if (first) first.focus();
 }
 
+async function showConversationAppearanceDialog() {
+  if (!_appearanceConversationId()) return;
+  await setAppearanceScope('conversation');
+  showAppearanceDialog();
+}
+
 function closeAppearanceDialog() {
   const dialog = document.getElementById('appearanceDialog');
   if (dialog) dialog.style.display = 'none';
@@ -257,7 +416,16 @@ async function setAppearanceScope(scope) {
     _appearanceScope = 'conversation';
     _appearanceKey = _appearanceStorageKey('conversation');
     _appearancePrefs = inherited;
-    _appearanceSavePrefs();
+    _appearanceSavePrefs(false);
+    if (_appearanceServerReady) {
+      try {
+        const data = await _appearancePersistServer('conversation', inherited, cid);
+        _appearanceCacheServerResult(data, cid);
+        localStorage.setItem(_appearanceMigrationKey(), '1');
+      } catch (error) {
+        _appearanceReportSyncError(error);
+      }
+    }
     await applyAppearance();
     return;
   }
@@ -265,6 +433,14 @@ async function setAppearanceScope(scope) {
   if (conversationKey) localStorage.removeItem(conversationKey);
   if (conversationKey) {
     try { await _appearanceBlob('delete', null, 'conversation'); } catch (_err) {}
+  }
+  if (conversationKey && _appearanceServerReady) {
+    try {
+      await _appearanceAction('appearance_clear_conversation', { conversation_id: cid });
+      localStorage.setItem(_appearanceMigrationKey(), '1');
+    } catch (error) {
+      _appearanceReportSyncError(error);
+    }
   }
   _appearanceSetObjectUrl(null);
   _appearanceScope = 'global';
@@ -315,10 +491,24 @@ async function setAppearanceFile(file) {
     _appearancePrefs.source = 'upload';
     _appearancePrefs.kind = kind;
     _appearancePrefs.url = '';
+    _appearancePrefs.file_id = '';
     _appearancePrefs.name = file.name;
-    _appearanceSavePrefs();
+    _appearanceSavePrefs(false);
     _appearanceSetMedia(kind, _appearanceSetObjectUrl(file));
     _appearanceSyncDialog();
+    try {
+      const uploaded = await _appearanceUploadFile(file);
+      _appearancePrefs.file_id = uploaded.file_id;
+      _appearancePrefs.url = uploaded.url || '';
+      _appearancePrefs.name = uploaded.filename || file.name;
+      const data = await _appearancePersistServer(_appearanceScope, _appearancePrefs);
+      _appearanceCacheServerResult(data);
+      _appearanceServerReady = true;
+      localStorage.setItem(_appearanceMigrationKey(), '1');
+      await applyAppearance();
+    } catch (error) {
+      _appearanceReportSyncError(error);
+    }
   } catch (error) {
     addMsg('error', t('backgroundStoreFailed', { error: error.message }));
   }
@@ -340,6 +530,7 @@ function applyAppearanceUrl() {
   _appearancePrefs.source = 'url';
   _appearancePrefs.kind = kind && kind.value === 'video' ? 'video' : 'image';
   _appearancePrefs.url = url;
+  _appearancePrefs.file_id = '';
   _appearancePrefs.name = new URL(url).hostname;
   _appearanceSavePrefs();
   _appearanceSetMedia(_appearancePrefs.kind, url);
@@ -351,6 +542,7 @@ async function removeAppearanceBackground() {
   _appearanceSetObjectUrl(null);
   _appearancePrefs.source = 'none';
   _appearancePrefs.url = '';
+  _appearancePrefs.file_id = '';
   _appearancePrefs.name = '';
   _appearanceSavePrefs();
   _appearanceSetMedia('', '');
@@ -383,6 +575,7 @@ window.addEventListener('pawflow:userchange', refreshAppearanceIdentity);
 document.addEventListener('DOMContentLoaded', () => {
   _appearanceLoadPrefs();
   applyAppearance();
+  _appearanceHydrateServer();
   const dialog = document.getElementById('appearanceDialog');
   if (dialog) dialog.addEventListener('mousedown', event => {
     if (event.target === dialog) closeAppearanceDialog();

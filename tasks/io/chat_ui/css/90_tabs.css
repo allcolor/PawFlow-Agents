@@ -14,9 +14,37 @@
 /* Tab tooltips go through the shared CSS tooltip (tooltips.js adopts every
    native title), so the tab bar carries no tooltip rendering of its own. */
 .tab-spacer { flex: 1; }
-/* The tab rail folds together with the sidebar: collapsed, only the grip on
-   the boundary line remains visible at the left edge. */
+.tab-bar-handle { display: none; }
+/* Narrow layouts still fold the tab rail together with the sidebar. */
 .tab-bar.collapsed { display: none; }
+.tab-audio-control { display: none; border: 0; padding: 4px; background: transparent;
+                     color: var(--pf-text); cursor: pointer; }
+.tab-audio-toggle { font-size: 18px; }
+.tab-audio-restart { font-size: 16px; }
+/* On desktop the rail is independent from Conversations/Resources. It lives at
+   the right viewport edge and reveals itself on edge approach or keyboard focus.
+   The slim themed tab is a persistent discoverability hint. */
+@media (min-width: 769px) {
+  .tab-bar,
+  .tab-bar.collapsed { display: flex; position: fixed; top: 0; right: 0; bottom: 0; left: auto;
+                       z-index: 190; overflow: visible;
+                       border-right: 0; border-left: 1px solid var(--pf-border);
+                       transform: translateX(calc(100% - 4px));
+                       transition: transform 0.22s ease, box-shadow 0.18s ease; }
+  .tab-bar-handle { position: absolute; top: 50%; right: 100%; left: auto;
+                    width: 15px; height: 44px; transform: translateY(-50%);
+                    display: flex; align-items: center; justify-content: center;
+                    border: 1px solid var(--pf-border); border-right: 0;
+                    border-radius: 8px 0 0 8px;
+                    background: color-mix(in srgb, var(--pf-panel) 94%, transparent);
+                    color: var(--pf-accent); box-shadow: -3px 0 12px var(--pf-shadow);
+                    font-size: 18px; font-weight: 700; pointer-events: auto; }
+  .tab-bar:hover,
+  .tab-bar:focus-within { transform: translateX(0);
+                          box-shadow: -6px 0 20px var(--pf-shadow); }
+  .tab-bar:hover .tab-bar-handle,
+  .tab-bar:focus-within .tab-bar-handle { color: var(--pf-text); }
+}
 /* Tab content panels */
 .tab-content { display: none; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; }
 .tab-content.active { display: flex; }

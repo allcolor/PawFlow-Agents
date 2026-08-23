@@ -201,6 +201,46 @@ def test_raw_http_upload_rejects_missing_user_before_reading_body():
         "Authenticated user is required")
 
 
+def test_appearance_upload_is_private_non_expiring_and_size_limited(monkeypatch):
+    handler = _UploadHandler(b"image-bytes", content_type="image/webp")
+    captured = {}
+
+    def fake_store_stream(store, filename, chunks, **kwargs):
+        captured.update(kwargs)
+        captured["filename"] = filename
+        captured["body"] = b"".join(chunks)
+        return "background123"
+
+    monkeypatch.setattr(upload_stream, "store_stream", fake_store_stream)
+    monkeypatch.setattr(
+        upload_stream.FileStore, "instance",
+        classmethod(lambda _cls: object()),
+    )
+
+    upload_stream.handle_upload_stream(
+        handler, len(b"image-bytes"), _Session(),
+        "purpose=appearance&filename=wall%20paper.webp",
+    )
+
+    assert handler.status == 200
+    assert captured["filename"] == "wall paper.webp"
+    assert captured["body"] == b"image-bytes"
+    assert captured["conversation_id"] == "_appearance"
+    assert captured["user_id"] == "alice"
+    assert captured["ttl"] == 0
+    assert captured["category"] == "appearance"
+    response = json.loads(handler.wfile.getvalue())["files"][0]
+    assert response["url"].endswith("/wall%20paper.webp")
+
+    oversized = _UploadHandler(b"x", content_type="image/png")
+    upload_stream.handle_upload_stream(
+        oversized, upload_stream._APPEARANCE_MAX_BYTES + 1, _Session(),
+        "purpose=appearance&filename=too-large.png",
+    )
+    assert oversized.status == 400
+    assert oversized.rfile.tell() == 0
+
+
 def test_http_upload_fast_path_precedes_generic_body_read():
     source = Path("services/_http_request.py").read_text(encoding="utf-8")
     branch = source.index('path == "/api/upload"')

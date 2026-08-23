@@ -133,6 +133,24 @@ test('remote backgrounds require HTTPS while same-origin URLs stay valid', () =>
     'https://pawflow.test/files/bg.webp');
 });
 
+test('server-backed uploads keep their private file identifier', () => {
+  const e = env();
+  const prefs = e.context._appearanceNormalize({
+    source: 'upload', file_id: 'file-42', url: '/files/file-42/background.webp',
+  });
+  equal(prefs.file_id, 'file-42');
+  equal(prefs.source, 'upload');
+});
+
+test('migration marker is isolated per authenticated user', () => {
+  const e = env();
+  equal(e.context._appearanceMigrationKey(),
+    'pawflow.appearance.serverMigrated.v1:bootstrap-user');
+  e.window._userId = 'alice';
+  equal(e.context._appearanceMigrationKey(),
+    'pawflow.appearance.serverMigrated.v1:alice');
+});
+
 if (failures.length) {
   console.error('\n' + failures.length + ' failing, ' + passed + ' passing');
   for (const failure of failures) console.error('  - ' + failure);

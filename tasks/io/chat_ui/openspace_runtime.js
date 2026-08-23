@@ -758,6 +758,7 @@ function _osPointerUp(e) {
       return;
     }
     if (ud && ud.osvDoor) { openspaceOpenConvDialog(); return; }
+    if (ud && ud.osvBigScreen) { _osSetCameraView('conversation'); return; }
     if (ud && ud.osvTv) { _osSetCameraView('tv'); openspaceOpenTvDialog(); return; }
     if (ud && ud.osvResSection) {
       openspaceOpenResSectionDialog(ud.osvResSection, ud.osvResTitle);
@@ -775,13 +776,17 @@ function _osPointerUp(e) {
   // it).
   const floor = _osScene.getObjectByName('floor');
   if (!floor) return;
+  // Furniture and the wall screen block the floor ray, so a screen click
+  // cannot move the visitor into the display.
+  if (!hits.length || hits[0].object !== floor) return;
   const ground = _osRaycaster.intersectObject(floor, false)[0];
   if (!ground) return;
   const me = _osEnsureUser(
     (typeof window !== 'undefined' && window._userId) || 'user');
   if (!me || !me.avatar) return;
-  const gx = Math.max(-35, Math.min(50, ground.point.x));
-  const gz = Math.max(-35, Math.min(50, ground.point.z));
+  const gx = Math.max(OSV_ROOM.minX + 1, Math.min(OSV_ROOM.maxX - 1, ground.point.x));
+  // Keep a navigable buffer between visitors and the projection wall.
+  const gz = Math.max(OSV_SCREEN_Z + 2.2, Math.min(OSV_ROOM.maxZ - 1, ground.point.z));
   me.homeSeat = { x: gx, z: gz };
   _osWalkTo(me, { x: gx, z: gz });
   _osFollow = true;

@@ -6,18 +6,44 @@
     <div class="prompt-controls-panel" id="promptControlsPanel">
       <div class="active-panel-title" data-i18n="conversationControls">Conversation controls</div>
       <div class="prompt-controls-row">
-        <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode" data-i18n-title="permissionModeTitle"
-                style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
-          <option value="default" data-i18n-permission="permissionDefault">&#x1F512; Default</option>
-          <option value="approve_edits" data-i18n-permission="permissionApproveEdits">&#x270F; Approve edits</option>
-          <option value="read_only" data-i18n-permission="permissionReadOnly">&#x1F4D6; Read-only</option>
-          <option value="auto" data-i18n-permission="permissionAuto">&#x26A1; Auto</option>
-        </select>
-        <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" aria-label="Speak agent messages live" data-i18n-aria-label="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
-        <button class="btn-attach" id="voiceModeBtn" onclick="toggleVoiceMode()" oncontextmenu="showVoiceServiceDialog(); return false;" title="Start realtime voice conversation" data-i18n-title="voiceModeStartTitle" style="display:none">&#x1F399;&#xFE0F;</button>
-        <button class="btn-attach" id="refreshConvBtn" onclick="refreshCurrentConversation()" title="Refresh conversation" data-i18n-title="refreshConversationTitle">&#x21BB;</button>
+        <div class="permission-menu-wrap" id="permissionModeWrap" style="display:none">
+          <button class="conversation-control-button" id="permissionModeBtn" type="button"
+                  onclick="togglePermissionModeMenu()" aria-haspopup="menu" aria-expanded="false"
+                  aria-controls="permissionModeMenu" title="Tool permission mode"
+                  data-i18n-title="permissionModeTitle"><span id="permissionModeIcon" aria-hidden="true">&#x1F512;</span></button>
+          <div class="permission-menu" id="permissionModeMenu" role="menu" hidden>
+            <button class="permission-menu-item" type="button" role="menuitemradio" aria-checked="true"
+                    data-permission-mode="default" onclick="setPermissionMode('default')"><span aria-hidden="true">&#x1F512;</span><span data-i18n="permissionDefault">Default</span></button>
+            <button class="permission-menu-item" type="button" role="menuitemradio" aria-checked="false"
+                    data-permission-mode="approve_edits" onclick="setPermissionMode('approve_edits')"><span aria-hidden="true">&#x270F;</span><span data-i18n="permissionApproveEdits">Approve edits</span></button>
+            <button class="permission-menu-item" type="button" role="menuitemradio" aria-checked="false"
+                    data-permission-mode="read_only" onclick="setPermissionMode('read_only')"><span aria-hidden="true">&#x1F4D6;</span><span data-i18n="permissionReadOnly">Read-only</span></button>
+            <button class="permission-menu-item" type="button" role="menuitemradio" aria-checked="false"
+                    data-permission-mode="auto" onclick="setPermissionMode('auto')"><span aria-hidden="true">&#x26A1;</span><span data-i18n="permissionAuto">Auto</span></button>
+          </div>
+        </div>
+        <button class="btn-attach conversation-control-button" id="refreshConvBtn" onclick="refreshCurrentConversation()" title="Refresh conversation" data-i18n-title="refreshConversationTitle">&#x21BB;</button>
+        <span class="conversation-quick-theme" id="conversationQuickThemeControl"
+              title="Conversation theme" data-i18n-title="convThemeLabel">
+          <span aria-hidden="true">&#x1F3AD;</span>
+          <select id="conversationQuickThemeSelect" data-conversation-theme-select
+                  onchange="onConversationThemeSelectChange(this.value)"
+                  aria-label="Conversation theme" data-i18n-aria-label="convThemeLabel">
+            <option value="" data-i18n="useGlobalTheme">Use global theme</option>
+          </select>
+        </span>
+        <button class="conversation-quick-btn conversation-control-button" id="conversationAppearanceBtn" type="button"
+                onclick="showConversationAppearanceDialog()"
+                title="Conversation appearance" data-i18n-title="appearanceTitle"
+                aria-label="Conversation appearance" data-i18n-aria-label="appearanceTitle">&#x1F3A8;</button>
+        <button class="conversation-quick-btn conversation-control-button" id="openspaceQuickBtn" type="button"
+                onclick="onViewModeSelect('openspace')"
+                title="Openspace (3D)" data-i18n-title="openspaceView"
+                aria-label="Openspace (3D)" data-i18n-aria-label="openspaceView">&#x1F3E2;</button>
+        <button class="speak-toggle-btn conversation-control-button" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" aria-label="Speak agent messages live" data-i18n-aria-label="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
+        <button class="btn-attach conversation-control-button" id="voiceModeBtn" onclick="toggleVoiceMode()" oncontextmenu="showVoiceServiceDialog(); return false;" title="Start realtime voice conversation" data-i18n-title="voiceModeStartTitle" style="display:none">&#x1F399;&#xFE0F;</button>
         <div class="view-menu-wrap" id="viewMenuWrap">
-          <button id="viewMenuToggle" class="tech-group-toggle" type="button" aria-haspopup="true" aria-expanded="false"
+          <button id="viewMenuToggle" class="tech-group-toggle conversation-control-button" type="button" aria-haspopup="true" aria-expanded="false"
                   aria-label="View options" data-i18n-aria-label="viewMenuTitle"
                   onclick="toggleViewMenu()">&#x1F441;</button>
           <div class="view-menu" id="viewMenu" role="menu">

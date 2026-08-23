@@ -224,10 +224,23 @@ def test_view_audio_and_permissions_live_in_left_prompt_panel_but_dictation_does
         '<div class="prompt-controls-panel"', '<div class="composer-action-mount"'
     )
 
-    for element_id in ("permissionMode", "speakToggleBtn", "viewMenuWrap"):
+    for element_id in ("permissionModeBtn", "permissionModeMenu", "speakToggleBtn", "viewMenuWrap"):
         marker = f'id="{element_id}"'
         assert marker in controls
         assert marker not in header
+
+    assert controls.index('id="refreshConvBtn"') < controls.index('id="conversationQuickThemeControl"')
+
+    composer_css = Path("tasks/io/chat_ui/css/50_composer.css").read_text(encoding="utf-8")
+    state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
+    assert '<select id="permissionMode"' not in controls
+    assert ".conversation-quick-theme { position: relative; width: 30px;" in composer_css
+    assert "button.setAttribute('aria-label', accessibleLabel)" in state_js
+    assert "function togglePermissionModeMenu(force)" in state_js
+    assert "function closePermissionModeMenu()" in state_js
+    assert "document.getElementById('permissionMode').style" not in state_js
+    assert "const permissionControl = document.getElementById('permissionModeWrap');" in state_js
+    assert "if (permissionControl) permissionControl.style.display" in state_js
 
     assert 'id="speechInputBtn"' not in controls
     composer = _between('<div class="input-row composer-shell"', '</div><!-- /tab-content chat -->')
@@ -263,7 +276,8 @@ def test_composer_context_row_orders_controls_and_action_dock():
         "grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);"
         in TEMPLATE_HTML
     )
-    assert "grid-template-columns: auto minmax(0, 1fr) auto;" not in TEMPLATE_HTML
+    # A three-column grid is valid for the separate mobile prompt shell; only
+    # the context row itself must keep the symmetric desktop columns above.
     assert ".prompt-controls-panel { justify-self: start; }" in TEMPLATE_HTML
     assert (
         ".input-area .composer-context-row { grid-template-columns: minmax(0, 1fr); }"
@@ -334,8 +348,21 @@ def test_control_docks_use_an_external_css_tooltip_without_horizontal_scroll():
     assert "_setTitle('#viewMenuToggle'" not in i18n_js
     assert '"tooltips.js"' in serve_src
     assert '.action-dock-menu > .action-menu-item' in TOOLTIPS_JS
-    assert '.prompt-controls-row button' in TOOLTIPS_JS
+    assert '.conversation-control-button' in TOOLTIPS_JS
     assert "getBoundingClientRect()" in TOOLTIPS_JS
+
+
+def test_conversation_control_buttons_are_thin_and_share_dock_motion():
+    css = Path("tasks/io/chat_ui/css/50_composer.css").read_text(encoding="utf-8")
+
+    assert "padding: 2px 4px 3px" in css
+    assert ".conversation-control-button { width: 30px !important; min-width: 30px; height: 30px;" in css
+    assert ".conversation-control-button, .conversation-quick-theme" in css
+    assert "background: var(--pf-sidebar) !important" in css
+    assert "border: 1px solid var(--pf-accent) !important" in css
+    assert "transform: scale(1.4)" in css
+    assert "box-shadow: 0 6px 16px" in css
+    assert "@media (prefers-reduced-motion: reduce)" in css
 
 
 def test_attachment_thumbnails_stack_before_send_and_expand_past_three():
@@ -360,6 +387,12 @@ def test_unified_composer_owns_prompt_actions_but_not_conversation_controls():
         assert f'id="{element_id}"' in before_prompt
     for element_id in ("speechInputBtn", "grabBtn", "sendBtn"):
         assert f'id="{element_id}"' in input_row
+    assert (
+        input_row.index('id="input"')
+        < input_row.index('id="speechInputBtn"')
+        < input_row.index('id="grabBtn"')
+        < input_row.index('id="sendBtn"')
+    )
     for element_id in ("voiceModeBtn", "refreshConvBtn"):
         assert f'id="{element_id}"' not in input_row
 

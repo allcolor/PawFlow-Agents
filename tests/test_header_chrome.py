@@ -1,10 +1,10 @@
-"""Header chrome: collapsible panels behind grips + icon/popover widgets.
+"""Header chrome: collapsible panels, independent desktop rail, and widgets.
 
-The three chrome zones (header bar, left sidebar + tab rail, composer
-drawer) each fold completely behind a small grip (a square showing 3
-vertical lines) that rides the separation line itself. Sidebar and composer
-start CLOSED so the transcript takes almost the whole screen on load; the
-header starts OPEN and folding it is the reader's persisted choice.
+The header, left sidebar, and composer drawer fold behind compact grips.
+Above 768 px the tab rail is independently revealed from the right edge;
+narrow layouts continue to fold it together with the sidebar. Sidebar and
+composer start CLOSED so the transcript takes almost the whole screen on load;
+the header starts OPEN and folding it is the reader's persisted choice.
 
 Three header widgets became compact icon buttons whose full content lives in
 a click-toggled popover (click shows, click again hides):
@@ -73,12 +73,21 @@ def test_header_shows_the_pawflow_logo_linking_to_the_site():
 def test_sidebar_grip_is_an_edge_tab_and_sidebar_defaults_closed():
     assert '<div class="sidebar collapsed" id="sidebar">' in TEMPLATE
     assert ".sidebar-toggle { position: fixed; top: 50%; left: 0;" in TEMPLATE
-    # The tab rail folds together with the sidebar: collapsed, only the grip
-    # remains visible at the left edge, glued to the boundary line.
+    # Desktop: independent edge-hover rail with a persistent visual hint.
     assert '<div class="tab-bar collapsed" id="tabBar">' in TEMPLATE
     assert ".tab-bar.collapsed { display: none; }" in TEMPLATE
-    assert "tabBar.classList.toggle('collapsed', collapsed)" in STATE_JS
-    assert "const boundary = collapsed ? 0 : 260 + (tabBar ? tabBar.offsetWidth : 0)" in STATE_JS
+    assert "@media (min-width: 769px)" in TEMPLATE
+    assert ".tab-bar:hover," in TEMPLATE
+    assert ".tab-bar:focus-within" in TEMPLATE
+    assert "top: 0; right: 0; bottom: 0; left: auto;" in TEMPLATE
+    assert "transform: translateX(calc(100% - 4px));" in TEMPLATE
+    assert ('class="tab-bar-handle" title="Task bar" '
+            'data-i18n-title="taskTabsTitle"' in TEMPLATE)
+    assert ".tab-bar-handle { position: absolute;" in TEMPLATE
+    assert "right: 100%; left: auto;" in TEMPLATE
+    # Mobile: retain the existing coupling to the overlay drawer.
+    assert "tabBar.classList.toggle('collapsed', narrow && collapsed)" in STATE_JS
+    assert "260 + (narrow && tabBar ? tabBar.offsetWidth : 0)" in STATE_JS
     assert "btn.style.left = Math.max(0, boundary - 8) + 'px'" in STATE_JS
     assert "&#9776;" not in TEMPLATE  # old hamburger glyph is gone
 

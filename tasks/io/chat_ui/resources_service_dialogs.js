@@ -141,7 +141,7 @@ function _openParamHelpWindow(btn, ev) {
   const markdown = btn.dataset.help || '';
   const win = document.createElement('div');
   win.className = 'svc-help-window';
-  win.style.cssText = 'position:fixed;z-index:10050;width:min(560px,calc(100vw - 24px));max-height:min(460px,calc(100vh - 24px));display:flex;flex-direction:column;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:8px;box-shadow:0 12px 36px rgba(0,0,0,0.55);overflow:hidden;';
+  win.style.cssText = 'position:fixed;z-index:10050;width:min(560px,calc(100vw - 24px));max-height:min(460px,calc(100vh - 24px));display:flex;flex-direction:column;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:8px;box-shadow:0 12px 36px color-mix(in srgb, var(--pf-shadow) 70%, transparent);overflow:hidden;';
   win.innerHTML = '<div class="svc-help-titlebar" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--pf-sidebar);border-bottom:1px solid var(--pf-border);cursor:move;user-select:none;">'
     + '<strong style="font-size:12px;color:var(--pf-text);flex:1;">' + escapeHtml(title) + '</strong>'
     + '<button type="button" class="svc-help-close" aria-label="Close" style="background:none;border:1px solid var(--pf-border);color:var(--pf-muted);border-radius:4px;width:22px;height:22px;line-height:18px;cursor:pointer;">&times;</button>'
@@ -186,7 +186,7 @@ async function _openParamFillHelper(btn, ev) {
   document.querySelectorAll('.svc-fill-window').forEach(el => el.remove());
   const win = document.createElement('div');
   win.className = 'svc-fill-window';
-  win.style.cssText = 'position:fixed;z-index:10055;width:min(620px,calc(100vw - 24px));max-height:min(520px,calc(100vh - 24px));display:flex;flex-direction:column;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:8px;box-shadow:0 12px 36px rgba(0,0,0,0.55);overflow:hidden;';
+  win.style.cssText = 'position:fixed;z-index:10055;width:min(620px,calc(100vw - 24px));max-height:min(520px,calc(100vh - 24px));display:flex;flex-direction:column;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:8px;box-shadow:0 12px 36px color-mix(in srgb, var(--pf-shadow) 70%, transparent);overflow:hidden;';
   win.innerHTML = '<div class="svc-fill-titlebar" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--pf-sidebar);border-bottom:1px solid var(--pf-border);cursor:move;user-select:none;">'
     + '<strong style="font-size:12px;color:var(--pf-text);flex:1;">' + escapeHtml(helper.label || 'Fill') + '</strong>'
     + '<button type="button" class="svc-fill-close" aria-label="Close" style="background:none;border:1px solid var(--pf-border);color:var(--pf-muted);border-radius:4px;width:22px;height:22px;line-height:18px;cursor:pointer;">&times;</button>'

@@ -87,3 +87,52 @@
 #conversationSettingsDialog label { display: block; margin-bottom: 4px; color: var(--pf-muted); font-size: 11px; }
 #conversationSettingsDialog select { width: 100%; padding: 6px 8px; border: 1px solid var(--pf-border);
                                      border-radius: 5px; background: var(--pf-sidebar); color: var(--pf-text); }
+
+/* Shared transaction progress for long-running server operations. */
+.operation-progress-overlay {
+  position: fixed; inset: 0; z-index: 12000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 18px;
+  background: color-mix(in srgb, var(--pf-bg) 58%, transparent);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.operation-progress-card {
+  width: min(460px, calc(100vw - 36px));
+  display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 15px;
+  padding: 20px;
+  border: 1px solid var(--pf-border); border-radius: 15px;
+  background: color-mix(in srgb, var(--pf-panel) 97%, var(--pf-bg));
+  color: var(--pf-text);
+  box-shadow: 0 22px 64px var(--pf-shadow);
+}
+.operation-progress-mark {
+  width: 42px; height: 42px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--pf-accent) 24%, var(--pf-border));
+  border-top-color: var(--pf-accent);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--pf-accent) 8%, transparent);
+  animation: operation-progress-spin .85s linear infinite;
+}
+.operation-progress-card.error .operation-progress-mark {
+  border-color: var(--pf-danger); animation: none;
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--pf-danger) 9%, transparent);
+}
+.operation-progress-card h3 { margin: 0 0 6px; color: var(--pf-text); font-size: 15px; }
+.operation-progress-phase { color: var(--pf-accent); font-size: 13px; font-weight: 700; }
+.operation-progress-card.error .operation-progress-phase { color: var(--pf-danger); }
+.operation-progress-detail { min-height: 17px; margin-top: 4px; color: var(--pf-muted); font-size: 11px; line-height: 1.45; }
+.operation-progress-track {
+  position: relative; height: 3px; margin-top: 13px; overflow: hidden;
+  border-radius: 999px; background: var(--pf-border);
+}
+.operation-progress-track span {
+  position: absolute; inset-block: 0; left: -42%; width: 42%;
+  border-radius: inherit; background: var(--pf-accent);
+  animation: operation-progress-slide 1.2s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+.operation-progress-card.error .operation-progress-track { display: none; }
+.operation-progress-close { margin-top: 14px; padding: 7px 14px; }
+@keyframes operation-progress-spin { to { transform: rotate(360deg); } }
+@keyframes operation-progress-slide { to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .operation-progress-mark, .operation-progress-track span { animation-duration: 2.4s; }
+}

@@ -34,14 +34,36 @@ function env() {
     hidden: true, innerHTML: '', dataset: {},
     querySelectorAll() { return []; }, contains() { return false; },
   };
-  const buttons = { composerSlashBtn: { setAttribute() {} }, composerMentionBtn: { setAttribute() {} } };
+  const agentPicker = {
+    hidden: true, innerHTML: '',
+    querySelectorAll() { return []; },
+  };
+  const agentOverlay = { hidden: true, contains() { return false; } };
+  const agentLabel = { textContent: '' };
+  const agentBadge = {
+    title: '', attributes: {},
+    setAttribute(name, value) { this.attributes[name] = value; },
+  };
+  const actionsPanel = {
+    dataset: { open: 'false' }, attributes: {},
+    setAttribute(name, value) { this.attributes[name] = value; },
+  };
+  const mobileToggle = {
+    attributes: {}, setAttribute(name, value) { this.attributes[name] = value; },
+  };
+  const buttons = {
+    composerSlashBtn: { setAttribute() {} }, composerMentionBtn: { setAttribute() {} },
+    composerMobileActions: actionsPanel, composerMobileActionsBtn: mobileToggle,
+    composerAgentPicker: agentPicker, composerAgentOverlay: agentOverlay,
+    composerAgentBadge: agentBadge, composerAgentBadgeLabel: agentLabel,
+  };
   const context = {
     console,
     document: {
       addEventListener() {},
       getElementById(id) { return id === 'input' ? input : id === 'composerPicker' ? picker : buttons[id] || null; },
     },
-    window: {}, Event: function Event() {},
+    window: { matchMedia() { return { matches: true }; } }, Event: function Event() {},
     HELP_DATA: {
       '/help': { usage: '/help [command]', short: 'Show help' },
       '/history': { usage: '/history', short: 'Show history' },
@@ -53,11 +75,16 @@ function env() {
     _lastResourcesData: { agents: [{ name: 'assistant' }, { name: 'research agent' }] },
     displayAgentName(name) { return context.nicknameMap[name] || name; },
     escapeHtml(value) { return String(value); },
-    t(key) { return key; },
+    t(key, values) {
+      if (key === 'selectedAgentLabel') return 'Selected agent: ' + values.name;
+      return key;
+    },
+    cmdAgentSelect(name) { context.selectedAgent = name; return Promise.resolve(true); },
   };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(SOURCE, 'utf8'), context, { filename: 'file_mention.js' });
-  return { context, input, picker };
+  return { context, input, picker, actionsPanel, mobileToggle, agentPicker,
+    agentOverlay, agentBadge, agentLabel };
 }
 
 test('slash choices use real commands, filter them, and hide aliases', () => {
@@ -94,6 +121,41 @@ test('selecting a mention replaces the active token and quotes spaces', () => {
   };
   e.context._composerChoose(0);
   equal(e.input.value, '@"research agent" ');
+});
+
+test('mobile secondary actions open behind one explicit toggle', () => {
+  const e = env();
+  e.context.toggleComposerMobileActions();
+  equal(e.actionsPanel.dataset.open, 'true');
+  equal(e.mobileToggle.attributes['aria-expanded'], 'true');
+});
+
+test('closing mobile actions updates both panel and accessibility state', () => {
+  const e = env();
+  e.context.toggleComposerMobileActions(true);
+  e.context.toggleComposerMobileActions(false);
+  equal(e.actionsPanel.dataset.open, 'false');
+  equal(e.actionsPanel.attributes['aria-hidden'], 'true');
+  equal(e.mobileToggle.attributes['aria-expanded'], 'false');
+});
+
+test('selected agent badge uses the nickname and exposes the quick picker', () => {
+  const e = env();
+  e.context.updateComposerAgentBadge();
+  equal(e.agentOverlay.hidden, false);
+  equal(e.agentLabel.textContent, 'Selected agent: Helper');
+  e.context.toggleComposerAgentPicker(true);
+  equal(e.agentPicker.hidden, false);
+  equal(e.agentBadge.attributes['aria-expanded'], 'true');
+  assert(e.agentPicker.innerHTML.includes('research agent'));
+});
+
+test('selected agent badge hides cleanly when no agent is available', () => {
+  const e = env();
+  e.context.selectedAgent = '';
+  e.context.updateComposerAgentBadge();
+  equal(e.agentOverlay.hidden, true);
+  equal(e.agentBadge.attributes['aria-expanded'], 'false');
 });
 
 if (failures.length) {

@@ -17,34 +17,34 @@ function showKgOverlay(triples) {
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
   overlay.id = 'kgOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
+  overlay.style.cssText = 'position:fixed;inset:0;background:color-mix(in srgb, var(--pf-shadow) 70%, transparent);display:flex;align-items:center;justify-content:center;z-index:9999';
 
   // Stats
   const current = triples.filter(t => !t.ended);
   const entities = new Set();
   triples.forEach(t => { entities.add(t.subject); entities.add(t.object); });
-  const statsHtml = '<span style="color:#6c6c8a;font-size:12px">'
+  const statsHtml = '<span style="color:var(--pf-muted);font-size:12px">'
     + t('kgStats', { entities: entities.size, triples: triples.length, current: current.length })
     + '</span>';
 
   // Filter input
   const filterHtml = '<input id="kgFilterInput" type="text" placeholder="' + escapeAttr(t('filterTriples')) + '" value="'
     + escapeAttr(_kgFilter) + '" oninput="kgFilterChanged(this.value)"'
-    + ' style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px;width:160px">';
+    + ' style="background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:6px;padding:3px 8px;font-size:12px;width:160px">';
 
   // Build triple rows
   const filtered = _kgFilterTriples(triples, _kgFilter);
   const rowsHtml = _kgBuildRows(filtered);
 
-  overlay.innerHTML = '<div class="cog-dialog" style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:750px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
+  overlay.innerHTML = '<div class="cog-dialog" style="background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:12px;padding:20px;max-width:750px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
     + '<div class="cog-head">'
-    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + t('knowledgeGraph') + '</h3>'
+    + '<h3 style="margin:0;color:var(--pf-text);font-size:16px">' + t('knowledgeGraph') + '</h3>'
     + statsHtml
     + filterHtml
-    + '<button onclick="kgAddNew()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;margin-left:auto">+ ' + escapeHtml(t('add')) + '</button>'
+    + '<button onclick="kgAddNew()" style="background:color-mix(in srgb, var(--pf-accent) 18%, var(--pf-panel));color:var(--pf-accent);border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;margin-left:auto">+ ' + escapeHtml(t('add')) + '</button>'
     + '<button class="cog-close" onclick="document.getElementById(\'kgOverlay\').remove()">&times;</button>'
     + '</div>'
-    + '<div id="kg-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + rowsHtml + '</div>'
+    + '<div id="kg-list" style="flex:1;overflow-y:auto;border:1px solid var(--pf-border);border-radius:8px;background:var(--pf-code-bg)">' + rowsHtml + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
 
@@ -62,7 +62,7 @@ function _kgFilterTriples(triples, query) {
 
 function _kgBuildRows(triples) {
   if (triples.length === 0) {
-    return '<div style="color:#6c6c8a;text-align:center;padding:20px">' + t('noTriplesFound') + '</div>';
+    return '<div style="color:var(--pf-muted);text-align:center;padding:20px">' + t('noTriplesFound') + '</div>';
   }
   let html = '';
   triples.forEach((t, i) => {
@@ -70,20 +70,20 @@ function _kgBuildRows(triples) {
     // Confidence badge
     const conf = (t.confidence || 'EXTRACTED').toUpperCase();
     let confColor, confBg;
-    if (conf === 'INFERRED') { confBg = '#1e3a5f'; confColor = '#4fc3f7'; }
-    else if (conf === 'AMBIGUOUS') { confBg = '#5a3a1a'; confColor = '#ffb347'; }
-    else { confBg = '#1b4332'; confColor = '#52b788'; }  // EXTRACTED
+    if (conf === 'INFERRED') { confBg = 'color-mix(in srgb, var(--pf-accent) 18%, var(--pf-panel))'; confColor = 'var(--pf-accent)'; }
+    else if (conf === 'AMBIGUOUS') { confBg = 'color-mix(in srgb, var(--pf-warning) 18%, var(--pf-panel))'; confColor = 'var(--pf-warning)'; }
+    else { confBg = 'color-mix(in srgb, var(--pf-success) 18%, var(--pf-panel))'; confColor = 'var(--pf-success)'; }  // EXTRACTED
     const confBadge = '<span style="background:' + confBg + ';color:' + confColor
       + ';padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">' + escapeHtml(conf) + '</span>';
 
     // Status badge
     const statusBadge = ended
-      ? '<span style="color:#e74c3c;font-size:11px" title="' + escapeAttr(t('endedTitle')) + '">\u2717 ' + escapeHtml(t('ended')) + '</span>'
-      : '<span style="color:#52b788;font-size:11px" title="' + escapeAttr(t('currentTitle')) + '">\u2713 ' + escapeHtml(t('current')) + '</span>';
+      ? '<span style="color:var(--pf-danger);font-size:11px" title="' + escapeAttr(t('endedTitle')) + '">\u2717 ' + escapeHtml(t('ended')) + '</span>'
+      : '<span style="color:var(--pf-success);font-size:11px" title="' + escapeAttr(t('currentTitle')) + '">\u2713 ' + escapeHtml(t('current')) + '</span>';
 
     // Invalidate button (only for current triples)
     const invalidateBtn = ended ? '' : '<button onclick="event.stopPropagation();kgInvalidate(' + jsStringArg(t.id || '') + ')"'
-      + ' style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:11px;padding:0 3px" title="' + escapeAttr(t('invalidate')) + '">\u2717</button>';
+      + ' style="background:none;border:none;color:var(--pf-danger);cursor:pointer;font-size:11px;padding:0 3px" title="' + escapeAttr(t('invalidate')) + '">\u2717</button>';
 
     // Age
     const age = t.valid_from ? _kgFormatAge(t.valid_from) : '';
@@ -94,16 +94,16 @@ function _kgBuildRows(triples) {
     const obj = escapeHtml(t.object || '');
     const opacity = ended ? 'opacity:0.5;' : '';
 
-    html += '<div style="padding:6px 8px;border-bottom:1px solid #222;' + opacity + '">'
+    html += '<div style="padding:6px 8px;border-bottom:1px solid var(--pf-border);' + opacity + '">'
       + '<div style="display:flex;align-items:center;gap:6px">'
-      + '<span style="color:#e0e0e0;font-size:12px;font-weight:600">' + subj + '</span>'
-      + '<span style="color:#6c6c8a;font-size:11px">\u2192</span>'
-      + '<span style="color:#a0a0c0;font-size:12px">' + pred + '</span>'
-      + '<span style="color:#6c6c8a;font-size:11px">\u2192</span>'
-      + '<span style="color:#e0e0e0;font-size:12px;font-weight:600">' + obj + '</span>'
+      + '<span style="color:var(--pf-text);font-size:12px;font-weight:600">' + subj + '</span>'
+      + '<span style="color:var(--pf-muted);font-size:11px">\u2192</span>'
+      + '<span style="color:var(--pf-muted);font-size:12px">' + pred + '</span>'
+      + '<span style="color:var(--pf-muted);font-size:11px">\u2192</span>'
+      + '<span style="color:var(--pf-text);font-size:12px;font-weight:600">' + obj + '</span>'
       + '<span style="margin-left:auto;display:flex;align-items:center;gap:6px">'
       + confBadge + statusBadge
-      + (age ? '<span style="color:#6c6c8a;font-size:10px">' + age + '</span>' : '')
+      + (age ? '<span style="color:var(--pf-muted);font-size:10px">' + age + '</span>' : '')
       + invalidateBtn
       + '</span>'
       + '</div>'
@@ -140,23 +140,23 @@ function kgAddNew() {
   const list = document.getElementById('kg-list');
   if (!list) return;
   const form = document.createElement('div');
-  form.style.cssText = 'padding:8px;border-bottom:1px solid #444;background:#1a1a2e';
+  form.style.cssText = 'padding:8px;border-bottom:1px solid var(--pf-border);background:var(--pf-panel)';
   form.innerHTML = '<div style="display:flex;gap:6px;margin-bottom:4px">'
-    + '<input id="kg-new-subject" placeholder="' + t('subject') + '" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:4px 6px;font-size:12px">'
-    + '<input id="kg-new-predicate" placeholder="' + t('predicate') + '" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:4px 6px;font-size:12px">'
-    + '<input id="kg-new-object" placeholder="' + t('object') + '" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:4px 6px;font-size:12px">'
+    + '<input id="kg-new-subject" placeholder="' + t('subject') + '" style="flex:1;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;padding:4px 6px;font-size:12px">'
+    + '<input id="kg-new-predicate" placeholder="' + t('predicate') + '" style="flex:1;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;padding:4px 6px;font-size:12px">'
+    + '<input id="kg-new-object" placeholder="' + t('object') + '" style="flex:1;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;padding:4px 6px;font-size:12px">'
     + '</div>'
     + '<div style="display:flex;gap:6px;align-items:center">'
-    + '<label style="color:#6c6c8a;font-size:11px">' + t('confidence') + '</label>'
-    + '<select id="kg-new-confidence" style="background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+    + '<label style="color:var(--pf-muted);font-size:11px">' + t('confidence') + '</label>'
+    + '<select id="kg-new-confidence" style="background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;padding:2px 6px;font-size:11px">'
     + '<option value="EXTRACTED">EXTRACTED</option>'
     + '<option value="INFERRED">INFERRED</option>'
     + '<option value="AMBIGUOUS">AMBIGUOUS</option>'
     + '</select>'
-    + '<label style="color:#6c6c8a;font-size:11px">' + t('validFrom') + '</label>'
-    + '<input id="kg-new-valid-from" type="date" style="background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
-    + '<button onclick="kgSaveNew()" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;margin-left:auto">Add</button>'
-    + '<button onclick="cmdShowKg()" style="background:#333;color:#aaa;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>'
+    + '<label style="color:var(--pf-muted);font-size:11px">' + t('validFrom') + '</label>'
+    + '<input id="kg-new-valid-from" type="date" style="background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;padding:2px 6px;font-size:11px">'
+    + '<button onclick="kgSaveNew()" style="background:color-mix(in srgb, var(--pf-success) 18%, var(--pf-panel));color:var(--pf-success);border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;margin-left:auto">Add</button>'
+    + '<button onclick="cmdShowKg()" style="background:var(--pf-border);color:var(--pf-muted);border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>'
     + '</div>';
   list.insertBefore(form, list.firstChild);
   document.getElementById('kg-new-subject').focus();

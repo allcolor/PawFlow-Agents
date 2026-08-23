@@ -226,6 +226,7 @@ function updateActiveAgentBadge() {
   } catch (e) {}
   badge.innerHTML = escapeHtml(label) + gaugeHtml;
   badge.style.display = '';
+  if (typeof updateComposerAgentBadge === 'function') updateComposerAgentBadge();
   // Battery-style header icon mirrors the badge's context gauge; the full
   // badge itself lives in the icon's popover. Display only: the battery
   // shows what is LEFT (100 − used %), orange under 20% remaining.

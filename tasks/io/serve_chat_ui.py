@@ -116,6 +116,7 @@ _CSS_MODULES: Tuple[str, ...] = (
     "60_openspace.css",       # OpenSpace 3D view
     "70_grab.css",            # terminal grab mode
     "75_composer_shell.css",  # unified prompt surface and slash/mention picker
+    "76_composer_agent.css",  # selected-agent overlay and quick selector
     "80_dialogs.css",         # exec approval + generic dialogs
     "85_terminal_files.css",  # terminal output, file explorer
     "90_tabs.css",            # tab bar, tab panels, desktop/audio tabs

@@ -9,12 +9,101 @@ var _composerPickerState = {
   items: [],
 };
 
+function _composerUsesMobileActions() {
+  return !!(window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
+}
+
+function _composerSetActionsOpen(open) {
+  const panel = document.getElementById('composerMobileActions');
+  const toggle = document.getElementById('composerMobileActionsBtn');
+  if (!panel || !toggle) return;
+  const expanded = _composerUsesMobileActions() && !!open;
+  panel.dataset.open = expanded ? 'true' : 'false';
+  panel.setAttribute('aria-hidden', _composerUsesMobileActions() && !expanded ? 'true' : 'false');
+  toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+}
+
+function toggleComposerMobileActions(force) {
+  const panel = document.getElementById('composerMobileActions');
+  if (!panel || !_composerUsesMobileActions()) return;
+  const next = typeof force === 'boolean' ? force : panel.dataset.open !== 'true';
+  _composerSetActionsOpen(next);
+}
+
 function _composerPickerElement() {
   return document.getElementById('composerPicker');
 }
 
 function _composerInput() {
   return document.getElementById('input');
+}
+
+function _composerAgentPickerElement() {
+  return document.getElementById('composerAgentPicker');
+}
+
+function updateComposerAgentBadge() {
+  const overlay = document.getElementById('composerAgentOverlay');
+  const badge = document.getElementById('composerAgentBadge');
+  const label = document.getElementById('composerAgentBadgeLabel');
+  const agent = typeof selectedAgent !== 'undefined' ? String(selectedAgent || '') : '';
+  if (!overlay || !badge || !label) return;
+  overlay.hidden = !agent;
+  if (!agent) {
+    label.textContent = '';
+    _composerCloseAgentPicker();
+    return;
+  }
+  const display = typeof displayAgentName === 'function' ? displayAgentName(agent) : agent;
+  label.textContent = t('selectedAgentLabel', { name: display || agent });
+  badge.title = t('selectAgent') + ': ' + (display || agent);
+}
+
+function _composerCloseAgentPicker() {
+  const picker = _composerAgentPickerElement();
+  const badge = document.getElementById('composerAgentBadge');
+  if (picker) picker.hidden = true;
+  if (badge) badge.setAttribute('aria-expanded', 'false');
+}
+
+function _composerSelectAgent(name) {
+  _composerCloseAgentPicker();
+  if (!name || name === selectedAgent || typeof cmdAgentSelect !== 'function') return;
+  const selection = cmdAgentSelect(name);
+  if (selection && typeof selection.catch === 'function') {
+    selection.catch(error => console.error('composer: agent selection failed', error));
+  }
+}
+
+function _composerRenderAgentPicker() {
+  const picker = _composerAgentPickerElement();
+  const badge = document.getElementById('composerAgentBadge');
+  if (!picker || !badge) return;
+  const items = _composerMentionChoices('');
+  picker.innerHTML = items.length ? items.map(item => {
+    const current = item.value === selectedAgent;
+    return '<button class="composer-agent-option" type="button" role="option" aria-selected="'
+      + (current ? 'true' : 'false') + '" data-agent="' + escapeHtml(item.value) + '">'
+      + '<span class="composer-agent-option-dot" aria-hidden="true"></span>'
+      + '<span class="composer-agent-option-name">' + escapeHtml(item.label) + '</span>'
+      + (item.description ? '<span class="composer-agent-option-real">' + escapeHtml(item.description) + '</span>' : '')
+      + '</button>';
+  }).join('') : '<div class="composer-picker-empty">' + escapeHtml(t('noAgents')) + '</div>';
+  picker.querySelectorAll('.composer-agent-option').forEach(row => {
+    row.addEventListener('click', () => _composerSelectAgent(row.dataset.agent));
+  });
+  picker.hidden = false;
+  badge.setAttribute('aria-expanded', 'true');
+}
+
+function toggleComposerAgentPicker(force) {
+  const picker = _composerAgentPickerElement();
+  if (!picker) return;
+  const open = typeof force === 'boolean' ? force : picker.hidden;
+  _composerClosePicker();
+  _composerSetActionsOpen(false);
+  if (open) _composerRenderAgentPicker();
+  else _composerCloseAgentPicker();
 }
 
 function _composerSlashChoices(query) {
@@ -219,6 +308,8 @@ function initComposerPicker() {
   if (!input) return;
   input.addEventListener('input', _composerUpdatePicker);
   input.addEventListener('keydown', _composerPickerKeydown, true);
+  _composerSetActionsOpen(false);
+  updateComposerAgentBadge();
   document.addEventListener('mousedown', event => {
     const picker = _composerPickerElement();
     if (!picker || picker.hidden || picker.contains(event.target)) return;
@@ -226,6 +317,35 @@ function initComposerPicker() {
         || event.target === document.getElementById('composerMentionBtn')) return;
     _composerClosePicker();
   });
+  document.addEventListener('mousedown', event => {
+    const overlay = document.getElementById('composerAgentOverlay');
+    const picker = _composerAgentPickerElement();
+    if (!overlay || !picker || picker.hidden || overlay.contains(event.target)) return;
+    _composerCloseAgentPicker();
+  });
+  document.addEventListener('click', event => {
+    const panel = document.getElementById('composerMobileActions');
+    const toggle = document.getElementById('composerMobileActionsBtn');
+    if (!panel || panel.dataset.open !== 'true') return;
+    if (event.target === toggle || toggle.contains(event.target)) return;
+    if (panel.contains(event.target)) {
+      if (event.target.closest && event.target.closest('button')) _composerSetActionsOpen(false);
+      return;
+    }
+    _composerSetActionsOpen(false);
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      _composerSetActionsOpen(false);
+      _composerCloseAgentPicker();
+    }
+  });
+  if (window.matchMedia) {
+    const media = window.matchMedia('(max-width: 768px)');
+    const sync = () => _composerSetActionsOpen(false);
+    if (media.addEventListener) media.addEventListener('change', sync);
+    else if (media.addListener) media.addListener(sync);
+  }
 }
 
 document.addEventListener('DOMContentLoaded', initComposerPicker);

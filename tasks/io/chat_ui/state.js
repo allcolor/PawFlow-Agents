@@ -107,8 +107,15 @@ function clearAllStreamsKeepDOM() {
   streams = {};
 }
 let permissionMode = 'default';  // current tool permission mode
+const PERMISSION_MODE_UI = {
+  default: { label: 'permissionDefault', icon: '\u{1F512}' },
+  approve_edits: { label: 'permissionApproveEdits', icon: '\u270F' },
+  read_only: { label: 'permissionReadOnly', icon: '\u{1F4D6}' },
+  auto: { label: 'permissionAuto', icon: '\u26A1' },
+};
 
 function setPermissionMode(mode) {
+  closePermissionModeMenu();
   permissionMode = mode;
   fireAction('set_permission_mode', { conversation_id: conversationId, mode });
   updatePermissionBadge();
@@ -122,21 +129,52 @@ function loadPermissionMode() {
   action$('get_permission_mode', { conversation_id: conversationId })
     .subscribe(d => {
       permissionMode = d.permission_mode || 'default';
-      const sel = document.getElementById('permissionMode');
-      if (sel) sel.value = permissionMode;
       updatePermissionBadge();
     });
 }
 
 function updatePermissionBadge() {
-  const sel = document.getElementById('permissionMode');
-  if (!sel) return;
-  sel.style.display = conversationId ? '' : 'none';
-  sel.value = permissionMode;
-  // Visual hint: color the border based on mode
-  const colors = {default: '#e94560', approve_edits: '#e94560', read_only: '#f0a500', auto: '#4ecdc4'};
-  sel.style.borderColor = colors[permissionMode] || '#e94560';
+  const wrap = document.getElementById('permissionModeWrap');
+  const button = document.getElementById('permissionModeBtn');
+  const icon = document.getElementById('permissionModeIcon');
+  if (!wrap || !button || !icon) return;
+  wrap.style.display = conversationId ? 'inline-flex' : 'none';
+  const meta = PERMISSION_MODE_UI[permissionMode] || PERMISSION_MODE_UI.default;
+  const modeLabel = t(meta.label);
+  const accessibleLabel = t('permissionModeTitle') + ' — ' + modeLabel;
+  icon.textContent = meta.icon;
+  button.title = accessibleLabel;
+  button.setAttribute('aria-label', accessibleLabel);
+  document.querySelectorAll('#permissionModeMenu [data-permission-mode]').forEach(item => {
+    item.setAttribute('aria-checked', item.dataset.permissionMode === permissionMode ? 'true' : 'false');
+  });
+  if (!conversationId) closePermissionModeMenu();
 }
+
+function togglePermissionModeMenu(force) {
+  const menu = document.getElementById('permissionModeMenu');
+  const button = document.getElementById('permissionModeBtn');
+  if (!menu || !button || !conversationId) return;
+  const open = typeof force === 'boolean' ? force : menu.hidden;
+  menu.hidden = !open;
+  button.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function closePermissionModeMenu() {
+  const menu = document.getElementById('permissionModeMenu');
+  const button = document.getElementById('permissionModeBtn');
+  if (menu) menu.hidden = true;
+  if (button) button.setAttribute('aria-expanded', 'false');
+}
+
+document.addEventListener('click', event => {
+  const wrap = document.getElementById('permissionModeWrap');
+  const menu = document.getElementById('permissionModeMenu');
+  if (wrap && menu && !menu.hidden && !wrap.contains(event.target)) closePermissionModeMenu();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closePermissionModeMenu();
+});
 
 let nicknameMap = {};      // { realName: displayName } — agent display names
 let pendingFiles = [];  // [{file, dataUrl, base64, mime_type, filename}]
@@ -312,11 +350,12 @@ function _syncToggleBtn() {
   const btn = document.getElementById('sidebarToggle');
   if (!sb || !btn) return;
   const collapsed = sb.classList.contains('collapsed');
-  // The tab rail folds with the sidebar; the grip hugs the boundary line
-  // (straddling it when open, flush with the edge when collapsed).
   const tabBar = document.getElementById('tabBar');
-  if (tabBar) tabBar.classList.toggle('collapsed', collapsed);
-  const boundary = collapsed ? 0 : 260 + (tabBar ? tabBar.offsetWidth : 0);
+  const narrow = window.matchMedia('(max-width: 768px)').matches;
+  // Desktop owns an independent edge-hover rail. On narrow layouts the rail
+  // remains coupled to the overlay drawer so the two layers cannot compete.
+  if (tabBar) tabBar.classList.toggle('collapsed', narrow && collapsed);
+  const boundary = collapsed ? 0 : 260 + (narrow && tabBar ? tabBar.offsetWidth : 0);
   btn.style.left = Math.max(0, boundary - 8) + 'px';
   btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
 }
@@ -324,6 +363,8 @@ function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('collapsed');
   _syncToggleBtn();
 }
+document.addEventListener('DOMContentLoaded', _syncToggleBtn);
+window.addEventListener('resize', _syncToggleBtn);
 
 // Composer drawer: the whole zone above the prompt (conversation controls +
 // action dock) folds completely behind a small centered grip. CLOSED by
@@ -760,7 +801,8 @@ function updateDeleteBtn() {
   if (convThemeSel) convThemeSel.style.display = show;
   const convThemeLabel = document.getElementById('convThemeLabel');
   if (convThemeLabel) convThemeLabel.style.display = show;
-  document.getElementById('permissionMode').style.display = show;
+  const permissionControl = document.getElementById('permissionModeWrap');
+  if (permissionControl) permissionControl.style.display = show ? 'inline-flex' : 'none';
   document.getElementById('actionMenuWrap').style.display = show;
 }
 // ── Reply-to state ──

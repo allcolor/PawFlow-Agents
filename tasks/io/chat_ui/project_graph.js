@@ -13,27 +13,27 @@ function showProjectGraphOverlay() {
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
   overlay.id = 'pgOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
+  overlay.style.cssText = 'position:fixed;inset:0;background:color-mix(in srgb, var(--pf-shadow) 70%, transparent);display:flex;align-items:center;justify-content:center;z-index:9999';
 
-  overlay.innerHTML = '<div class="cog-dialog" style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:750px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
+  overlay.innerHTML = '<div class="cog-dialog" style="background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:12px;padding:20px;max-width:750px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
     + '<div class="cog-head">'
-    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">Project Graph</h3>'
-    + '<label style="color:#888;font-size:11px">' + escapeHtml(t('relays'))
-    + ' <select id="pgRelaySelect" onchange="pgRelayChanged()" style="background:#1e1e3a;color:#ddd;border:1px solid #444;border-radius:6px;padding:3px 7px"><option>'
+    + '<h3 style="margin:0;color:var(--pf-text);font-size:16px">Project Graph</h3>'
+    + '<label style="color:var(--pf-muted);font-size:11px">' + escapeHtml(t('relays'))
+    + ' <select id="pgRelaySelect" onchange="pgRelayChanged()" style="background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:6px;padding:3px 7px"><option>'
     + escapeHtml(t('loadingRelays')) + '</option></select></label>'
-    + '<button onclick="pgBuild()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">Build</button>'
-    + '<button onclick="pgReport()" style="background:#1b4332;color:#52b788;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">Report</button>'
-    + '<button onclick="pgOpenGraphView()" style="background:#3a2a5f;color:#b088ff;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">View</button>'
-    + '<button onclick="document.getElementById(\'pgOverlay\').remove();showProjectWikiOverlay()" style="background:#2a2a4a;color:#a0a0c0;border:1px solid #444;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Wiki</button>'
-    + '<button onclick="document.getElementById(\'pgOverlay\').remove();showScratchpadOverlay()" style="background:#2a2a4a;color:#a0a0c0;border:1px solid #444;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Scratchpad</button>'
+    + '<button onclick="pgBuild()" style="background:color-mix(in srgb, var(--pf-accent) 18%, var(--pf-panel));color:var(--pf-accent);border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">Build</button>'
+    + '<button onclick="pgReport()" style="background:color-mix(in srgb, var(--pf-success) 18%, var(--pf-panel));color:var(--pf-success);border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">Report</button>'
+    + '<button onclick="pgOpenGraphView()" style="background:color-mix(in srgb, var(--pf-accent-2) 18%, var(--pf-panel));color:var(--pf-accent-2);border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">View</button>'
+    + '<button onclick="document.getElementById(\'pgOverlay\').remove();showProjectWikiOverlay()" style="background:var(--pf-sidebar);color:var(--pf-muted);border:1px solid var(--pf-border);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Wiki</button>'
+    + '<button onclick="document.getElementById(\'pgOverlay\').remove();showScratchpadOverlay()" style="background:var(--pf-sidebar);color:var(--pf-muted);border:1px solid var(--pf-border);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Scratchpad</button>'
     + '<button class="cog-close" onclick="document.getElementById(\'pgOverlay\').remove()">&times;</button>'
     + '</div>'
     + '<div style="display:flex;gap:6px;margin-bottom:10px">'
-    + '<input id="pgSearchInput" type="text" placeholder="' + escapeHtml(t('searchNodesEdges')) + '" style="flex:1;background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:5px 10px;font-size:12px" onkeydown="if(event.key===\'Enter\')pgSearch()">'
-    + '<button onclick="pgSearch()" style="background:#2a2a4a;color:#a0a0c0;border:1px solid #444;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Search</button>'
+    + '<input id="pgSearchInput" type="text" placeholder="' + escapeHtml(t('searchNodesEdges')) + '" style="flex:1;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:6px;padding:5px 10px;font-size:12px" onkeydown="if(event.key===\'Enter\')pgSearch()">'
+    + '<button onclick="pgSearch()" style="background:var(--pf-sidebar);color:var(--pf-muted);border:1px solid var(--pf-border);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Search</button>'
     + '</div>'
-    + '<div id="pg-content" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117;padding:12px">'
-    + '<div style="color:#6c6c8a;text-align:center;padding:20px">Use <b>Build</b> to index the codebase, <b>Report</b> to view stats, or <b>Search</b> to query the graph.</div>'
+    + '<div id="pg-content" style="flex:1;overflow-y:auto;border:1px solid var(--pf-border);border-radius:8px;background:var(--pf-code-bg);padding:12px">'
+    + '<div style="color:var(--pf-muted);text-align:center;padding:20px">Use <b>Build</b> to index the codebase, <b>Report</b> to view stats, or <b>Search</b> to query the graph.</div>'
     + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
@@ -46,14 +46,14 @@ function showProjectGraphOverlay() {
     const select = document.getElementById('pgRelaySelect');
     if (!available.relays.length) {
       select.innerHTML = '<option value="">' + escapeHtml(t('noRelaysLinked')) + '</option>';
-      _pgSetContent('<div style="color:#6c6c8a;text-align:center;padding:20px">'
+      _pgSetContent('<div style="color:var(--pf-muted);text-align:center;padding:20px">'
         + escapeHtml(t('noRelaysLinked')) + '</div>');
       return;
     }
     select.innerHTML = _cognitiveRelayOptions(available.relays, _pgRelay);
     pgReport();
   }, function(error) {
-    _pgSetContent('<div style="color:#e74c3c">' + escapeHtml(error.message) + '</div>');
+    _pgSetContent('<div style="color:var(--pf-danger)">' + escapeHtml(error.message) + '</div>');
   });
 }
 
@@ -62,7 +62,7 @@ function pgRelayChanged() {
   _pgReportCache = null;
   _pgQueryCache = [];
   _pgNodeCache = null;
-  _pgSetContent('<div style="color:#6c6c8a;text-align:center;padding:20px">'
+  _pgSetContent('<div style="color:var(--pf-muted);text-align:center;padding:20px">'
     + escapeHtml(t('loadingRelayData')) + '</div>');
   pgReport();
 }
@@ -70,8 +70,8 @@ function pgRelayChanged() {
 function pgBuild() {
   var content = document.getElementById('pg-content');
   if (content) {
-    content.innerHTML = '<div style="color:#4fc3f7;text-align:center;padding:20px">'
-      + '<div style="display:inline-block;width:20px;height:20px;border:2px solid #4fc3f7;border-top-color:transparent;border-radius:50%;animation:pgSpin 0.8s linear infinite"></div>'
+    content.innerHTML = '<div style="color:var(--pf-accent);text-align:center;padding:20px">'
+      + '<div style="display:inline-block;width:20px;height:20px;border:2px solid var(--pf-accent);border-top-color:transparent;border-radius:50%;animation:pgSpin 0.8s linear infinite"></div>'
       + '<div style="margin-top:8px">Building project graph...</div>'
       + '<style>@keyframes pgSpin { to { transform: rotate(360deg); } }</style>'
       + '</div>';
@@ -83,7 +83,7 @@ function pgBuild() {
   action$('project_graph_build', { relay_id: _pgRelay }).subscribe({
     next: function(data) {
       if (data.error) {
-        _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(data.error) + '</div>');
+        _pgSetContent('<div style="color:var(--pf-danger);padding:8px">' + escapeHtml(data.error) + '</div>');
         return;
       }
       var status = data.status || 'unknown';
@@ -108,12 +108,12 @@ function pgBuild() {
       } else {
         msg = JSON.stringify(data);
       }
-      var color = (status === 'error') ? '#e74c3c' : '#52b788';
+      var color = (status === 'error') ? 'var(--pf-danger)' : 'var(--pf-success)';
       _pgSetContent('<div style="color:' + color
         + ';padding:8px;white-space:pre-wrap">' + escapeHtml(msg) + '</div>');
     },
     error: function(e) {
-      _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(t('projectGraphBuildFailed', { error: e.message })) + '</div>');
+      _pgSetContent('<div style="color:var(--pf-danger);padding:8px">' + escapeHtml(t('projectGraphBuildFailed', { error: e.message })) + '</div>');
     },
   });
 }
@@ -121,26 +121,26 @@ function pgBuild() {
 function pgReport() {
   var content = document.getElementById('pg-content');
   if (content) {
-    content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('loadingReport')) + '</div>';
+    content.innerHTML = '<div style="color:var(--pf-muted);text-align:center;padding:20px">' + escapeHtml(t('loadingReport')) + '</div>';
   }
   action$('project_graph_report', { relay_id: _pgRelay }).subscribe({
     next: function(data) {
       if (data.error) {
-        _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(data.error) + '</div>');
+        _pgSetContent('<div style="color:var(--pf-danger);padding:8px">' + escapeHtml(data.error) + '</div>');
         return;
       }
       _pgReportCache = data;
       _pgRenderReport(data);
     },
     error: function(e) {
-      _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(t('projectGraphReportLoadFailed', { error: e.message })) + '</div>');
+      _pgSetContent('<div style="color:var(--pf-danger);padding:8px">' + escapeHtml(t('projectGraphReportLoadFailed', { error: e.message })) + '</div>');
     },
   });
 }
 
 function _pgRenderReport(data) {
   if (!data.has_graph) {
-    _pgSetContent('<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('projectGraphEmptyBuildHint')) + '</div>');
+    _pgSetContent('<div style="color:var(--pf-muted);text-align:center;padding:20px">' + escapeHtml(t('projectGraphEmptyBuildHint')) + '</div>');
     return;
   }
   var report = data.report || '';
@@ -150,16 +150,16 @@ function _pgRenderReport(data) {
 
   // Metadata section
   html += '<div style="margin-bottom:12px">';
-  html += '<div style="color:#e0e0e0;font-size:14px;font-weight:600;margin-bottom:6px">' + escapeHtml(lines[0] || 'Project Graph') + '</div>';
+  html += '<div style="color:var(--pf-text);font-size:14px;font-weight:600;margin-bottom:6px">' + escapeHtml(lines[0] || 'Project Graph') + '</div>';
   if (lines[1]) {
     html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:4px">';
     var parts = lines[1].split(',').map(function(s) { return s.trim(); });
     parts.forEach(function(part) {
       var kv = part.split(':').map(function(s) { return s.trim(); });
       if (kv.length === 2) {
-        html += '<span style="background:#1e1e3a;color:#a0a0c0;padding:2px 8px;border-radius:6px;font-size:11px">'
-          + '<span style="color:#6c6c8a">' + escapeHtml(kv[0]) + ':</span> '
-          + '<span style="color:#e0e0e0;font-weight:600">' + escapeHtml(kv[1]) + '</span></span>';
+        html += '<span style="background:var(--pf-sidebar);color:var(--pf-muted);padding:2px 8px;border-radius:6px;font-size:11px">'
+          + '<span style="color:var(--pf-muted)">' + escapeHtml(kv[0]) + ':</span> '
+          + '<span style="color:var(--pf-text);font-weight:600">' + escapeHtml(kv[1]) + '</span></span>';
       }
     });
     html += '</div>';
@@ -169,7 +169,7 @@ function _pgRenderReport(data) {
   // Confidence breakdown
   if (lines[2] && lines[2].startsWith('Confidence:')) {
     html += '<div style="margin-bottom:12px">';
-    html += '<div style="color:#a0a0c0;font-size:12px;margin-bottom:4px">' + escapeHtml(t('confidenceBreakdown')) + '</div>';
+    html += '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:4px">' + escapeHtml(t('confidenceBreakdown')) + '</div>';
     var confStr = lines[2].replace('Confidence: ', '');
     var confParts = confStr.split(',').map(function(s) { return s.trim(); });
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
@@ -179,9 +179,9 @@ function _pgRenderReport(data) {
         var conf = kv[0].trim().toUpperCase();
         var count = kv[1].trim();
         var confBg, confColor;
-        if (conf === 'INFERRED') { confBg = '#1e3a5f'; confColor = '#4fc3f7'; }
-        else if (conf === 'AMBIGUOUS') { confBg = '#5a3a1a'; confColor = '#ffb347'; }
-        else { confBg = '#1b4332'; confColor = '#52b788'; }
+        if (conf === 'INFERRED') { confBg = 'color-mix(in srgb, var(--pf-accent) 18%, var(--pf-panel))'; confColor = 'var(--pf-accent)'; }
+        else if (conf === 'AMBIGUOUS') { confBg = 'color-mix(in srgb, var(--pf-warning) 18%, var(--pf-panel))'; confColor = 'var(--pf-warning)'; }
+        else { confBg = 'color-mix(in srgb, var(--pf-success) 18%, var(--pf-panel))'; confColor = 'var(--pf-success)'; }
         html += '<span style="background:' + confBg + ';color:' + confColor
           + ';padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600">'
           + conf + ': ' + count + '</span>';
@@ -194,7 +194,7 @@ function _pgRenderReport(data) {
   var godIdx = lines.findIndex(function(l) { return l.includes('God nodes'); });
   if (godIdx >= 0) {
     html += '<div style="margin-bottom:8px">';
-    html += '<div style="color:#a0a0c0;font-size:12px;margin-bottom:6px">' + escapeHtml(t('mostConnectedNodes')) + '</div>';
+    html += '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:6px">' + escapeHtml(t('mostConnectedNodes')) + '</div>';
     for (var i = godIdx + 1; i < lines.length; i++) {
       var line = lines[i].trim();
       if (!line) continue;
@@ -204,10 +204,10 @@ function _pgRenderReport(data) {
         var label = match[1];
         var deg = match[2];
         html += '<div onclick="pgNodeDetail(\'' + escapeHtml(label).replace(/'/g, "\\'") + '\')" '
-          + 'style="padding:4px 8px;border-bottom:1px solid #222;cursor:pointer;display:flex;align-items:center;gap:8px" '
-          + 'onmouseover="this.style.background=\'#1e1e3a\'" onmouseout="this.style.background=\'transparent\'">'
-          + '<span style="color:#e0e0e0;font-size:12px;font-weight:600">' + escapeHtml(label) + '</span>'
-          + '<span style="color:#6c6c8a;font-size:11px;margin-left:auto">' + escapeHtml(t('connectionsCount', { n: deg })) + '</span>'
+          + 'style="padding:4px 8px;border-bottom:1px solid var(--pf-border);cursor:pointer;display:flex;align-items:center;gap:8px" '
+          + 'onmouseover="this.style.background=\'var(--pf-sidebar)\'" onmouseout="this.style.background=\'transparent\'">'
+          + '<span style="color:var(--pf-text);font-size:12px;font-weight:600">' + escapeHtml(label) + '</span>'
+          + '<span style="color:var(--pf-muted);font-size:11px;margin-left:auto">' + escapeHtml(t('connectionsCount', { n: deg })) + '</span>'
           + '</div>';
       }
     }
@@ -225,47 +225,47 @@ function pgSearch() {
 
   var content = document.getElementById('pg-content');
   if (content) {
-    content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('searching')) + '</div>';
+    content.innerHTML = '<div style="color:var(--pf-muted);text-align:center;padding:20px">' + escapeHtml(t('searching')) + '</div>';
   }
   action$('project_graph_query', { relay_id: _pgRelay, question: query }).subscribe({
     next: function(data) {
       if (data.error) {
-        _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(data.error) + '</div>');
+        _pgSetContent('<div style="color:var(--pf-danger);padding:8px">' + escapeHtml(data.error) + '</div>');
         return;
       }
       _pgQueryCache = data.edges || [];
       _pgRenderEdges(_pgQueryCache, query);
     },
     error: function(e) {
-      _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(t('projectGraphQueryFailed', { error: e.message })) + '</div>');
+      _pgSetContent('<div style="color:var(--pf-danger);padding:8px">' + escapeHtml(t('projectGraphQueryFailed', { error: e.message })) + '</div>');
     },
   });
 }
 
 function _pgRenderEdges(edges, query) {
   if (edges.length === 0) {
-    _pgSetContent('<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('noConnectionsFoundFor', { query: query })) + '</div>');
+    _pgSetContent('<div style="color:var(--pf-muted);text-align:center;padding:20px">' + escapeHtml(t('noConnectionsFoundFor', { query: query })) + '</div>');
     return;
   }
-  var html = '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px">' + escapeHtml(t('edgesForQuery', { n: edges.length, query: query })) + '</div>';
+  var html = '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:8px">' + escapeHtml(t('edgesForQuery', { n: edges.length, query: query })) + '</div>';
   edges.forEach(function(e) {
     var source = e.source || '?';
     var relation = e.relation || '?';
     var target = e.target || '?';
     var conf = (e.confidence || 'EXTRACTED').toUpperCase();
     var confBg, confColor;
-    if (conf === 'INFERRED') { confBg = '#1e3a5f'; confColor = '#4fc3f7'; }
-    else if (conf === 'AMBIGUOUS') { confBg = '#5a3a1a'; confColor = '#ffb347'; }
-    else { confBg = '#1b4332'; confColor = '#52b788'; }
+    if (conf === 'INFERRED') { confBg = 'color-mix(in srgb, var(--pf-accent) 18%, var(--pf-panel))'; confColor = 'var(--pf-accent)'; }
+    else if (conf === 'AMBIGUOUS') { confBg = 'color-mix(in srgb, var(--pf-warning) 18%, var(--pf-panel))'; confColor = 'var(--pf-warning)'; }
+    else { confBg = 'color-mix(in srgb, var(--pf-success) 18%, var(--pf-panel))'; confColor = 'var(--pf-success)'; }
     var confBadge = '<span style="background:' + confBg + ';color:' + confColor
       + ';padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">' + conf + '</span>';
 
-    html += '<div style="padding:5px 8px;border-bottom:1px solid #222;display:flex;align-items:center;gap:6px">'
-      + '<span onclick="pgNodeDetail(\'' + escapeHtml(source).replace(/'/g, "\\'") + '\')" style="color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted #444" title="' + escapeHtml(t('viewNode')) + '">' + escapeHtml(source) + '</span>'
-      + '<span style="color:#6c6c8a;font-size:11px">\u2192</span>'
-      + '<span style="color:#a0a0c0;font-size:12px">' + escapeHtml(relation) + '</span>'
-      + '<span style="color:#6c6c8a;font-size:11px">\u2192</span>'
-      + '<span onclick="pgNodeDetail(\'' + escapeHtml(target).replace(/'/g, "\\'") + '\')" style="color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted #444" title="' + escapeHtml(t('viewNode')) + '">' + escapeHtml(target) + '</span>'
+    html += '<div style="padding:5px 8px;border-bottom:1px solid var(--pf-border);display:flex;align-items:center;gap:6px">'
+      + '<span onclick="pgNodeDetail(\'' + escapeHtml(source).replace(/'/g, "\\'") + '\')" style="color:var(--pf-text);font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted var(--pf-border)" title="' + escapeHtml(t('viewNode')) + '">' + escapeHtml(source) + '</span>'
+      + '<span style="color:var(--pf-muted);font-size:11px">\u2192</span>'
+      + '<span style="color:var(--pf-muted);font-size:12px">' + escapeHtml(relation) + '</span>'
+      + '<span style="color:var(--pf-muted);font-size:11px">\u2192</span>'
+      + '<span onclick="pgNodeDetail(\'' + escapeHtml(target).replace(/'/g, "\\'") + '\')" style="color:var(--pf-text);font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted var(--pf-border)" title="' + escapeHtml(t('viewNode')) + '">' + escapeHtml(target) + '</span>'
       + '<span style="margin-left:auto">' + confBadge + '</span>'
       + '</div>';
   });
@@ -275,54 +275,54 @@ function _pgRenderEdges(edges, query) {
 function pgNodeDetail(label) {
   var content = document.getElementById('pg-content');
   if (content) {
-    content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('loadingNode')) + '</div>';
+    content.innerHTML = '<div style="color:var(--pf-muted);text-align:center;padding:20px">' + escapeHtml(t('loadingNode')) + '</div>';
   }
   action$('project_graph_node', { relay_id: _pgRelay, label: label }).subscribe({
     next: function(data) {
       if (data.error) {
-        _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(data.error) + '</div>');
+        _pgSetContent('<div style="color:var(--pf-danger);padding:8px">' + escapeHtml(data.error) + '</div>');
         return;
       }
       _pgNodeCache = data;
       _pgRenderNode(data);
     },
     error: function(e) {
-      _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(t('projectGraphNodeLoadFailed', { error: e.message })) + '</div>');
+      _pgSetContent('<div style="color:var(--pf-danger);padding:8px">' + escapeHtml(t('projectGraphNodeLoadFailed', { error: e.message })) + '</div>');
     },
   });
 }
 
 function _pgRenderNode(node) {
   var html = '<div style="margin-bottom:10px">'
-    + '<button onclick="pgReport()" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:11px;padding:0">\u2190 ' + escapeHtml(t('backToReport')) + '</button>'
+    + '<button onclick="pgReport()" style="background:none;border:none;color:var(--pf-accent);cursor:pointer;font-size:11px;padding:0">\u2190 ' + escapeHtml(t('backToReport')) + '</button>'
     + '</div>';
 
   html += '<div style="margin-bottom:12px">';
-  html += '<div style="color:#e0e0e0;font-size:14px;font-weight:600;margin-bottom:6px">' + escapeHtml(node.label || node.id || '?') + '</div>';
+  html += '<div style="color:var(--pf-text);font-size:14px;font-weight:600;margin-bottom:6px">' + escapeHtml(node.label || node.id || '?') + '</div>';
   html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:4px">';
 
   if (node.source_file) {
-    html += '<span style="background:#1e1e3a;color:#a0a0c0;padding:2px 8px;border-radius:6px;font-size:11px">'
-      + '<span style="color:#6c6c8a">' + escapeHtml(t('file')) + ':</span> <span style="color:#e0e0e0">' + escapeHtml(node.source_file) + '</span></span>';
+    html += '<span style="background:var(--pf-sidebar);color:var(--pf-muted);padding:2px 8px;border-radius:6px;font-size:11px">'
+      + '<span style="color:var(--pf-muted)">' + escapeHtml(t('file')) + ':</span> <span style="color:var(--pf-text)">' + escapeHtml(node.source_file) + '</span></span>';
   }
   if (node.file_type) {
-    html += '<span style="background:#1e1e3a;color:#a0a0c0;padding:2px 8px;border-radius:6px;font-size:11px">'
-      + '<span style="color:#6c6c8a">' + escapeHtml(t('type')) + ':</span> <span style="color:#e0e0e0">' + escapeHtml(node.file_type) + '</span></span>';
+    html += '<span style="background:var(--pf-sidebar);color:var(--pf-muted);padding:2px 8px;border-radius:6px;font-size:11px">'
+      + '<span style="color:var(--pf-muted)">' + escapeHtml(t('type')) + ':</span> <span style="color:var(--pf-text)">' + escapeHtml(node.file_type) + '</span></span>';
   }
   if (node.source_location) {
-    html += '<span style="background:#1e1e3a;color:#a0a0c0;padding:2px 8px;border-radius:6px;font-size:11px">'
-      + '<span style="color:#6c6c8a">' + escapeHtml(t('location')) + ':</span> <span style="color:#e0e0e0">' + escapeHtml(node.source_location) + '</span></span>';
+    html += '<span style="background:var(--pf-sidebar);color:var(--pf-muted);padding:2px 8px;border-radius:6px;font-size:11px">'
+      + '<span style="color:var(--pf-muted)">' + escapeHtml(t('location')) + ':</span> <span style="color:var(--pf-text)">' + escapeHtml(node.source_location) + '</span></span>';
   }
   if (node.neighbors !== undefined) {
-    html += '<span style="background:#1e1e3a;color:#a0a0c0;padding:2px 8px;border-radius:6px;font-size:11px">'
-      + '<span style="color:#6c6c8a">' + escapeHtml(t('neighbors')) + ':</span> <span style="color:#e0e0e0">' + node.neighbors + '</span></span>';
+    html += '<span style="background:var(--pf-sidebar);color:var(--pf-muted);padding:2px 8px;border-radius:6px;font-size:11px">'
+      + '<span style="color:var(--pf-muted)">' + escapeHtml(t('neighbors')) + ':</span> <span style="color:var(--pf-text)">' + node.neighbors + '</span></span>';
   }
   html += '</div></div>';
 
   // Neighbor edges
   var edges = node.neighbor_edges || [];
   if (edges.length > 0) {
-    html += '<div style="color:#a0a0c0;font-size:12px;margin-bottom:6px">' + escapeHtml(t('connectionsHeading', { n: edges.length + (edges.length >= 20 ? '+' : '') })) + '</div>';
+    html += '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:6px">' + escapeHtml(t('connectionsHeading', { n: edges.length + (edges.length >= 20 ? '+' : '') })) + '</div>';
     edges.forEach(function(e) {
       var isSource = e.source === node.id;
       var other = isSource ? e.target : e.source;
@@ -330,22 +330,22 @@ function _pgRenderNode(node) {
       var relation = e.relation || '?';
       var conf = (e.confidence || 'EXTRACTED').toUpperCase();
       var confBg, confColor;
-      if (conf === 'INFERRED') { confBg = '#1e3a5f'; confColor = '#4fc3f7'; }
-      else if (conf === 'AMBIGUOUS') { confBg = '#5a3a1a'; confColor = '#ffb347'; }
-      else { confBg = '#1b4332'; confColor = '#52b788'; }
+      if (conf === 'INFERRED') { confBg = 'color-mix(in srgb, var(--pf-accent) 18%, var(--pf-panel))'; confColor = 'var(--pf-accent)'; }
+      else if (conf === 'AMBIGUOUS') { confBg = 'color-mix(in srgb, var(--pf-warning) 18%, var(--pf-panel))'; confColor = 'var(--pf-warning)'; }
+      else { confBg = 'color-mix(in srgb, var(--pf-success) 18%, var(--pf-panel))'; confColor = 'var(--pf-success)'; }
       var confBadge = '<span style="background:' + confBg + ';color:' + confColor
         + ';padding:1px 5px;border-radius:6px;font-size:10px;font-weight:600">' + conf + '</span>';
 
-      html += '<div style="padding:4px 8px;border-bottom:1px solid #222;display:flex;align-items:center;gap:6px">'
-        + '<span style="color:#6c6c8a;font-size:11px">' + direction + '</span>'
-        + '<span style="color:#a0a0c0;font-size:12px">' + escapeHtml(relation) + '</span>'
-        + '<span style="color:#6c6c8a;font-size:11px">' + direction + '</span>'
-        + '<span onclick="pgNodeDetail(\'' + escapeHtml(other).replace(/'/g, "\\'") + '\')" style="color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted #444" title="' + escapeHtml(t('viewNode')) + '">' + escapeHtml(other) + '</span>'
+      html += '<div style="padding:4px 8px;border-bottom:1px solid var(--pf-border);display:flex;align-items:center;gap:6px">'
+        + '<span style="color:var(--pf-muted);font-size:11px">' + direction + '</span>'
+        + '<span style="color:var(--pf-muted);font-size:12px">' + escapeHtml(relation) + '</span>'
+        + '<span style="color:var(--pf-muted);font-size:11px">' + direction + '</span>'
+        + '<span onclick="pgNodeDetail(\'' + escapeHtml(other).replace(/'/g, "\\'") + '\')" style="color:var(--pf-text);font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted var(--pf-border)" title="' + escapeHtml(t('viewNode')) + '">' + escapeHtml(other) + '</span>'
         + '<span style="margin-left:auto">' + confBadge + '</span>'
         + '</div>';
     });
   } else {
-    html += '<div style="color:#6c6c8a;font-size:12px">' + escapeHtml(t('noConnectionsFound')) + '</div>';
+    html += '<div style="color:var(--pf-muted);font-size:12px">' + escapeHtml(t('noConnectionsFound')) + '</div>';
   }
 
   _pgSetContent(html);
@@ -389,6 +389,6 @@ async function pgOpenGraphView() {
     if (overlay) overlay.remove();
     addBlobHtmlTab('pg-view-' + relay, html);
   } catch (e) {
-    _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(e.message || String(e)) + '</div>');
+    _pgSetContent('<div style="color:var(--pf-danger);padding:8px">' + escapeHtml(e.message || String(e)) + '</div>');
   }
 }

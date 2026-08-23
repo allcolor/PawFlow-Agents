@@ -481,6 +481,7 @@ class FileStore:
                 "created_at": entry.get("created_at", 0),
                 "user_id": entry.get("user_id", ""),
                 "conversation_id": entry.get("conversation_id", ""),
+                "category": entry.get("category", ""),
             }
 
     def find_by_name(self, filename: str, user_id: str = "") -> Optional[str]:

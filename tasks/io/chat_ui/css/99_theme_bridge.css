@@ -22,3 +22,191 @@ textarea, input, select, .input-row textarea, .sidebar-settings select, .fe-tool
 .msg.error, .exec-risk.high { background: color-mix(in srgb, var(--pf-danger) 18%, var(--pf-panel)) !important; color: var(--pf-danger) !important; }
 .ctx-menu, .action-menu, .dialog, .exec-dialog, .fe-panel, .fe-ctx, .fe-preview-pane, .scroll-nav button { box-shadow: 0 4px 16px var(--pf-shadow) !important; }
 ::-webkit-scrollbar-thumb { background: var(--pf-border) !important; }
+
+/* Shared Beautiful UI dialog contract. Dynamic dialogs historically carried
+   their own inline palettes; these selectors deliberately win over those
+   values so every dialog follows the active theme. */
+:is(.exec-overlay, .dialog-bg, .memory-overlay, .pf-ext-modal-overlay,
+    .git-dialog-overlay, .share-dialog-overlay, #kgOverlay, #diaryOverlay,
+    #pgOverlay, #projectWikiOverlay, #scratchpadOverlay, #scratchdirOverlay,
+    #contextOverlay, #resourceEditorOverlay, #toolCallOverlay, #promptOverlay,
+    #usageCostPanelOverlay, #usageDashOverlay) {
+  background: color-mix(in srgb, var(--pf-bg) 58%, transparent) !important;
+  backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div) {
+  background: color-mix(in srgb, var(--pf-panel) 97%, var(--pf-bg)) !important;
+  color: var(--pf-text) !important; border: 1px solid var(--pf-border) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 20px 60px var(--pf-shadow), inset 0 1px rgb(255 255 255 / .035) !important;
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div)
+  :is(input, textarea, select) {
+  border-radius: 7px !important;
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--pf-shadow) 55%, transparent);
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div) button {
+  border: 1px solid var(--pf-border) !important; border-radius: 7px !important;
+  background: color-mix(in srgb, var(--pf-sidebar) 90%, transparent) !important;
+  color: var(--pf-text) !important; cursor: pointer;
+  transform-origin: center;
+  transition: transform .18s cubic-bezier(.34, 1.56, .64, 1),
+              background .15s ease, border-color .15s ease, box-shadow .18s ease !important;
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div) button:hover {
+  transform: translateY(-1px) scale(1.06); z-index: 2;
+  background: color-mix(in srgb, var(--pf-accent) 18%, var(--pf-sidebar)) !important;
+  border-color: var(--pf-accent) !important;
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--pf-shadow) 80%, transparent) !important;
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div) button:active {
+  transform: translateY(0) scale(.98);
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div) button:focus-visible {
+  outline: 2px solid var(--pf-accent); outline-offset: 2px;
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div)
+  :is(.exec-approve, .btn-primary) {
+  background: color-mix(in srgb, var(--pf-accent) 22%, var(--pf-sidebar)) !important;
+  border-color: var(--pf-accent) !important;
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div)
+  :is(.exec-deny, .btn-danger) {
+  background: color-mix(in srgb, var(--pf-danger) 18%, var(--pf-sidebar)) !important;
+  border-color: var(--pf-danger) !important; color: var(--pf-danger) !important;
+}
+
+/* Dynamic dialogs are created by several independent UI modules. Any direct
+   body overlay/dialog receives the same button behavior, even when a module
+   did not opt into one of the historical surface classes. */
+:is(body > [id$="Overlay"], body > [id$="Dialog"], dialog) button {
+  border: 1px solid var(--pf-border) !important;
+  border-radius: 8px !important;
+  background: color-mix(in srgb, var(--pf-sidebar) 90%, transparent) !important;
+  color: var(--pf-text) !important;
+  cursor: pointer;
+  transform-origin: center;
+  transition: transform .18s cubic-bezier(.34, 1.56, .64, 1),
+              background .15s ease, border-color .15s ease, box-shadow .18s ease !important;
+}
+:is(body > [id$="Overlay"], body > [id$="Dialog"], dialog) button:hover {
+  transform: translateY(-1px) scale(1.045);
+  background: color-mix(in srgb, var(--pf-accent) 18%, var(--pf-sidebar)) !important;
+  border-color: var(--pf-accent) !important;
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--pf-shadow) 80%, transparent) !important;
+}
+:is(body > [id$="Overlay"], body > [id$="Dialog"], dialog) button:active {
+  transform: translateY(0) scale(.98);
+}
+:is(body > [id$="Overlay"], body > [id$="Dialog"], dialog) button:focus-visible {
+  outline: 2px solid var(--pf-accent); outline-offset: 2px;
+}
+:is(body > [id$="Overlay"], body > [id$="Dialog"], dialog)
+  :is(.btn-primary, .exec-approve) {
+  background: color-mix(in srgb, var(--pf-accent) 22%, var(--pf-sidebar)) !important;
+  border-color: var(--pf-accent) !important;
+}
+:is(body > [id$="Overlay"], body > [id$="Dialog"], dialog)
+  :is(.btn-danger, .exec-deny) {
+  background: color-mix(in srgb, var(--pf-danger) 18%, var(--pf-sidebar)) !important;
+  border-color: var(--pf-danger) !important;
+  color: var(--pf-danger) !important;
+}
+
+.resource-create-choice-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 18px;
+}
+.dialog-choice-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 12px;
+}
+.dialog-choice-header h3 { margin: 0; color: var(--pf-text); font-size: 14px; }
+.dialog-icon-button {
+  width: 30px; min-width: 30px; height: 30px; padding: 0 !important;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50% !important; font-size: 18px; line-height: 1;
+}
+.dialog-choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.dialog-choice-button {
+  min-height: 48px; padding: 9px 12px !important;
+  font: 650 12px/1.25 inherit; text-align: center;
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div) table {
+  width: 100%; border: 1px solid var(--pf-border) !important;
+  border-collapse: separate !important; border-spacing: 0; border-radius: 9px;
+  background: color-mix(in srgb, var(--pf-bg) 76%, transparent) !important;
+  color: var(--pf-text); overflow: hidden;
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div) table th {
+  padding: 8px 10px !important; background: var(--pf-sidebar) !important;
+  color: var(--pf-muted) !important; border: 0 !important; text-align: left;
+  font-size: 10px; font-weight: 700; letter-spacing: .045em; text-transform: uppercase;
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div) table td {
+  padding: 8px 10px !important; border: 0 !important;
+  border-top: 1px solid var(--pf-border) !important;
+}
+:is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+    #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+    #usageCostPanelOverlay > div, #usageDashOverlay > div,
+    .git-dialog-overlay > div, .share-dialog-overlay > div) table tbody tr:hover > td {
+  background: color-mix(in srgb, var(--pf-accent) 8%, transparent) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+      #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+      #usageCostPanelOverlay > div, #usageDashOverlay > div,
+      .git-dialog-overlay > div, .share-dialog-overlay > div) button {
+    transition: none !important;
+  }
+  :is(.dialog, .exec-dialog, .cog-dialog, .pf-ext-modal-box,
+      #resourceEditorOverlay > div, #toolCallOverlay > div, #promptOverlay > div,
+      #usageCostPanelOverlay > div, #usageDashOverlay > div,
+      .git-dialog-overlay > div, .share-dialog-overlay > div) button:hover {
+    transform: none;
+  }
+  :is(body > [id$="Overlay"], body > [id$="Dialog"], dialog) button {
+    transition: none !important;
+  }
+  :is(body > [id$="Overlay"], body > [id$="Dialog"], dialog) button:hover {
+    transform: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .dialog-choice-grid { grid-template-columns: 1fr; }
+}

@@ -4,7 +4,8 @@ import json
 import logging
 import shlex
 import uuid
-from urllib.parse import parse_qs
+from pathlib import Path
+from urllib.parse import parse_qs, quote
 
 from core._file_store_stream import store_stream
 from core.file_store import FileStore
@@ -14,6 +15,7 @@ from core.handlers._fs_helpers import find_fs_service
 
 logger = logging.getLogger("services.http_listener_service")
 _CHUNK_SIZE = 1024 * 1024
+_APPEARANCE_MAX_BYTES = 80 * 1024 * 1024
 
 
 def _send_json(handler, status, payload):
@@ -90,11 +92,38 @@ def handle_upload_stream(handler, content_length, session, query):
     conversation_id = _one(params, "conversation_id")
     service_name = _one(params, "service")
     relay_path = _one(params, "path")
+    purpose = _one(params, "purpose")
     mime = handler.headers.get("Content-Type") or "application/octet-stream"
     chunks = _body_chunks(handler, content_length)
 
     try:
-        if service_name or relay_path:
+        if purpose:
+            if purpose != "appearance":
+                raise ValueError("Unsupported upload purpose")
+            if service_name or relay_path:
+                raise ValueError("Appearance uploads cannot target a relay")
+            if content_length <= 0 or content_length > _APPEARANCE_MAX_BYTES:
+                raise ValueError("Appearance upload must be between 1 byte and 80 MiB")
+            mime = mime.split(";", 1)[0].strip().lower()
+            if not (mime.startswith("image/") or mime.startswith("video/")):
+                raise ValueError("Appearance upload must be an image or video")
+            filename = _one(params, "filename")
+            if not filename:
+                raise ValueError("filename is required")
+            safe_name = Path(filename).name or "background"
+            file_id = store_stream(
+                FileStore.instance(), safe_name, chunks,
+                expected_size=content_length, content_type=mime,
+                user_id=user_id, conversation_id="_appearance",
+                ttl=0, category="appearance")
+            result = {
+                "file_id": file_id,
+                "filename": safe_name,
+                "mime_type": mime,
+                "size": content_length,
+                "url": f"/files/{file_id}/{quote(safe_name, safe='')}",
+            }
+        elif service_name or relay_path:
             if not service_name or not relay_path:
                 raise ValueError("service and path are both required")
             written = _stream_to_relay(

@@ -129,6 +129,7 @@ const OSV_TITLE_W = 600, OSV_TITLE_H = 70;
 // walking (floor click) or the ⌂ reset re-engages the follow.
 let _osFollow = true;
 let _osSurfaceFocus = '';
+let _osWebchatTransitionRaf = 0;
 
 function openspaceIsActive() { return _osActive; }
 
@@ -182,6 +183,9 @@ function openspaceSetActive(on) {
       .then(() => _osEnsureEnvironment()).then(() => {
       if (!_osActive) return;
       _osBuildScene(wrap);
+      // Entering OpenSpace is a fresh overview, never a restoration of the
+      // close-up or manually moved camera left behind before Webchat.
+      _osSetCameraView('home');
       _osSeedAgents();
       _osStartLoop();
     }).catch((e) => {
@@ -192,6 +196,9 @@ function openspaceSetActive(on) {
       wrap.appendChild(err);
     });
   } else {
+    if (_osWebchatTransitionRaf) cancelAnimationFrame(_osWebchatTransitionRaf);
+    _osWebchatTransitionRaf = 0;
+    wrap.classList.remove('osv-webchat-transition');
     openspaceCloseFlow();
     openspaceTvStop();
     _osStopLoop();
@@ -386,6 +393,15 @@ function _osBuildScene(wrap) {
     });
     wrap.appendChild(views);
   }
+  if (!wrap.querySelector('.osv-webchat-btn')) {
+    const webchat = document.createElement('button');
+    webchat.className = 'osv-webchat-btn';
+    webchat.textContent = '\u{1F4AC} ' + t('osvWebchat');
+    webchat.title = t('osvWebchatTitle');
+    webchat.setAttribute('aria-label', t('osvWebchatTitle'));
+    webchat.onclick = openspaceZoomToWebchat;
+    wrap.appendChild(webchat);
+  }
   if (!wrap.querySelector('.osv-mobile-ctl')) {
     // Touch controls: pinch/two-finger pan work on the canvas itself;
     // these buttons cover zoom and "I'm lost" on small screens.
@@ -456,6 +472,61 @@ function _osUpdateCamera() {
     _osCamHeight + _osCamPan.y,
     cz + _osCamPan.z + Math.sin(_osCamAngle) * _osCamDist);
   _osCamera.lookAt(cx + _osCamPan.x, _osCamPan.y, cz + _osCamPan.z);
+}
+
+function openspaceZoomToWebchat() {
+  if (!_osActive || !_osCamera || _osWebchatTransitionRaf) return;
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    onViewModeSelect('simplified');
+    return;
+  }
+  const wrap = document.getElementById('openspaceWrap');
+  const button = wrap && wrap.querySelector('.osv-webchat-btn');
+  const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
+  const rows = Math.max(1, Math.ceil(Math.max(_osSeatCount, 1) / OSV_GRID_COLS));
+  const cz = ((rows - 1) * OSV_DESK_SPACING) / 2;
+  const from = {
+    angle: _osCamAngle, dist: _osCamDist, height: _osCamHeight,
+    x: _osCamPan.x, y: _osCamPan.y, z: _osCamPan.z,
+  };
+  const to = {
+    angle: Math.PI / 2, dist: 3.35, height: 0.08,
+    x: 7 - cx, y: 1.8, z: OSV_SCREEN_Z - cz,
+  };
+  let angleDelta = to.angle - from.angle;
+  while (angleDelta > Math.PI) angleDelta -= Math.PI * 2;
+  while (angleDelta < -Math.PI) angleDelta += Math.PI * 2;
+  const started = performance.now();
+  const duration = 900;
+  if (wrap) wrap.classList.add('osv-webchat-transition');
+  if (button) button.disabled = true;
+  const step = (now) => {
+    if (!_osActive) { _osWebchatTransitionRaf = 0; return; }
+    const progress = Math.min(1, (now - started) / duration);
+    const eased = progress < 0.5
+      ? 4 * progress * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+    _osCamAngle = from.angle + angleDelta * eased;
+    _osCamDist = from.dist + (to.dist - from.dist) * eased;
+    _osCamHeight = from.height + (to.height - from.height) * eased;
+    _osCamPan.x = from.x + (to.x - from.x) * eased;
+    _osCamPan.y = from.y + (to.y - from.y) * eased;
+    _osCamPan.z = from.z + (to.z - from.z) * eased;
+    _osSurfaceFocus = 'conversation';
+    _osFollow = false;
+    _osUpdateCamera();
+    if (progress < 1) {
+      _osWebchatTransitionRaf = requestAnimationFrame(step);
+      return;
+    }
+    _osWebchatTransitionRaf = 0;
+    onViewModeSelect('simplified');
+    setTimeout(() => {
+      if (wrap) wrap.classList.remove('osv-webchat-transition');
+      if (button) button.disabled = false;
+    }, 1200);
+  };
+  _osWebchatTransitionRaf = requestAnimationFrame(step);
 }
 
 function _osResize() {

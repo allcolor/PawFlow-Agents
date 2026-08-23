@@ -110,18 +110,11 @@ function exportConversation(cid) {
 }
 
 function _showImportProgress(label) {
-  var overlay = document.createElement('div');
-  overlay.id = 'importProgressOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
-  var box = document.createElement('div');
-  box.style.cssText = 'background:var(--pf-panel,#1a1a2e);border:1px solid var(--pf-accent,#6c5ce7);border-radius:10px;padding:24px 32px;display:flex;align-items:center;gap:14px;color:var(--pf-text,#e0e0e0);font-size:14px;min-width:260px;box-shadow:0 10px 40px rgba(0,0,0,0.5);';
-  box.innerHTML = '<span class="spinner" style="color:var(--pf-accent,#6c5ce7);font-size:22px;animation:spin 1.2s linear infinite;display:inline-block;">\u273B</span><span id="importProgressLabel">' + label + '</span>';
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-  return {
-    setLabel: function(s) { var el = document.getElementById('importProgressLabel'); if (el) el.textContent = s; },
-    close: function() { var el = document.getElementById('importProgressOverlay'); if (el) el.remove(); },
-  };
+  return showOperationProgress({
+    title: t('importConversation'),
+    phase: label,
+    detail: t('operationPleaseWait'),
+  });
 }
 
 function importConversation() {
@@ -135,21 +128,28 @@ function importConversation() {
     const fmt = ext === 'zip' ? 'pawflow' : ext === 'jsonl' ? 'claude_code' : null;
     if (!fmt) { addMsg('error', t('unsupportedImportFormat')); return; }
     var progress = _showImportProgress(t('uploadingFile', { file: file.name }));
+    if (!progress) return;
     document.getElementById('status').textContent = t('uploading');
     try {
       const info = await uploadFileToStore(file);
       progress.setLabel(t('analyzingConversation'));
       document.getElementById('status').textContent = t('analyzing');
       action$('conv_import_analyze', { file_id: info.file_id, format: fmt }).subscribe(result => {
-        progress.close();
         document.getElementById('status').textContent = t('ready');
-        if (result.error) { addMsg('error', t('importFailed', { error: result.error })); return; }
+        if (result.error) {
+          var message = t('importFailed', { error: result.error });
+          progress.fail(message);
+          addMsg('error', message);
+          return;
+        }
+        progress.close();
         _showImportConvDialog(result, fmt);
       });
     } catch(e) {
-      progress.close();
       document.getElementById('status').textContent = t('ready');
-      addMsg('error', t('uploadFailed', { error: e.message }));
+      var message = t('uploadFailed', { error: e.message });
+      progress.fail(message);
+      addMsg('error', message);
     }
   };
   input.click();
@@ -412,6 +412,13 @@ function _showImportConvDialog(info, fmt) {
       _commitCurrentDetail();  // flush visible panel into agentInstances
       if (!Object.keys(agentInstances).length) { alert(t('atLeastOneAgentRequired')); return; }
       var title = (document.getElementById('_impTitle').value || '').trim() || t('imported');
+      var progress = showOperationProgress({
+        title: t('importConversation'),
+        phase: t('finalizingConversationImport'),
+        detail: t('operationPleaseWait'),
+      });
+      if (!progress) return;
+      document.getElementById('_impGoBtn').disabled = true;
       overlay.remove();
       document.getElementById('status').textContent = t('importing');
       action$('conv_import_execute', {
@@ -421,7 +428,14 @@ function _showImportConvDialog(info, fmt) {
         restore_filestore: !!(document.getElementById('_impRestoreFiles') && document.getElementById('_impRestoreFiles').checked),
         file_id_policy: 'preserve_or_remap',
       }).subscribe(result => {
-        if (result.error) { addMsg('error', t('importFailed', { error: result.error })); document.getElementById('status').textContent = t('ready'); return; }
+        if (result.error) {
+          var message = t('importFailed', { error: result.error });
+          progress.fail(message);
+          addMsg('error', message);
+          document.getElementById('status').textContent = t('ready');
+          return;
+        }
+        progress.close();
         addMsg('system', t('importSuccess'));
         // Imported conversations should become the active chat immediately.
         // Refresh once now and once after the route switch so VPS-side cache or
@@ -432,6 +446,11 @@ function _showImportConvDialog(info, fmt) {
           loadConversations();
           if (conversationId === result.conversation_id) highlightConv(result.conversation_id);
         }, 250);
+        document.getElementById('status').textContent = t('ready');
+      }, error => {
+        var message = t('importFailed', { error: error.message });
+        progress.fail(message);
+        addMsg('error', message);
         document.getElementById('status').textContent = t('ready');
       });
     };

@@ -59,8 +59,10 @@ function _osEnsureUser(name) {
     guest: false,
     state: 'idle',
     stateSince: Date.now(),
+    // Never put the first visitor on the wall-screen's optical axis: the
+    // conversation camera would look straight through that avatar.
     seat: { x: cx + (_osUserCount % 2 === 0 ? 1 : -1)
-            * Math.ceil(_osUserCount / 2) * 3.5, z: -4.5 },
+            * (Math.floor(_osUserCount / 2) + 1) * 4.0, z: -4.5 },
     color: _osAgentColor(clean),
     log: [],
     tools: [],

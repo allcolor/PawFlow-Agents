@@ -15,8 +15,8 @@ html[data-pf-atmosphere="on"] #pfAtmosphere { display: block; }
 html[data-pf-atmosphere-kind="image"] #pfAtmosphereImage,
 html[data-pf-atmosphere-kind="video"] #pfAtmosphereVideo { display: block; }
 html[data-pf-atmosphere="on"] body > .sidebar,
-html[data-pf-atmosphere="on"] body > .main,
-html[data-pf-atmosphere="on"] body > .tab-bar { position: relative; z-index: 1; }
+html[data-pf-atmosphere="on"] body > .main { position: relative; z-index: 1; }
+html[data-pf-atmosphere="on"] body > .tab-bar { z-index: 190; }
 
 /* These selectors intentionally outrank theme selectors while atmosphere is
    active. Without the data attribute every existing theme keeps its exact

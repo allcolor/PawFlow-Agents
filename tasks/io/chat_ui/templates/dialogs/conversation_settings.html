@@ -11,7 +11,8 @@
         <option value="604800" data-i18n="ttl7d">7 days</option>
       </select>
       <label id="convThemeLabel" style="display:block;margin-top:12px" data-i18n="convThemeLabel">Conversation theme</label>
-      <select id="conversationThemeSelect" onchange="onConversationThemeSelectChange(this.value)" aria-label="Conversation theme" data-i18n-aria-label="convThemeLabel">
+      <select id="conversationThemeSelect" data-conversation-theme-select
+              onchange="onConversationThemeSelectChange(this.value)" aria-label="Conversation theme" data-i18n-aria-label="convThemeLabel">
         <option value="" data-i18n="useGlobalTheme">Use global theme</option>
       </select>
     </div>

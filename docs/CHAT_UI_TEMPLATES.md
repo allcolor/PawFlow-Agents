@@ -94,21 +94,51 @@ ships one small cacheable file.
 
 ## Personal appearance and compact AI surfaces
 
-The header Appearance button opens a user-owned browser preference panel. The
-selected scale (75–150%), background source and atmosphere effects are not part
-of a theme and never modify a conversation or another user's settings.
-`appearance.js` namespaces the small JSON preference record by authenticated
-`user_id` in `localStorage`; uploaded image/video blobs (maximum 80 MiB) are
-stored under the same user identity in IndexedDB. Remote backgrounds require
-HTTPS (same-origin relative URLs are accepted) and contact their host directly.
-Image/video motion is disabled when `prefers-reduced-motion` is active, and
-videos pause while the page is hidden. Removing or resetting a background also
-deletes its stored blob.
+The header Appearance button opens a user-owned preference panel. The selected
+scale (75–150%), background source and atmosphere effects are independent from
+themes. An authenticated user owns one global record inherited by every
+conversation; a conversation can own an override.
+`core/appearance_store.py` persists those small records per user, while
+appearance uploads (image/video, maximum 80 MiB) use a private, non-expiring
+FileStore category. The client loads its namespaced localStorage/IndexedDB cache
+first for instant paint and offline use, then silently hydrates from the server.
+It migrates pre-sync browser preferences and blobs once per authenticated user;
+after that marker exists, the server remains authoritative so stale devices
+cannot resurrect a cleared override. Superseded private uploads are deleted when
+no appearance record references them. Remote backgrounds require HTTPS and
+contact their host directly. Image/video motion is disabled when
+`prefers-reduced-motion` is active, and videos pause while the page is hidden.
 
 The surrounding chat surfaces remain theme-neutral:
 
 - the prompt row exposes compact search, slash-command and agent-mention
-  shortcuts without changing message submission;
+  shortcuts without changing message submission; below 768 px, only the
+  secondary-action toggle, prompt, Micro, Grab, and Send stay visible, while
+  attach, search, slash, mention, and extension actions are stacked in an
+  accessible panel above the composer. Micro and Grab remain trailing controls
+  immediately before Send on every viewport. The selected agent remains visible in a
+  thin, localized `Selected agent: <name>` button at the prompt row's right
+  edge, immediately before Send;
+  activating it opens a conversation-aware quick selector. On narrow screens
+  the button truncates and the selector becomes a
+  full-width touch-friendly panel that stays inside the viewport;
+- the thin conversation-controls strip puts Refresh first and exposes compact
+  permission, conversation-theme, conversation-appearance, and OpenSpace
+  controls. Its buttons share the action dock's dimensions, resting surface,
+  accent border, spring hover zoom, and shadow while respecting reduced-motion
+  preferences. Permission is a real button opening an accessible menu rather
+  than a visible native combo; permission and theme controls show only their
+  compact icons while closed but retain current-value tooltips and accessible
+  labels;
+- activating OpenSpace always resets its camera to the general home view after
+  the scene is ready; close-up and manually moved camera state is never restored
+  when returning from Webchat;
+- above 768 px, the right tab rail is independent from the
+  Conversations/Resources sidebar: a persistent themed edge hint reveals the
+  fixed overlay on pointer approach or keyboard focus, while the sidebar grip
+  controls only the sidebar. Atmosphere mode never puts this rail back in the
+  body flex, so it reserves no width in the header, transcript, or composer;
+  narrow layouts retain the coupled overlay behavior;
 - `Ctrl/Cmd+K` and `/search <query>` share the same overlay over the latest
   500 conversation messages;
 - fenced Markdown code has a language header and accessible copy action;
@@ -181,6 +211,27 @@ invariant is about a partial's own source.
 - **Add an extension slot**: see the last bullet of the section above.
 - **Never** reintroduce a string-replace marker: everything the server
   injects is a named context key.
+
+## Dialog visual contract
+
+All built-in and extension dialogs use the shared theme bridge rather than a
+private palette. A dialog surface must use one of `.dialog`, `.exec-dialog`,
+`.cog-dialog`, or `.pf-ext-modal-box`; the legacy resource editor is also
+covered through `#resourceEditorOverlay`. The bridge provides the themed
+surface and overlay colors, fields, rounded Beautiful UI tables, keyboard
+focus, and dialog-button motion. Buttons use the dock's spring transition at
+a smaller scale suitable for text labels, while `prefers-reduced-motion`
+removes that motion. New dialogs must keep positive and destructive semantics
+through `.btn-primary`/`.exec-approve` and `.btn-danger`/`.exec-deny`.
+The contract also covers dynamically-created direct body overlays/dialogs, so
+their buttons cannot fall back to a module-private shape or interaction style.
+Dynamic dialog modules use only `--pf-*` tokens (including semantic accent,
+success, warning, and danger tokens); literal hex/RGB palettes are forbidden.
+Long server transactions use `showOperationProgress()` from `dialogs.js`.
+The modal exposes real phase labels with indeterminate progress (never a fake
+percentage), blocks duplicate/destructive input while busy, and becomes an
+explicit dismissible error state on failure. Skill-draft promotion and both
+conversation-import phases are the reference integrations.
 
 ## Hotpatching a running server
 

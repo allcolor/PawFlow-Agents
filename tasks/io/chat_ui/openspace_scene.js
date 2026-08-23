@@ -67,6 +67,7 @@ function _osBuildBigScreen() {
     new T.BoxGeometry(sw + 0.7, sh + 0.7, 0.3),
     new T.MeshLambertMaterial({ color: 0x222a4d }));
   bezel.position.set(cx, sy, sz - 0.18);
+  bezel.userData.osvBigScreen = true;
   _osScene.add(bezel);
   // Title frame above the screen: a bezel plus a projected DOM strip
   // showing the conversation title (same quad transform as the screen).
@@ -74,6 +75,7 @@ function _osBuildBigScreen() {
     new T.BoxGeometry(sw + 0.7, titleHeight + 0.1, 0.25),
     new T.MeshLambertMaterial({ color: 0x222a4d }));
   titleBezel.position.set(cx, (titleBottom + titleTop) / 2, sz - 0.2);
+  titleBezel.userData.osvBigScreen = true;
   _osScene.add(titleBezel);
   _osTitleCorners = [
     { x: cx - sw / 2, y: titleTop, z: sz },

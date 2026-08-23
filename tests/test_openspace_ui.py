@@ -78,9 +78,40 @@ def test_view_menu_offers_openspace_mode():
     assert "onViewModeSelect('openspace')" in template
     assert 'id="openspaceWrap"' in template
     assert 'id="openspaceOverlay"' in template
+    assert 'id="openspaceQuickBtn"' in template
     # The message list survives underneath: hidden unless projected onto
     # the openspace wall screen.
     assert "body.openspace-active .messages:not(.osv-projected) { display: none; }" in template
+
+
+def test_webchat_button_zooms_to_main_screen_before_simplified_view():
+    openspace = _openspace_text()
+    css = _text("tasks/io/chat_ui/css/60_openspace.css")
+    assert "function openspaceZoomToWebchat()" in openspace
+    assert "OSV_SCREEN_Z" in openspace
+    assert "onViewModeSelect('simplified')" in openspace
+    assert "prefers-reduced-motion: reduce" in openspace
+    assert ".osv-webchat-btn" in css
+    assert "osvWebchatTransition" not in css
+
+
+def test_reentering_openspace_always_resets_to_the_home_camera():
+    openspace = _text("tasks/io/chat_ui/openspace.js")
+    activation = openspace[
+        openspace.index("function openspaceSetActive(on)"):
+        openspace.index("function _osEnsureThree()")]
+    assert activation.index("_osBuildScene(wrap);") < activation.index(
+        "_osSetCameraView('home');") < activation.index("_osStartLoop();")
+
+
+def test_visitor_stays_off_screen_axis_and_screen_blocks_floor_navigation():
+    agents = _text("tasks/io/chat_ui/openspace_agents.js")
+    runtime = _text("tasks/io/chat_ui/openspace_runtime.js")
+    scene = _text("tasks/io/chat_ui/openspace_scene.js")
+    assert "(Math.floor(_osUserCount / 2) + 1) * 4.0" in agents
+    assert "bezel.userData.osvBigScreen = true" in scene
+    assert "hits[0].object !== floor" in runtime
+    assert "OSV_SCREEN_Z + 2.2" in runtime
 
 
 def test_view_mode_plumbing_accepts_openspace():
@@ -163,6 +194,7 @@ def test_openspace_i18n_keys_exist_in_all_locales():
         "osvThought", "osvSaid", "osvAsksYou", "osvDelegatesTo", "osvDone",
         "osvBoardTitle", "osvBoardIdle", "osvHelp", "osvViewHome",
         "osvViewConversation", "osvViewBoard", "osvViewTv", "osvViewResources",
+        "osvWebchat", "osvWebchatTitle",
     )
     for locale in ("en", "fr", "es"):
         data = json.loads(_text(f"tasks/io/chat_ui/i18n/{locale}.json"))

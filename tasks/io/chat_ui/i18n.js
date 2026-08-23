@@ -187,13 +187,14 @@ function applyI18n(root) {
   _setText('#status', t('ready'));
   _setTitle('.btn-attach', t('promptLibraryTitle'));
   _setTitle('#fileAttachBtn', t('attachTitle'));
-  _setTitle('#permissionMode', t('permissionModeTitle'));
+  _setTitle('#permissionModeBtn', t('permissionModeTitle'));
   _setText('.sidebar-header h2', t('conversations'));
   _setText('.btn-new', t('newChat'));
   _setText('#ttlLabel', t('ttlLabel'));
   _setText('#convThemeLabel', t('convThemeLabel'));
-  const convTheme = document.getElementById('conversationThemeSelect');
-  if (convTheme && convTheme.options.length) convTheme.options[0].textContent = t('useGlobalTheme');
+  document.querySelectorAll('[data-conversation-theme-select]').forEach((convTheme) => {
+    if (convTheme.options.length) convTheme.options[0].textContent = t('useGlobalTheme');
+  });
   const ttl = document.getElementById('ttlSelect');
   if (ttl && ttl.options.length >= 5) {
     ttl.options[0].textContent = t('ttlNone');

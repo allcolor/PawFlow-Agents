@@ -29,8 +29,6 @@ def test_task_tabs_panel_and_dock_present_in_template():
     assert 'onclick="closeActiveTaskTab()"' in html
     assert ".task-tab-panel.open" in html
     assert ".task-tab-dock" in html
-
-
 def test_task_tabs_js_exposes_expected_api():
     src = (CHAT_UI / "task_tabs.js").read_text(encoding="utf-8")
     for fn in [

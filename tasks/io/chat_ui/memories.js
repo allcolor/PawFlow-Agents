@@ -4,6 +4,7 @@ let _memoryAgentFilter = null;  // null = all
 let _memoryDraftFilter = false;
 let _memoryVisibleCache = [];
 let _memoryAgents = [];
+let _memoryPromotionInFlight = new Set();
 
 function cmdShowMemories() {
   _cognitiveLoadResources(function(resources) {
@@ -73,7 +74,7 @@ function showMemoryOverlay(memories) {
       const editBtn = '<button class="memory-icon-button edit" onclick="event.stopPropagation();memEdit(' + i + ')" title="' + escapeHtml(t('contextEdit')) + '">&#9998;</button>';
       const delBtn = '<button class="memory-icon-button delete" onclick="event.stopPropagation();memDelete(\'' + m.id + '\')" title="' + escapeHtml(t('delete')) + '">&#128465;</button>';
       const promoteBtn = m.skill_draft
-        ? '<button class="memory-icon-button promote" onclick="event.stopPropagation();memPromoteDraft(' + i + ')" title="' + escapeHtml(t('promoteSkillDraft')) + '">' + escapeHtml(t('promote')) + '</button>'
+        ? '<button class="memory-icon-button promote" onclick="event.stopPropagation();memPromoteDraft(' + i + ', false, this)" title="' + escapeHtml(t('promoteSkillDraft')) + '">' + escapeHtml(t('promote')) + '</button>'
         : '';
       const text = escapeHtml(m.text || '');
       msgsHtml += '<div id="mem-row-' + i + '" class="memory-card' + (m.skill_draft ? ' skill-draft' : '') + '" onclick="this.querySelector(\'.memory-full\')&&(this.querySelector(\'.memory-full\').style.display=this.querySelector(\'.memory-full\').style.display===\'block\'?\'none\':\'block\')">'
@@ -147,13 +148,37 @@ function _skillDraftInstructions(draft) {
   return body;
 }
 
-function memPromoteDraft(idx, force) {
+function memPromoteDraft(idx, force, sourceButton) {
   const memory = _memoryVisibleCache[idx];
   const draft = memory && memory.skill_draft;
   if (!memory || !draft || !memory.conversation_id) {
     addMsg('error', t('skillDraftInvalid'));
     return;
   }
+  if (_memoryPromotionInFlight.has(memory.id)) return;
+  const progress = showOperationProgress({
+    title: t('promotingSkill', { name: draft.name }),
+    phase: t('reviewingSkillDraft'),
+    detail: t('operationPleaseWait'),
+  });
+  if (!progress) return;
+  _memoryPromotionInFlight.add(memory.id);
+  if (sourceButton) {
+    sourceButton.disabled = true;
+    sourceButton.setAttribute('aria-busy', 'true');
+  }
+  const release = function() {
+    _memoryPromotionInFlight.delete(memory.id);
+    if (sourceButton && sourceButton.isConnected) {
+      sourceButton.disabled = false;
+      sourceButton.removeAttribute('aria-busy');
+    }
+  };
+  const fail = function(message, keepLocked) {
+    if (!keepLocked) release();
+    progress.fail(message);
+    addMsg('error', message);
+  };
   const payload = {
     resource_type: 'skill',
     name: draft.name,
@@ -169,17 +194,22 @@ function memPromoteDraft(idx, force) {
   action$('create_resource', payload).subscribe({
     next: (data) => {
       if (data && data.requires_confirmation) {
+        progress.close();
+        release();
         _showSkillReviewConfirm(data.review, data.message,
           function() { memPromoteDraft(idx, true); });
         return;
       }
-      if (data.error) { addMsg('error', data.error); return; }
+      if (data.error) { fail(data.error); return; }
+      progress.setPhase(t('cleaningSkillDraft'), t('operationPleaseWait'));
       action$('delete_memory', { memory_id: memory.id }).subscribe({
         next: (deleted) => {
           if (deleted.error || !deleted.deleted) {
-            addMsg('error', deleted.error || t('skillDraftCleanupFailed'));
+            fail(deleted.error || t('skillDraftCleanupFailed'), true);
             return;
           }
+          release();
+          progress.close();
           addMsg('system', t('skillDraftPromoted', { name: draft.name }));
           notifyResourceChanged('skill', 'create', {
             name: draft.name, scope: 'conversation',
@@ -187,10 +217,10 @@ function memPromoteDraft(idx, force) {
           loadResources();
           cmdShowMemories();
         },
-        error: (e) => addMsg('error', e.message),
+        error: (e) => fail(e.message, true),
       });
     },
-    error: (e) => addMsg('error', e.message),
+    error: (e) => fail(e.message),
   });
 }
 

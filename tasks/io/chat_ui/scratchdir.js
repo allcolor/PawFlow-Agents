@@ -23,14 +23,14 @@ function showScratchDirOverlay() {
     if (event.target === overlay) closeScratchDirOverlay();
   };
   overlay.innerHTML = '<div class="cog-dialog" style="width:min(900px,94vw);height:min(720px,90vh)">'
-    + '<div class="cog-head"><h2 id="sdTitle" style="margin:0;color:#eee;font-size:17px">ScratchDir</h2>'
-    + '<select id="sdAgent" onchange="sdAgentChanged()" style="margin-left:auto;background:#1e1e3a;color:#ddd;border:1px solid #444;border-radius:5px;padding:5px"></select>'
+    + '<div class="cog-head"><h2 id="sdTitle" style="margin:0;color:var(--pf-text);font-size:17px">ScratchDir</h2>'
+    + '<select id="sdAgent" onchange="sdAgentChanged()" style="margin-left:auto;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:5px;padding:5px"></select>'
     + '<button type="button" class="btn" onclick="sdEnsure()">Ensure</button>'
     + '<button type="button" class="btn" onclick="sdRenew()">Renew</button>'
     + '<button type="button" class="btn" onclick="sdClear()">Clear</button>'
     + '<button type="button" class="btn" onclick="closeScratchDirOverlay()">Close</button>'
     + '<button type="button" class="cog-close" onclick="closeScratchDirOverlay()" aria-label="Close">&times;</button></div>'
-    + '<div id="sdBody" style="overflow:auto;min-height:0;flex:1;padding:14px;color:#d0d0dc"></div></div>';
+    + '<div id="sdBody" style="overflow:auto;min-height:0;flex:1;padding:14px;color:var(--pf-text)"></div></div>';
   document.body.appendChild(overlay);
   overlay.addEventListener('keydown', function(event) {
     if (event.key === 'Escape') closeScratchDirOverlay();
@@ -78,13 +78,13 @@ function sdBytes(value) {
 
 function sdError(error) {
   const body = document.getElementById('sdBody');
-  if (body) body.innerHTML = '<div style="color:#e74c3c">'
+  if (body) body.innerHTML = '<div style="color:var(--pf-danger)">'
     + escapeHtml((error && error.message) || String(error || 'Unknown error')) + '</div>';
 }
 
 function sdLoad() {
   const body = document.getElementById('sdBody');
-  if (body) body.innerHTML = '<div style="color:#777">Loading...</div>';
+  if (body) body.innerHTML = '<div style="color:var(--pf-muted)">Loading...</div>';
   action$('scratchdir_tree', sdPayload({ max_entries: 200 })).subscribe({
     next: function(data) {
       if (!data || data.error) { sdError((data && data.error) || 'Cannot load ScratchDir'); return; }
@@ -107,27 +107,27 @@ function sdRender(data) {
     + sdMetric('Expires', escapeHtml(sdDate(data.expires_at))) + '</div>';
   const entries = Array.isArray(data.entries) ? data.entries : [];
   if (!entries.length) {
-    html += '<div style="color:#777;text-align:center;padding:28px">No temporary files.</div>';
+    html += '<div style="color:var(--pf-muted);text-align:center;padding:28px">No temporary files.</div>';
   } else {
-    html += '<div style="border:1px solid #292944;border-radius:7px;overflow:hidden">';
+    html += '<div style="border:1px solid var(--pf-border);border-radius:7px;overflow:hidden">';
     entries.forEach(function(entry) {
       const path = String(entry.path || '');
-      html += '<div style="display:flex;align-items:center;gap:9px;padding:8px;border-bottom:1px solid #292944">'
-        + '<span style="color:#999">' + (entry.kind === 'directory' ? 'DIR' : 'FILE') + '</span>'
+      html += '<div style="display:flex;align-items:center;gap:9px;padding:8px;border-bottom:1px solid var(--pf-border)">'
+        + '<span style="color:var(--pf-muted)">' + (entry.kind === 'directory' ? 'DIR' : 'FILE') + '</span>'
         + '<code style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(path) + '</code>'
-        + '<span style="margin-left:auto;color:#777">' + (entry.kind === 'file' ? escapeHtml(sdBytes(entry.size)) : '') + '</span>'
+        + '<span style="margin-left:auto;color:var(--pf-muted)">' + (entry.kind === 'file' ? escapeHtml(sdBytes(entry.size)) : '') + '</span>'
         + (entry.kind === 'file' ? '<button type="button" class="btn" onclick="sdPromote(decodeURIComponent(\''
           + encodeURIComponent(path) + '\'))">Copy to FileStore</button>' : '') + '</div>';
     });
     html += '</div>';
-    if (data.truncated) html += '<div style="color:#f0ad4e;margin-top:8px">Tree limited to 200 entries.</div>';
+    if (data.truncated) html += '<div style="color:var(--pf-warning);margin-top:8px">Tree limited to 200 entries.</div>';
   }
   body.innerHTML = html;
 }
 
 function sdMetric(label, value) {
-  return '<div style="border:1px solid #292944;border-radius:7px;padding:9px;background:#111124">'
-    + '<div style="font-size:10px;color:#777;text-transform:uppercase">' + label + '</div>'
+  return '<div style="border:1px solid var(--pf-border);border-radius:7px;padding:9px;background:var(--pf-bg)">'
+    + '<div style="font-size:10px;color:var(--pf-muted);text-transform:uppercase">' + label + '</div>'
     + '<div style="margin-top:4px">' + value + '</div></div>';
 }
 

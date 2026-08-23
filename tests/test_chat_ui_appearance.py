@@ -19,7 +19,7 @@ def test_appearance_behavioural_js_suite():
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "6 passing" in result.stdout
+    assert "8 passing" in result.stdout
 
 
 def test_appearance_panel_is_loaded_with_theme_safe_tokens():
@@ -31,6 +31,7 @@ def test_appearance_panel_is_loaded_with_theme_safe_tokens():
     assert 'id="appearanceBtn"' in html
     assert 'id="appearanceDialog"' in html
     assert 'id="appearanceScope"' in html
+    assert 'id="conversationAppearanceBtn"' in html
     assert 'id="pfAtmosphere"' in html
     assert "--pf-atmosphere-panel-opacity" in html
     assert '"appearance.js"' in serve
@@ -48,6 +49,15 @@ def test_background_translucency_reaches_messages_and_composer_only_when_active(
     assert "backdrop-filter: blur" in css
 
 
+def test_atmosphere_keeps_desktop_tab_bar_fixed_as_an_overlay():
+    css = (ROOT / "tasks" / "io" / "chat_ui" / "css" / "55_appearance.css").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'body > .tab-bar { position: relative' not in css
+    assert 'body > .tab-bar { z-index: 190; }' in css
+
+
 def test_appearance_preferences_are_user_scoped_and_motion_aware():
     source = APPEARANCE_JS.read_text(encoding="utf-8")
 
@@ -58,3 +68,8 @@ def test_appearance_preferences_are_user_scoped_and_motion_aware():
     assert "pawflow:userchange" in source
     assert "prefers-reduced-motion: reduce" in source
     assert "visibilitychange" in source
+    assert "appearance_get" in source
+    assert "appearance_save" in source
+    assert "appearance_clear_conversation" in source
+    assert "purpose=appearance" in source
+    assert "showConversationAppearanceDialog" in source

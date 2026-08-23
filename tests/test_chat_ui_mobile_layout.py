@@ -53,6 +53,8 @@ def test_mobile_sidebar_toggle_stays_above_the_open_drawer():
         "body:has(.sidebar:not(.collapsed)) .sidebar-toggle"
         " { left: 295px !important; }" in mobile
     )
+    # The desktop-only tooltip handle must not add another chevron on mobile.
+    assert ".tab-bar-handle { display: none; }" in TEMPLATE_HTML
 
 
 def test_mobile_action_dock_stays_below_the_open_sidebar():
@@ -132,3 +134,38 @@ def test_mobile_composer_hint_is_localized_and_applied_last():
     apply = I18N_JS[I18N_JS.index("function applyI18n(root)"):]
     apply = apply[:apply.index("\n}", apply.index("_setComposerPlaceholder")) + 2]
     assert apply.index("_applyGenericI18n") < apply.index("_setComposerPlaceholder")
+
+
+def test_mobile_composer_stacks_secondary_actions_behind_one_toggle():
+    assert 'id="composerMobileActionsBtn"' in TEMPLATE_HTML
+    assert 'id="composerMobileActions"' in TEMPLATE_HTML
+    assert 'data-open="false"' in TEMPLATE_HTML
+    css = Path("tasks/io/chat_ui/css/75_composer_shell.css").read_text(
+        encoding="utf-8")
+    assert '.composer-mobile-actions[data-open="true"]' in css
+    assert "flex-direction: column" in css
+    assert "toggleComposerMobileActions" in Path(
+        "tasks/io/chat_ui/file_mention.js").read_text(encoding="utf-8")
+
+
+def test_selected_agent_button_is_right_aligned_compact_and_mobile_safe():
+    assert 'id="composerAgentBadge"' in TEMPLATE_HTML
+    assert 'id="composerAgentPicker"' in TEMPLATE_HTML
+    assert 'onclick="toggleComposerAgentPicker()"' in TEMPLATE_HTML
+    for locale in ("en", "fr", "es"):
+        catalog = json.loads(Path(
+            f"tasks/io/chat_ui/i18n/{locale}.json").read_text(encoding="utf-8"))
+        assert "{name}" in catalog["selectedAgentLabel"]
+    css = Path("tasks/io/chat_ui/css/76_composer_agent.css").read_text(
+        encoding="utf-8")
+    trailing = TEMPLATE_HTML[TEMPLATE_HTML.index('<div class="composer-trailing">'):]
+    assert trailing.index('id="composerAgentBadge"') < trailing.index('id="sendBtn"')
+    assert 'composer-agent-chevron' not in trailing
+    assert ".composer-agent-overlay" in css
+    assert "var(--pf-accent)" in css
+    assert "height: 24px" in css
+    assert "padding: 1px 5px !important" in css
+    assert "top: 0; right: 50px" in css
+    assert "transform: translateY(-50%)" in css
+    assert "position: fixed" in css
+    assert "left: 12px; right: 12px" in css

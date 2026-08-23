@@ -109,6 +109,7 @@ async function _loadResourceRelayOptions() {
 
 function _buildResourceForm(rtype, data, isNew, readonly) {
   const fields = _RESOURCE_FIELDS[rtype] || [];
+  const ro = !!readonly;
   const dis = readonly ? ' disabled' : '';
   const roS = readonly ? 'opacity:0.7;cursor:not-allowed;' : '';
   let html = '';
@@ -124,7 +125,7 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
   }
   if (rtype === 'skill' && !isNew && data && data._invalid) {
     // B9: a malformed skill must surface its failure, not look editable-as-usual.
-    html += '<div style="background:color-mix(in srgb, var(--pf-danger,#e05260) 14%, var(--pf-panel));border:1px solid var(--pf-danger,#e05260);color:var(--pf-text);border-radius:4px;padding:8px;margin-bottom:8px;font-size:11px;">'
+    html += '<div style="background:color-mix(in srgb, var(--pf-danger) 14%, var(--pf-panel));border:1px solid var(--pf-danger);color:var(--pf-text);border-radius:4px;padding:8px;margin-bottom:8px;font-size:11px;">'
       + escapeHtml('⚠ This skill is invalid: ' + data._invalid + ' — re-enter description and instructions below to repair it.')
       + '</div>';
   }
@@ -275,8 +276,8 @@ function _loadSkillsPicker(container, selected, readonly) {
       // selection so saving the form does not silently drop it.
       const locked = readonly || !!s.invalid;
       const cbDis = locked ? ' disabled' : '';
-      const color = s.invalid ? 'var(--pf-danger,#e05260)' : 'var(--pf-text)';
-      const invMark = s.invalid ? ' <span style="color:var(--pf-danger,#e05260);font-size:10px;" title="' + escapeHtml(s.invalid) + '">⚠</span>' : '';
+      const color = s.invalid ? 'var(--pf-danger)' : 'var(--pf-text)';
+      const invMark = s.invalid ? ' <span style="color:var(--pf-danger);font-size:10px;" title="' + escapeHtml(s.invalid) + '">⚠</span>' : '';
       return '<label style="display:flex;align-items:center;gap:6px;padding:2px 0;cursor:' + (locked ? 'default' : 'pointer') + ';font-size:12px;color:' + color + ';">'
         + '<input type="checkbox" class="skill-cb" value="' + escapeHtml(s.name) + '"' + checked + cbDis + ' style="accent-color:var(--pf-accent);"/>'
         + escapeHtml(s.name) + invMark
@@ -426,7 +427,7 @@ function _showSkillReviewConfirm(review, message, onForce) {
     findings.forEach(function(f) {
       f = f || {};
       html += '<div style="margin-bottom:6px;font-size:11px;">'
-        + '<span style="color:var(--pf-danger,#e05260);font-weight:600;">[' + escapeHtml(String(f.severity || '')) + '] ' + escapeHtml(String(f.category || '')) + '</span><br/>'
+        + '<span style="color:var(--pf-danger);font-weight:600;">[' + escapeHtml(String(f.severity || '')) + '] ' + escapeHtml(String(f.category || '')) + '</span><br/>'
         + '<span style="color:var(--pf-text);">' + escapeHtml(String(f.reason || '')) + '</span>'
         + (f.evidence ? '<br/><code style="color:var(--pf-muted);font-size:10px;word-break:break-all;">' + escapeHtml(String(f.evidence)) + '</code>' : '')
         + '</div>';
@@ -436,7 +437,7 @@ function _showSkillReviewConfirm(review, message, onForce) {
   html += '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:10px;">' + escapeHtml(t('skillReviewFinalWord')) + '</div>';
   html += '<div style="display:flex;gap:8px;justify-content:flex-end;">'
     + '<button id="reviewCancelBtn" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
-    + '<button id="reviewForceBtn" style="background:var(--pf-danger,#e05260);color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('skillReviewProceedAnyway')) + '</button>'
+    + '<button id="reviewForceBtn" class="btn-danger" style="background:var(--pf-danger);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('skillReviewProceedAnyway')) + '</button>'
     + '</div>';
   panel.innerHTML = html;
   overlay.appendChild(panel);

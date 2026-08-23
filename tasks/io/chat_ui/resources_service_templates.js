@@ -8,13 +8,13 @@ function showServiceCreateDialog() {
   overlay.id = 'resourceEditorOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:8px;padding:20px;width:440px;max-width:calc(100vw - 32px);color:var(--pf-text);';
-  panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">'
-    + '<h3 style="margin:0;font-size:14px;">' + escapeHtml(t('chooseServiceCreation')) + '</h3>'
-    + '<button id="svc-create-close" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button></div>'
-    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'
-    + '<button id="svc-create-empty" style="background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:7px;padding:18px 10px;cursor:pointer;font-weight:600;">' + escapeHtml(t('newService')) + '</button>'
-    + '<button id="svc-create-template" style="background:color-mix(in srgb,var(--pf-accent) 12%,var(--pf-panel));color:var(--pf-accent);border:1px solid var(--pf-accent);border-radius:7px;padding:18px 10px;cursor:pointer;font-weight:600;">' + escapeHtml(t('newFromTemplate')) + '</button>'
+  panel.className = 'resource-create-choice-dialog';
+  panel.innerHTML = '<div class="dialog-choice-header">'
+    + '<h3>' + escapeHtml(t('chooseServiceCreation')) + '</h3>'
+    + '<button id="svc-create-close" class="dialog-icon-button" aria-label="' + escapeHtml(t('close')) + '">&times;</button></div>'
+    + '<div class="dialog-choice-grid">'
+    + '<button id="svc-create-empty" class="dialog-choice-button">' + escapeHtml(t('newService')) + '</button>'
+    + '<button id="svc-create-template" class="dialog-choice-button btn-primary">' + escapeHtml(t('newFromTemplate')) + '</button>'
     + '</div>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);

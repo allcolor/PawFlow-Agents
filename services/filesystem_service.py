@@ -100,6 +100,8 @@ class RelayService(_RelayConnMixin, _RelayFsOpsMixin, BaseService):
         self._managed_container_started = False
         # Guards ensure_managed_relay_alive(): missing containers respawn at
         # once; running containers get a reconnect grace before replacement.
+        # Brief registrations do not reset that grace until the connection has
+        # remained stable, preventing an endless reconnect-flap loop.
         # One respawn is allowed per cooldown window regardless of how many
         # requests fail concurrently.
         self._managed_respawn_at = 0.0

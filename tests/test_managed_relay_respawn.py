@@ -154,6 +154,59 @@ def test_a_reconnect_during_container_inspection_cancels_respawn(
     assert svc._managed_disconnected_at == 0.0
 
 
+def test_brief_reconnects_do_not_restart_the_replacement_grace(
+        manager, monkeypatch):
+    from services import _relay_conn as conn_mod
+
+    now = [100.0]
+    monkeypatch.setattr(conn_mod.time, "monotonic", lambda: now[0])
+    mgr = manager(running=True)
+    svc = _managed_service()
+
+    assert svc.ensure_managed_relay_alive() is False
+    assert svc._managed_disconnected_at == 100.0
+
+    for connected_at in (101.0, 106.0, 111.0):
+        now[0] = connected_at
+        reader = object()
+        registered_at = svc._set_relay(
+            reader, object(), object(), object())
+        now[0] += 0.2
+        svc._clear_relay(reader=reader)
+        svc._record_managed_relay_disconnect(registered_at)
+        assert svc._managed_disconnected_at == 100.0
+
+    now[0] = 115.1
+    assert svc.ensure_managed_relay_alive() is True
+    assert len(mgr.spawned) == 1
+    assert mgr.spawned[0]["replace"] is True
+
+
+def test_a_stable_reconnect_resets_grace_before_a_new_outage(
+        manager, monkeypatch):
+    from services import _relay_conn as conn_mod
+
+    now = [100.0]
+    monkeypatch.setattr(conn_mod.time, "monotonic", lambda: now[0])
+    mgr = manager(running=True)
+    svc = _managed_service()
+
+    assert svc.ensure_managed_relay_alive() is False
+    now[0] = 101.0
+    reader = object()
+    registered_at = svc._set_relay(reader, object(), object(), object())
+
+    now[0] += conn_mod._MANAGED_RECONNECT_STABLE_SECONDS + 0.1
+    assert svc.ensure_managed_relay_alive() is False
+    assert svc._managed_disconnected_at == 0.0
+
+    svc._clear_relay(reader=reader)
+    svc._record_managed_relay_disconnect(registered_at)
+    assert svc._managed_disconnected_at == now[0]
+    assert svc.ensure_managed_relay_alive() is False
+    assert mgr.spawned == []
+
+
 def test_an_operator_run_relay_is_never_touched(manager):
     """No `server_managed`: PawFlow owns no container and must not inspect one."""
     mgr = manager(running=False)

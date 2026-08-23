@@ -38,6 +38,10 @@ _MANAGED_RESPAWN_COOLDOWN_SECONDS = 60.0
 #: is considered wedged. A container that is actually gone is still respawned
 #: immediately.
 _MANAGED_RECONNECT_GRACE_SECONDS = 15.0
+#: A registration alone is not proof that the worker recovered: a wedged
+#: worker can repeatedly register and lose the socket a fraction of a second
+#: later.  Only a connection that survives this long resets the outage grace.
+_MANAGED_RECONNECT_STABLE_SECONDS = 5.0
 
 
 class _RelayConnMixin:
@@ -137,13 +141,13 @@ class _RelayConnMixin:
         if not self.config.get("server_managed"):
             return False
         if self.is_connected():
-            self._managed_disconnected_at = 0.0
+            self._clear_managed_disconnect_if_stable()
             return False
         with self._managed_respawn_lock:
             # A concurrent reconnect or respawn may have repaired it while this
             # caller waited for the lock.
             if self.is_connected():
-                self._managed_disconnected_at = 0.0
+                self._clear_managed_disconnect_if_stable()
                 return False
             now = time.monotonic()
             since = now - self._managed_respawn_at
@@ -164,7 +168,7 @@ class _RelayConnMixin:
                 # Inspecting Docker is not atomic with WS registration. The
                 # relay may have reconnected while that subprocess was running.
                 if self.is_connected():
-                    self._managed_disconnected_at = 0.0
+                    self._clear_managed_disconnect_if_stable()
                     return False
                 if not self._managed_disconnected_at:
                     self._managed_disconnected_at = now
@@ -182,7 +186,7 @@ class _RelayConnMixin:
             # Final destructive-action guard: a registration can land after the
             # container inspection or grace calculation.
             if self.is_connected():
-                self._managed_disconnected_at = 0.0
+                self._clear_managed_disconnect_if_stable()
                 return False
             logger.warning(
                 "RelayService %s: managed relay is %s%s — respawning it",
@@ -200,6 +204,34 @@ class _RelayConnMixin:
                 # its own error to raise if this does not bring the relay back.
                 return False
             return True
+
+    def _clear_managed_disconnect_if_stable(self) -> None:
+        """Forget an outage only after the newest connection proves stable."""
+        if not self._managed_disconnected_at:
+            return
+        now = time.monotonic()
+        with self._relay_pool_lock:
+            latest = self._relay_pool[-1] if self._relay_pool else None
+            connected_at = latest.get("connected_at") if latest else None
+        # Pool entries created before this field existed (or by narrow unit
+        # tests) represent an already-established connection.
+        if latest and (connected_at is None or
+                       now - connected_at >= _MANAGED_RECONNECT_STABLE_SECONDS):
+            self._managed_disconnected_at = 0.0
+
+    def _record_managed_relay_disconnect(self, connected_at: float) -> None:
+        """Carry outage grace across brief reconnects, reset it after stability."""
+        if not self.config.get("server_managed") or self.is_connected():
+            return
+        now = time.monotonic()
+        lived = now - connected_at if connected_at else 0.0
+        if lived >= _MANAGED_RECONNECT_STABLE_SECONDS:
+            # This was a healthy session followed by a new outage.
+            self._managed_disconnected_at = now
+        elif not self._managed_disconnected_at:
+            # First observed flap: start the grace at registration rather than
+            # letting each subsequent short registration restart the clock.
+            self._managed_disconnected_at = connected_at or now
 
     def is_connected(self) -> bool:
         with self._relay_pool_lock:
@@ -279,6 +311,7 @@ class _RelayConnMixin:
         # Windows) can have __slots__ and refuse new attributes.
         send_lock = asyncio.Lock()
         relay_tasks = set()
+        registered_at = 0.0
         # [relay-diag] Per-connection id so the cold-start flap cycles can be
         # correlated and overlaps (two live conns at once) spotted.
         try:
@@ -323,7 +356,8 @@ class _RelayConnMixin:
             async with send_lock:
                 await _ws_send_frame(writer, json.dumps({
                     'type': 'registered', 'relay_id': relay_id}).encode())
-            service._set_relay(reader, writer, loop, send_lock, relay_tasks)
+            registered_at = service._set_relay(
+                reader, writer, loop, send_lock, relay_tasks)
             self._spawn_ctx_sync(reg_info, relay_id)
             try:
                 from core.relay_key_integration import on_relay_connected
@@ -387,6 +421,7 @@ class _RelayConnMixin:
                 service._clear_relay(reader=reader)
             except Exception as e:
                 logger.debug('_clear_relay failed: %s', e, exc_info=True)
+            service._record_managed_relay_disconnect(registered_at)
             try:
                 from core.relay_key_integration import on_relay_disconnected
                 on_relay_disconnected(conn_state.get('relay_id') or service._service_id)
@@ -691,15 +726,14 @@ class _RelayConnMixin:
 
     def _set_relay(self, reader, writer, loop, send_lock, relay_tasks=None):
         """Add a relay connection to the pool."""
+        connected_at = time.monotonic()
         with self._relay_pool_lock:
             self._relay_pool.append({"reader": reader, "writer": writer,
                                       "loop": loop, "send_lock": send_lock,
-                                      "tasks": relay_tasks})
+                                      "tasks": relay_tasks,
+                                      "connected_at": connected_at})
             count = len(self._relay_pool)
             self._relay_available.set()
-        # Registration is the definitive recovery signal. Clear any grace
-        # started by transport retries before they can replace this connection.
-        self._managed_disconnected_at = 0.0
         logger.debug("Relay pool: %d connection(s) for '%s'", count, self._service_id)
         _invalidate_tool_relay_registry_cache()
         self.push_remote_fs_manifest()
@@ -714,6 +748,7 @@ class _RelayConnMixin:
                     "relay_id": self._service_id, "connected": True})
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        return connected_at
 
     def push_remote_fs_manifest(self, user_id: str = "") -> None:
         """Push the current conversation remote-FS manifest to all relay sockets."""

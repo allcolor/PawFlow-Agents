@@ -1,6 +1,7 @@
 """Tests for ServiceRegistry — CRUD, scope isolation, resolution chain, persistence, i18n."""
 
 import json
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1614,6 +1615,59 @@ class TestResourceConflict:
         with pytest.raises(ResourceConflictError):
             self.reg.install(self.SCOPE_USER, "alice", "ft2", "fileTracking",
                              config={"storage_path": "/data/tracking.json"})
+
+
+# ── Connection lifecycle ───────────────────────────────────────────
+
+
+def test_concurrent_connect_builds_only_one_live_instance(monkeypatch):
+    """A second connect claim returns; it never waits behind service I/O."""
+    from core.service_registry import ServiceDef, ServiceRegistry
+    import core.service_registry as mod
+    import tasks
+
+    registry = ServiceRegistry()
+    registry._definitions["alice"] = {
+        "relay": ServiceDef(
+            service_id="relay",
+            service_type="raceTestService",
+            scope="user",
+            scope_id="alice",
+            config={},
+            created_at=0.0,
+        )
+    }
+    connect_started = threading.Event()
+    release_connect = threading.Event()
+    instances = []
+
+    class SlowService:
+        def __init__(self, config):
+            instances.append(self)
+
+        def connect(self):
+            connect_started.set()
+            release_connect.wait(timeout=2)
+
+    monkeypatch.setattr(mod, "_resolve_service_class", lambda *_args: SlowService)
+    monkeypatch.setattr(tasks, "_register_all_services", lambda: None)
+
+    first = threading.Thread(
+        target=registry._connect_one, args=("alice", "relay"))
+    first.start()
+    assert connect_started.wait(timeout=1)
+
+    second = threading.Thread(
+        target=registry._connect_one, args=("alice", "relay"))
+    second.start()
+    second.join(timeout=1)
+    assert not second.is_alive()
+
+    release_connect.set()
+    first.join(timeout=1)
+    assert not first.is_alive()
+    assert instances == [registry._live_instances["alice"]["relay"]]
+    assert registry._connecting == set()
 
 
 # ── i18n ──────────────────────────────────────────────────────────

@@ -5,6 +5,12 @@ from core import server_relay_manager as srm
 from core import _relay_naming as _rn
 
 
+def test_managed_relay_uses_private_plain_ws_bridge():
+    assert srm._managed_relay_ws_url(
+        "host.docker.internal", 19990, "/ws/relay/MyWorkspace",
+    ) == "ws://host.docker.internal:19990/ws/relay/MyWorkspace"
+
+
 def test_managed_relay_spawn_log_does_not_include_secret_command():
     source = inspect.getsource(srm.ServerRelayManager.spawn_service_relay)
     assert 'cmd=%s' not in source

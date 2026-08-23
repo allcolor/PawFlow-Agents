@@ -46,6 +46,18 @@ from core._relay_naming import (
 logger = logging.getLogger(__name__)
 
 
+def _managed_relay_ws_url(host_ip: str, port: int, path: str) -> str:
+    """Return the private Docker-bridge endpoint for a managed relay.
+
+    Managed relays share a host with the server and authenticate with both an
+    ephemeral internal token and their relay registration token. Keeping this
+    high-volume FUSE channel on the private plain-WS bridge avoids routing it
+    through the listener's threaded TLS socket adapter. External relays still
+    use the listener's public TLS URL.
+    """
+    return f"ws://{host_ip}:{port}{path}"
+
+
 class ServerRelayManager:
     """Manages server-side relay containers (one per conversation)."""
 
@@ -115,7 +127,6 @@ class ServerRelayManager:
                 "Start the main listener first.")
         _main_listener = next(iter(_listeners.values()))
         main_port = _main_listener._port
-        ws_scheme = "wss" if _main_listener.is_ssl else "ws"
 
         # Read config live from global_parameters.json
         relay_image = kind_cfg["image"]
@@ -133,7 +144,8 @@ class ServerRelayManager:
         # HTTPListenerService — no separate port or path to configure.
         self._install_relay_service(user_id, relay_id, token, kind=kind)
 
-        ws_url_for_container = f"{ws_scheme}://{host_ip}:{main_port}{path}"
+        ws_url_for_container = _managed_relay_ws_url(
+            host_ip, main_port, path)
 
         # Mount relay runtime code staged from the PawFlow server image so relay
         # images stay clean dependency/runtime images instead of embedding code.
@@ -331,7 +343,6 @@ class ServerRelayManager:
                 "Start the main listener first.")
         _main_listener = next(iter(_listeners.values()))
         main_port = _main_listener._port
-        ws_scheme = "wss" if _main_listener.is_ssl else "ws"
 
         relay_image = kind_cfg["image"]
         relay_workspace = _cfg("server_relay_workspace")
@@ -343,7 +354,8 @@ class ServerRelayManager:
         code_dir = _prepare_relay_code_dir(runtime_dir)
         code_host_dir = _relay_runtime_host_dir(code_dir)
 
-        ws_url_for_container = f"{ws_scheme}://{host_ip}:{main_port}{path}"
+        ws_url_for_container = _managed_relay_ws_url(
+            host_ip, main_port, path)
         docker_run_args = [
             "--rm",
             "--detach",

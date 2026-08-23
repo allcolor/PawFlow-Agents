@@ -77,6 +77,10 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         # _live_instances[scope_id][service_id] = Service
         self._live_instances: Dict[str, Dict[str, Service]] = {}
         self._data_lock = threading.Lock()
+        # Non-blocking claims prevent concurrent callers from constructing two
+        # instances for the same service. The data lock is released before
+        # connect(), so unrelated work and tool calls never queue behind I/O.
+        self._connecting: set = set()
         self._loaded: set = set()  # scope_ids that have been loaded
         self._load_failed: set = set()  # scope_ids where load failed
         # Heartbeat
@@ -718,12 +722,16 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
 
     def _connect_one(self, scope_id: str, service_id: str) -> None:
         """Instantiate and connect a single service."""
+        connection_key = (scope_id, service_id)
         with self._data_lock:
             svc_def = self._definitions.get(scope_id, {}).get(service_id)
             if not svc_def:
                 return
             if service_id in self._live_instances.get(scope_id, {}):
                 return
+            if connection_key in self._connecting:
+                return
+            self._connecting.add(connection_key)
 
         try:
             _t0 = time.monotonic()
@@ -757,6 +765,9 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         except Exception as e:
             logger.error("Failed to connect service '%s' (scope_id=%s): %s",
                          service_id, scope_id[:8] if len(scope_id) > 8 else scope_id, e)
+        finally:
+            with self._data_lock:
+                self._connecting.discard(connection_key)
 
     def _disconnect_one(self, scope_id: str, service_id: str) -> None:
         """Disconnect and remove a live service instance."""

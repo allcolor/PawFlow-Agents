@@ -127,9 +127,11 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
     def _http_route_allows_plain(self, sock, client_address):
         """Peek at the request to decide if plain HTTP is allowed.
 
-        Returns True if the matched route is public AND private_only,
-        leaving the socket with the consumed bytes re-injected via a
-        wrapper. The caller should dispatch normally.
+        Public private-only routes are allowed as before. A server-managed
+        component may also use plain WS on the private Docker bridge when it
+        presents a live pawflow_internal token. The normal WS path checks that
+        token again after consuming the request, and relay registration still
+        requires the independent per-relay token.
         """
         try:
             # Peek the request line + Host header (~256 bytes is enough)
@@ -151,8 +153,32 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             if not _match:
                 return False
             entry = _match[0]
-            if not (getattr(entry, "public", False)
-                    and getattr(entry, "private_only", False)):
+            allowed = bool(
+                getattr(entry, "public", False)
+                and getattr(entry, "private_only", False))
+            if not allowed and path.startswith((
+                    "/ws/tools/",
+                    "/ws/relay/",
+                    "/ws/cc-interactive/events/",
+            )):
+                from core.internal_auth import validate_token
+                from core.relay_proxy_auth import is_private_ip
+
+                remote = client_address[0] if client_address else ""
+                if is_private_ip(remote):
+                    headers = {}
+                    for line in data.decode(
+                            "latin-1", errors="replace").split("\r\n")[1:]:
+                        if ":" in line:
+                            key, value = line.split(":", 1)
+                            headers[key.strip().lower()] = value.strip()
+                    for part in headers.get("cookie", "").split(";"):
+                        part = part.strip()
+                        if part.startswith("pawflow_internal="):
+                            allowed = validate_token(
+                                part[len("pawflow_internal="):])
+                            break
+            if not allowed:
                 return False
             # Reset to no-timeout so the dispatcher controls it
             try:

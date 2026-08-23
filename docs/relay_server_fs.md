@@ -186,6 +186,15 @@ Both container-spawning launch paths wire this automatically:
   up by `pawflow_relay.cli`'s default).
 Operators do not need to edit a compose file for these paths.
 
+Server-managed relays use a private plain-WebSocket endpoint on
+`host.docker.internal`. The listener accepts that endpoint only for private
+source addresses carrying a live ephemeral `pawflow_internal` token; the
+relay's independent registration token is still required immediately after
+the upgrade. External relays continue to use TLS. This keeps high-volume
+bidirectional FUSE traffic away from the listener's threaded TLS adapter
+without serializing socket reads and writes, so an idle receive cannot block
+tool calls.
+
 ### FUSE mount lifecycle vs. WS reconnects
 
 The FUSE filesystems are mounted **once** by the relay worker, before

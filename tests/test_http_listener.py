@@ -39,6 +39,58 @@ def _auth_headers(token):
     return {"Cookie": f"pawflow_token={token}"}
 
 
+def test_plain_ws_allows_private_internal_auth_only():
+    from types import SimpleNamespace
+    from core.internal_auth import mint_token, revoke_token
+
+    token = mint_token()
+    request = (
+        "GET /ws/relay/MyWorkspace HTTP/1.1\r\n"
+        "Host: host.docker.internal:19990\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Cookie: pawflow_internal={token}\r\n\r\n"
+    ).encode("latin-1")
+
+    class FakeSocket:
+        def __init__(self, payload):
+            self.payload = payload
+            self.timeouts = []
+
+        def settimeout(self, value):
+            self.timeouts.append(value)
+
+        def recv(self, _size, flags=0):
+            assert flags == socket.MSG_PEEK
+            return self.payload
+
+    class FakeRegistry:
+        @staticmethod
+        def match(method, path):
+            assert method == "GET"
+            assert path == "/ws/relay/MyWorkspace"
+            return SimpleNamespace(public=False, private_only=False), {}
+
+    server = object.__new__(_HTTPServerWithRegistry)
+    server._route_registry = FakeRegistry()
+    try:
+        valid = FakeSocket(request)
+        assert server._http_route_allows_plain(
+            valid, ("172.17.0.2", 12345)) is True
+        assert valid.timeouts[-1] is None
+
+        invalid = FakeSocket(request.replace(
+            token.encode("latin-1"), b"invalid-token"))
+        assert server._http_route_allows_plain(
+            invalid, ("172.17.0.2", 12345)) is False
+
+        public_source = FakeSocket(request)
+        assert server._http_route_allows_plain(
+            public_source, ("203.0.113.7", 12345)) is False
+    finally:
+        revoke_token(token)
+
+
 def _create_expired_test_session():
     """Create an expired SecurityManager session and return the token."""
     from core.security import SecurityManager, Role

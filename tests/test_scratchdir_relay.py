@@ -133,8 +133,8 @@ def test_relay_usage_allows_in_tree_symlinks_without_double_counting(
     assert current["observed_bytes"] == 5
 
 
-@pytest.mark.parametrize("target", ("outside", "loop"))
-def test_relay_usage_rejects_escaping_and_cyclic_symlinks(
+@pytest.mark.parametrize("target", ("outside", "broken", "loop"))
+def test_relay_usage_rejects_unsafe_symlinks(
         relay_root, tmp_path, target):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -146,6 +146,8 @@ def test_relay_usage_rejects_escaping_and_cyclic_symlinks(
         outside = relay_root / "outside.txt"
         outside.write_text("secret", encoding="utf-8")
         link.symlink_to(outside)
+    elif target == "broken":
+        link.symlink_to("missing")
     else:
         link.symlink_to("unsafe")
 

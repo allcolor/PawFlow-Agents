@@ -115,7 +115,7 @@ def _usage(files_root: Path, quota_bytes: int, quota_files: int) -> tuple[int, i
     for path in files_root.rglob("*"):
         if path.is_symlink():
             try:
-                target = path.resolve()
+                target = path.resolve(strict=True)
             except (OSError, RuntimeError) as exc:
                 raise ScratchDirRelayError(
                     "scratchdir_unsafe_entry",

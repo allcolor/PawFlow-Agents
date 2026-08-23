@@ -25,10 +25,11 @@ class _CsCacheMixin:
     def _read(self, cid: str, read_fn: Callable):
         """THE ONLY transcript read method.
 
-        Do not hold the conversation write lock while scanning the full
-        transcript. The file is append-only; a concurrent partial final row is
-        ignored by the JSON decoder and will be visible on the next read.
+        The first read may briefly take the conversation lock to physically
+        remove legacy runtime secret keys. Normal reads do not hold the write
+        lock while scanning the append-only transcript.
         """
+        self._scrub_persisted_secret_runtime_values(cid)
         log = self._transcript_log(cid)
         if not log.exists():
             return read_fn(iter([]))

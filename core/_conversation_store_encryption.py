@@ -142,6 +142,8 @@ class _CsEncryptionMixin:
                 desc = self._encryption_descriptor(cid)
                 desc["migrated"] = True
                 self._set_encryption_descriptor(cid, desc)
+        self._secret_runtime_scrubbed.discard(cid)
+        self._scrub_persisted_secret_runtime_values(cid)
         self._invalidate_enc_caches(cid)
         return True
 

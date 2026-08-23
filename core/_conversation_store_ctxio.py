@@ -368,6 +368,8 @@ class _CsCtxIoMixin:
         message was MINTED, not when the writer happened to flush it —
         matching what the user saw in the live SSE stream.
         """
+        if cid:
+            self._scrub_persisted_secret_runtime_values(cid)
         log = self._content_seg(cid, path) if cid else SegmentedJsonl(path)
         if not log.exists():
             return []

@@ -58,20 +58,29 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         return self._segment_paths()
 
     def iter_rows(self) -> Iterator[Dict[str, Any]]:
+        from core.secret_sanitization import strip_secret_runtime_values
+
         codec = self.codec
         for path in self.iter_paths():
             for row in self._iter_file(path):
-                yield codec.decode(row) if codec is not None else row
+                decoded = codec.decode(row) if codec is not None else row
+                yield strip_secret_runtime_values(decoded)
 
     def iter_rows_reverse(self) -> Iterator[Dict[str, Any]]:
+        from core.secret_sanitization import strip_secret_runtime_values
+
         self._flush_own_append_handles()
         codec = self.codec
         paths = self._segment_paths()
         for path in reversed(paths):
             for row in self._iter_file_reverse(path):
-                yield codec.decode(row) if codec is not None else row
+                decoded = codec.decode(row) if codec is not None else row
+                yield strip_secret_runtime_values(decoded)
 
     def append_dicts(self, rows: Iterable[Dict[str, Any]]) -> None:
+        from core.secret_sanitization import strip_secret_runtime_values
+
+        rows = (strip_secret_runtime_values(row) for row in rows)
         if self.codec is not None:
             rows = [self.codec.encode(row) for row in rows]
         lines = [json.dumps(row, ensure_ascii=False) + "\n" for row in rows]
@@ -188,6 +197,9 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         )
 
     def replace_dicts(self, rows: Iterable[Dict[str, Any]]) -> None:
+        from core.secret_sanitization import strip_secret_runtime_values
+
+        rows = (strip_secret_runtime_values(row) for row in rows)
         if self.codec is not None:
             rows = (self.codec.encode(row) for row in rows)
         self.replace_lines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
@@ -236,7 +248,13 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         if target_idx < 0:
             return {"found": False, "kept_rows": 0, "boundary": None}
 
-        kept_target_rows = target_rows[:boundary_row_idx + 1]
+        from core.secret_sanitization import strip_secret_runtime_values
+
+        kept_target_rows = [
+            strip_secret_runtime_values(row)
+            for row in target_rows[:boundary_row_idx + 1]
+        ]
+        boundary = strip_secret_runtime_values(boundary)
         target_path = paths[target_idx]
         self._replace_rows_in_path(target_path, kept_target_rows)
 
@@ -362,11 +380,42 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
             self.replace_dicts(out)
         return changed
 
+    def scrub_secret_runtime_values(self) -> tuple[int, int]:
+        """Physically remove runtime secret keys from existing segments.
+
+        Returns ``(changed_rows, removed_keys)`` and never logs row content.
+        """
+        from core.secret_sanitization import strip_secret_runtime_values_counted
+
+        self._flush_own_append_handles()
+        changed_rows = 0
+        removed_keys = 0
+        codec = self.codec
+        for path in self._segment_paths():
+            raw_rows = list(self._iter_file(path))
+            stored_rows = []
+            path_changed = False
+            for raw in raw_rows:
+                decoded = codec.decode(raw) if codec is not None else raw
+                clean, removed = strip_secret_runtime_values_counted(decoded)
+                if removed:
+                    changed_rows += 1
+                    removed_keys += removed
+                    path_changed = True
+                stored_rows.append(
+                    codec.encode(clean) if codec is not None else clean)
+            if path_changed:
+                self._replace_rows_in_path(path, stored_rows)
+        return changed_rows, removed_keys
+
     def patch_first_by_msg_id(self, msg_id: str,
                               fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Patch one message row without rewriting every segment."""
         if not msg_id or not fields or not self.exists():
             return None
+        from core.secret_sanitization import strip_secret_runtime_values
+
+        fields = strip_secret_runtime_values(fields)
         paths = self._segment_paths()
         for path in reversed(paths):
             self.flush_append_handles(path)
@@ -382,6 +431,7 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
                 # re-encode for storage. msg_id is clear, so the match above
                 # needs no key.
                 decoded = codec.decode(row) if codec is not None else row
+                decoded = strip_secret_runtime_values(decoded)
                 updated = dict(decoded)
                 updated.update(fields)
                 changed = updated != decoded

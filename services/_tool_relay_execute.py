@@ -1,7 +1,8 @@
 """ToolRelayService tool execute / do_execute / secrets env."""
 
-import logging
+import copy
 import json
+import logging
 import threading
 import time
 
@@ -435,6 +436,11 @@ class _ToolRelayExecuteMixin:
 
     def _do_execute(self, request_id, tool_name, arguments,
                     user_id, conversation_id, agent_name):
+        # Never mutate the caller-owned tool-call arguments. Provider adapters
+        # retain that object for their transcript, so adding runtime secrets to
+        # it exposes plaintext after the call completes.
+        if isinstance(arguments, dict):
+            arguments = copy.deepcopy(arguments)
         total_started = time.perf_counter()
         registry_started = time.perf_counter()
         registry = self._get_registry(user_id, conversation_id, agent_name)
@@ -589,16 +595,23 @@ class _ToolRelayExecuteMixin:
             return {"type": "result", "request_id": request_id,
                     "data": "Error: tool approval check failed; denied for safety."}
 
+        # Keep approved/public arguments separate from the private execution
+        # payload. Only the latter may ever contain resolved secret material.
+        public_arguments = (
+            copy.deepcopy(arguments) if isinstance(arguments, dict) else arguments)
+        execution_arguments = (
+            copy.deepcopy(arguments) if isinstance(arguments, dict) else arguments)
+
         # Resolve env vars (all variables + secrets) and secret values (for redaction)
         _secret_values = set()
         _secret_names = {}
         _all_env = {}
         _secret_cid = _perm_cid
-        if user_id and isinstance(arguments, dict):
+        if user_id and isinstance(execution_arguments, dict):
             try:
                 secrets_started = time.perf_counter()
                 _needs_env = (tool_name in self._ENV_SECRET_TOOLS
-                              or self._args_reference_env(arguments))
+                              or self._args_reference_env(execution_arguments))
                 # One fingerprint per execution, shared by the env and
                 # redaction caches — it is their staleness check (secrets
                 # added mid-conversation must reach the very next call).
@@ -612,7 +625,7 @@ class _ToolRelayExecuteMixin:
                 if _needs_env and _all_env:
                     # Inject as process env vars for shell tools
                     if tool_name in {"bash", "execute_script"}:
-                        arguments["_secret_env"] = _all_env
+                        execution_arguments["_secret_env"] = _all_env
                     # Resolve $VAR / ${VAR} in string arguments
                     # bash: skip 'command' (shell resolves $VAR itself)
                     # execute_script: skip 'code' (Python uses os.environ)
@@ -621,7 +634,8 @@ class _ToolRelayExecuteMixin:
                         _skip = {"command"}
                     elif tool_name == "execute_script":
                         _skip = {"code"}
-                    _resolve_vars_in_args(arguments, _all_env, skip_keys=_skip)
+                    _resolve_vars_in_args(
+                        execution_arguments, _all_env, skip_keys=_skip)
                 # Only secrets → redaction
                 _secret_values, _secret_names = self._cached_secret_values(
                     user_id, _secret_cid, fingerprint=_fp,
@@ -662,12 +676,13 @@ class _ToolRelayExecuteMixin:
             try:
                 handler = registry.get(tool_name)
                 from core.handlers.meta_tools import _normalize_tool_args
-                if handler and isinstance(arguments, dict):
-                    arguments = _normalize_tool_args(tool_name, arguments)
+                if handler and isinstance(execution_arguments, dict):
+                    execution_arguments = _normalize_tool_args(
+                        tool_name, execution_arguments)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             tool_exec_started = time.perf_counter()
-            result = registry.execute(tool_name, arguments)
+            result = registry.execute(tool_name, execution_arguments)
             tool_exec_ms = (time.perf_counter() - tool_exec_started) * 1000
             if tool_name in {
                     "create_tool", "delete_tool", "manage_resource",
@@ -704,7 +719,9 @@ class _ToolRelayExecuteMixin:
                 _post = _hook_runner.run("post_tool_call", {
                     "tool_call_id": request_id,
                     "tool_name": tool_name,
-                    "arguments": arguments if isinstance(arguments, dict) else {},
+                    "arguments": (
+                        public_arguments
+                        if isinstance(public_arguments, dict) else {}),
                     "result": result_str,
                 })
                 if _post.get("decision") == "replace":

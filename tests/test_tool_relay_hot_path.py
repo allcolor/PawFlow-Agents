@@ -296,7 +296,11 @@ def test_bash_still_receives_secret_environment(monkeypatch):
     monkeypatch.setattr(_trb_mod, "resolve_secrets_env", _env)
     monkeypatch.setattr(_trb_mod, "resolve_secret_values", lambda *_args: (set(), {}))
 
-    result = svc._do_execute("r1", "bash", {"command": "echo $TOKEN"},
+    public_args = {
+        "command": "echo $TOKEN",
+        "metadata": {"reference": "$TOKEN"},
+    }
+    result = svc._do_execute("r1", "bash", public_args,
                              "alice", "conv1", "assistant")
     second = svc._do_execute("r2", "bash", {"command": "echo $TOKEN"},
                              "alice", "conv1", "assistant")
@@ -305,8 +309,61 @@ def test_bash_still_receives_secret_environment(monkeypatch):
     assert second["data"] == "ok"
     assert registry.executed_args[0]["_secret_env"] == {"TOKEN": "TOPSECRET"}
     assert registry.executed_args[0]["command"] == "echo $TOKEN"
+    assert registry.executed_args[0]["metadata"] == {"reference": "TOPSECRET"}
+    assert public_args == {
+        "command": "echo $TOKEN",
+        "metadata": {"reference": "$TOKEN"},
+    }
     assert len(env_calls) == 1
     assert len(fingerprint_calls) == 2
+
+
+def test_post_tool_hook_never_receives_private_secret_environment(monkeypatch):
+    import core.agent_hooks as hooks_mod
+    from core.tool_approval import ToolApprovalGate
+
+    ToolRelayService.clear_runtime_caches()
+    registry = _Registry("ok")
+    svc = ToolRelayService({})
+    monkeypatch.setattr(svc, "_get_registry", lambda *args: registry)
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_has_hooks", classmethod(lambda *args: True))
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_extra_fast",
+        staticmethod(lambda _cid, key, default=None: _fast_auto_permissions(key, default)))
+    monkeypatch.setattr(ToolApprovalGate, "_is_catastrophic_command", lambda _cmd: False)
+    monkeypatch.setattr(
+        ToolRelayService, "_secret_config_fingerprint",
+        classmethod(lambda cls, uid, conv, agent_name="": ("fp",)))
+    monkeypatch.setattr(
+        _trb_mod, "resolve_secrets_env", lambda *_args: {"TOKEN": "CANARY_SECRET"})
+    monkeypatch.setattr(
+        _trb_mod, "resolve_secret_values", lambda *_args: (set(), {}))
+    events = []
+
+    class _HookRunner:
+        def __init__(self, **_kwargs):
+            pass
+
+        def run(self, event, payload, **_kwargs):
+            events.append((event, payload))
+            return {"decision": "allow"}
+
+    monkeypatch.setattr(hooks_mod, "AgentHookRunner", _HookRunner)
+    original = {"command": "printf %s $TOKEN", "nested": {"ref": "$TOKEN"}}
+
+    result = svc._do_execute(
+        "r1", "bash", original, "alice", "conv1", "assistant")
+
+    assert result["data"] == "ok"
+    assert registry.executed_args[0]["_secret_env"] == {
+        "TOKEN": "CANARY_SECRET"}
+    assert registry.executed_args[0]["nested"] == {"ref": "CANARY_SECRET"}
+    assert original == {"command": "printf %s $TOKEN", "nested": {"ref": "$TOKEN"}}
+    post_payload = next(payload for event, payload in events
+                        if event == "post_tool_call")
+    assert post_payload["arguments"] == original
+    assert "_secret_env" not in post_payload["arguments"]
 
 
 def test_subconversation_tool_execution_uses_parent_runtime_scope(monkeypatch):

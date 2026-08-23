@@ -84,6 +84,7 @@ class ConversationStore(
         self._context_usage_repair_mtime: Dict[str, float] = {}
         self._cid_user: Dict[str, str] = {}  # cid -> user_id (fast lookup, no scan)
         self._enc_enabled: Dict[str, bool] = {}  # cid -> encryption-enabled (cached)
+        self._secret_runtime_scrubbed = set()
         self._loaded = False
         try:
             _csb._HOT_METADATA_EXECUTOR.submit(lambda: None)
@@ -118,6 +119,39 @@ class ConversationStore(
             if cid not in self._extras_locks:
                 self._extras_locks[cid] = threading.RLock()
             return self._extras_locks[cid]
+
+    def _scrub_persisted_secret_runtime_values(self, cid: str) -> bool:
+        """Remove legacy runtime secret keys once before content is loaded.
+
+        Returns ``False`` for a locked encrypted conversation so the scrub is
+        retried after unlock. Only counts are logged; row content is never
+        included in diagnostics.
+        """
+        if cid in self._secret_runtime_scrubbed:
+            return True
+        if self._is_encryption_enabled(cid) and self._codec_for(cid) is None:
+            return False
+        with self._get_conv_lock(cid):
+            if cid in self._secret_runtime_scrubbed:
+                return True
+            if self._is_encryption_enabled(cid) and self._codec_for(cid) is None:
+                return False
+            changed_rows = 0
+            removed_keys = 0
+            for path in self._content_log_paths(cid):
+                log = self._content_seg(cid, path)
+                if not log.exists():
+                    continue
+                rows, keys = log.scrub_secret_runtime_values()
+                changed_rows += rows
+                removed_keys += keys
+            self._secret_runtime_scrubbed.add(cid)
+            if changed_rows:
+                self._invalidate_ctx_cache(cid)
+                logger.warning(
+                    "Removed runtime secret material from conversation "
+                    "storage: rows=%d keys=%d", changed_rows, removed_keys)
+            return True
 
 
 

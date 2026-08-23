@@ -149,8 +149,84 @@ Motion:
 - Architecture diagram with moving relay packets.
 - Respect `prefers-reduced-motion`.
 
-## Implementation Recommendation
+## Implemented Information Architecture
 
-Next implementation step: replace the current `index.html` and `style.css` with a static multi-page website, then add `quickstart.html`, `docs.html`, `howtos.html`, `faq.html`, and `site.js`.
+The public website now separates product orientation from technical depth:
 
-No build system is needed for this phase. Verification can be done with `python -m http.server` from `pawflow-website` and browser screenshots at desktop and mobile widths.
+- `index.html`: a concise product story built around Relays, the shared durable runtime, and agents plus deterministic Flows.
+- `product.html`: the product definition, runtime architecture, shared state, agent/Flow division of labor, and interoperability.
+- `features.html`: the complete capability catalog grouped by product concern instead of presented as equal homepage sections.
+- `flows.html`: Flow Editor, Runtime Viewer, queues, backpressure, checkpoints, retries, subflows, and agent-generated workflows.
+- `relays.html`: the controlled boundary to real filesystems, shells, browsers, desktops, services, and GPU hosts.
+- `integrations.html`: models, clients, MCP, A2A, AG-UI, and infrastructure compatibility.
+- `use-cases.html`: coding, multi-machine operations, self-hosted workspaces, automation, UI control, media, and private AI operations.
+- `quickstart.html`, `docs.html`, `howtos.html`, and `faq.html`: installation and implementation depth.
+
+The homepage deliberately keeps only seven sections: Hero, Why PawFlow, Architecture, Demos, Stack, Comparison, and Install. Detailed capabilities belong on a specialized page and receive at most one short homepage mention.
+
+## Visual Contract
+
+The visual system keeps PawFlow's graphite and cyan infrastructure identity. The homepage uses a single technical stage, grid depth, runtime routes, restrained motion, and strong type hierarchy. This cadence is inspired by contemporary technical launch pages such as Forge, but the component shapes, copy, diagrams, and product identity remain PawFlow-specific.
+
+Motion must remain functional and lightweight:
+
+- route packets can move through the runtime diagram;
+- content may reveal on scroll;
+- cards may use small depth changes;
+- all non-essential animation must stop under `prefers-reduced-motion`.
+
+On wide desktop viewports with a precise pointer, the homepage becomes a
+zoomable narrative canvas. It is deliberately hybrid rather than a sequence of
+identical zooms:
+
+- Hero to About, Architecture to Videos, and Comparison to Install use nested
+  inception zooms;
+- About to Architecture and Videos through Comparison use vertical canvas
+  pans;
+- transitions use a short blur crossfade, then settle to a completely sharp
+  scene;
+- one complete wheel/trackpad gesture advances exactly one scene; inertial
+  events stay locked until the scene is sharp and the gesture has been idle
+  for one second;
+- every scene is top-aligned just below the fixed header instead of vertically
+  centered, avoiding decorative empty space above short content;
+- the final Install scene zooms into a visual Hero copy, then resets to the
+  original Hero without a visible seam.
+
+Every scene must fit inside the available viewport as one complete artboard.
+The runtime measures the natural scene content and applies a fit scale that
+accounts for the persistent section navigator. A scene may never require an
+unreachable inner scroll area. Only the current and next scenes remain
+rendered; all deeper scenes use `content-visibility: hidden` so the nested
+camera does not compound browser load.
+
+The fixed scene navigator keeps direct anchors for Home, About, Architecture,
+Videos, Stack, Comparison, and Install, plus a direct How-tos link. Keyboard
+Page Up/Page Down, arrows, Home, End, and Space mirror wheel navigation.
+
+On mobile, the first viewport prioritizes the H1, one sentence, primary and secondary actions, then the single runtime visual. It must not reintroduce a logo animation, sound control, help banner, install command, or capability badge wall ahead of the product story.
+
+Mobile uses a full-screen chapter canvas rather than ordinary page scrolling.
+Each short chapter fits as one stable scene; a chapter that genuinely needs
+more room scrolls vertically inside that scene. A swipe can trigger the next
+zoom or pan only when it starts at the current chapter's bottom, so reaching the
+last line and changing chapters are always two distinct gestures. Reverse
+navigation follows the same rule at the top, and the final chapter loops to the
+first. Reduced-motion visitors receive the same complete content as a normal
+document without this canvas.
+
+The How-tos page reuses this visual language without sacrificing complete
+documentation. Its animated canvas is a nine-scene category map; every card
+opens the canonical recipe in a normal vertical reader. Existing direct recipe
+anchors remain valid, while category anchors navigate the canvas. Mobile and
+reduced-motion users receive the same map as a normal scrolling document.
+
+The site includes a looping ambient soundtrack at low volume. Audible autoplay
+is requested by default; when a browser blocks it before user activation, the
+same playback request is retried on the first pointer, keyboard, or wheel
+gesture. A persistent, accessible sound toggle lets the visitor opt out, and
+playback pauses whenever the page is hidden. The current position is carried
+across internal full-page navigations within the same tab, including the short
+page-load transit time, so the static multi-page site resumes almost seamlessly.
+
+No build system is needed for this phase. Verification uses structural tests plus a local static server and browser screenshots at desktop and mobile widths.

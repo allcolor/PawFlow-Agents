@@ -270,7 +270,7 @@ def test_external_secret_delivery_is_documented_across_product_surfaces():
         encoding="utf-8")
     docs_hub = (root / "pawflow-website" / "docs.html").read_text(
         encoding="utf-8")
-    homepage = (root / "pawflow-website" / "index.html").read_text(
+    features = (root / "pawflow-website" / "features.html").read_text(
         encoding="utf-8")
 
     for provider in (
@@ -282,4 +282,5 @@ def test_external_secret_delivery_is_documented_across_product_surfaces():
     assert "one or more attached agents" in readme
     assert "Use local or external secrets" in howto
     assert "External secret provider reference" in docs_hub
-    assert "Secrets can stay in your vault" in homepage
+    assert "secret providers" in features
+    assert 'id="security"' in features

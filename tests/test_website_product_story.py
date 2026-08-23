@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+import re
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import urlsplit
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SITE = ROOT / "pawflow-website"
+PRODUCT_PAGES = (
+    "index.html",
+    "product.html",
+    "features.html",
+    "flows.html",
+    "relays.html",
+    "integrations.html",
+    "use-cases.html",
+)
+ALL_PAGES = PRODUCT_PAGES + (
+    "quickstart.html",
+    "docs.html",
+    "howtos.html",
+    "faq.html",
+)
+
+
+class PageParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.ids: set[str] = set()
+        self.links: list[str] = []
+        self.media: list[str] = []
+        self.scripts: list[str] = []
+        self.h1_count = 0
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        values = dict(attrs)
+        if element_id := values.get("id"):
+            self.ids.add(element_id)
+        if tag == "a" and (href := values.get("href")):
+            self.links.append(href)
+        if tag in {"img", "source", "video"} and (src := values.get("src")):
+            self.media.append(src)
+        if tag == "script" and (src := values.get("src")):
+            self.scripts.append(src)
+        if tag == "h1":
+            self.h1_count += 1
+
+
+def parse_page(name: str) -> PageParser:
+    parser = PageParser()
+    parser.feed((SITE / name).read_text(encoding="utf-8"))
+    parser.close()
+    return parser
+
+
+def local_target(value: str) -> tuple[Path, str] | None:
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc or value.startswith(("mailto:", "tel:", "data:")):
+        return None
+    path = parsed.path
+    if not path:
+        return None
+    return SITE / path, parsed.fragment
+
+
+@pytest.mark.parametrize("name", ALL_PAGES)
+def test_website_pages_have_one_heading_and_valid_local_targets(name: str) -> None:
+    parser = parse_page(name)
+
+    assert parser.h1_count == 1
+    assert "site.js?v=a30" in parser.scripts
+
+    references = parser.links + parser.scripts
+    if name in PRODUCT_PAGES:
+        references += parser.media
+
+    for value in references:
+        target = local_target(value)
+        if target is None:
+            continue
+        path, fragment = target
+        assert path.exists(), f"{name} references missing local target {value}"
+        if fragment and path.suffix == ".html":
+            target_parser = parse_page(path.name)
+            assert fragment in target_parser.ids, (
+                f"{name} references missing fragment {value}"
+            )
+
+
+def test_homepage_tells_the_product_story_without_old_hero_clutter() -> None:
+    html = (SITE / "index.html").read_text(encoding="utf-8")
+    parser = parse_page("index.html")
+
+    assert "AI agents that work on your real machines." in html
+    assert "Work where your infrastructure already is" in html
+    assert "One durable runtime" in html
+    assert "Reason with agents. Run with flows." in html
+    assert "Install in 5 minutes" in html
+    assert {"why", "architecture", "demos", "stack", "comparison", "install"} <= parser.ids
+
+    hero = html.split('<section class="landing-hero"', 1)[1].split("</section>", 1)[0]
+    for removed_element in (
+        "hero-logo-video",
+        "hero-logo-sound",
+        "hero-help-note",
+        "hero-install",
+        "signal-row",
+        "product-strip",
+    ):
+        assert removed_element not in hero
+
+
+def test_homepage_uses_three_real_demo_assets() -> None:
+    html = (SITE / "index.html").read_text(encoding="utf-8")
+
+    assert "chatgpt-mcp-live-workspace.mp4" in html
+    assert "desktop-relay-session.webp" in html
+    assert "agent-to-flow-pattern.webp" in html
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    (
+        ("product.html", "The model is a component. The runtime is the product."),
+        ("features.html", "Capabilities built around one shared runtime."),
+        ("flows.html", "Turn repeatable agent work into durable visual flows."),
+        ("relays.html", "Your real machine. Your tools. Your boundary."),
+        ("integrations.html", "Bring your model. Expose one runtime."),
+        ("use-cases.html", "Agentic work where your infrastructure already is."),
+    ),
+)
+def test_secondary_pages_have_a_distinct_job(name: str, expected: str) -> None:
+    assert expected in (SITE / name).read_text(encoding="utf-8")
+
+
+def test_homepage_motion_respects_user_preference() -> None:
+    css = (SITE / "style.css").read_text(encoding="utf-8")
+    script = (SITE / "site.js").read_text(encoding="utf-8")
+
+    assert "@media (prefers-reduced-motion: reduce)" in css
+    assert ".stage-link i" in css
+    assert "animation: none !important" in css
+    assert ".zoom-story-active" in css
+    assert "initZoomStory" in script
+    assert "loopClone" in script
+    assert "const choreography" in script
+    assert "'pan'" in script
+    assert "'zoom'" in script
+    assert "--scene-content-fit" in script
+    assert "--scene-blur" in script
+    assert "wheelLocked" in script
+    assert "unlockAfterIdle" in script
+    assert "lastWheelEvent < 1000" in script
+    assert "window.addEventListener('wheel', onWheel, { passive: false })" in script
+
+
+def test_mobile_story_uses_boundary_aware_scrollable_scenes() -> None:
+    css = (SITE / "style.css").read_text(encoding="utf-8")
+    script = (SITE / "site.js").read_text(encoding="utf-8")
+
+    assert "initMobileStoryCanvas" in script
+    assert "(max-width: 999px) and (prefers-reduced-motion: no-preference)" in script
+    assert "atBottom: scene.scrollTop + scene.clientHeight >= scene.scrollHeight - 2" in script
+    assert "if (delta < 0 && start.atBottom) move(1)" in script
+    assert "if (delta > 0 && start.atTop) move(-1)" in script
+    assert "(current + direction + scenes.length) % scenes.length" in script
+    assert ".mobile-story-active .mobile-story-scene" in css
+    assert "overflow-y: auto" in css
+    assert "mobile-zoom-in" in css
+    assert "mobile-pan-in-forward" in css
+    assert "mobile-reader-arrive" in css
+
+
+def test_homepage_keeps_direct_navigation_around_the_zoom_story() -> None:
+    html = (SITE / "index.html").read_text(encoding="utf-8")
+
+    for target in ("product", "why", "architecture", "demos", "stack", "comparison", "install"):
+        assert f'href="#{target}"' in html
+    assert "How-tos" in html
+    assert "Videos" in html
+
+
+def test_howto_canvas_indexes_every_recipe_and_keeps_full_reader() -> None:
+    html = (SITE / "howtos.html").read_text(encoding="utf-8")
+    script = (SITE / "site.js").read_text(encoding="utf-8")
+    recipe_ids = re.findall(r'<article[^>]*class="[^"]*\brecipe\b[^"]*"[^>]*\bid="([^"]+)"', html)
+
+    assert len(recipe_ids) == 51
+    assert len(recipe_ids) == len(set(recipe_ids))
+    assert 'data-howto-canvas' in html
+    assert 'class="howto-reader"' in html
+    assert html.count('data-zoom-target') == 9
+    assert "buildHowtoCanvas" in script
+    assert "howtos.html?read=" in script
+    for recipe_id in recipe_ids:
+        assert f"'{recipe_id}'" in script
+
+
+def test_site_soundtrack_autoplays_with_a_user_control() -> None:
+    script = (SITE / "site.js").read_text(encoding="utf-8")
+    css = (SITE / "style.css").read_text(encoding="utf-8")
+    soundtrack = SITE / "assets/media/audio/music_suno_brand.mp3"
+
+    assert soundtrack.stat().st_size > 1_000_000
+    assert "initAmbientSound" in script
+    assert "audio.autoplay = true" in script
+    assert "audio.loop = true" in script
+    assert "pawflow-site-sound" in script
+    assert "pawflow-site-sound-playback" in script
+    assert "sessionStorage.setItem(playbackKey" in script
+    assert "audio.currentTime = (savedPlayback.position + transit) % audio.duration" in script
+    assert "window.addEventListener('pagehide'" in script
+    assert "resumeOnGesture" in script
+    assert "event.target.closest('.site-sound-toggle')" in script
+    assert "toggle.classList.contains('is-blocked')" in script
+    assert "audio.addEventListener('playing'" in script
+    assert ".site-sound-toggle" in css
+
+
+def test_release_fallback_matches_current_release() -> None:
+    script = (SITE / "site.js").read_text(encoding="utf-8")
+
+    assert "version: '1.0.0-beta.241'" in script

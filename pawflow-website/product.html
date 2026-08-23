@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#090b0f">
+  <meta name="description" content="See how PawFlow connects AI agents, durable context, deterministic flows, and real infrastructure through one self-hosted runtime.">
+  <title>PawFlow Product — One runtime for agents and flows</title>
+  <link rel="canonical" href="https://pawflow.allcolor.org/product.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="PawFlow">
+  <meta property="og:title" content="PawFlow Product — One runtime for agents and flows">
+  <meta property="og:description" content="See how PawFlow connects AI agents, durable context, deterministic flows, and real infrastructure through one self-hosted runtime.">
+  <meta property="og:url" content="https://pawflow.allcolor.org/product.html">
+  <meta property="og:image" content="https://pawflow.allcolor.org/assets/media/hero/pawflow-runtime-hero.webp">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="PawFlow Product — One runtime for agents and flows">
+  <meta name="twitter:description" content="See how PawFlow connects AI agents, durable context, deterministic flows, and real infrastructure through one self-hosted runtime.">
+  <link rel="icon" href="assets/logo.png" type="image/png">
+  <link rel="stylesheet" href="style.css?v=a30">
+</head>
+<body data-page="product">
+  <header class="site-header" data-header>
+    <a class="brand" href="index.html" aria-label="PawFlow home"><img src="assets/logo.png" alt="" class="brand-mark"><span>PawFlow</span></a>
+    <button class="nav-toggle" type="button" data-nav-toggle aria-label="Open navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+    <nav class="site-nav" data-nav aria-label="Primary navigation">
+      <a href="product.html" aria-current="page">Product</a>
+      <a href="features.html">Features</a>
+      <a href="flows.html">Flows</a>
+      <a href="docs.html">Docs</a>
+      <a href="quickstart.html">Quickstart</a>
+      <a class="nav-github" href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a>
+    </nav>
+  </header>
+  <main>
+    <section class="page-hero"><div class="container split"><div data-reveal><p class="eyebrow">Product</p><h1>One runtime from reasoning to reliable execution.</h1><p class="hero-copy">PawFlow is a self-hosted AI harness and runtime that connects agents to your real machines, shared context, and durable workflows.</p><div class="hero-actions"><a class="button button-primary" href="quickstart.html">Run PawFlow in 5 minutes</a><a class="button button-secondary" href="#architecture">See the architecture</a></div></div><figure class="visual-card" data-reveal><img src="assets/media/hero/pawflow-runtime-hero.webp" alt="PawFlow runtime connecting clients to real infrastructure"><figcaption>Clients and external systems share one control plane; Relays execute next to the work.</figcaption></figure></div></section>
+    <section class="section surface" id="architecture"><div class="container"><div class="section-head" data-reveal><p class="eyebrow">Architecture</p><h2>A durable control plane with a controlled execution boundary.</h2><p>Models can change. Clients can change. The runtime keeps the agents, state, policies, and workflows together.</p></div><div class="architecture-diagram" data-reveal><div class="node clients">Clients<br><span>Web · CLI · VS Code · Android · Telegram · API</span></div><div class="connector"></div><div class="node server">PawFlow Runtime<br><span>agents · context · flows · auth · permissions</span></div><div class="connector"></div><div class="node relay">Relay<br><span>filesystem · shell · browser · desktop · services</span></div><div class="connector"></div><div class="node workspace">Your infrastructure<br><span>workstation · repo · VPS · GPU host</span></div></div></div></section>
+    <section class="section" id="runtime"><div class="container"><div class="section-head" data-reveal><p class="eyebrow">Shared durable runtime</p><h2>The model is a component. The runtime is the product.</h2></div><div class="feature-grid"><article class="feature" data-reveal><span>01</span><h3>Persistent context</h3><p>Memory, knowledge, diary, todos, scratchpads, project context, and conversations keep the right lifetime across sessions.</p></article><article class="feature" data-reveal><span>02</span><h3>Reusable capability</h3><p>Agents, tools, skills, providers, and permissions are configured once and shared across clients.</p></article><article class="feature" data-reveal><span>03</span><h3>Continuous workspace</h3><p>Continue the same conversation from Web, terminal, VS Code, Android, Telegram, API, or an embedded application.</p></article></div></div></section>
+    <section class="section surface"><div class="container split"><div data-reveal><p class="eyebrow">Agents + flows</p><h2>Use reasoning where it helps. Use structure where reliability matters.</h2><p class="lead">Agents explore, inspect, code, delegate, and decide. Flows schedule, route, retry, transform, persist, recover, and deliver.</p><div class="bullet-stack"><div><strong>Agent designs</strong><span>Explore an unfamiliar task, use real tools, and shape the right procedure.</span></div><div><strong>Flow executes</strong><span>Make the repeatable path visible through tasks, queues, checkpoints, retries, and backpressure.</span></div><div><strong>Runtime observes</strong><span>Inspect progress and recover execution without throwing away durable state.</span></div></div><a class="inline-link" href="flows.html">Explore the Flow engine →</a></div><figure class="visual-card" data-reveal><img src="assets/media/diagrams/agent-to-flow-pattern.webp" alt="Agent work becoming a durable PawFlow Flow"><figcaption>Agent → Flow Editor → deployed Flow → Runtime Viewer.</figcaption></figure></div></section>
+    <section class="section"><div class="container split reverse"><figure class="visual-card" data-reveal><img src="assets/media/diagrams/published-mcp-read-only.webp" alt="External AI clients reaching a workspace through PawFlow MCP and a Relay"><figcaption>The same runtime can be exposed to other AI systems without duplicating its state.</figcaption></figure><div data-reveal><p class="eyebrow">Interoperability</p><h2>One runtime, several interfaces.</h2><div class="bullet-stack"><div><strong>MCP</strong><span>Tools and context for LLM clients, including read-only live workspaces.</span></div><div><strong>A2A</strong><span>Agent-to-agent discovery and interoperability.</span></div><div><strong>AG-UI</strong><span>Agent-to-application and frontend interaction.</span></div></div><a class="inline-link" href="integrations.html">View integrations →</a></div></div></section>
+    <section class="section surface"><div class="container cta-panel" data-reveal><div><p class="eyebrow">Own the whole path</p><h2>Run agents on your infrastructure.</h2><p>Install the self-hosted runtime, connect a Relay, and give an agent its first real task.</p></div><a class="button button-primary" href="quickstart.html">Start the quickstart</a></div></section>
+  </main>
+  <footer class="site-footer"><div class="container footer-grid"><div><strong>PawFlow</strong><span>AI agents on your infrastructure, not in someone else’s sandbox.</span></div><nav aria-label="Footer navigation"><a href="product.html">Product</a><a href="features.html">Features</a><a href="flows.html">Flows</a><a href="relays.html">Relays</a><a href="integrations.html">Integrations</a><a href="use-cases.html">Use Cases</a><a href="faq.html">FAQ</a><a href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a></nav></div></footer>
+  <script src="site.js?v=a30"></script>
+</body>
+</html>

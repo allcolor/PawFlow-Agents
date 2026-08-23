@@ -22,15 +22,32 @@
   <meta name="twitter:image" content="https://pawflow.allcolor.org/assets/hero-banner.png">
   <meta name="twitter:image:alt" content="PawFlow - self-hosted agent runtime">
   <link rel="icon" href="assets/logo.png" type="image/png">
-  <link rel="stylesheet" href="style.css?v=a23">
+  <link rel="stylesheet" href="style.css?v=a30">
 </head>
-<body data-page="howtos">
+<body data-page="howtos" class="landing-page howto-canvas-page">
   <header class="site-header" data-header>
     <a class="brand" href="index.html"><img src="assets/logo.png" alt="" class="brand-mark"><span>PawFlow</span></a>
     <button class="nav-toggle" type="button" data-nav-toggle aria-label="Open navigation" aria-expanded="false"><span></span><span></span><span></span></button>
-    <nav class="site-nav" data-nav><a href="quickstart.html">Quickstart</a><a href="docs.html">Docs</a><a href="howtos.html">How-tos</a><a href="faq.html">FAQ</a><a href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a></nav>
+    <nav class="site-nav" data-nav aria-label="Primary navigation"><a href="product.html">Product</a><a href="howtos.html" aria-current="page">How-tos</a><a href="features.html">Features</a><a href="flows.html">Flows</a><a href="docs.html">Docs</a><a href="quickstart.html">Install</a><a class="nav-github" href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a></nav>
   </header>
-  <main>
+
+  <nav class="zoom-story-links howto-story-links" aria-label="How-to journeys">
+    <a href="#howtos-home" data-zoom-target="0"><span>00</span> Guide</a>
+    <a href="#install" data-zoom-target="1"><span>01</span> Start</a>
+    <a href="#agents-interop" data-zoom-target="2"><span>02</span> Agents</a>
+    <a href="#clients" data-zoom-target="3"><span>03</span> Clients</a>
+    <a href="#relays-workspaces" data-zoom-target="4"><span>04</span> Relays</a>
+    <a href="#identity" data-zoom-target="5"><span>05</span> Identity</a>
+    <a href="#resources" data-zoom-target="6"><span>06</span> Resources</a>
+    <a href="#flows" data-zoom-target="7"><span>07</span> Flows</a>
+    <a href="#media-voice" data-zoom-target="8"><span>08</span> Media</a>
+  </nav>
+  <div class="zoom-story-hint" aria-hidden="true"><span></span> Scroll to explore</div>
+
+  <main class="landing-main howto-canvas" data-howto-canvas aria-label="Animated How-to guide"></main>
+
+  <main class="howto-reader">
+    <div class="howto-reader-toolbar"><a href="howtos.html">← Back to the animated How-to guide</a><span>Full recipe view</span></div>
     <section class="page-hero"><div class="container narrow" data-reveal><p class="eyebrow">How-tos</p><h1>Small recipes for the first useful PawFlow sessions.</h1><p class="hero-copy">Install the runtime, connect relays, configure providers, publish packages, and turn useful agent work into flows.</p></div></section>
     <section class="band compact-band"><div class="container howto-nav" data-reveal><a href="#agent-tool-selection">Tool selection</a><a href="#install">Install</a><a href="#install-wizard">Wizard</a><a href="#published-mcp-client">MCP client</a><a href="#agui-embed">AG-UI embed</a><a href="#chat-views">Views</a><a href="#desktop-novnc-audio">Desktop</a><a href="#multi-llm-aggregator">Multi-LLM</a><a href="#fault-tolerant-llm">LLM router</a><a href="#delegated-vision">Vision fallback</a><a href="#pawcode-installer">PawCode</a><a href="#pawcode-usage">PawCode usage</a><a href="#vscode-plugin-installer">VS Code plugin</a><a href="#relay-desktop-installer">Relay Desktop</a><a href="#relay-cli-installer">Relay CLI</a><a href="#identity">Identity</a><a href="#resources">Resources</a><a href="#flows">Flows</a><a href="#channels">Telegram</a><a href="#security-context">Security</a><a href="#encryption">Encryption</a><a href="#media-voice">Media</a><a href="#comfyui">ComfyUI</a></div></section>
     <section class="section surface"><div class="container howto-list">
@@ -317,6 +334,6 @@ pawcode --dir .</code></pre></div>
     </div></section>
   </main>
   <footer class="site-footer"><div class="container footer-grid"><div><strong>PawFlow</strong><span>Recipes for the first useful workflow.</span></div><nav><a href="index.html">Home</a><a href="quickstart.html">Quickstart</a><a href="docs.html">Docs</a><a href="faq.html">FAQ</a><a href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a><a href="https://github.com/allcolor/PawFlow-Agents/issues" target="_blank" rel="noreferrer">Issues</a><a href="https://github.com/allcolor/PawFlow-Agents/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT License</a></nav></div></footer>
-  <script src="site.js?v=a25"></script>
+  <script src="site.js?v=a30"></script>
 </body>
 </html>

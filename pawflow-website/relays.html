@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#090b0f">
+  <meta name="description" content="Connect PawFlow agents to files, terminals, browsers, desktops, local services, and GPUs on real infrastructure through controlled Relays.">
+  <title>PawFlow Relays — AI agents on real machines</title>
+  <link rel="canonical" href="https://pawflow.allcolor.org/relays.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="PawFlow">
+  <meta property="og:title" content="PawFlow Relays — AI agents on real machines">
+  <meta property="og:description" content="Connect PawFlow agents to files, terminals, browsers, desktops, local services, and GPUs on real infrastructure through controlled Relays.">
+  <meta property="og:url" content="https://pawflow.allcolor.org/relays.html">
+  <meta property="og:image" content="https://pawflow.allcolor.org/assets/media/hero/pawflow-runtime-hero.webp">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="PawFlow Relays — AI agents on real machines">
+  <meta name="twitter:description" content="Connect PawFlow agents to files, terminals, browsers, desktops, local services, and GPUs on real infrastructure through controlled Relays.">
+  <link rel="icon" href="assets/logo.png" type="image/png">
+  <link rel="stylesheet" href="style.css?v=a30">
+</head>
+<body data-page="relays">
+  <header class="site-header" data-header>
+    <a class="brand" href="index.html" aria-label="PawFlow home"><img src="assets/logo.png" alt="" class="brand-mark"><span>PawFlow</span></a>
+    <button class="nav-toggle" type="button" data-nav-toggle aria-label="Open navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+    <nav class="site-nav" data-nav aria-label="Primary navigation">
+      <a href="product.html">Product</a>
+      <a href="features.html">Features</a>
+      <a href="flows.html">Flows</a>
+      <a href="docs.html">Docs</a>
+      <a href="quickstart.html">Quickstart</a>
+      <a class="nav-github" href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a>
+    </nav>
+  </header>
+  <main>
+    <section class="page-hero"><div class="container split"><div data-reveal><p class="eyebrow">Relays</p><h1>Your real machine. Your tools. Your boundary.</h1><p class="hero-copy">Relays let agents work where files, browsers, desktops, services, and GPUs already exist—without uploading the project into a disposable agent cloud.</p><div class="hero-actions"><a class="button button-primary" href="howtos.html#remote-relay">Connect a Relay</a><a class="button button-secondary" href="quickstart.html">Install PawFlow</a></div></div><figure class="visual-card" data-reveal><img src="assets/media/product/desktop-relay-session.webp" alt="PawFlow Desktop Relay session"><figcaption>The agent can work on a real environment, not only an API sandbox.</figcaption></figure></div></section>
+    <section class="section surface"><div class="container split"><div data-reveal><p class="eyebrow">Why a Relay?</p><h2>Keep orchestration separate from execution.</h2><p class="lead">The PawFlow runtime coordinates agents and policy. A connected Relay executes explicit tools next to the workspace.</p><div class="bullet-stack"><div><strong>No stale copy</strong><span>Read the live repo or filesystem rather than an exported ZIP.</span></div><div><strong>No forced migration</strong><span>Keep private services, data, GPUs, and specialist tools on their existing machines.</span></div><div><strong>Controlled access</strong><span>Choose read-only or writable access and expose only the tool surfaces the task needs.</span></div></div></div><div class="architecture-diagram" data-reveal><div class="node clients">PawFlow Runtime<br><span>agents · policy · shared context</span></div><div class="connector"></div><div class="node relay">Controlled Relay<br><span>explicit tools · scoped workspace</span></div><div class="connector"></div><div class="node workspace">Real machine<br><span>files · shell · browser · desktop · services</span></div></div></div></section>
+    <section class="section" id="capabilities"><div class="container"><div class="section-head" data-reveal><p class="eyebrow">Capabilities</p><h2>One route to the surfaces agents actually need.</h2></div><div class="feature-grid"><article class="feature" data-reveal><span>01</span><h3>Filesystem + terminal</h3><p>Search, inspect, edit, build, test, and operate against the live workspace.</p></article><article class="feature" data-reveal><span>02</span><h3>Browser + desktop</h3><p>Use browser automation, screen tools, and a full desktop or noVNC session when APIs are not enough.</p></article><article class="feature" data-reveal><span>03</span><h3>Services + GPUs</h3><p>Reach local applications, private endpoints, media pipelines, and accelerator hosts without relocating them.</p></article></div></div></section>
+    <section class="section surface"><div class="container split reverse"><figure class="visual-card" data-reveal><img src="assets/media/product/relay-terminal-menu.webp" alt="PawFlow Relay terminal choices"><figcaption>Connect the server itself, a container workspace, a workstation, or a remote host.</figcaption></figure><div data-reveal><p class="eyebrow">Deployment choices</p><h2>Put the boundary where it belongs.</h2><div class="bullet-stack"><div><strong>Server Relay</strong><span>Work directly in server-side workspaces for a pure remote self-hosted setup.</span></div><div><strong>Relay Desktop</strong><span>Connect a workstation and expose approved local or container tool surfaces through a GUI client.</span></div><div><strong>Relay CLI</strong><span>Connect terminal-only servers, build hosts, or GPU machines without a desktop application.</span></div></div><a class="inline-link" href="howtos.html#server-relay">Read Relay setup guides →</a></div></div></section>
+    <section class="section"><div class="container cta-panel" data-reveal><div><p class="eyebrow">First real task</p><h2>Connect the machine where the work already lives.</h2><p>Install a Relay, select a workspace, and control the capabilities available to the agent.</p></div><a class="button button-primary" href="howtos.html#remote-relay">Connect a remote Relay</a></div></section>
+  </main>
+  <footer class="site-footer"><div class="container footer-grid"><div><strong>PawFlow</strong><span>AI agents on your infrastructure, not in someone else’s sandbox.</span></div><nav aria-label="Footer navigation"><a href="product.html">Product</a><a href="features.html">Features</a><a href="flows.html">Flows</a><a href="relays.html">Relays</a><a href="integrations.html">Integrations</a><a href="use-cases.html">Use Cases</a><a href="faq.html">FAQ</a><a href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a></nav></div></footer>
+  <script src="site.js?v=a30"></script>
+</body>
+</html>

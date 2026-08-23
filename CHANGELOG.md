@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.241] — 2026-08-23
+
+### Fixed
+
+- On mobile, secondary composer actions now fill the action panel instead of
+  clipping their labels, and Micro and Grab move into that panel to leave more
+  width for the prompt while preserving their desktop placement.
+
 ## [1.0.0-beta.240] — 2026-08-23
 
 ### Added

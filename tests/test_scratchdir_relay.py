@@ -114,6 +114,66 @@ def test_relay_quota_and_symlink_checks(relay_root, tmp_path):
     assert exc.value.code == "scratchdir_quota_bytes"
 
 
+def test_relay_usage_allows_in_tree_symlinks_without_double_counting(
+        relay_root, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    relay_scratchdir.ensure(
+        _message(), workspace_root=str(workspace))
+    files = relay_root / _message()["scratch_id"] / "files"
+    library = files / ".venv" / "lib"
+    library.mkdir(parents=True)
+    (library / "module.py").write_text("value", encoding="utf-8")
+    (files / ".venv" / "lib64").symlink_to("lib", target_is_directory=True)
+
+    current = relay_scratchdir.status(
+        _message(), workspace_root=str(workspace))
+
+    assert current["observed_files"] == 1
+    assert current["observed_bytes"] == 5
+
+
+@pytest.mark.parametrize("target", ("outside", "loop"))
+def test_relay_usage_rejects_escaping_and_cyclic_symlinks(
+        relay_root, tmp_path, target):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    relay_scratchdir.ensure(
+        _message(), workspace_root=str(workspace))
+    files = relay_root / _message()["scratch_id"] / "files"
+    link = files / "unsafe"
+    if target == "outside":
+        outside = relay_root / "outside.txt"
+        outside.write_text("secret", encoding="utf-8")
+        link.symlink_to(outside)
+    else:
+        link.symlink_to("unsafe")
+
+    with pytest.raises(relay_scratchdir.ScratchDirRelayError) as exc:
+        relay_scratchdir.status(
+            _message(), workspace_root=str(workspace))
+
+    assert exc.value.code == "scratchdir_unsafe_entry"
+
+
+def test_relay_usage_rejects_a_symlinked_files_root(relay_root, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    relay_scratchdir.ensure(
+        _message(), workspace_root=str(workspace))
+    files = relay_root / _message()["scratch_id"] / "files"
+    files.rmdir()
+    outside = relay_root / "outside"
+    outside.mkdir()
+    files.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(relay_scratchdir.ScratchDirRelayError) as exc:
+        relay_scratchdir.status(
+            _message(), workspace_root=str(workspace))
+
+    assert exc.value.code == "scratchdir_unsafe_entry"
+
+
 @pytest.fixture()
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "SCRATCHDIRS_DIR", tmp_path / "metadata")

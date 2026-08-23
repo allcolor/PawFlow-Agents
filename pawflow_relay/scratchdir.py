@@ -105,13 +105,29 @@ def _require_owner(record: dict, scope_hash: str) -> None:
 def _usage(files_root: Path, quota_bytes: int, quota_files: int) -> tuple[int, int]:
     total_bytes = 0
     total_files = 0
+    if files_root.is_symlink():
+        raise ScratchDirRelayError(
+            "scratchdir_unsafe_entry",
+            "ScratchDir root must not be a symbolic link")
     if not files_root.exists():
         return 0, 0
+    resolved_root = files_root.resolve()
     for path in files_root.rglob("*"):
         if path.is_symlink():
-            raise ScratchDirRelayError(
-                "scratchdir_unsafe_entry",
-                "ScratchDir contains an unsupported symbolic link")
+            try:
+                target = path.resolve()
+            except (OSError, RuntimeError) as exc:
+                raise ScratchDirRelayError(
+                    "scratchdir_unsafe_entry",
+                    "ScratchDir contains an unsafe symbolic link") from exc
+            if target != resolved_root and not target.is_relative_to(resolved_root):
+                raise ScratchDirRelayError(
+                    "scratchdir_unsafe_entry",
+                    "ScratchDir contains an unsafe symbolic link")
+            # The target is already visited and counted at its canonical path.
+            # Skipping the alias supports standard in-tree links such as a
+            # virtualenv lib64-to-lib link without double-counting its files.
+            continue
         if not path.is_file():
             continue
         total_files += 1

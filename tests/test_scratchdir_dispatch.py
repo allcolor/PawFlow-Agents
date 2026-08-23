@@ -182,6 +182,26 @@ def test_dispatch_isolates_neighboring_scopes(roots):
     assert "scratchdir_owner_mismatch" in mismatched["error"]
 
 
+def test_dispatch_reads_through_a_confined_virtualenv_symlink(roots):
+    workspace, runtime = roots
+    ticket = _ticket()
+    _ensure(ticket, workspace)
+    files = runtime / ticket["scratch_id"] / "files"
+    library = files / ".venv" / "lib"
+    library.mkdir(parents=True)
+    (library / "module.py").write_text("value", encoding="utf-8")
+    (files / ".venv" / "lib64").symlink_to(
+        "lib", target_is_directory=True)
+
+    result = dispatch.execute_command(_ctx(workspace), {
+        "action": "read_file",
+        "path": ".venv/lib64/module.py",
+        "scratchdir": ticket,
+    })
+
+    assert result["ok"] is True
+
+
 def test_dispatch_supports_chunked_scratchdir_downloads(roots):
     workspace, runtime = roots
     ticket = _ticket()

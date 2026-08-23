@@ -32,7 +32,9 @@ They are interconnected:
   `fs://scratchdir/` (or `/scratch` in shell execution) for temporary files
   that must survive one tool call. Its UI shows bounded file metadata, quotas,
   expiry, renewal, exact clear, and explicit promotion to FileStore; it never
-  exposes the relay's physical root.
+  exposes the relay's physical root. Symbolic links are accepted only when
+  their resolved targets remain inside the same scoped root; escaping or cyclic
+  links fail closed.
 
 ---
 

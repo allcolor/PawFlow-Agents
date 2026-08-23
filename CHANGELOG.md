@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.242] — 2026-08-23
+
+### Added
+
+- The public website now presents PawFlow through an immersive product story
+  and animated how-to experience with dedicated media and audio.
+
+### Changed
+
+- Server-managed relays now use an authenticated private plain-WebSocket
+  Docker-bridge endpoint while external relays remain on TLS.
+
+### Fixed
+
+- Relay reconnect recovery no longer flaps or retains stale pending work, and
+  concurrent service connection attempts use a short non-blocking claim so
+  tool calls never queue behind connection I/O.
+- Managed Relay container replacement now waits for Docker's asynchronous
+  removal to complete instead of treating an in-progress removal as fatal.
+
+### Security
+
+- Runtime-only secret environment mappings are excluded from hooks,
+  transcripts, contexts, compactions, and exports, with an idempotent
+  count-only scrub for previously persisted conversation streams.
+
 ## [1.0.0-beta.241] — 2026-08-23
 
 ### Fixed

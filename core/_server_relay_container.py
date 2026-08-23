@@ -4,6 +4,7 @@ import json
 import logging
 import subprocess  # nosec B404
 import threading
+import time
 from typing import Dict, Optional, Tuple
 
 from core.docker_utils import (
@@ -21,6 +22,8 @@ _MANAGED_RELAY_KIND = "relay-managed"
 _LOCKS: Dict[str, threading.Lock] = {}
 _GENERATIONS: Dict[str, int] = {}
 _LOCKS_GUARD = threading.Lock()
+_REMOVAL_WAIT_SECONDS = 10.0
+_REMOVAL_POLL_SECONDS = 0.05
 
 
 def _container_claim(container_name: str) -> Tuple[threading.Lock, int]:
@@ -54,6 +57,17 @@ def _inspect_container(container_name: str) -> Optional[dict]:
         raise RuntimeError(
             f"Docker returned invalid labels for relay container '{container_name}'") from exc
     return {"id": parts[0], "running": parts[1] == "true", "labels": labels}
+
+
+def _wait_until_container_gone(container_name: str) -> bool:
+    """Wait briefly for Docker's asynchronous removal to finish."""
+    deadline = time.monotonic() + _REMOVAL_WAIT_SECONDS
+    while _inspect_container(container_name) is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(_REMOVAL_POLL_SECONDS, remaining))
+    return True
 
 
 def start_managed_relay_container(
@@ -92,9 +106,20 @@ def start_managed_relay_container(
                 capture_output=True, text=True,
             )
             if removed.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to remove managed relay container '{container_name}': "
-                    f"{removed.stderr.strip() or 'Docker gave no reason'}")
+                reason = removed.stderr.strip()
+                removal_in_progress = (
+                    "removal of container" in reason.lower()
+                    and "already in progress" in reason.lower()
+                )
+                if not removal_in_progress or not _wait_until_container_gone(
+                        container_name):
+                    raise RuntimeError(
+                        f"Failed to remove managed relay container '{container_name}': "
+                        f"{reason or 'Docker gave no reason'}")
+                logger.info(
+                    "Managed relay container %s finished its asynchronous removal",
+                    container_name,
+                )
 
         result = subprocess.run(  # nosec B603
             command, capture_output=True, text=True,

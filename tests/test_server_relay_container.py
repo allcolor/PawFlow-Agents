@@ -135,3 +135,29 @@ def test_failed_removal_prevents_a_conflicting_run(monkeypatch):
         relay_container.start_managed_relay_container(
             "pawflow-relay-srv-test", ["docker", "run"], replace=True)
     assert calls == [["docker", "rm", "-f", "old"]]
+
+
+def test_removal_already_in_progress_waits_before_start(monkeypatch):
+    monkeypatch.setattr(relay_container, "get_server_id", lambda: "server-1")
+    inspections = iter([_owned(), _owned(), None])
+    monkeypatch.setattr(
+        relay_container, "_inspect_container", lambda _name: next(inspections))
+    monkeypatch.setattr(relay_container.time, "sleep", lambda _seconds: None)
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if "rm" in args:
+            return _result(
+                args,
+                code=1,
+                stderr="removal of container old is already in progress",
+            )
+        return _result(args, stdout="new\n")
+
+    monkeypatch.setattr(relay_container.subprocess, "run", fake_run)
+
+    assert relay_container.start_managed_relay_container(
+        "pawflow-relay-srv-test", ["docker", "run"], replace=True,
+    ) == ("new", False)
+    assert calls == [["docker", "rm", "-f", "old"], ["docker", "run"]]

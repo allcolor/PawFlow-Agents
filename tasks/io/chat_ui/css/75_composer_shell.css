@@ -191,7 +191,7 @@ html[data-pf-atmosphere="on"] .input-row.composer-shell {
     backdrop-filter: blur(18px) saturate(125%);
   }
   .composer-mobile-actions[data-open="true"] { display: flex; }
-  .composer-mobile-actions > .composer-icon-button {
+  .input-row.composer-shell .composer-mobile-actions > .composer-icon-button {
     width: 100%; min-width: 0; height: 42px; padding: 0 11px !important;
     justify-content: flex-start; gap: 11px;
     border-color: var(--pf-border) !important;

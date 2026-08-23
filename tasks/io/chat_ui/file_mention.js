@@ -30,6 +30,25 @@ function toggleComposerMobileActions(force) {
   _composerSetActionsOpen(next);
 }
 
+// Keep one Micro and Grab control: on phones they join the overflow panel so
+// the prompt gains their width; on wider screens they return before Agent/Send.
+function _composerPlaceResponsiveActions() {
+  const panel = document.getElementById('composerMobileActions');
+  const trailing = document.querySelector('.composer-trailing');
+  if (!panel || !trailing) return;
+  const mobile = _composerUsesMobileActions();
+  const target = mobile ? panel : trailing;
+  const anchor = mobile
+    ? panel.querySelector('.composer-extension-slot')
+    : (document.getElementById('composerAgentOverlay')
+      || document.getElementById('sendBtn'));
+  const before = anchor && anchor.parentNode === target ? anchor : null;
+  for (const id of ['speechInputBtn', 'grabBtn']) {
+    const button = document.getElementById(id);
+    if (button) target.insertBefore(button, before);
+  }
+}
+
 function _composerPickerElement() {
   return document.getElementById('composerPicker');
 }
@@ -308,6 +327,7 @@ function initComposerPicker() {
   if (!input) return;
   input.addEventListener('input', _composerUpdatePicker);
   input.addEventListener('keydown', _composerPickerKeydown, true);
+  _composerPlaceResponsiveActions();
   _composerSetActionsOpen(false);
   updateComposerAgentBadge();
   document.addEventListener('mousedown', event => {
@@ -342,7 +362,10 @@ function initComposerPicker() {
   });
   if (window.matchMedia) {
     const media = window.matchMedia('(max-width: 768px)');
-    const sync = () => _composerSetActionsOpen(false);
+    const sync = () => {
+      _composerSetActionsOpen(false);
+      _composerPlaceResponsiveActions();
+    };
     if (media.addEventListener) media.addEventListener('change', sync);
     else if (media.addListener) media.addListener(sync);
   }

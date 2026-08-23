@@ -144,6 +144,22 @@ def test_mobile_composer_stacks_secondary_actions_behind_one_toggle():
         encoding="utf-8")
     assert '.composer-mobile-actions[data-open="true"]' in css
     assert "flex-direction: column" in css
+    # The compact icon rule is scoped through `.input-row.composer-shell`.
+    # Match that specificity here or the menu buttons stay 32 px wide and
+    # their labels overflow to the left, clipped by the panel scrollbox.
+    assert (
+        ".input-row.composer-shell .composer-mobile-actions"
+        " > .composer-icon-button {" in css
+    )
+    mobile_action_rule = css[
+        css.index(
+            ".input-row.composer-shell .composer-mobile-actions"
+            " > .composer-icon-button {"
+        ):
+    ]
+    mobile_action_rule = mobile_action_rule[:mobile_action_rule.index("}")]
+    assert "width: 100%" in mobile_action_rule
+    assert "justify-content: flex-start" in mobile_action_rule
     assert "toggleComposerMobileActions" in Path(
         "tasks/io/chat_ui/file_mention.js").read_text(encoding="utf-8")
 

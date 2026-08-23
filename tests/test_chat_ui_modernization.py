@@ -32,7 +32,7 @@ def test_composer_picker_behavioural_js_suite():
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "8 passing" in result.stdout
+    assert "9 passing" in result.stdout
 
 
 def test_resource_dialogs_behavioural_js_suite():

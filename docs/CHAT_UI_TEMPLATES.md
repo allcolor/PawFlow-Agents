@@ -113,10 +113,13 @@ The surrounding chat surfaces remain theme-neutral:
 
 - the prompt row exposes compact search, slash-command and agent-mention
   shortcuts without changing message submission; below 768 px, only the
-  secondary-action toggle, prompt, Micro, Grab, and Send stay visible, while
-  attach, search, slash, mention, and extension actions are stacked in an
-  accessible panel above the composer. Micro and Grab remain trailing controls
-  immediately before Send on every viewport. The selected agent remains visible in a
+  secondary-action toggle, prompt, selected agent, and Send stay visible, while
+  attach, search, slash, mention, Micro, Grab, and extension actions are stacked
+  in an accessible full-width panel above the composer. Its action rows override
+  the compact icon dimensions with equal selector specificity so their labels
+  remain inside the mobile viewport. Above that breakpoint, Micro and Grab
+  return to the trailing controls immediately before Send. The selected agent
+  remains visible in a
   thin, localized `Selected agent: <name>` button at the prompt row's right
   edge, immediately before Send;
   activating it opens a conversation-aware quick selector. On narrow screens

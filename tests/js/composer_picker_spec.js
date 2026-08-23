@@ -22,6 +22,25 @@ function equal(actual, expected, message) {
 }
 
 function env() {
+  function container(children) {
+    const parent = {
+      children: children || [],
+      insertBefore(node, anchor) {
+        if (node.parentNode) {
+          node.parentNode.children = node.parentNode.children.filter(child => child !== node);
+        }
+        const index = anchor ? this.children.indexOf(anchor) : -1;
+        if (index < 0) this.children.push(node);
+        else this.children.splice(index, 0, node);
+        node.parentNode = this;
+      },
+    };
+    parent.children.forEach(child => { child.parentNode = parent; });
+    return parent;
+  }
+  function node(id) {
+    return { id, parentNode: null, setAttribute() {} };
+  }
   const input = {
     value: '', selectionStart: 0, selectionEnd: 0,
     setRangeText(value, start, end) {
@@ -38,32 +57,45 @@ function env() {
     hidden: true, innerHTML: '',
     querySelectorAll() { return []; },
   };
-  const agentOverlay = { hidden: true, contains() { return false; } };
+  const agentOverlay = {
+    id: 'composerAgentOverlay', hidden: true, contains() { return false; },
+  };
   const agentLabel = { textContent: '' };
   const agentBadge = {
     title: '', attributes: {},
     setAttribute(name, value) { this.attributes[name] = value; },
   };
-  const actionsPanel = {
+  const extensionSlot = node('composerExtensionSlot');
+  const actionsPanel = Object.assign(container([extensionSlot]), {
     dataset: { open: 'false' }, attributes: {},
     setAttribute(name, value) { this.attributes[name] = value; },
-  };
+    querySelector(selector) {
+      return selector === '.composer-extension-slot' ? extensionSlot : null;
+    },
+  });
   const mobileToggle = {
     attributes: {}, setAttribute(name, value) { this.attributes[name] = value; },
   };
+  const speechInput = node('speechInputBtn');
+  const grab = node('grabBtn');
+  const send = node('sendBtn');
+  const trailing = container([speechInput, grab, agentOverlay, send]);
+  const media = { matches: true };
   const buttons = {
     composerSlashBtn: { setAttribute() {} }, composerMentionBtn: { setAttribute() {} },
     composerMobileActions: actionsPanel, composerMobileActionsBtn: mobileToggle,
     composerAgentPicker: agentPicker, composerAgentOverlay: agentOverlay,
     composerAgentBadge: agentBadge, composerAgentBadgeLabel: agentLabel,
+    speechInputBtn: speechInput, grabBtn: grab, sendBtn: send,
   };
   const context = {
     console,
     document: {
       addEventListener() {},
       getElementById(id) { return id === 'input' ? input : id === 'composerPicker' ? picker : buttons[id] || null; },
+      querySelector(selector) { return selector === '.composer-trailing' ? trailing : null; },
     },
-    window: { matchMedia() { return { matches: true }; } }, Event: function Event() {},
+    window: { matchMedia() { return media; } }, Event: function Event() {},
     HELP_DATA: {
       '/help': { usage: '/help [command]', short: 'Show help' },
       '/history': { usage: '/history', short: 'Show history' },
@@ -84,7 +116,8 @@ function env() {
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(SOURCE, 'utf8'), context, { filename: 'file_mention.js' });
   return { context, input, picker, actionsPanel, mobileToggle, agentPicker,
-    agentOverlay, agentBadge, agentLabel };
+    agentOverlay, agentBadge, agentLabel, extensionSlot, speechInput, grab,
+    send, trailing, media };
 }
 
 test('slash choices use real commands, filter them, and hide aliases', () => {
@@ -137,6 +170,26 @@ test('closing mobile actions updates both panel and accessibility state', () => 
   equal(e.actionsPanel.dataset.open, 'false');
   equal(e.actionsPanel.attributes['aria-hidden'], 'true');
   equal(e.mobileToggle.attributes['aria-expanded'], 'false');
+});
+
+test('responsive composer moves Micro and Grab into the mobile menu and restores desktop order', () => {
+  const e = env();
+  e.context._composerPlaceResponsiveActions();
+  equal(e.speechInput.parentNode, e.actionsPanel);
+  equal(e.grab.parentNode, e.actionsPanel);
+  equal(
+    e.actionsPanel.children.map(child => child.id).join(','),
+    'speechInputBtn,grabBtn,composerExtensionSlot'
+  );
+
+  e.media.matches = false;
+  e.context._composerPlaceResponsiveActions();
+  equal(e.speechInput.parentNode, e.trailing);
+  equal(e.grab.parentNode, e.trailing);
+  equal(
+    e.trailing.children.map(child => child.id).join(','),
+    'speechInputBtn,grabBtn,composerAgentOverlay,sendBtn'
+  );
 });
 
 test('selected agent badge uses the nickname and exposes the quick picker', () => {

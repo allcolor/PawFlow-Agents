@@ -1,7 +1,7 @@
 # PawFlow Project Summary — Current State
 
 **Last updated**: 2026-08-23
-**Package version**: `1.0.0b242` (beta.242)
+**Package version**: `1.0.0b243` (beta.243)
 
 **Status**: functional beta, remaining API changes before 1.0.0 expected to be minor
 
@@ -164,6 +164,8 @@ The README also advertises:
 - Desktop/screen/browser automation via relay/VNC per configuration.
 - Security scanning and script execution.
 - Secret, resource, memory, KG, and plan management.
+- Relay-owned ScratchDir lifecycle and quota enforcement, including confined
+  in-tree symbolic links with fail-closed handling for unsafe links.
 
 ### User interfaces
 

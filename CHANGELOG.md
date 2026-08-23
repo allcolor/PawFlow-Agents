@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.243] — 2026-08-23
+
+### Fixed
+
+- ScratchDir quota accounting now accepts confined in-tree symbolic links such
+  as a virtualenv's `.venv/lib64 -> lib` alias without double-counting files.
+
+### Security
+
+- ScratchDir usage checks fail closed for escaping, broken, or cyclic symbolic
+  links and for a symbolic-link root.
+
 ## [1.0.0-beta.242] — 2026-08-23
 
 ### Added

@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.240] — 2026-08-23
+
+### Added
+
+- Chat appearance preferences now synchronize through a private server-backed
+  user store, with inherited global settings, conversation overrides, safe
+  image/video uploads in FileStore, cross-device hydration, and cleanup of
+  replaced media.
+- Long-running skill promotion and conversation imports now use a shared modal
+  with real phase labels, blocking transaction state, and explicit dismissible
+  errors.
+
+### Changed
+
+- The responsive composer keeps Micro and Grab beside Send, exposes the selected
+  agent through a compact conversation-aware button, and groups secondary mobile
+  actions without hiding them. Conversation controls now share the action dock's
+  dimensions, borders, spring effects, and tooltips; Permissions is an accessible
+  button menu instead of a native combo.
+- Built-in and extension dialogs now share theme tokens, surfaces, controls,
+  tables, focus treatment, and motion. Resource creation forms retain their
+  editable parameters when opened from repository actions.
+- The desktop task rail is a right-edge overlay with a localized handle tooltip,
+  while the mobile Resources/task rail remains coupled to the sidebar drawer.
+- OpenSpace gains a Webchat camera transition and always starts from its home
+  camera when re-entered; its interaction targets, visitor placement, agent
+  selection, and floor navigation are more predictable.
+
+### Fixed
+
+- Atmosphere mode no longer puts the desktop task rail back into document flow,
+  so the header and composer keep their full width and opening the left sidebar
+  does not shift the rail.
+- Conversation resume no longer crashes after the Permissions selector was
+  replaced, and the sidebar grip remains available independently of the task
+  rail.
+- Appearance uploads enforce type and size limits before reading the body, retain
+  FileStore category metadata, and safely encode generated media URLs.
+
 ## [1.0.0-beta.239] — 2026-08-22
 
 ### Added

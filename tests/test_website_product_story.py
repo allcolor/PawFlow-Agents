@@ -74,7 +74,7 @@ def test_website_pages_have_one_heading_and_valid_local_targets(name: str) -> No
     parser = parse_page(name)
 
     assert parser.h1_count == 1
-    assert "site.js?v=a30" in parser.scripts
+    assert "site.js?v=a32" in parser.scripts
 
     references = parser.links + parser.scripts
     if name in PRODUCT_PAGES:
@@ -103,6 +103,9 @@ def test_homepage_tells_the_product_story_without_old_hero_clutter() -> None:
     assert "Reason with agents. Run with flows." in html
     assert "Install in 5 minutes" in html
     assert {"why", "architecture", "demos", "stack", "comparison", "install"} <= parser.ids
+    assert html.index('id="architecture"') < html.index('id="why"')
+    assert "01 / HOW IT WORKS" in html
+    assert "02 / WHY PAWFLOW" in html
 
     hero = html.split('<section class="landing-hero"', 1)[1].split("</section>", 1)[0]
     for removed_element in (
@@ -114,6 +117,14 @@ def test_homepage_tells_the_product_story_without_old_hero_clutter() -> None:
         "product-strip",
     ):
         assert removed_element not in hero
+
+
+def test_homepage_has_no_continuous_desktop_redraw_effects() -> None:
+    css = (SITE / "style.css").read_text(encoding="utf-8")
+
+    assert "zoom-glow-drift" not in css
+    assert "zoom-stage-scan" not in css
+    assert "zoom-node-pulse" not in css
 
 
 def test_homepage_uses_three_real_demo_assets() -> None:
@@ -139,7 +150,7 @@ def test_secondary_pages_have_a_distinct_job(name: str, expected: str) -> None:
     assert expected in (SITE / name).read_text(encoding="utf-8")
 
 
-def test_homepage_motion_respects_user_preference() -> None:
+def test_homepage_uses_a_fluid_infinite_zoom_canvas() -> None:
     css = (SITE / "style.css").read_text(encoding="utf-8")
     script = (SITE / "site.js").read_text(encoding="utf-8")
 
@@ -149,23 +160,27 @@ def test_homepage_motion_respects_user_preference() -> None:
     assert ".zoom-story-active" in css
     assert "initZoomStory" in script
     assert "loopClone" in script
-    assert "const choreography" in script
-    assert "'pan'" in script
-    assert "'zoom'" in script
+    assert "portalFrames" in script
+    assert "frame.width / width" in script
+    assert "frame.height / height" in script
+    assert "easeInOut" in script
+    assert "const threshold = raf ? 60 : 1" in script
+    assert "queuedWheelDirection" in script
+    assert "queueWheelStep" in script
+    assert "window.addEventListener('wheel', onWheel, { passive: false })" in script
     assert "--scene-content-fit" in script
     assert "--scene-blur" in script
-    assert "wheelLocked" in script
-    assert "unlockAfterIdle" in script
-    assert "lastWheelEvent < 1000" in script
-    assert "window.addEventListener('wheel', onWheel, { passive: false })" in script
+    assert "wheelLocked" not in script
+    assert "wheelUnlockTimer" not in script
+    assert "lastWheelEvent < 1000" not in script
 
 
-def test_mobile_story_uses_boundary_aware_scrollable_scenes() -> None:
+def test_mobile_story_uses_boundary_aware_zoom_scenes() -> None:
     css = (SITE / "style.css").read_text(encoding="utf-8")
     script = (SITE / "site.js").read_text(encoding="utf-8")
 
     assert "initMobileStoryCanvas" in script
-    assert "(max-width: 999px) and (prefers-reduced-motion: no-preference)" in script
+    assert "Array(scenes.length).fill('zoom')" in script
     assert "atBottom: scene.scrollTop + scene.clientHeight >= scene.scrollHeight - 2" in script
     assert "if (delta < 0 && start.atBottom) move(1)" in script
     assert "if (delta > 0 && start.atTop) move(-1)" in script
@@ -173,8 +188,22 @@ def test_mobile_story_uses_boundary_aware_scrollable_scenes() -> None:
     assert ".mobile-story-active .mobile-story-scene" in css
     assert "overflow-y: auto" in css
     assert "mobile-zoom-in" in css
-    assert "mobile-pan-in-forward" in css
-    assert "mobile-reader-arrive" in css
+
+
+def test_homepage_chapters_form_an_ordered_portal_chain() -> None:
+    html = (SITE / "index.html").read_text(encoding="utf-8")
+    script = (SITE / "site.js").read_text(encoding="utf-8")
+
+    assert html.count("data-zoom-portal") == 7
+    assert '<figure class="runtime-stage" data-zoom-portal' in html
+    assert "'product', 'architecture', 'why', 'demos', 'stack', 'comparison', 'install'" in script
+    architecture_link = 'href="#architecture" data-zoom-target="1"'
+    about_link = 'href="#why" data-zoom-target="2"'
+    assert architecture_link in html
+    assert about_link in html
+    assert html.index(architecture_link) < html.index(about_link)
+    assert '<div class="zoom-story-hint" aria-hidden="true"><span></span></div>' in html
+    assert "Scroll to zoom" not in html
 
 
 def test_homepage_keeps_direct_navigation_around_the_zoom_story() -> None:
@@ -191,8 +220,11 @@ def test_howto_canvas_indexes_every_recipe_and_keeps_full_reader() -> None:
     script = (SITE / "site.js").read_text(encoding="utf-8")
     recipe_ids = re.findall(r'<article[^>]*class="[^"]*\brecipe\b[^"]*"[^>]*\bid="([^"]+)"', html)
 
-    assert len(recipe_ids) == 51
+    assert len(recipe_ids) == 52
     assert len(recipe_ids) == len(set(recipe_ids))
+    assert "workflow-agents" in recipe_ids
+    assert "PAWFLOW_WORKFLOW_AGENTS_ENABLED=1" in html
+    assert "PAWFLOW_AGENT_GROUPS_ENABLED=1" in html
     assert 'data-howto-canvas' in html
     assert 'class="howto-reader"' in html
     assert html.count('data-zoom-target') == 9

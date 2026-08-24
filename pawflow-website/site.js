@@ -351,7 +351,7 @@ document.querySelectorAll('.site-nav a').forEach((link) => {
       eyebrow: '07 / FLOWS',
       title: 'Turn useful agent work into explicit automation.',
       copy: 'Design with agents, then schedule and operate repeatable work as durable Flows.',
-      recipes: ['flows-explained', 'agent-flow-main', 'tasks-plans', 'daily-digest'],
+      recipes: ['flows-explained', 'agent-flow-main', 'workflow-agents', 'tasks-plans', 'daily-digest'],
     },
     {
       id: 'media-voice',
@@ -442,6 +442,15 @@ if ('IntersectionObserver' in window) {
   revealItems.forEach((item) => item.classList.add('is-visible'));
 }
 
+function orderLandingStoryScenes(scenes) {
+  if (document.body.dataset.page !== 'home') return scenes;
+  const byId = new Map(scenes.map((scene) => [scene.id, scene]));
+  const ordered = [
+    'product', 'architecture', 'why', 'demos', 'stack', 'comparison', 'install',
+  ].map((id) => byId.get(id)).filter(Boolean);
+  return ordered.length === scenes.length ? ordered : scenes;
+}
+
 // Mobile uses discrete full-screen scenes rather than a decorated document
 // scroll. Long scenes scroll inside their viewport; only a new gesture that
 // starts at a boundary can trigger the next zoom/pan transition.
@@ -450,12 +459,12 @@ if ('IntersectionObserver' in window) {
   const main = document.querySelector('.landing-main');
   if (!main || !body.classList.contains('landing-page')) return;
 
-  const scenes = Array.from(main.children).filter(
-    (node) => node.matches('.landing-hero, .landing-section'));
+  const scenes = orderLandingStoryScenes(Array.from(main.children).filter(
+    (node) => node.matches('.landing-hero, .landing-section')));
   const directLinks = Array.from(document.querySelectorAll('[data-zoom-target]'));
   const query = window.matchMedia(
     '(max-width: 999px) and (prefers-reduced-motion: no-preference)');
-  const choreography = ['zoom', 'pan', 'zoom', 'pan', 'zoom', 'pan', 'zoom', 'pan', 'zoom'];
+  const choreography = Array(scenes.length).fill('zoom');
   let enabled = false;
   let current = 0;
   let transitioning = false;
@@ -636,8 +645,9 @@ if ('IntersectionObserver' in window) {
 
   const query = window.matchMedia(
     '(min-width: 1000px) and (pointer: fine) and (prefers-reduced-motion: no-preference)');
-  const sourceScenes = Array.from(main.children).filter(
+  const domScenes = Array.from(main.children).filter(
     (node) => node.matches('.landing-hero, .landing-section'));
+  const sourceScenes = orderLandingStoryScenes(domScenes);
   const directLinks = Array.from(document.querySelectorAll('[data-zoom-target]'));
   const sceneCount = sourceScenes.length;
   if (sceneCount < 2) return;
@@ -651,10 +661,10 @@ if ('IntersectionObserver' in window) {
   let raf = 0;
   let activeIndex = -1;
   let enabled = false;
-  let wheelLocked = false;
-  let wheelUnlockTimer = 0;
-  let lastWheelEvent = 0;
-  let wheelLockUntil = 0;
+  let wheelDelta = 0;
+  let wheelDirection = 0;
+  let lastWheelAt = 0;
+  let queuedWheelDirection = 0;
   let animationFrom = 0;
   let animationStarted = 0;
   let animationDuration = 900;
@@ -662,6 +672,9 @@ if ('IntersectionObserver' in window) {
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const smooth = (value) => value * value * (3 - 2 * value);
   const mix = (from, to, amount) => from + (to - from) * amount;
+  const easeInOut = (value) => value < .5
+    ? 4 * value * value * value
+    : 1 - Math.pow(-2 * value + 2, 3) / 2;
 
   function stripCloneIdentity(root) {
     root.dataset.zoomClone = '';
@@ -677,40 +690,13 @@ if ('IntersectionObserver' in window) {
     const width = window.innerWidth;
     const height = window.innerHeight;
     const ratio = .255;
-    // Transition from one scene to the next. Equal-scale placements create a
-    // camera pan; reduced-scale placements create an inception zoom.
-    const choreography = body.classList.contains('howto-canvas-page')
-      ? ['zoom', 'pan', 'zoom', 'pan', 'zoom', 'pan', 'zoom', 'pan', 'zoom']
-      : [
-          'zoom',   // Hero -> About
-          'pan',    // About -> Architecture
-          'zoom',   // Architecture -> Videos
-          'pan',    // Videos -> Stack
-          'pan',    // Stack -> Comparison
-          'zoom',   // Comparison -> Install
-          'zoom',   // Install -> cloned Hero, then reset
-        ];
+    const fallbackChoreography = [
+      'zoom', 'pan', 'zoom', 'pan', 'pan', 'zoom', 'zoom',
+    ];
     let x = 0;
     let y = 0;
     let scale = 1;
     placements = [];
-
-    scenes.forEach((scene, index) => {
-      placements.push({ x, y, scale });
-      scene.style.setProperty('--scene-x', x + 'px');
-      scene.style.setProperty('--scene-y', y + 'px');
-      scene.style.setProperty('--scene-scale', String(scale));
-      if (index < scenes.length - 1) {
-        if (choreography[index] === 'pan') {
-          x += scale * width * (index % 2 ? .035 : -.025);
-          y += scale * height * 1.06;
-        } else {
-          x += scale * width * (index % 2 ? .16 : .54);
-          y += scale * height * (index % 3 === 1 ? .44 : .17);
-          scale *= ratio;
-        }
-      }
-    });
 
     scenes.forEach((scene) => {
       const content = scene.querySelector(':scope > .container');
@@ -725,6 +711,42 @@ if ('IntersectionObserver' in window) {
         availableWidth / naturalWidth,
         availableHeight / naturalHeight);
       scene.style.setProperty('--scene-content-fit', String(fit));
+    });
+
+    world.style.transform = 'none';
+    scenes.forEach((scene) => {
+      scene.style.setProperty('--scene-x', '0px');
+      scene.style.setProperty('--scene-y', '0px');
+      scene.style.setProperty('--scene-scale', '1');
+      scene.style.visibility = 'visible';
+      scene.style.contentVisibility = 'visible';
+    });
+    const portalFrames = scenes.map((scene) => {
+      const portal = scene.querySelector('[data-zoom-portal]');
+      return portal ? portal.getBoundingClientRect() : null;
+    });
+
+    scenes.forEach((scene, index) => {
+      placements.push({ x, y, scale });
+      scene.style.setProperty('--scene-x', x + 'px');
+      scene.style.setProperty('--scene-y', y + 'px');
+      scene.style.setProperty('--scene-scale', String(scale));
+      if (index < scenes.length - 1) {
+        const frame = portalFrames[index];
+        if (frame) {
+          const portalScale = Math.min(frame.width / width, frame.height / height);
+          x += scale * (frame.left + (frame.width - width * portalScale) / 2);
+          y += scale * (frame.top + (frame.height - height * portalScale) / 2);
+          scale *= portalScale;
+        } else if (fallbackChoreography[index] === 'pan') {
+          x += scale * width * (index % 2 ? .035 : -.025);
+          y += scale * height * 1.06;
+        } else {
+          x += scale * width * (index % 2 ? .16 : .54);
+          y += scale * height * (index % 3 === 1 ? .44 : .17);
+          scale *= ratio;
+        }
+      }
     });
     render();
   }
@@ -784,7 +806,7 @@ if ('IntersectionObserver' in window) {
   function animate(now) {
     const elapsed = Math.max(0, now - animationStarted);
     const time = clamp(elapsed / animationDuration, 0, 1);
-    const eased = 1 - Math.pow(1 - time, 4);
+    const eased = easeInOut(time);
     progress = mix(animationFrom, target, eased);
     render();
     if (time >= 1) {
@@ -797,19 +819,44 @@ if ('IntersectionObserver' in window) {
         activeIndex = -1;
         render();
       }
+      const nextDirection = queuedWheelDirection;
+      queuedWheelDirection = 0;
+      if (nextDirection) runWheelStep(nextDirection);
       return;
     }
     raf = requestAnimationFrame(animate);
   }
 
-  function moveTarget(amount) {
-    const next = clamp(target + amount, 0, sceneCount);
-    if (next === target) return;
+  function startAnimation(next, duration) {
     animationFrom = progress;
     target = next;
     animationStarted = performance.now();
-    animationDuration = 900 + Math.min(3, Math.abs(target - progress)) * 90;
+    animationDuration = duration;
     if (!raf) raf = requestAnimationFrame(animate);
+  }
+
+  function runWheelStep(direction) {
+    const current = clamp(Math.round(progress), 0, sceneCount - 1);
+    if (current <= 0 && direction < 0) {
+      progress = sceneCount;
+      target = sceneCount;
+      activeIndex = -1;
+      render();
+      startAnimation(sceneCount - 1, 860);
+      return;
+    }
+    const next = current === sceneCount - 1 && direction > 0
+      ? sceneCount
+      : current + direction;
+    startAnimation(next, 820);
+  }
+
+  function queueWheelStep(direction) {
+    if (raf) {
+      queuedWheelDirection = direction;
+      return;
+    }
+    runWheelStep(direction);
   }
 
   function onWheel(event) {
@@ -820,54 +867,24 @@ if ('IntersectionObserver' in window) {
     if (!direction) return;
 
     const now = performance.now();
-    lastWheelEvent = now;
-    clearTimeout(wheelUnlockTimer);
-    const unlockAfterIdle = () => {
-      const currentTime = performance.now();
-      if (raf || currentTime < wheelLockUntil ||
-          currentTime - lastWheelEvent < 1000) {
-        wheelUnlockTimer = setTimeout(unlockAfterIdle, 100);
-        return;
-      }
-      wheelLocked = false;
-    };
-    wheelUnlockTimer = setTimeout(unlockAfterIdle, 360);
-    if (wheelLocked) return;
-    wheelLocked = true;
-    wheelLockUntil = now + 1100;
-
-    const current = clamp(Math.round(progress), 0, sceneCount - 1);
-    if (current <= 0 && direction < 0) {
-      progress = sceneCount;
-      target = sceneCount;
-      activeIndex = -1;
-      render();
-      animationFrom = progress;
-      target = sceneCount - 1;
-      animationStarted = performance.now();
-      animationDuration = 990;
-      if (!raf) raf = requestAnimationFrame(animate);
-      return;
-    }
-    if (current === sceneCount - 1 && direction > 0) {
-      goTo(sceneCount, true);
-      return;
-    }
-    goTo(current + direction);
+    if (now - lastWheelAt > 180 || direction !== wheelDirection) wheelDelta = 0;
+    lastWheelAt = now;
+    wheelDirection = direction;
+    wheelDelta += Math.min(160, Math.abs(delta));
+    const threshold = raf ? 60 : 1;
+    if (wheelDelta < threshold) return;
+    wheelDelta = 0;
+    queueWheelStep(direction);
   }
 
   function onKeydown(event) {
     if (!enabled || event.altKey || event.ctrlKey || event.metaKey) return;
     if (['ArrowDown', 'PageDown', ' '].includes(event.key)) {
       event.preventDefault();
-      moveTarget(1);
+      queueWheelStep(1);
     } else if (['ArrowUp', 'PageUp'].includes(event.key)) {
       event.preventDefault();
-      if (target <= 0) {
-        progress = sceneCount;
-        target = sceneCount;
-      }
-      moveTarget(-1);
+      queueWheelStep(-1);
     } else if (event.key === 'Home') {
       event.preventDefault();
       goTo(0);
@@ -878,6 +895,8 @@ if ('IntersectionObserver' in window) {
   }
 
   function goTo(index, includeLoop = false) {
+    queuedWheelDirection = 0;
+    wheelDelta = 0;
     animationFrom = progress;
     target = clamp(index, 0, includeLoop ? sceneCount : sceneCount - 1);
     animationStarted = performance.now();
@@ -892,7 +911,7 @@ if ('IntersectionObserver' in window) {
     world = document.createElement('div');
     world.className = 'zoom-world';
     main.insertBefore(world, sourceScenes[0]);
-    sourceScenes.forEach((scene) => {
+    domScenes.forEach((scene) => {
       scene.classList.add('zoom-scene');
       world.appendChild(scene);
     });
@@ -937,10 +956,10 @@ if ('IntersectionObserver' in window) {
     world = null;
     loopClone = null;
     scenes = [];
-    clearTimeout(wheelUnlockTimer);
-    wheelLocked = false;
-    lastWheelEvent = 0;
-    wheelLockUntil = 0;
+    wheelDelta = 0;
+    wheelDirection = 0;
+    lastWheelAt = 0;
+    queuedWheelDirection = 0;
     body.classList.remove('zoom-story-active');
   }
 

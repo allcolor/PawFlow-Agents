@@ -1344,19 +1344,6 @@ pre { margin: 0; padding: 18px; overflow-x: auto; color: #d9f5ff; font-size: 14p
     box-shadow: 0 0 8px var(--cyan);
     animation: zoom-wheel 1.7s ease-in-out infinite;
   }
-  .zoom-story-active .landing-glow-one { animation: zoom-glow-drift 7s ease-in-out infinite alternate; }
-  .zoom-story-active .runtime-stage::after {
-    content: "";
-    position: absolute;
-    z-index: 4;
-    inset: -25% 0 auto;
-    height: 24%;
-    pointer-events: none;
-    background: linear-gradient(180deg, transparent, rgba(38,212,255,.1), transparent);
-    animation: zoom-stage-scan 4.2s linear infinite;
-  }
-  .zoom-story-active .stage-runtime { animation: zoom-node-pulse 3.4s ease-in-out infinite; }
-  .zoom-story-active .stage-relay { animation: zoom-node-pulse 3.4s 1.7s ease-in-out infinite; }
 }
 
 @keyframes zoom-wheel {
@@ -1365,19 +1352,6 @@ pre { margin: 0; padding: 18px; overflow-x: auto; color: #d9f5ff; font-size: 14p
   75% { opacity: 1; }
   100% { transform: translateY(9px); opacity: 0; }
 }
-@keyframes zoom-glow-drift {
-  from { transform: translate3d(-4%, -3%, 0) scale(.9); opacity: .65; }
-  to { transform: translate3d(5%, 4%, 0) scale(1.12); opacity: 1; }
-}
-@keyframes zoom-stage-scan {
-  from { transform: translateY(0); }
-  to { transform: translateY(620%); }
-}
-@keyframes zoom-node-pulse {
-  0%, 100% { opacity: .88; }
-  50% { opacity: 1; }
-}
-
 /* ── Mobile narrative canvas ───────────────────────────────────────────── */
 @media (max-width: 999px) and (prefers-reduced-motion: no-preference) {
   .mobile-story-active {

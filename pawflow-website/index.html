@@ -20,7 +20,7 @@
   <meta name="twitter:description" content="Self-hosted AI agents that work on your real machines and durable workflows.">
   <meta name="twitter:image" content="https://pawflow.allcolor.org/assets/media/hero/pawflow-runtime-hero.webp">
   <link rel="icon" href="assets/logo.png" type="image/png">
-  <link rel="stylesheet" href="style.css?v=a30">
+  <link rel="stylesheet" href="style.css?v=a32">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -72,8 +72,8 @@
       <span></span><span></span><span></span>
     </button>
     <nav class="site-nav" data-nav aria-label="Primary navigation">
-      <a href="#why">About</a>
       <a href="#architecture">How it works</a>
+      <a href="#why">About</a>
       <a href="#demos">Videos</a>
       <a href="howtos.html">How-tos</a>
       <a href="docs.html">Docs</a>
@@ -84,8 +84,8 @@
 
   <nav class="zoom-story-links" aria-label="Homepage sections">
     <a href="#product" data-zoom-target="0"><span>00</span> Home</a>
-    <a href="#why" data-zoom-target="1"><span>01</span> About</a>
-    <a href="#architecture" data-zoom-target="2"><span>02</span> Architecture</a>
+    <a href="#architecture" data-zoom-target="1"><span>01</span> Architecture</a>
+    <a href="#why" data-zoom-target="2"><span>02</span> About</a>
     <a href="#demos" data-zoom-target="3"><span>03</span> Videos</a>
     <a href="#stack" data-zoom-target="4"><span>04</span> Stack</a>
     <a href="#comparison" data-zoom-target="5"><span>05</span> Comparison</a>
@@ -93,7 +93,7 @@
     <i aria-hidden="true"></i>
     <a class="zoom-story-external" href="howtos.html">How-tos ↗</a>
   </nav>
-  <div class="zoom-story-hint" aria-hidden="true"><span></span> Scroll to zoom</div>
+  <div class="zoom-story-hint" aria-hidden="true"><span></span></div>
 
   <main class="landing-main">
     <section class="landing-hero" id="product">
@@ -112,7 +112,7 @@
           <p class="landing-proof">Open source <span>·</span> Self-hosted <span>·</span> MIT licensed</p>
         </div>
 
-        <figure class="runtime-stage" data-reveal aria-labelledby="runtime-stage-caption">
+        <figure class="runtime-stage" data-zoom-portal data-reveal aria-labelledby="runtime-stage-caption">
           <div class="stage-toolbar">
             <span class="stage-status"><i></i> LIVE RUNTIME</span>
             <span>ROUTE / WORKSPACE</span>
@@ -142,50 +142,17 @@
       </div>
     </section>
 
-    <section class="landing-section landing-why" id="why">
-      <div class="container">
-        <header class="landing-section-head" data-reveal>
-          <p class="landing-index">01 / WHY PAWFLOW</p>
-          <h2>One runtime. Three ideas.</h2>
-          <p>The capabilities matter because they share the same architecture.</p>
-        </header>
-        <div class="pillar-grid">
-          <article class="pillar" data-reveal>
-            <span class="pillar-number">01</span>
-            <div class="pillar-icon relay-icon" aria-hidden="true"><i></i><i></i><i></i></div>
-            <h3>Work where your infrastructure already is</h3>
-            <p>Connect agents to real machines through Relays instead of moving projects into disposable cloud sandboxes.</p>
-            <a href="relays.html">Explore Relays <span aria-hidden="true">→</span></a>
-          </article>
-          <article class="pillar" data-reveal>
-            <span class="pillar-number">02</span>
-            <div class="pillar-icon runtime-icon" aria-hidden="true"><i></i><i></i><i></i></div>
-            <h3>One durable runtime</h3>
-            <p>Models, agents, tools, memory, skills, conversations, and permissions persist across clients and sessions.</p>
-            <a href="product.html#runtime">See the runtime <span aria-hidden="true">→</span></a>
-          </article>
-          <article class="pillar" data-reveal>
-            <span class="pillar-number">03</span>
-            <div class="pillar-icon flow-icon" aria-hidden="true"><i></i><i></i><i></i></div>
-            <h3>Reason with agents. Run with flows.</h3>
-            <p>Use agents where reasoning helps. Move repeatable execution into flows with queues, retries, checkpoints, and backpressure.</p>
-            <a href="flows.html">Explore Flows <span aria-hidden="true">→</span></a>
-          </article>
-        </div>
-      </div>
-    </section>
-
     <section class="landing-section architecture-story" id="architecture">
       <div class="container">
         <header class="landing-section-head architecture-heading" data-reveal>
           <div>
-            <p class="landing-index">02 / HOW IT WORKS</p>
+            <p class="landing-index">01 / HOW IT WORKS</p>
             <h2>A controlled path to real infrastructure.</h2>
           </div>
           <p>Clients share one runtime. Relays put execution next to the files, tools, and machines that matter.</p>
         </header>
 
-        <div class="architecture-stack" data-reveal>
+        <div class="architecture-stack" data-zoom-portal data-reveal>
           <div class="architecture-row architecture-clients">
             <span class="architecture-label">USE IT FROM</span>
             <div><b>Web</b><b>CLI</b><b>VS Code</b><b>Android</b><b>Telegram</b><b>API</b></div>
@@ -218,13 +185,46 @@
       </div>
     </section>
 
+    <section class="landing-section landing-why" id="why">
+      <div class="container">
+        <header class="landing-section-head" data-reveal>
+          <p class="landing-index">02 / WHY PAWFLOW</p>
+          <h2>One runtime. Three ideas.</h2>
+          <p>The capabilities matter because they share the same architecture.</p>
+        </header>
+        <div class="pillar-grid" data-zoom-portal>
+          <article class="pillar" data-reveal>
+            <span class="pillar-number">01</span>
+            <div class="pillar-icon relay-icon" aria-hidden="true"><i></i><i></i><i></i></div>
+            <h3>Work where your infrastructure already is</h3>
+            <p>Connect agents to real machines through Relays instead of moving projects into disposable cloud sandboxes.</p>
+            <a href="relays.html">Explore Relays <span aria-hidden="true">→</span></a>
+          </article>
+          <article class="pillar" data-reveal>
+            <span class="pillar-number">02</span>
+            <div class="pillar-icon runtime-icon" aria-hidden="true"><i></i><i></i><i></i></div>
+            <h3>One durable runtime</h3>
+            <p>Models, agents, tools, memory, skills, conversations, and permissions persist across clients and sessions.</p>
+            <a href="product.html#runtime">See the runtime <span aria-hidden="true">→</span></a>
+          </article>
+          <article class="pillar" data-reveal>
+            <span class="pillar-number">03</span>
+            <div class="pillar-icon flow-icon" aria-hidden="true"><i></i><i></i><i></i></div>
+            <h3>Reason with agents. Run with flows.</h3>
+            <p>Use agents where reasoning helps. Move repeatable execution into flows with queues, retries, checkpoints, and backpressure.</p>
+            <a href="flows.html">Explore Flows <span aria-hidden="true">→</span></a>
+          </article>
+        </div>
+      </div>
+    </section>
+
     <section class="landing-section demo-story" id="demos">
       <div class="container">
         <header class="landing-section-head" data-reveal>
           <p class="landing-index">03 / SEE IT WORKING</p>
           <h2>Three proofs, not thirty promises.</h2>
         </header>
-        <div class="demo-grid">
+        <div class="demo-grid" data-zoom-portal>
           <article class="demo-card" data-reveal>
             <div class="demo-media">
               <video controls preload="metadata" poster="assets/media/video/chatgpt-mcp-live-workspace-poster.webp">
@@ -279,7 +279,7 @@
           </div>
           <p>Mix providers and clients without rebuilding the system around each one.</p>
         </header>
-        <div class="stack-list" data-reveal>
+        <div class="stack-list" data-zoom-portal data-reveal>
           <div><span>MODELS</span><p>OpenAI <i>·</i> Claude <i>·</i> Codex <i>·</i> Gemini <i>·</i> DeepSeek <i>·</i> compatible APIs</p></div>
           <div><span>PROTOCOLS</span><p>MCP <i>·</i> A2A <i>·</i> AG-UI</p></div>
           <div><span>CLIENTS</span><p>Web <i>·</i> CLI <i>·</i> VS Code <i>·</i> Android <i>·</i> Telegram <i>·</i> API</p></div>
@@ -299,7 +299,7 @@
           <h2>Capabilities that usually live apart.</h2>
           <p>PawFlow combines a coding harness, workflow engine, real-machine execution, durable context, and interoperability because they share one runtime.</p>
         </header>
-        <div class="comparison-wrap" data-reveal>
+        <div class="comparison-wrap" data-zoom-portal data-reveal>
           <table class="product-comparison">
             <thead>
               <tr><th>Capability</th><th>Coding harness</th><th>Cloud agent</th><th>Workflow engine</th><th>PawFlow</th></tr>
@@ -320,7 +320,7 @@
     </section>
 
     <section class="landing-section install-story" id="install">
-      <div class="container install-panel" data-reveal>
+      <div class="container install-panel" data-zoom-portal data-reveal>
         <div>
           <p class="landing-index">06 / RUN IT YOURSELF</p>
           <h2>Run PawFlow on your infrastructure.</h2>
@@ -350,6 +350,6 @@
       </nav>
     </div>
   </footer>
-  <script src="site.js?v=a30"></script>
+  <script src="site.js?v=a32"></script>
 </body>
 </html>

@@ -175,45 +175,37 @@ Motion must remain functional and lightweight:
 - cards may use small depth changes;
 - all non-essential animation must stop under `prefers-reduced-motion`.
 
-On wide desktop viewports with a precise pointer, the homepage becomes a
-zoomable narrative canvas. It is deliberately hybrid rather than a sequence of
-identical zooms:
+On wide desktop viewports with a precise pointer, the homepage is one nested
+infinite-zoom canvas rather than a stack of slides. The narrative order is Home,
+Architecture, About, Videos, Stack, Comparison, and Install. Every chapter marks
+one large visual as the portal to the next chapter. The runtime measures each
+portal and places the next full scene inside it, so forward navigation zooms into
+that representation and reverse navigation follows the exact same path as a
+dezoom. Install contains the loop portal back to a visual Home clone.
 
-- Hero to About, Architecture to Videos, and Comparison to Install use nested
-  inception zooms;
-- About to Architecture and Videos through Comparison use vertical canvas
-  pans;
-- transitions use a short blur crossfade, then settle to a completely sharp
-  scene;
-- one complete wheel/trackpad gesture advances exactly one scene; inertial
-  events stay locked until the scene is sharp and the gesture has been idle
-  for one second;
-- every scene is top-aligned just below the fixed header instead of vertically
-  centered, avoiding decorative empty space above short content;
-- the final Install scene zooms into a visual Hero copy, then resets to the
-  original Hero without a visible seam.
+Wheel and trackpad input are intercepted only while this desktop canvas is
+active. Any non-zero initial delta starts one chapter transition. Continued
+input during the animation accumulates and queues the next chapter without an
+idle timeout or a release-and-wait lock. Each individual segment uses an
+acceleration/deceleration curve and stops exactly on a sharp scene before a
+queued segment begins. A short blur crossfade hides the level-of-detail swap
+between the simplified portal and the full chapter.
 
-Every scene must fit inside the available viewport as one complete artboard.
-The runtime measures the natural scene content and applies a fit scale that
-accounts for the persistent section navigator. A scene may never require an
-unreachable inner scroll area. Only the current and next scenes remain
-rendered; all deeper scenes use `content-visibility: hidden` so the nested
-camera does not compound browser load.
+Every scene is fitted inside the available viewport. The fixed scene navigator
+keeps direct anchors for Home, About, Architecture, Videos, Stack, Comparison,
+and Install, plus a direct How-tos link. `prefers-reduced-motion` disables the
+canvas and leaves the same content as a normal document.
 
-The fixed scene navigator keeps direct anchors for Home, About, Architecture,
-Videos, Stack, Comparison, and Install, plus a direct How-tos link. Keyboard
-Page Up/Page Down, arrows, Home, End, and Space mirror wheel navigation.
+The fixed desktop section navigator keeps direct anchors for Home, About,
+Architecture, Videos, Stack, Comparison, and Install, plus a direct How-tos
+link. On mobile the regular header and in-content links provide navigation.
 
 On mobile, the first viewport prioritizes the H1, one sentence, primary and secondary actions, then the single runtime visual. It must not reintroduce a logo animation, sound control, help banner, install command, or capability badge wall ahead of the product story.
 
-Mobile uses a full-screen chapter canvas rather than ordinary page scrolling.
-Each short chapter fits as one stable scene; a chapter that genuinely needs
-more room scrolls vertically inside that scene. A swipe can trigger the next
-zoom or pan only when it starts at the current chapter's bottom, so reaching the
-last line and changing chapters are always two distinct gestures. Reverse
-navigation follows the same rule at the top, and the final chapter loops to the
-first. Reduced-motion visitors receive the same complete content as a normal
-document without this canvas.
+Mobile uses a full-screen chapter canvas. A chapter that needs more room scrolls
+inside its scene; a new gesture changes chapters only when it starts at the
+current scene boundary. Chapter changes use the same zoom direction and loop,
+while reduced-motion visitors receive a normal continuous document.
 
 The How-tos page reuses this visual language without sacrificing complete
 documentation. Its animated canvas is a nine-scene category map; every card

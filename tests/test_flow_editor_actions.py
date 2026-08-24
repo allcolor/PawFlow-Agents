@@ -100,6 +100,16 @@ def test_publish_answers_422_with_the_validation_report():
     assert data["validation"]["errors"] >= 1
 
 
+def test_new_action_forwards_the_agent_workflow_starter_selection():
+    data, status = _call("flow_editor_new", {
+        "package": "my_flows", "name": "specialist", "version": "1.0.0",
+        "scope": "user", "template_kind": "agent_workflow"})
+    assert status == "200", data
+    definition = data["draft"]["definition"]
+    assert definition["kind"] == "agent_workflow"
+    assert definition["entries"] == ["agent_request"]
+
+
 def test_global_scope_writes_require_admin_and_drafts_are_private():
     body = {"package": "shared", "name": "flow", "version": "1.0.0", "scope": "global"}
     data, status = _call("flow_editor_new", body)

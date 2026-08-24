@@ -244,6 +244,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
         from core.llm_client import stamp_message
         _uid = flowfile.get_attribute("http.auth.principal") or ""
         _stamped_user = None
+        _runtime = None
         _skip_pre_persist = bool(flowfile.get_attribute("skip_pre_persist"))
         _persisted_source = {"type": "user", "name": _uid,
                              "target_agent": _target or None}
@@ -334,7 +335,75 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 }).encode())
                 flowfile.set_attribute("http.response.status", "403")
                 return [flowfile]
-            if not _skip_pre_persist:
+            from core.agent_feature_flags import workflow_agents_enabled
+            if not _already_active or workflow_agents_enabled():
+                from core.agent_runtime_router import (
+                    AgentRuntimeRouter,
+                    AgentRuntimeRoutingError,
+                )
+                try:
+                    _runtime = AgentRuntimeRouter.instance().resolve(
+                        conversation_id, _target)
+                except AgentRuntimeRoutingError as _routing_error:
+                    if (_routing_error.code == "workflow_agents_disabled"
+                            and not _skip_pre_persist):
+                        ConversationWriter.for_conversation(
+                            conversation_id).enqueue_message(
+                                dict(_stamped_user),
+                                agent_name=_target or "", user_id=_uid,
+                                wait=(_channel == "telegram"))
+                    flowfile.set_content(json.dumps({
+                        "error": str(_routing_error),
+                        "code": _routing_error.code,
+                        "conversation_id": conversation_id,
+                    }).encode("utf-8"))
+                    flowfile.set_attribute("http.response.status", "503")
+                    flowfile.set_attribute(
+                        "agent.conversation_id", conversation_id)
+                    return [flowfile]
+            _is_workflow = (
+                _runtime is not None and _runtime.runtime_kind == "workflow")
+            if _is_workflow:
+                try:
+                    from core.agent_inbox_store import AgentInboxStore
+                    _inbox = AgentInboxStore.instance()
+                    _canonical_agent = _runtime.canonical_agent_name
+                    _receipt_source = str(
+                        (_stamped_user.get("source") or {}).get("type")
+                        or _channel or "user")
+                    _inbox.prepare_receipt(
+                        conversation_id, _canonical_agent,
+                        dict(_stamped_user), _receipt_source)
+                    if not _skip_pre_persist:
+                        _cw = ConversationWriter.for_conversation(conversation_id)
+                        _cw.enqueue_message_if_absent(
+                            dict(_stamped_user),
+                            agent_name=_canonical_agent,
+                            user_id=_uid,
+                            sse_events=[{"type": "new_message", "data": {
+                                "role": "user",
+                                "content": _stamped_user.get("content", ""),
+                                "msg_id": _stamped_user.get("msg_id", ""),
+                                "ts": _stamped_user.get("ts"),
+                                "source": _stamped_user.get("source") or {},
+                                "channel": _channel,
+                                "attachments": _attachments_body,
+                            }}])
+                    _inbox.mark_transcript_persisted(
+                        conversation_id, _canonical_agent,
+                        str(_stamped_user.get("msg_id") or ""))
+                except Exception as _pe:
+                    logger.exception("workflow ingress persistence failed")
+                    flowfile.set_content(json.dumps({
+                        "error": str(_pe),
+                        "code": "workflow_ingress_persistence_failed",
+                        "conversation_id": conversation_id,
+                    }).encode("utf-8"))
+                    flowfile.set_attribute("http.response.status", "503")
+                    flowfile.set_attribute(
+                        "agent.conversation_id", conversation_id)
+                    return [flowfile]
+            elif not _skip_pre_persist:
                 try:
                     _writer_started = _t_stream.monotonic()
                     _cw = ConversationWriter.for_conversation(conversation_id)
@@ -393,10 +462,54 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                     "conversation_id": conversation_id})
             return True
 
-        # A published external agent owns its local TUI. The canonical row may
-        # have been persisted immediately above (web/A2A) or by the private
-        # delegate delivery path before this wake (skip_pre_persist=1). Route
-        # both shapes; persistence ownership must not decide runtime routing.
+        # Workflow ingress always reaches its queue-only adapter, including
+        # messages submitted while a run is active. The canonical row is already
+        # enqueued above, so the coordinator owns only execution/finalization.
+        if _stamped_user is not None and _runtime is not None:
+            if _runtime.runtime_kind == "workflow":
+                try:
+                    from core.workflow_agent_runtime import prepare_workflow_turn
+                    _prepared = prepare_workflow_turn(
+                        conversation_id=conversation_id,
+                        agent_name=_runtime.canonical_agent_name,
+                        user_id=_uid,
+                        message=_user_text,
+                        attachments=_attachments_body,
+                        message_id=str(_stamped_user.get("msg_id") or ""),
+                        channel=_channel,
+                        permission_mode=(
+                            flowfile.get_attribute("agent.permission_mode")
+                            or "default"),
+                        source=dict(_stamped_user.get("source") or {}),
+                    )
+                    _workflow_ack = _runtime.adapter.submit(_prepared)
+                except Exception as _workflow_error:
+                    logger.exception("workflow turn submission failed")
+                    flowfile.set_content(json.dumps({
+                        "error": str(_workflow_error),
+                        "code": "workflow_submission_failed",
+                        "conversation_id": conversation_id,
+                    }).encode("utf-8"))
+                    flowfile.set_attribute("http.response.status", "503")
+                    flowfile.set_attribute(
+                        "agent.conversation_id", conversation_id)
+                    return [flowfile]
+                flowfile.set_content(json.dumps({
+                    "status": "accepted",
+                    "conversation_id": conversation_id,
+                    "message_count": _ack_message_count(),
+                    "server_start_time": SERVER_START_TIME,
+                    "wait_for_done": True,
+                    "runtime_kind": "workflow",
+                    "run_id": _workflow_ack.get("run_id") or "",
+                    "queued": bool(_workflow_ack.get("queued")),
+                }).encode("utf-8"))
+                flowfile.set_attribute("agent.conversation_id", conversation_id)
+                flowfile.set_attribute("agent.streaming", "true")
+                return [flowfile]
+
+        # A published external agent owns its local TUI. Route only idle turns;
+        # LLM preemption remains on the characterized path below.
         if _stamped_user is not None and not _already_active:
             from services.external_agent_runtime_router import (
                 route_external_agent_prompt)

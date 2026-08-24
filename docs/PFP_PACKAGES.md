@@ -77,11 +77,56 @@ my-package-1.0.0.pfp
 }
 ```
 
-Supported installable object types are `agent`, `prompt`, `skill`, `theme`, `task_def`, `flow`, `service_definition`, `tool`, `service_provider`, `flow_task`, `task_provider`, `ui_extension`, `web_app`, `mcp_server`, `repository_type`, and `repository_resource`. `task_def` is a PawFlow agent/task definition resource. `flow_task`/`task_provider` are processor types for flows: install registers a `TaskFactory` proxy so flows can parse, validate, and execute the new task type when a runtime runner is declared. PFP `tool` objects are installed as runtime proxies with provenance and declared capabilities. A PFP `service_provider` registers its declared `service_type` in the normal `ServiceFactory` catalogue with its own schema, rules, actions, operations, category, and runtime implementation. It does not create an instance: instances are ordinary `service_definition` resources or services created through the normal service UI/API, and multiple instances may use the same PFP type with different configuration. `ui_extension` objects ship JS/CSS assets that hook into the chat web UI via the versioned `ui.v1` slot/hook contract; assets are served by `servePfpExtensionAssets` at `/chat/ext/<package>/<short_sha256>/<file>` with per-file SHA-256 integrity verification, and the install plan rejects packages declaring an incompatible `version_compat`. `web_app` objects ship a standalone page (html/js/css) served at its own authenticated route instead of being injected into the chat page; see [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md) for the manifest shape and trust model. `mcp_server` objects install directly as an `mcp` resource (the same resource type the Resources sidebar's MCP section manages) — no manual reconnection step after install; see "MCP Servers (mcp_server)" below. `repository_type` and `repository_resource` let a package add schema-validated repository features without adding feature-specific entries to PawFlow's built-in `ResourceStore`.
+Supported installable object types are `agent`, `agent_group`, `prompt`, `skill`, `theme`, `task_def`, `flow`, `service_definition`, `tool`, `service_provider`, `flow_task`, `task_provider`, `ui_extension`, `web_app`, `mcp_server`, `repository_type`, and `repository_resource`. `agent_group` is a validated bounded-deliberation definition stored under `content/agent_groups/<name>.json`; installation does not bind its member requirements to conversation instances or enable group execution. `task_def` is a PawFlow agent/task definition resource. `flow_task`/`task_provider` are processor types for flows: install registers a `TaskFactory` proxy so flows can parse, validate, and execute the new task type when a runtime runner is declared. PFP `tool` objects are installed as runtime proxies with provenance and declared capabilities. A PFP `service_provider` registers its declared `service_type` in the normal `ServiceFactory` catalogue with its own schema, rules, actions, operations, category, and runtime implementation. It does not create an instance: instances are ordinary `service_definition` resources or services created through the normal service UI/API, and multiple instances may use the same PFP type with different configuration. `ui_extension` objects ship JS/CSS assets that hook into the chat web UI via the versioned `ui.v1` slot/hook contract; assets are served by `servePfpExtensionAssets` at `/chat/ext/<package>/<short_sha256>/<file>` with per-file SHA-256 integrity verification, and the install plan rejects packages declaring an incompatible `version_compat`. `web_app` objects ship a standalone page (html/js/css) served at its own authenticated route instead of being injected into the chat page; see [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md) for the manifest shape and trust model. `mcp_server` objects install directly as an `mcp` resource (the same resource type the Resources sidebar's MCP section manages) — no manual reconnection step after install; see "MCP Servers (mcp_server)" below. `repository_type` and `repository_resource` let a package add schema-validated repository features without adding feature-specific entries to PawFlow's built-in `ResourceStore`.
 
 `dependencies` declares package-level dependencies. Object-level `requires` can also reference another package with `"package:community.pkg@1.0.0"` or `{"package": "community.pkg", "version": "1.0.0"}`. `allowed_tools` and `allowed_services` accept builtin names, such as `{"name": "read"}`, and package-qualified grants, such as `{"package": "community.media-core", "object": "tool:normalize_image"}` or `"community.media-core/tool:normalize_image"`. These grants are only for brokered calls back into PawFlow through `pfp.call_tool(...)` and `pfp.call_service(...)`; they do not gate normal relay-local filesystem or binary access by the package process. Package-qualified grants are treated as dependencies: the referenced package, and the referenced object when one is named, must already be installed in the target scope or in the user scope before the dependent object can be selected for install.
 
 Dependency `version` accepts exact versions and simple ranges: `>=1.0.0,<2.0.0`, `^1.2.0`, `~1.2.3`, comparison operators (`>`, `>=`, `<`, `<=`, `==`, `!=`), or `*`. Install and runtime checks require the installed package to satisfy the constraint. Updating a package is blocked when an installed dependent would no longer satisfy its declared constraint, unless `force` is explicit.
+
+### Workflow agent bundles
+
+A package may ship a workflow agent only with the exact flow it binds. The
+`agent` resource declares `runtime_defaults.kind: workflow` and an immutable
+`flow_fqn`; the manifest contains a `flow` object with that same FQN, and the
+agent object's `requires` names the flow object ID:
+
+```json
+{
+  "objects": [
+    {
+      "id": "flow:wiki",
+      "type": "flow",
+      "name": "example.wiki:1.0.0",
+      "fqn": "example.wiki:1.0.0",
+      "path": "content/flows/wiki.json"
+    },
+    {
+      "id": "agent:wiki",
+      "type": "agent",
+      "name": "wiki",
+      "path": "content/agents/wiki.md",
+      "requires": ["flow:wiki"]
+    }
+  ]
+}
+```
+
+Inspection rejects a missing, non-exact, mismatched, or undeclared flow.
+Selective installation also refuses the agent if its flow object was not
+selected. Installed bindings resolve within the target conversation/user scope,
+record the resolved scope and digest, and do not follow a later package update
+until the user explicitly upgrades the conversation agent.
+
+### Agent group resources
+
+An `agent_group` manifest object points to
+`content/agent_groups/<name>.json`. Inspection validates the versioned group
+schema, distinct concrete member requirements, capped rounds/calls/parallelism,
+private-context policy, tool policy, synthesis target, and positive budgets.
+The installed resource remains inert until an operator enables both workflow
+agents and agent groups and a user explicitly binds every member requirement to
+a compatible LLM conversation instance. Bind and run-start snapshots pin exact
+agent and service revisions; package updates never retarget an active binding.
 
 ### UI extension on-demand assets
 
@@ -299,6 +344,8 @@ used for an official release identity.
 - Every archive path is normalized and rejected if it is absolute, escapes the package, or contains unsafe characters.
 - Registry refs and direct URLs show package size before download and require explicit confirmation before fetching. Local inspect shows package size, uncompressed content size, and file count before install; there is no arbitrary PFP size cap. Users decide whether a package is acceptable before installing it.
 - Installation writes only selected objects from the install plan. Agent definitions with default `assigned_skills` can be installed only when every referenced skill is either already visible in the target scope or selected in the same install operation. Those defaults are copied into each new conversation instance rather than remaining a mutable cross-conversation assignment.
+- Workflow-agent definitions must bundle and depend on their exact flow object;
+  partial install cannot leave an agent pointing at an absent or mutable flow.
 - When at least one object is installed, the verified package payload is copied into a scoped local content store under the package repository. Runtime proxies reference that stable `content_dir` plus their signed entrypoint path; they never depend on the original `.pfp` file remaining on disk.
 - Installed resources receive `installed_from` provenance with package id, version, object id, file hash, package hash, and developer public key.
 - PFP runtime proxies validate their installed entrypoint before invocation: the file must still live under the scoped package content directory and its SHA-256 must match the signed install provenance. Dev-loaded `.pfpdir` packages still enforce path containment, but skip hash mismatch failures so source edits take effect immediately.

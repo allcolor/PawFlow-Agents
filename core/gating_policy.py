@@ -165,7 +165,8 @@ def is_mutating_call(tool_name: str, arguments: Dict[str, Any]) -> bool:
 
 def classify_call(tool_name: str, arguments: Dict[str, Any], *,
                   permission_mode: str = "default", tool_permission: str = "",
-                  read_only_override: bool = False) -> Tuple[str, str]:
+                  read_only_override: bool = False,
+                  capability_effects: Optional[Iterable[Any]] = None) -> Tuple[str, str]:
     """Return ``(class, reason)`` with class in
     ``internal_ungated | hard_deny | hard_confirm | ordinary``.
 
@@ -178,8 +179,21 @@ def classify_call(tool_name: str, arguments: Dict[str, Any], *,
         return "internal_ungated", "authorization plumbing"
     if tool_permission == "deny":
         return "hard_deny", "tool is denied by permission settings"
-    if (read_only_override or permission_mode in ("read_only", "advisor_read_only")) \
-            and not ToolApprovalGate.is_read_only_allowed(name, args):
+    if permission_mode in ("read_only", "advisor_read_only"):
+        if capability_effects is not None:
+            from core.agent_contracts import READ_ONLY_EFFECTS, CapabilityEffect
+            try:
+                effects = {
+                    value if isinstance(value, CapabilityEffect)
+                    else CapabilityEffect(value) for value in capability_effects
+                }
+            except ValueError:
+                return "hard_deny", "unknown capability effect"
+            if not effects or not effects <= READ_ONLY_EFFECTS:
+                return "hard_deny", "read-only mode"
+        elif not ToolApprovalGate.is_read_only_allowed(name, args):
+            return "hard_deny", "read-only mode"
+    if read_only_override and not ToolApprovalGate.is_read_only_allowed(name, args):
         return "hard_deny", "read-only mode"
     if tool_permission == "confirm":
         return "hard_confirm", "tool requires confirmation by permission settings"
@@ -207,7 +221,8 @@ def build_envelope(*, user_id: str, conversation_id: str, agent_name: str,
                    turn_id: str, tool_name: str, arguments: Dict[str, Any],
                    call_id: str = "", authorization: Optional[Dict[str, Any]] = None,
                    secret_values: Iterable[str] = (), classification: str = "ordinary",
-                   max_authority_chars: Optional[int] = None) -> Dict[str, Any]:
+                   max_authority_chars: Optional[int] = None,
+                   capability_effects: Optional[Iterable[Any]] = None) -> Dict[str, Any]:
     """Immutable evaluator input (plan section 8.6). Arguments are redacted."""
     from core.authorization_context import DEFAULT_ENVELOPE_CHARS, authority_envelope
     redacted = redact_arguments(arguments, secret_values)
@@ -236,6 +251,10 @@ def build_envelope(*, user_id: str, conversation_id: str, agent_name: str,
             "arguments_sha256": canonical_hash(tool_name, redacted),
             "policy_classification": classification,
             "mutating": is_mutating_call(tool_name, arguments),
+            "capability_effects": [
+                str(getattr(value, "value", value))
+                for value in (capability_effects or ())
+            ],
         },
     }
 

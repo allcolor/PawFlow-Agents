@@ -170,3 +170,26 @@ def test_singleton_per_key(fake_store):
     assert a is b
     assert a is c
     assert a is not d
+
+
+def test_explicit_sqlite_migration_keeps_pending_queue_facade(fake_store, tmp_path):
+    from core.agent_inbox_store import AgentInboxStore
+
+    previous = AgentInboxStore._instance
+    AgentInboxStore._instance = AgentInboxStore(tmp_path / "inbox.sqlite3")
+    try:
+        queue = PendingQueue.for_agent("c1", "claude")
+        queue.enqueue(_msg("legacy", "m1", 1), source="http")
+
+        migrated = PendingQueue.migrate_agent_to_inbox("c1", "claude")
+        assert migrated["migrated"] is True
+        assert queue.peek_count() == 1
+
+        queue.enqueue(_msg("sqlite", "m2", 2), source="http")
+        assert ("c1", "claude", 2) in PendingQueue.all_nonempty()
+        assert [row["msg_id"] for row in queue.drain()] == ["m1", "m2"]
+        assert queue.peek_count() == 0
+        assert PendingQueue.migrate_agent_to_inbox(
+            "c1", "claude")["migrated"] is False
+    finally:
+        AgentInboxStore._instance = previous

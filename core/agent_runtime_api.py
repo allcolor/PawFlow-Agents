@@ -204,10 +204,21 @@ class AgentResultWaiter:
         if not isinstance(data, dict):
             return
         turn_id = str(data.get("turn_id") or data.get("request_msg_id") or "")
+        aliases = tuple(dict.fromkeys(
+            str(value) for value in (data.get("answered_turn_ids") or ())
+            if str(value)))
+        lookup_ids = tuple(dict.fromkeys(
+            value for value in (turn_id, *aliases) if value))
         with self._pending_lock:
-            if turn_id:
-                key = self._key(conversation_id, turn_id)
-                item = self._pending.get(key)
+            if lookup_ids:
+                matched = [
+                    (value, self._pending.get(self._key(conversation_id, value)))
+                    for value in lookup_ids
+                ]
+                matched = [(value, pending)
+                           for value, pending in matched if pending is not None]
+                item = matched[0][1] if matched else None
+                key = self._key(conversation_id, matched[0][0]) if matched else ""
             else:
                 matches = [pending for pending_key, pending in self._pending.items()
                            if pending_key.startswith(conversation_id + "\x1f")]
@@ -232,24 +243,21 @@ class AgentResultWaiter:
             return
         if not turn_id:
             return
-        key = self._key(conversation_id, turn_id)
-        with self._pending_lock:
-            item = self._pending.get(key)
-        if not item:
-            return
-        result = AgentFinalResult(
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-            response=str(data.get("response") or ""),
-            agent_name=str(data.get("agent_name") or ""),
-            channel=str(data.get("channel") or ""),
-            finish_reason=str(data.get("finish_reason") or ""),
-            error=str(data.get("message") or "") if event_type == "error_event" else "",
-            event_type=event_type,
-            data=dict(data),
-        )
-        item["result"] = result
-        item["event"].set()
+        for resolved_turn_id, pending in matched:
+            result = AgentFinalResult(
+                conversation_id=conversation_id,
+                turn_id=resolved_turn_id,
+                response=str(data.get("response") or ""),
+                agent_name=str(data.get("agent_name") or ""),
+                channel=str(data.get("channel") or ""),
+                finish_reason=str(data.get("finish_reason") or ""),
+                error=(str(data.get("message") or "")
+                       if event_type == "error_event" else ""),
+                event_type=event_type,
+                data=dict(data),
+            )
+            pending["result"] = result
+            pending["event"].set()
 
     @staticmethod
     def _key(conversation_id: str, turn_id: str) -> str:

@@ -109,6 +109,52 @@ def test_read_history_search_prefers_exact_phrase_matches():
     assert "alpha only" not in result
 
 
+def test_read_history_keyword_fallback_rejects_single_generic_term_hits():
+    handler = ReadHistoryHandler()
+    messages = [
+        {"role": "assistant", "content": "exact wording elsewhere"},
+        {"role": "assistant", "content": "another hotpatch discussion"},
+        {"role": "assistant", "content": "the manifest was regenerated"},
+        {"role": "assistant", "content": "hotpatch manifest verified"},
+        {"role": "assistant", "content": "revision 91 was published"},
+    ]
+
+    result = handler._do_search(
+        FakeConversationStore(messages),
+        {"query": "exact hotpatch manifest 91", "limit": 20},
+        role_filter="",
+        agent_filter="",
+    )
+
+    assert "Found 1 match(es)" in result
+    assert "hotpatch manifest verified" in result
+    assert "exact wording elsewhere" not in result
+    assert "another hotpatch discussion" not in result
+    assert "revision 91" not in result
+
+
+def test_read_history_keyword_fallback_keeps_distinctive_identifiers():
+    handler = ReadHistoryHandler()
+    messages = [
+        {"role": "assistant", "content": "A generic rewrite happened."},
+        {
+            "role": "assistant",
+            "content": "PAWFLOW_USE_RTK remains disabled.",
+        },
+    ]
+
+    result = handler._do_search(
+        FakeConversationStore(messages),
+        {"query": "rtk PAWFLOW_USE_RTK rewrite bash grep glob read", "limit": 20},
+        role_filter="",
+        agent_filter="",
+    )
+
+    assert "Found 1 match(es)" in result
+    assert "PAWFLOW_USE_RTK" in result
+    assert "generic rewrite" not in result
+
+
 def test_read_history_oldest_returns_head_not_recent_tail():
     handler = ReadHistoryHandler()
     messages = [

@@ -510,6 +510,10 @@ class _ALCClosures1Mixin:
                     "ts": getattr(msg, "timestamp", 0) or None,
                     "seq": getattr(msg, "seq", 0) or None,
                 }
+                if msg.is_error:
+                    _store_msg["is_error"] = True
+                if msg.display_only:
+                    _store_msg["display_only"] = True
                 _turn_id = st.ctx.get("request_msg_id") or ""
                 if _turn_id:
                     _store_msg["turn_id"] = _turn_id

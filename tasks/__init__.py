@@ -265,6 +265,21 @@ def register_all_tasks():
     # Tasks AI
     from tasks.ai.agent_loop import AgentLoopTask
     from tasks.ai.agent_actions_task import AgentActionsTask
+    from tasks.ai.workflow import (  # noqa: F401
+        AgentLLMCallTask, AgentParticipantCallTask, AgentWorkflowInputTask,
+        ApplyWikiPatchTask,
+        CompleteAgentTurnTask, EmitAgentProgressTask, FetchWikiSourcesTask,
+        FormatWikiWorkReportTask, LintProjectWikiTask,
+        GroupDeliberationInputTask, InitializeSharedRoomTask,
+        MergeWikiExtractionsTask, NormalizeProjectSourcesTask,
+        PrepareWikiIntentTask, PrepareWikiReviewTask, RouteWikiIntentTask,
+        ResolveGroupSnapshotTask, SelectGroupRespondersTask,
+        ScanProjectWikiSourcesTask, SelectWikiSourceBatchTask,
+        SynthesizeGroupResultTask,
+        SplitWikiSourceBatchesTask, ValidateWikiPatchTask,
+        ValidateWikiReviewTask,
+        WorkflowFakeLLMTask,
+    )
 
     # Auto-register ToolHandlers as flow tasks (tool.*)
     from core.tool_task_adapter import register_tool_tasks

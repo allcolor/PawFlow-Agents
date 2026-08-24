@@ -657,6 +657,8 @@ class _ContinuousExecControlMixin:
             "input_flowfiles": len(input_flowfiles) if input_flowfiles else 0,
             "output_flowfiles": len(executor._exit_results),
             "bytes_processed": sum(ff.size() for ff in executor._exit_results),
+            "discarded_flowfile_errors": list(
+                executor._discarded_flowfile_errors),
         }
         if provenance:
             stats["provenance"] = provenance.to_dict()

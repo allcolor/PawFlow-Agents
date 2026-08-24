@@ -284,8 +284,9 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                             is_error=True, display_only=True,
                             source=st._agent_source(),
                             conversation_id=st.conversation_id)
-                        st.new_messages.append(st._err_msg)
-                        st.messages.append(st._err_msg)
+                        # Use the canonical append path so the row carries its
+                        # error flags in the initial write and needs no patch.
+                        st._append(st._err_msg)
                         st._err_mid = st._err_msg.msg_id
                         st._err_created_new = True
 
@@ -293,7 +294,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                 if st._fatal_error:
                     st.finish_reason = "error"
                     # Patch the message in store (may have been flushed earlier)
-                    if st._err_mid and st.use_conv_store and st.conversation_id:
+                    if (st._err_mid and not st._err_created_new
+                            and st.use_conv_store and st.conversation_id):
                         try:
                             from core.conversation_store import ConversationStore
                             st._err_patch = {"is_error": True}
@@ -384,8 +386,18 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     st._had_preempts)
             ]
             if st._new_user_msgs and (not st._had_preempts or st._unhandled_user_msgs):
+                st._retrigger_msgs = (
+                    st._unhandled_user_msgs if st._had_preempts
+                    else st._new_user_msgs)
                 logger.info("[agent:%s] %d truly new message(s) arrived during last turn — re-triggering",
-                            st.conversation_id[:8], len(st._unhandled_user_msgs or st._new_user_msgs))
+                            st.conversation_id[:8], len(st._retrigger_msgs))
+                # The outer streaming loop owns the next invocation. Carry an
+                # immutable payload because this inner loop may have rebuilt its
+                # context and its local message list is not a safe next-turn
+                # input. The same payload is also the exact cold->delta rebuild
+                # input if the provider finds a live CLI session.
+                st.ctx["_retrigger_messages"] = self._serialize_messages(
+                    st._retrigger_msgs)
                 st.ctx["_retrigger_after_done"] = True
             elif st._new_user_msgs and st._had_preempts:
                 logger.info("[agent:%s] %d message(s) arrived but preempts were processed — NOT re-triggering",

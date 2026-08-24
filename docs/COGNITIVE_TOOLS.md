@@ -34,7 +34,9 @@ They are interconnected:
   expiry, renewal, exact clear, and explicit promotion to FileStore; it never
   exposes the relay's physical root. Symbolic links are accepted only when
   their resolved targets remain inside the same scoped root; escaping or cyclic
-  links fail closed.
+  links fail closed. Filesystem handlers validate a cached scoped ticket against
+  the current store epoch before reuse, so `clear` followed by `ensure`
+  immediately rebinds instead of retaining a stale facade.
 
 ---
 
@@ -269,6 +271,10 @@ The project graph builds a structural code graph from a codebase using tree-sitt
 Initial context preparation schedules a background build automatically. Successful
 relay writes and shell commands schedule a debounced incremental refresh. The
 manual `build` action remains available for recovery or an explicit root change.
+Automatic maintenance always indexes the relay container, even when a server-local
+mutation triggered the refresh; otherwise it would index the deployed runtime
+instead of the relay-scoped project. An explicit manual `build(local=true)`
+remains available when the caller intentionally targets the local surface.
 Each build runs as a single relay exec; the extraction script travels
 base64-encoded in the `PAWFLOW_GRAPH_SCRIPT` env var and is executed in memory
 by a tiny fixed command, without writing a helper file into the source tree.

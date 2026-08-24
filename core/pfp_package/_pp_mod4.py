@@ -148,6 +148,21 @@ def _selected_agent_missing_skills(row: Dict[str, Any], package: Dict[str, Any],
         data, package, user_id, conversation_id, scope, selected_ids)
 
 
+def _selected_agent_missing_workflow(
+        row: Dict[str, Any], package: Dict[str, Any],
+        selected_ids: set) -> str:
+    if str(row.get("type") or "") != "agent":
+        return ""
+    obj = row.get("object") or {}
+    rel = _safe_relpath(str(obj.get("path") or ""))
+    data = _load_resource_data(package, rel, "agent", row.get("name", ""))
+    from core.workflow_agent_resources import (
+        validate_pfp_workflow_agent_dependency,
+    )
+    dependency = validate_pfp_workflow_agent_dependency(data, obj, package)
+    return dependency if dependency and dependency not in selected_ids else ""
+
+
 def _package_update_diff(manifest: Dict[str, Any], package: Dict[str, Any],
                          objects: List[Dict[str, Any]], user_id: str,
                          conversation_id: str, scope: str) -> Dict[str, Any]:

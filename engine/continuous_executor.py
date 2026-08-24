@@ -109,6 +109,7 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
         self._connections = ConnectionManager()
         self._tasks: Dict[str, Task] = {}
         self._task_retry_counts: Dict[str, int] = {}
+        self._discarded_flowfile_errors: List[Dict[str, str]] = []
 
         self._pool: Optional[ThreadPoolExecutor] = None
         self._interactive_pool: Optional[ThreadPoolExecutor] = None
@@ -227,6 +228,27 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
                 conversation_id=conversation_id,
                 scope=scope,
                 agent_name=agent_name,
+            )
+
+        workflow_context = self._runtime_context.get("workflow_run_context")
+        if workflow_context is not None and hasattr(
+                task, "set_workflow_run_context"):
+            task.set_workflow_run_context(
+                workflow_context,
+                event_callback=self._runtime_context.get(
+                    "workflow_event_callback"),
+                terminal_callback=self._runtime_context.get(
+                    "workflow_terminal_callback"),
+                inbox_store=self._runtime_context.get(
+                    "workflow_inbox_store"),
+                run_store=self._runtime_context.get(
+                    "workflow_run_store"),
+                cancel_event=self._runtime_context.get(
+                    "workflow_cancel_event"),
+                preempt_policy=self._runtime_context.get(
+                    "workflow_preempt_policy"),
+                visible_through_sequence=self._runtime_context.get(
+                    "workflow_visible_through_sequence"),
             )
 
         if not getattr(task, "PACKAGE_RUNTIME", None):

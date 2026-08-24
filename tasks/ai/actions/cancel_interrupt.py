@@ -73,6 +73,30 @@ def _clear_force_stop_relaunch_state(conv_id: str, agent_name: str,
             except Exception:
                 logger.debug("force-stop pending queue scan failed", exc_info=True)
     try:
+        from core.agent_inbox_store import AgentInboxStore
+        inbox = AgentInboxStore.instance()
+        agents.update(inbox.list_agent_keys(conv_id))
+    except Exception:
+        inbox = None
+        logger.debug("force-stop inbox scan failed", exc_info=True)
+    if inbox is not None:
+        try:
+            for agent in sorted(agents):
+                inbox.discard_through(conv_id, agent, stopped_at)
+        except Exception:
+            logger.exception("force-stop inbox cutoff failed")
+    try:
+        from core.agent_runtime_router import AgentRunKey
+        from core.workflow_agent_runtime import WorkflowAgentRuntime
+        workflow_runtime = WorkflowAgentRuntime._instance
+        if workflow_runtime is not None:
+            for agent in sorted(agents):
+                workflow_runtime.cancel(
+                    AgentRunKey(conv_id, agent), "force_stop", True)
+            workflow_runtime._resume_durable_pending()
+    except Exception:
+        logger.exception("force-stop workflow cancellation failed")
+    try:
         from core.pending_queue import PendingQueue
         for agent in sorted(agents):
             PendingQueue.for_agent(conv_id, agent).clear("force_stop")

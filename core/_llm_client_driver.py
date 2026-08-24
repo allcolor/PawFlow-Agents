@@ -118,7 +118,9 @@ class _LLMClientDriverMixin:
             temperature: Sampling temperature.
             max_tokens: Maximum visible tokens in the terminal response. Hidden
                 reasoning and tool calls do not consume this budget.
-            response_format: "json" for JSON mode (OpenAI only).
+            response_format: "json" for provider JSON mode. Higher-level JSON
+                Schema contracts remain caller-owned and are validated after the
+                normal completion/tool path returns.
             tools: Tool definitions for function calling / tool_use.
             call_user_id, call_conversation_id, call_agent_name,
             call_event_cid, call_ephemeral_stream: per-call identity for

@@ -1,4 +1,5 @@
 """Read conversation history tool — lets the LLM pull messages outside ctx."""
+import heapq
 import logging
 import re
 from collections import deque
@@ -61,14 +62,39 @@ def _search_tokens(query: str) -> List[str]:
     a fallback so queries like "rtk PAWFLOW_USE_RTK rewrite" can recover nearby
     messages even when the words are not a contiguous phrase.
     """
+    raw_tokens = _QUERY_TOKEN_RE.findall(query.lower())
+    has_text_token = any(not token.isdigit() for token in raw_tokens)
     seen = set()
     tokens = []
-    for token in _QUERY_TOKEN_RE.findall(query.lower()):
+    for token in raw_tokens:
         if len(token) < 2 or token in seen:
+            continue
+        # A number helps when it is the whole query (a message index, version,
+        # or issue number). In a natural multi-term query it is usually a
+        # revision/timestamp fragment and turns the fallback into noise.
+        if has_text_token and token.isdigit():
             continue
         seen.add(token)
         tokens.append(token)
     return tokens
+
+
+def _keyword_score(tokens: List[str], content_lower: str) -> int:
+    """Return a meaningful fallback score, or zero for a weak one-token hit.
+
+    Exact substring matching already handles one-term queries. For a
+    non-contiguous multi-term fallback, one ordinary word is not enough:
+    queries such as "exact hotpatch manifest" otherwise match most of a long
+    technical transcript. Structured identifiers remain useful on their own
+    because a token such as PAWFLOW_USE_RTK is already specific.
+    """
+    matched = [token for token in tokens if token in content_lower]
+    if not matched:
+        return 0
+    if len(tokens) == 1 or len(matched) >= 2:
+        return len(matched)
+    token = matched[0]
+    return 1 if any(char in token for char in "_.-") else 0
 
 
 def _msg_ts(m) -> float:
@@ -454,10 +480,13 @@ class ReadHistoryHandler(ToolHandler):
 
     @staticmethod
     def _matches(msg, role_filter: str, agent_filter: str) -> bool:
-        """``_apply_filters`` for a single message, so it can gate a stream."""
-        if not role_filter and not agent_filter:
-            return True
-        return bool(_apply_filters([msg], role_filter, agent_filter))
+        """Apply role and agent filters to one streamed message."""
+        if role_filter == "thinking":
+            if _msg_role(msg) != "thinking" or not _msg_thinking(msg):
+                return False
+        elif role_filter and _msg_role(msg) != role_filter:
+            return False
+        return not agent_filter or agent_filter in _msg_agents_involved(msg)
 
     @staticmethod
     def _budget(offset_arg, limit_arg) -> tuple:
@@ -516,7 +545,7 @@ class ReadHistoryHandler(ToolHandler):
         offset, limit, budget = self._budget(
             arguments.get("offset"), arguments.get("limit"))
         exact_hits = []      # (index, msg), first `budget` of them
-        token_hits = []      # (score, index, msg), the `budget` best
+        token_hits = []      # min-heap of (score, -index, index, msg)
         exact_total = 0
         token_total = 0
         query_lower = query.lower()
@@ -533,24 +562,24 @@ class ReadHistoryHandler(ToolHandler):
                     continue
                 if not tokens or exact_total:
                     continue
-                score = sum(1 for token in tokens if token in content_lower)
+                score = _keyword_score(tokens, content_lower)
                 if not score:
                     continue
                 token_total += 1
-                # Bounded best-of: replace the weakest kept hit rather than
-                # growing a list that a wide query could make enormous.
+                # Bounded best-of in O(log(budget)). The previous linear
+                # minimum scan per hit made broad searches cost
+                # O(total_hits * page_size).
+                index = start + i
+                candidate = (score, -index, index, msg)
                 if len(token_hits) < budget:
-                    token_hits.append((score, start + i, msg))
-                else:
-                    weakest = min(range(len(token_hits)),
-                                  key=lambda k: token_hits[k][0])
-                    if token_hits[weakest][0] < score:
-                        token_hits[weakest] = (score, start + i, msg)
+                    heapq.heappush(token_hits, candidate)
+                elif candidate[:2] > token_hits[0][:2]:
+                    heapq.heapreplace(token_hits, candidate)
         if exact_hits:
             hits, total = exact_hits, exact_total
         else:
-            token_hits.sort(key=lambda h: (-h[0], h[1]))
-            hits = [(i, msg) for _score, i, msg in token_hits]
+            token_hits.sort(key=lambda h: (-h[0], h[2]))
+            hits = [(i, msg) for _score, _neg_i, i, msg in token_hits]
             total = token_total
         if not hits:
             scope = _scope_label(role_filter, agent_filter)

@@ -78,6 +78,43 @@ Rules:
 - Manual starts for one-shot flows can pass `entry_task_ids` to run only selected root one-shot triggers. The chat UI exposes this as a checkbox list for flows with root one-shot triggers and no persistent sources; omitted `entry_task_ids` keeps the legacy behavior and arms every one-shot root. `executeFlow` subflow invocations suppress unrelated one-shot roots and inject only into the mapped input port, when one is configured.
 - Required secrets are declared by logical package-local name and injected as environment variables at runtime. Secret values never go into `pfp.json`.
 
+### Developing a workflow-agent bundle
+
+Keep the flow and agent definition as ordinary declarative package resources:
+
+1. Author and validate a `kind: "agent_workflow"` flow, then give it an exact
+   FQN such as `dev.example.reviewer:1.0.0`.
+2. Add a manifest `flow` object whose `fqn` is exactly that value.
+3. Add an `agent` object whose Markdown frontmatter uses
+   `runtime_defaults.kind: workflow` and the same `workflow.flow_fqn`.
+4. Add the flow object ID to the agent object's `requires`.
+5. Run `/pfp dev-load --replace ...`, select both objects, add the agent to a
+   test conversation, and validate one normal turn plus inspector/recovery
+   behavior before building the signed package.
+
+The agent workflow must use declared input/terminal ports, bounded preemption,
+and the closed workflow-safe task catalog. Package `flow_task` processors are
+eligible only when their signed `workflow_capabilities` are structurally valid
+and declare `workflow_safe: true`; effective effects and authority are still
+intersected at bind/run time. Package code cannot enable workflow agents or
+`silent_maintenance`: those remain server-owned capabilities.
+
+When releasing a new flow version, add a new immutable flow object and update
+the agent default explicitly. Existing conversation bindings remain pinned until
+the user chooses **Upgrade workflow**.
+
+### Developing an agent-group resource
+
+Declare an `agent_group` object whose path is
+`content/agent_groups/<name>.json`. Keep member `agent_ref` values exact and
+use only bounded version-1 policies. Package inspection validates the resource,
+but installation intentionally does not choose conversation instances or LLM
+services. In a test conversation, bind every member explicitly, enable the
+server-owned workflow/group flags, and exercise the pinned first-party
+`pawflow.agents.group-deliberation:1.0.0` flow. Tool-free WP6 groups must use
+`tool_policy.mode: none`; `declared` mutations are rejected and
+`read_only` execution belongs to the later capability gate.
+
 ## SDK Surface For PFP Entrypoints
 
 PawFlow stages the signed package cache and each invocation under the scoped

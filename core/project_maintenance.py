@@ -9,6 +9,7 @@ process one bounded wiki batch. Nothing runs on the UI or HTTP worker thread.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections import Counter
@@ -20,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 _LAZY_REFRESH_SECONDS = 60.0
 _WRITE_DEBOUNCE_SECONDS = 2.0
+_WIKI_FLOW_FQN = "pawflow.agents.wiki:1.0.0"
+_WIKI_WORKFLOW_CUTOVER_ENV = "PAWFLOW_WIKI_WORKFLOW_CUTOVER"
 
 
 @dataclass
@@ -138,16 +141,80 @@ class ProjectMaintenanceScheduler:
         return [path for path, _count in counts.most_common(40)]
 
     @staticmethod
-    def _resolve_wiki_client(user_id: str, conversation_id: str):
-        """Resolve only the LLM configured by the effective summarizer service."""
+    def _resolve_wiki_service_id(user_id: str, conversation_id: str) -> str:
+        """Resolve the exact LLM service selected by the effective summarizer."""
         from core.summarizer_bindings import resolve_service
         summarizer, _definition, _explicit = resolve_service(
             user_id, conversation_id)
         if summarizer is None or not hasattr(summarizer, "resolve_llm_service"):
-            return None
-        client, _context_size, _service_id = summarizer.resolve_llm_service(
+            return ""
+        _client, _context_size, service_id = summarizer.resolve_llm_service(
             user_id, conversation_id)
-        return client
+        return str(service_id or "")
+
+    def _submit_wiki_workflow(
+            self, job: _MaintenanceJob, *,
+            write_mode: str = "live") -> Dict[str, Any]:
+        """Queue the exact Wiki Agent flow under the active user authority."""
+        if write_mode not in {"live", "shadow"}:
+            raise ValueError("Wiki workflow write_mode must be live or shadow")
+        if not job.conversation_id or not job.agent_name:
+            return {"status": "skipped", "reason": "missing conversation agent"}
+        from core.authorization_context import active_authority_ref
+        authorization = active_authority_ref(
+            job.conversation_id, job.agent_name)
+        if authorization is None or not authorization.root_turn_id:
+            return {"status": "skipped", "reason": "missing authorization"}
+        from core.relay_bindings import get_default
+        if get_default(
+                job.conversation_id, agent=job.agent_name) != job.relay_id:
+            return {"status": "skipped", "reason": "relay binding changed"}
+        service_id = self._resolve_wiki_service_id(
+            job.user_id, job.conversation_id)
+        if not service_id:
+            return {"status": "skipped", "reason": "missing summarizer LLM"}
+
+        from core.workflow_agent_contracts import WorkflowInstanceConfig
+        from core.workflow_agent_resources import bind_agent_workflow
+        binding = WorkflowInstanceConfig.from_dict(bind_agent_workflow({
+            "flow_fqn": _WIKI_FLOW_FQN,
+            "preempt_policy": "checkpoint",
+            "parameters": {
+                "project_root": job.root,
+                "extractor_llm": service_id,
+                "writer_llm": service_id,
+                "batch_files": 8,
+                "max_files": 10000,
+                "write_mode": write_mode,
+            },
+        }, job.user_id, job.conversation_id))
+        from core.workflow_agent_runtime import (
+            WorkflowAgentRuntime,
+            prepare_workflow_turn,
+        )
+        runtime = WorkflowAgentRuntime.instance()
+        request = prepare_workflow_turn(
+            conversation_id=job.conversation_id,
+            agent_name=job.agent_name,
+            user_id=job.user_id,
+            message="Refresh the project wiki from pending relay changes.",
+            attachments=[],
+            message_id=authorization.root_turn_id,
+            channel="maintenance",
+            permission_mode="default",
+            source={
+                "type": "user",
+                "name": job.user_id,
+                "authorization": authorization.to_dict(),
+            },
+            runtime=runtime,
+        )
+        return runtime.submit_bound(
+            request, binding, invocation_mode="silent_maintenance")
+
+    @staticmethod
+    def _workflow_cutover_enabled() -> bool:
+        return os.environ.get(_WIKI_WORKFLOW_CUTOVER_ENV, "").strip() == "1"
 
     def _run(self, job: _MaintenanceJob) -> None:
         if job.conversation_id and job.agent_name:
@@ -169,8 +236,11 @@ class ProjectMaintenanceScheduler:
         from core.project_wiki import ProjectWiki
 
         graph = ProjectGraph.for_relay(job.user_id, job.relay_id)
+        # Project knowledge is relay-scoped. A server-local filesystem mutation
+        # may schedule this job with local=True, but indexing that surface would
+        # scan the deployed /app tree instead of the relay project.
         graph_result = graph.build_from_relay(
-            job.service, job.root, local=job.local)
+            job.service, job.root, local=False)
         if graph_result.get("status") == "error":
             logger.warning("Automatic project graph refresh failed relay=%s: %s",
                            job.relay_id, graph_result.get("reason", ""))
@@ -180,10 +250,20 @@ class ProjectMaintenanceScheduler:
         wiki_result = wiki.scan_from_relay(
             job.service, job.root, local=False,
             initial_paths=self._graph_seed_paths(graph))
-        llm_client = self._resolve_wiki_client(
-            job.user_id, job.conversation_id)
-        update_result = wiki.auto_update(
-            job.service, llm_client, local=False)
+        if self._workflow_cutover_enabled():
+            update_result = self._submit_wiki_workflow(job)
+        else:
+            from core.summarizer_bindings import resolve_service
+            summarizer, _definition, _explicit = resolve_service(
+                job.user_id, job.conversation_id)
+            llm_client = None
+            if summarizer is not None and hasattr(
+                    summarizer, "resolve_llm_service"):
+                llm_client, _context_size, _service_id = (
+                    summarizer.resolve_llm_service(
+                        job.user_id, job.conversation_id))
+            update_result = wiki.auto_update(
+                job.service, llm_client, local=False)
         logger.info(
             "Project maintenance relay=%s graph=%s wiki=%s update=%s",
             job.relay_id, graph_result.get("status"),

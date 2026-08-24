@@ -32,6 +32,7 @@ AGENT_CONFIG_DEFAULTS = {
     "params": {},
     # External runtimes must never start a PawFlow LLM turn.
     "runtime_kind": "llm",
+    "workflow": None,
     "agui_url": "",
     "agui_service": "",
     "agui_timeout": 300,
@@ -80,7 +81,15 @@ def _agent_config_source(
 
 def get_all_agent_configs(conv_id: str) -> Dict[str, Dict[str, Any]]:
     """Get all agent configs for a conversation."""
-    return _agent_config_source(conv_id)[1]
+    source_id, configs = _agent_config_source(conv_id)
+    result = {}
+    for agent_name, raw in configs.items():
+        config = dict(raw or {})
+        from core.resource_binding_migration import runtime_skill_assignments
+        config["assigned_skills"] = runtime_skill_assignments(
+            source_id, agent_name, config.get("assigned_skills") or [])
+        result[agent_name] = config
+    return result
 
 
 def resolve_agent_config_entry(
@@ -99,6 +108,9 @@ def resolve_agent_config_entry(
         return source_id, "", {}
     result = dict(AGENT_CONFIG_DEFAULTS)
     result.update(configs[resolved_name] or {})
+    from core.resource_binding_migration import runtime_skill_assignments
+    result["assigned_skills"] = runtime_skill_assignments(
+        source_id, resolved_name, result.get("assigned_skills") or [])
     return source_id, resolved_name, result
 
 
@@ -136,8 +148,33 @@ def set_agent_config(conv_id: str, agent_name: str,
             key for key in configs
             if isinstance(key, str) and key.lower() == needle
         ), agent_name)
+    config = dict(config)
+    if "assigned_skills" in config:
+        from core.agent_feature_flags import resource_bindings_v2_enabled
+        if resource_bindings_v2_enabled():
+            from core.resource_binding_migration import replace_active_skill_assignments
+            metadata = store.get_metadata(conv_id) or {}
+            owner_id = str(
+                metadata.get("user_id")
+                or getattr(store, "_cid_user", {}).get(conv_id, "")
+                or "")
+            if replace_active_skill_assignments(
+                    conv_id, owner_id, resolved_name,
+                    list(config.get("assigned_skills") or []),
+                    conversation_store=store,
+                    assigned_by=owner_id or "operator"):
+                config.pop("assigned_skills", None)
     existing = configs.get(resolved_name, {})
     existing.update(config)
+    if (existing.get("runtime_kind") or "llm") == "workflow":
+        from core.workflow_agent_resources import bind_agent_workflow
+        metadata = store.get_metadata(conv_id) or {}
+        owner_id = str(
+            metadata.get("user_id")
+            or getattr(store, "_cid_user", {}).get(conv_id, "")
+            or "")
+        existing["workflow"] = bind_agent_workflow(
+            existing.get("workflow") or {}, owner_id, conv_id)
     configs[resolved_name] = existing
     store.set_extra(conv_id, CONV_AGENTS_KEY, configs)
 
@@ -164,7 +201,9 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
                       agui_url: str = "", agui_service: str = "",
                       agui_timeout: int = 300,
                       agui_max_tool_rounds: int = 8,
-                      gating_service: Any = "") -> Dict[str, Any]:
+                      gating_service: Any = "",
+                      workflow: Optional[Dict[str, Any]] = None,
+                      user_id: str = "") -> Dict[str, Any]:
     """Add an agent instance to a conversation.
 
     instance_name: the key in conv_agents (chosen by user, unique per conv).
@@ -176,10 +215,8 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
     flash_delegate_llm_service optionally overrides the service used by
     flash_delegate; when empty, flash agents inherit llm_service.
     """
-    runtime_kind = str(runtime_kind or "llm").strip()
-    if runtime_kind not in {"llm", "external_mcp", "external_agui"}:
-        raise ValueError(
-            "runtime_kind must be 'llm', 'external_mcp', or 'external_agui'")
+    from core.agent_feature_flags import validate_agent_runtime_kind
+    runtime_kind = validate_agent_runtime_kind(runtime_kind)
     if runtime_kind == "llm" and not llm_service:
         raise ValueError(
             f"llm_service is required when adding agent '{instance_name}' to conversation")
@@ -190,10 +227,16 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
             and not str(agui_service or "").strip()):
         raise ValueError(
             "agui_url or agui_service is required for an external_agui agent")
+    resolved_workflow = None
+    if runtime_kind == "workflow":
+        from core.workflow_agent_resources import bind_agent_workflow
+        resolved_workflow = bind_agent_workflow(
+            workflow or {}, user_id, conv_id)
     config = {
         "definition": definition,
         "params": params or {},
         "runtime_kind": runtime_kind,
+        "workflow": resolved_workflow,
         "agui_url": str(agui_url or "").strip(),
         "agui_service": str(agui_service or "").strip(),
         "agui_timeout": max(1, int(agui_timeout or 300)),

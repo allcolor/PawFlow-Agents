@@ -44,9 +44,12 @@ class ManageResourceHandler(ToolHandler):
             "- import_marketplace: Review/import an external Agent Skill\n"
             "- assign_skill: Assign a skill to an agent and notify it\n"
             "- unassign_skill: Remove a skill from an agent and notify it\n"
+            "- inspect_skill_bindings: Inspect exact-skill migration state\n"
+            "- migrate_skill_bindings: Preflight and activate exact bindings\n"
+            "- rollback_skill_bindings: Roll back before the first v2 write\n"
             "- activate: Activate a resource in the current conversation\n"
             "- deactivate: Deactivate a resource from the current conversation\n\n"
-            "Resource types: agent, skill, mcp, task_def, tool\n\n"
+            "Resource types: agent, agent_group, skill, mcp, task_def, tool\n\n"
             "Agent fields: prompt (required), model, tools (list), "
             "max_depth, timeout, description, llm_service\n"
             "Skill fields: description (required), instructions (required), "
@@ -67,12 +70,14 @@ class ManageResourceHandler(ToolHandler):
                     "enum": ["create", "update", "delete", "list",
                              "get", "review", "search_marketplace", "resolve_import_source",
                              "import_marketplace", "assign_skill", "unassign_skill",
+                             "inspect_skill_bindings", "migrate_skill_bindings",
+                             "rollback_skill_bindings",
                              "activate", "deactivate"],
                     "description": "Action to perform",
                 },
                 "resource_type": {
                     "type": "string",
-                    "enum": ["agent", "skill", "mcp", "task_def", "tool"],
+                    "enum": ["agent", "agent_group", "skill", "mcp", "task_def", "tool"],
                     "description": "Type of resource",
                 },
                 "name": {
@@ -436,6 +441,34 @@ class ManageResourceHandler(ToolHandler):
                         resource_store=store,
                         conversation_store=ConversationStore.instance(),
                         source="skill_unassign")
+                return json.dumps(result, ensure_ascii=False, indent=2)
+
+            elif action in {
+                    "inspect_skill_bindings", "migrate_skill_bindings",
+                    "rollback_skill_bindings"}:
+                if rtype != "skill":
+                    return f"Error: {action} is only supported for skills"
+                if not self._conversation_id:
+                    return f"Error: {action} requires a conversation"
+                from core.resource_binding_migration import (
+                    migrate_skill_bindings, migration_status,
+                    rollback_skill_binding_migration,
+                )
+                conversation_store = ConversationStore.instance()
+                if action == "inspect_skill_bindings":
+                    result = migration_status(
+                        self._conversation_id,
+                        conversation_store=conversation_store)
+                elif action == "migrate_skill_bindings":
+                    result = migrate_skill_bindings(
+                        self._conversation_id, user_id,
+                        conversation_store=conversation_store,
+                        resource_store=store,
+                        activated_by=user_id)
+                else:
+                    result = rollback_skill_binding_migration(
+                        self._conversation_id,
+                        conversation_store=conversation_store)
                 return json.dumps(result, ensure_ascii=False, indent=2)
 
             elif action == "activate":

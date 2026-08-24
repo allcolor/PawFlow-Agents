@@ -16,6 +16,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from core.llm_client import (
@@ -851,6 +852,42 @@ class TestAgentLoopTask(unittest.TestCase):
         # something the assistant actually said) -- only visible in the
         # transcript for the user, same guarantee as sub_agent_trace/nudges.
         assert history[-1]["display_only"] is True
+
+    def test_synthetic_error_flags_are_in_initial_writer_payload(self):
+        task = AgentLoopTask({"api_key": "test-key"})
+        writer = MagicMock()
+        emitter = MagicMock(
+            _current_msg_id="",
+            is_streaming=False,
+        )
+        state = SimpleNamespace(
+            ctx={"active_agent_name": "assistant"},
+            emitter=emitter,
+            messages=[],
+            new_messages=[],
+            all_assistant_msg_ids=[],
+            conversation_id="conv-error",
+            user_id="alice",
+            use_conv_store=True,
+            _maybe_auto_compact_after_append=lambda *args: None,
+        )
+        message = LLMMessage(
+            role="assistant", content="LLM call failed: boom",
+            is_error=True, display_only=True,
+            source={"type": "agent", "name": "assistant"},
+            conversation_id="conv-error",
+        )
+
+        with patch(
+                "core.agent_hooks.AgentHookRunner") as hooks, patch(
+                "core.conversation_writer.ConversationWriter.for_conversation",
+                return_value=writer):
+            hooks.return_value.run.return_value = {"decision": "allow"}
+            task._alc_append(state, message)
+
+        payload = writer.enqueue_message.call_args.args[0]
+        assert payload["is_error"] is True
+        assert payload["display_only"] is True
 
     def test_stale_worker_cannot_remove_successor_active_context(self):
         task = AgentLoopTask({"api_key": "test-key"})

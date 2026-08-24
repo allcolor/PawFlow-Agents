@@ -69,6 +69,17 @@ def test_no_binding_is_legacy_and_writes_no_audit(env):
     assert ta.list_decisions("c1") == []
 
 
+def test_structured_effects_enforce_read_only_without_policy_gate(env):
+    result = ta.authorize_tool_call(
+        **_call(permission_mode="read_only"),
+        capability_effects=["filesystem.write"],
+        resolved_gates=_resolved(),
+    )
+    assert result.decision == "deny"
+    records = ta.list_decisions("c1")
+    assert records[-1]["capability_effects"] == ["filesystem.write"]
+
+
 def test_gate_allow_executes_and_is_audited_redacted(env):
     calls = []
     result = ta.authorize_tool_call(
@@ -83,6 +94,27 @@ def test_gate_allow_executes_and_is_audited_redacted(env):
     assert records[0]["decision_id"] == result.decision_id and records[0]["created_at"] > 0
     ta.record_execution_outcome("c1", result.decision_id, "succeeded")
     assert ta.list_decisions("c1")[-1]["outcome"] == "succeeded"
+
+
+def test_group_attribution_reaches_policy_envelope_and_audit(env):
+    calls = []
+    attribution = {
+        "group_run_id": "group-run-1",
+        "run_id": "workflow-run-1",
+        "round": 2,
+        "member_id": "architecture",
+        "turn_id": "t1",
+    }
+
+    result = ta.authorize_tool_call(
+        **_call(tool_name="read", arguments={"path": "/workspace/README.md"}),
+        attribution=attribution,
+        resolved_gates=_resolved(conv=_gate("allow", calls=calls)),
+    )
+
+    assert result.decision == "execute"
+    assert calls[0]["attribution"] == attribution
+    assert ta.list_decisions("c1")[-1]["attribution"] == attribution
 
 
 def test_structural_guards_beat_the_gate(env):

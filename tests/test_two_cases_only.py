@@ -131,6 +131,12 @@ class TheLoopRebuildsInBothDirections(unittest.TestCase):
         self.assertIn('getattr(st, "force_delta", False)', src)
         self.assertIn('getattr(st, "force_cold", False)', src)
 
+    def test_delta_rebuild_uses_the_active_retrigger_payload(self):
+        src = Path("tasks/ai/_alc_llm_turn.py").read_text(encoding="utf-8")
+        self.assertIn('st.ctx.get("_active_retrigger_messages")', src)
+        self.assertIn(
+            'st._rebuild_args["skip_current_user_inject"] = True', src)
+
     def test_the_retry_loop_lets_both_through(self):
         """Swallowed by the provider retry, the rebuild would never happen."""
         src = Path("core/_llm_client_driver.py").read_text(encoding="utf-8")

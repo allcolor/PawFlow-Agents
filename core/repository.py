@@ -548,6 +548,9 @@ class ScopedRepository(_RepositorySerdeMixin):
         if len(versions) == 1:
             raise ValueError(
                 f"{fqn} is the only version of {qualified}; delete the flow instead")
+        from core.workflow_agent_resources import assert_flow_version_unreferenced
+        assert_flow_version_unreferenced(
+            fqn, scope, user_id=user_id, conv_id=conv_id)
         flow_version_file(package, flowname, version, scope, user_id, conv_id).unlink()
         remaining = [v for v in versions if v != version]
         latest_file = flow_latest_file(package, flowname, scope, user_id, conv_id)

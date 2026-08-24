@@ -106,6 +106,56 @@ def split_fqn(fqn: str):
     return fqn, version
 
 
+def _agent_workflow_starter(name: str) -> Dict[str, Any]:
+    """Return a runnable, safe v1 agent-workflow editing starter."""
+    return {
+        "kind": "agent_workflow",
+        "agent_contract": {
+            "version": 1,
+            "input": {"port": "agent_request"},
+            "terminal": {"port": "agent_terminal"},
+            "parameters": {},
+            "supported_preempt_policies": ["queue", "checkpoint", "restart"],
+            "allowed_effects": ["resource.read"],
+        },
+        "tasks": {
+            "agent_request": {
+                "type": "inputPort",
+                "parameters": {"port_name": "agent_request"},
+            },
+            "validate_request": {
+                "type": "agentWorkflowInput", "parameters": {},
+            },
+            "draft_response": {
+                "type": "workflowFakeLLM",
+                "parameters": {"response_prefix": f"{name}: "},
+            },
+            "complete_turn": {
+                "type": "completeAgentTurn", "parameters": {},
+            },
+            "agent_terminal": {
+                "type": "outputPort",
+                "parameters": {"port_name": "agent_terminal"},
+            },
+        },
+        "relations": [
+            {"from": "agent_request", "to": "validate_request", "type": "success"},
+            {"from": "validate_request", "to": "draft_response", "type": "success"},
+            {"from": "draft_response", "to": "complete_turn", "type": "success"},
+            {"from": "complete_turn", "to": "agent_terminal", "type": "success"},
+        ],
+        "entries": ["agent_request"],
+        "exits": ["agent_terminal"],
+        "layout": {"nodes": {
+            "agent_request": {"x": 40, "y": 120},
+            "validate_request": {"x": 260, "y": 120},
+            "draft_response": {"x": 480, "y": 120},
+            "complete_turn": {"x": 700, "y": 120},
+            "agent_terminal": {"x": 920, "y": 120},
+        }},
+    }
+
+
 class FlowAuthoringService:
     """Draft lifecycle, validation, diff, versioning and catalogs."""
 
@@ -239,7 +289,8 @@ class FlowAuthoringService:
             f"{flow}:{version}", scope, user_id=user_id, conv_id=conv_id)
 
     def new(self, package: str, name: str, version: str, scope: str,
-            user_id: str, conv_id: str = "", description: str = "") -> Dict[str, Any]:
+            user_id: str, conv_id: str = "", description: str = "",
+            template_kind: str = "standard") -> Dict[str, Any]:
         """A draft for a flow that does not exist yet (nothing is published)."""
         scope = normalize_scope(scope)
         self._check_identifiers(package, name, version)
@@ -253,6 +304,10 @@ class FlowAuthoringService:
             "parameters": {}, "tasks": {}, "services": {}, "groups": {},
             "relations": [], "entries": [], "exits": [], "layout": {},
         }
+        if template_kind == "agent_workflow":
+            definition.update(_agent_workflow_starter(name))
+        elif template_kind != "standard":
+            raise ValueError("template_kind must be standard or agent_workflow")
         return self._new_draft(user_id=user_id, flow=flow, scope=scope,
                                conv_id=conv_id, base_version="",
                                definition=definition)
@@ -379,6 +434,11 @@ class FlowAuthoringService:
     @staticmethod
     def validate(definition: Dict[str, Any]) -> Dict[str, Any]:
         """Static validation — never resolves secrets or opens connections."""
+        if definition.get("kind") == "agent_workflow":
+            from core.workflow_agent_resources import (
+                validate_agent_workflow_definition,
+            )
+            return validate_agent_workflow_definition(definition)
         return FlowDefinitionValidator.validate(definition)
 
     def validate_draft(self, draft_id: str, user_id: str) -> Dict[str, Any]:
@@ -506,7 +566,17 @@ class FlowAuthoringService:
         flow, scope, conv_id = draft["flow"], draft["scope"], draft.get("conv_id", "")
         package, name = flow.rsplit(".", 1)
 
-        report = self.validate(definition)
+        definition["version"] = version
+        definition.setdefault("id", name)
+        definition.setdefault("name", name)
+        definition["fqn"] = f"{flow}:{version}"
+        if definition.get("kind") == "agent_workflow":
+            from core.workflow_agent_resources import (
+                validate_agent_workflow_definition,
+            )
+            report = validate_agent_workflow_definition(definition)
+        else:
+            report = self.validate(definition)
         if not report["ok"]:
             raise FlowValidationFailed(report)
         if parse:
@@ -517,9 +587,6 @@ class FlowAuthoringService:
                 report["ok"] = False
                 raise FlowValidationFailed(report)
 
-        definition["version"] = version
-        definition.setdefault("id", name)
-        definition.setdefault("name", name)
         for key in _REPO_KEYS:
             definition.pop(key, None)
         fqn = f"{flow}:{version}"

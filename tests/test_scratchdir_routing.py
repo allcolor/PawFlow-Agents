@@ -134,6 +134,31 @@ def test_reserved_service_is_resolved_before_named_relays(relay):
     assert service._service_id == "relay-1"
 
 
+def test_reserved_service_rebinds_after_clear_and_reactivation(relay):
+    handler = _wire(_Handler(), relay)
+    first, _workdir = handler._resolve("scratchdir")
+    store = ScratchDirStore.instance()
+    record = store.get("user", "conversation", "assistant", "relay-1")
+
+    clearing = store.begin_clear(
+        "user", "conversation", "assistant", "relay-1",
+        operation_id="clear")
+    store.finish_clear(
+        "user", "conversation", "assistant", "relay-1",
+        operation_id="clear")
+    active = store.activate(
+        "user", "conversation", "assistant", "relay-1",
+        locator=record.id, operation_id="reactivate", scratch_id=record.id)
+
+    rebound, _workdir = handler._resolve("scratchdir")
+
+    assert clearing.epoch == record.epoch + 1
+    assert active.epoch == clearing.epoch + 1
+    assert rebound is not first
+    assert first._ticket["epoch"] == record.epoch
+    assert rebound._ticket["epoch"] == active.epoch
+
+
 def test_reserved_service_requires_full_authenticated_context(relay):
     handler = _Handler()
     handler.set_fs_service(relay)

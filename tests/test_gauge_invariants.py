@@ -1821,6 +1821,44 @@ def test_list_active_uses_provider_agnostic_active_turn_without_context():
     }]
 
 
+def test_list_active_merges_workflow_runtime_snapshot():
+    from core import FlowFile
+    from tasks.ai.actions.usage import _handle_usage
+
+    fake_exec = SimpleNamespace(
+        _active_turns={}, _active_contexts={},
+        _active_contexts_lock=threading.Lock())
+    workflow_row = {
+        "agent_name": "wiki", "task_id": "", "turn_id": "web:wiki",
+        "workflow_run_id": "wr_wiki", "iteration": 0, "round": 0,
+        "max_rounds": 0, "last_tool": "", "duration_s": 3.0,
+        "status": "Extracting facts", "message_preview": "update wiki",
+        "runtime_kind": "workflow",
+    }
+    fake_workflow = SimpleNamespace(
+        active_snapshot=lambda conversation_id: (
+            [workflow_row] if conversation_id == "conv-live" else []))
+
+    class _Store:
+        def resolve_owner(self, _cid):
+            return "user"
+
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec), \
+            patch("core.workflow_agent_runtime.WorkflowAgentRuntime._instance", fake_workflow), \
+            patch("core.cc_live_registry.LiveSessionRegistry.instance") as cc_reg, \
+            patch("core.codex_live_registry.CodexLiveRegistry.instance") as codex_reg, \
+            patch("core.gemini_live_registry.GeminiLiveRegistry.instance") as gemini_reg:
+        cc_reg.return_value.status.return_value = []
+        codex_reg.return_value.status.return_value = []
+        gemini_reg.return_value.status.return_value = []
+        out = _handle_usage(
+            SimpleNamespace(), "list_active", {"conversation_id": "conv-live"},
+            _Store(), "user", FlowFile())
+
+    data = json.loads(out[0].get_content().decode("utf-8"))
+    assert data["active"] == [workflow_row]
+
+
 def test_is_agent_active_uses_provider_agnostic_active_turns():
     from tasks.ai.agent_loop import AgentLoopTask
 

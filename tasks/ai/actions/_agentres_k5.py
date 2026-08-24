@@ -120,16 +120,17 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
         definition = body.get("definition", "").strip()
         inst_params = body.get("params") or {}
         llm_service = body.get("llm_service", "").strip()
-        runtime_kind = str(body.get("runtime_kind") or "llm").strip()
+        from core.agent_feature_flags import validate_agent_runtime_kind
+        try:
+            runtime_kind = validate_agent_runtime_kind(
+                body.get("runtime_kind") or "llm")
+        except ValueError as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         if not conv_id or not instance_name or not definition:
             flowfile.set_content(json.dumps({
                 "error": "Missing conversation_id, instance_name, or definition",
-            }).encode())
-            flowfile.set_attribute("http.response.status", "400")
-            return [flowfile]
-        if runtime_kind not in {"llm", "external_mcp", "external_agui"}:
-            flowfile.set_content(json.dumps({
-                "error": "runtime_kind must be 'llm', 'external_mcp', or 'external_agui'",
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
@@ -160,6 +161,11 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
              flash_delegate_llm_service=body.get(
                  "flash_delegate_llm_service", "").strip(),
              runtime_kind=runtime_kind,
+             workflow=(body.get("workflow")
+                       or ((agent.get("runtime_defaults") or {}).get("workflow")
+                           if (agent.get("runtime_defaults") or {}).get("kind") == "workflow"
+                           else None)),
+             user_id=user_id,
              agui_url=str(body.get("agui_url") or "").strip(),
              agui_service=str(body.get("agui_service") or "").strip(),
              agui_timeout=max(1, int(body.get("agui_timeout") or 300)),
@@ -176,6 +182,60 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({
             "ok": True, "agent": instance_name, "definition": definition,
         }).encode())
+        return [flowfile]
+
+    if action == "bind_agent_group":
+        conv_id = str(body.get("conversation_id") or "").strip()
+        group_name = str(body.get("group_name") or body.get("name") or "").strip()
+        instance_name = str(body.get("instance_name") or group_name).strip()
+        if not conv_id or not group_name or not instance_name:
+            flowfile.set_content(json.dumps({
+                "error": "Missing conversation_id, group_name, or instance_name",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            from core.agent_group_resources import bind_agent_group_instance
+            result = bind_agent_group_instance(
+                group_name,
+                instance_name,
+                user_id,
+                conv_id,
+                preempt_policy=str(body.get("preempt_policy") or "queue"),
+            )
+            active = store.get_extra(conv_id, "active_resources") or {}
+            if not active.get("agent"):
+                active["agent"] = instance_name
+                store.set_extra(conv_id, "active_resources", active)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "group_name": result["group_name"],
+                "instance_name": result["instance_name"],
+                "binding_digest": result["binding"]["binding_digest"],
+            }, ensure_ascii=False).encode())
+        except Exception as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+        return [flowfile]
+
+    if action == "list_agent_groups":
+        conv_id = str(body.get("conversation_id") or "").strip()
+        from core.resource_store import ResourceStore
+        groups = ResourceStore.instance().list_all(
+            "agent_group", user_id, conversation_id=conv_id)
+        bindings = store.get_extra(conv_id, "agent_group_bindings") or {}
+        flowfile.set_content(json.dumps({
+            "groups": [
+                {
+                    "name": item.get("name"),
+                    "description": item.get("description", ""),
+                    "scope": item.get("_scope", ""),
+                    "member_count": len(item.get("members") or ()),
+                    "bound": item.get("name") in bindings,
+                }
+                for item in groups
+            ],
+        }, ensure_ascii=False).encode())
         return [flowfile]
 
     if action == "get_agent_conv_config":
@@ -225,14 +285,14 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Agent '{aname}' not in conversation"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        runtime_kind = str(
-            cfg.get("runtime_kind")
-            or configs[aname].get("runtime_kind")
-            or "llm")
-        if runtime_kind not in {"llm", "external_mcp", "external_agui"}:
-            flowfile.set_content(json.dumps({
-                "error": "runtime_kind must be 'llm', 'external_mcp', or 'external_agui'",
-            }).encode())
+        from core.agent_feature_flags import validate_agent_runtime_kind
+        try:
+            runtime_kind = validate_agent_runtime_kind(
+                cfg.get("runtime_kind")
+                or configs[aname].get("runtime_kind")
+                or "llm")
+        except ValueError as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         effective_llm = cfg.get(
@@ -246,7 +306,8 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
         _allowed = {"llm_service", "model", "tools", "max_depth", "params",
                     "realtime_voice_service", "flash_delegate_llm_service",
                     "runtime_kind", "agui_url", "agui_service", "agui_timeout",
-                    "agui_max_tool_rounds", "gating_service", "tool_exposure"}
+                    "agui_max_tool_rounds", "gating_service", "tool_exposure",
+                    "workflow"}
         if "tool_exposure" in cfg:
             from core.tool_exposure import MODES
             _exposure = str(cfg.get("tool_exposure") or "").strip().lower()
@@ -284,6 +345,10 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
         for k, v in cfg.items():
             if k in _allowed:
                 merged[k] = v
+        if runtime_kind == "workflow":
+            from core.workflow_agent_resources import bind_agent_workflow
+            merged["workflow"] = bind_agent_workflow(
+                merged.get("workflow") or {}, user_id, conv_id)
         set_agent_config(conv_id, aname, merged)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
@@ -333,9 +398,29 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
             # Include parameters schema if present in the definition
             if a.get("parameters"):
                 entry["parameters"] = a["parameters"]
+            if a.get("runtime_defaults"):
+                entry["runtime_defaults"] = a["runtime_defaults"]
             out.append(entry)
         flowfile.set_content(json.dumps({
             "agents": out,
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "list_agent_workflow_versions":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({
+                "error": "Missing conversation_id",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.workflow_agent_resources import (
+            list_compatible_agent_workflows,
+        )
+        from core.agent_feature_flags import workflow_agents_enabled
+        flowfile.set_content(json.dumps({
+            "enabled": workflow_agents_enabled(),
+            "workflows": list_compatible_agent_workflows(user_id, conv_id),
         }, ensure_ascii=False).encode())
         return [flowfile]
 

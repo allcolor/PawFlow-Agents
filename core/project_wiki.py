@@ -11,7 +11,6 @@ import base64
 import hashlib
 import json
 import logging
-import os
 import posixpath
 import re
 import threading
@@ -31,6 +30,9 @@ _MAX_BATCH_CHARS = 80_000
 _MAX_EXISTING_PAGE_CHARS = 20_000
 _DEFAULT_BATCH_FILES = 8
 _AUTO_UPDATE_RESPONSE_TOKENS = 6_000
+_MAX_PATCH_PAGES = 12
+_MAX_PATCH_CHARS = 128_000
+_MAX_APPLIED_PATCHES = 200
 
 _SCAN_SCRIPT = r'''
 import hashlib
@@ -268,6 +270,7 @@ class ProjectWiki:
             "sources": {},
             "dirty_sources": {},
             "pages": {},
+            "applied_patches": {},
             "scan": {},
         }
 
@@ -751,6 +754,434 @@ class ProjectWiki:
             used += len(block)
         return "".join(chunks)
 
+    @staticmethod
+    def _digest(value: Any) -> str:
+        encoded = json.dumps(
+            value, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _clean_source_path(path: Any) -> str:
+        value = str(path or "").strip().replace("\\", "/")
+        normalized = posixpath.normpath(value)
+        if (not value or value.startswith("/") or normalized != value
+                or normalized in {".", ".."}
+                or normalized.startswith("../")):
+            raise ValueError(f"invalid project wiki source path: {value}")
+        if normalized.startswith("pages/"):
+            raise ValueError("generated wiki pages cannot be project sources")
+        return normalized
+
+    def select_update_batch(
+            self, batch_files: int = _DEFAULT_BATCH_FILES,
+            focus_paths: Iterable[str] = ()) -> Dict[str, Any]:
+        """Snapshot one bounded dirty-source batch without reading content."""
+        limit = max(1, min(int(batch_files or _DEFAULT_BATCH_FILES), 20))
+        focus = tuple(
+            str(value or "").strip().casefold()
+            for value in focus_paths if str(value or "").strip())
+        with self._lock:
+            dirty = self._manifest.get("dirty_sources", {}) or {}
+
+            def order(item):
+                path, meta = item
+                related = bool(focus and any(
+                    token in path.casefold() for token in focus))
+                return (
+                    0 if related else 1,
+                    float(meta.get("detected_at", 0) or 0), path,
+                )
+
+            entries = []
+            for raw_path, raw_meta in sorted(dirty.items(), key=order)[:limit]:
+                path = self._clean_source_path(raw_path)
+                meta = dict(raw_meta)
+                entries.append({
+                    "path": path,
+                    "state": str(meta.get("state") or ""),
+                    "old_sha256": str(meta.get("old_sha256") or ""),
+                    "sha256": str(meta.get("sha256") or ""),
+                    "detected_at": float(meta.get("detected_at", 0) or 0),
+                })
+            identity = {
+                "relay_id": self.relay_id,
+                "root": str(self._manifest.get("root") or "."),
+                "entries": entries,
+            }
+            try:
+                index = (self.path / "index.md").read_text(
+                    encoding="utf-8")[:12_000]
+            except OSError:
+                index = "(empty)"
+            paths = {entry["path"] for entry in entries}
+            return {
+                **identity,
+                "selection_digest": self._digest(identity),
+                "pending_count": len(dirty),
+                "index": index,
+                "affected_pages": self._affected_pages_text(paths),
+            }
+
+    def _selection_entries(
+            self, selection: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not isinstance(selection, dict):
+            raise TypeError("project wiki selection must be an object")
+        if selection.get("relay_id") != self.relay_id:
+            raise ValueError("project wiki selection targets another relay")
+        entries = selection.get("entries")
+        if not isinstance(entries, list):
+            raise ValueError("project wiki selection entries must be a list")
+        parsed = []
+        for raw in entries:
+            if not isinstance(raw, dict):
+                raise ValueError("project wiki selection entry must be an object")
+            path = self._clean_source_path(raw.get("path"))
+            state = str(raw.get("state") or "")
+            if state not in {"added", "modified", "removed"}:
+                raise ValueError("project wiki selection state is invalid")
+            parsed.append({
+                "path": path,
+                "state": state,
+                "old_sha256": str(raw.get("old_sha256") or ""),
+                "sha256": str(raw.get("sha256") or ""),
+                "detected_at": float(raw.get("detected_at", 0) or 0),
+            })
+        identity = {
+            "relay_id": self.relay_id,
+            "root": str(selection.get("root") or "."),
+            "entries": parsed,
+        }
+        if selection.get("selection_digest") != self._digest(identity):
+            raise ValueError("project wiki selection digest does not match")
+        return parsed
+
+    def fetch_update_sources(
+            self, service, selection: Dict[str, Any],
+            local: bool = False) -> Dict[str, Any]:
+        """Read and normalize only the exact selected relay sources."""
+        if not service:
+            raise ValueError("relay service is required")
+        if local:
+            raise ValueError("project wiki source fetch is forbidden on the "
+                             "local surface (local=true)")
+        entries = self._selection_entries(selection)
+        root = str(selection.get("root") or ".")
+        files = []
+        used = 0
+        superseded = []
+        for entry in entries:
+            path = entry["path"]
+            if entry["state"] == "removed":
+                files.append({**entry, "text": "[SOURCE REMOVED]",
+                              "size": 0, "line_count": 0,
+                              "truncated": False, "readable": True,
+                              "binary": False})
+                continue
+            relay_path = path if root in ("", ".") else posixpath.join(root, path)
+            try:
+                raw = service.read_file(relay_path, local=False)
+                if not isinstance(raw, bytes):
+                    raw = bytes(raw)
+            except Exception as exc:
+                files.append({
+                    **entry,
+                    "text": f"[SOURCE UNREADABLE: {type(exc).__name__}]",
+                    "size": 0, "line_count": 0, "truncated": False,
+                    "readable": False, "binary": False,
+                })
+                continue
+            if hashlib.sha256(raw).hexdigest() != entry["sha256"]:
+                superseded.append(path)
+                continue
+            binary = b"\x00" in raw[:8192]
+            text = (
+                "[SOURCE BINARY]" if binary
+                else raw.decode("utf-8", errors="replace").replace(
+                    "\r\n", "\n").replace("\r", "\n"))
+            remaining = max(0, _MAX_BATCH_CHARS - used)
+            bounded = text[:min(_MAX_SOURCE_CHARS, remaining)]
+            truncated = len(bounded) < len(text)
+            used += len(bounded)
+            files.append({
+                **entry, "text": bounded, "size": len(raw),
+                "line_count": bounded.count("\n") + (1 if bounded else 0),
+                "truncated": truncated, "readable": True, "binary": binary,
+            })
+        if superseded:
+            return {"status": "superseded", "sources": sorted(superseded),
+                    "selection_digest": selection["selection_digest"]}
+        source_text = "".join(
+            f"\n--- SOURCE {item['path']} ({item['state']}) ---\n{item['text']}"
+            for item in files)
+        return {
+            "status": "prepared", "files": files,
+            "source_text": source_text,
+            "selection_digest": selection["selection_digest"],
+        }
+
+    def validate_update_patch(
+            self, selection: Dict[str, Any], payload: Dict[str, Any]
+            ) -> Dict[str, Any]:
+        """Validate a proposed patch and every citation before any write."""
+        entries = self._selection_entries(selection)
+        if not isinstance(payload, dict):
+            raise TypeError("project wiki patch must be an object")
+        unknown = sorted(set(payload) - {"pages", "processed_sources"})
+        if unknown:
+            raise ValueError(
+                "project wiki patch has unknown fields: " + ", ".join(unknown))
+        pages = payload.get("pages")
+        processed = payload.get("processed_sources")
+        if not isinstance(pages, list) or not isinstance(processed, list):
+            raise ValueError("project wiki patch fields must be lists")
+        if len(pages) > _MAX_PATCH_PAGES:
+            raise ValueError("project wiki patch contains too many pages")
+        selected = {entry["path"]: entry for entry in entries}
+        processed_paths = []
+        for raw_path in processed:
+            path = self._clean_source_path(raw_path)
+            if path not in selected:
+                raise ValueError("processed source is outside the selected snapshot")
+            if path not in processed_paths:
+                processed_paths.append(path)
+
+        normalized_pages = []
+        slugs = set()
+        total_chars = 0
+        for raw_page in pages:
+            if not isinstance(raw_page, dict):
+                raise ValueError("project wiki page patch must be an object")
+            page_unknown = sorted(set(raw_page) - {
+                "slug", "title", "summary", "content", "sources"})
+            if page_unknown:
+                raise ValueError(
+                    "project wiki page has unknown fields: "
+                    + ", ".join(page_unknown))
+            title = " ".join(str(raw_page.get("title") or "").split())
+            slug = _slug(str(raw_page.get("slug") or title))
+            summary = " ".join(str(raw_page.get("summary") or "").split())
+            content = str(raw_page.get("content") or "").strip()
+            if not title or not content:
+                raise ValueError("project wiki page title and content are required")
+            if len(title) > 200 or len(summary) > 500:
+                raise ValueError("project wiki page metadata is too large")
+            if slug in slugs:
+                raise ValueError("project wiki patch contains duplicate slugs")
+            slugs.add(slug)
+            raw_sources = raw_page.get("sources")
+            if not isinstance(raw_sources, list) or not raw_sources:
+                raise ValueError("project wiki factual pages require sources")
+            sources = []
+            for raw_path in raw_sources:
+                path = self._clean_source_path(raw_path)
+                selected_entry = selected.get(path)
+                if selected_entry is None or selected_entry["state"] == "removed":
+                    raise ValueError("page citation is outside the selected snapshot")
+                if path not in sources:
+                    sources.append(path)
+            total_chars += len(content)
+            if total_chars > _MAX_PATCH_CHARS:
+                raise ValueError("project wiki patch body limit exceeded")
+            normalized_pages.append({
+                "slug": slug, "title": title, "summary": summary,
+                "content": content, "sources": sources,
+            })
+
+        known_slugs = set((self._manifest.get("pages", {}) or {})) | slugs
+        for page in normalized_pages:
+            for target in re.findall(r"\[\[([^\]|#]+)", page["content"]):
+                if _slug(target) not in known_slugs:
+                    raise ValueError(f"project wiki patch has missing link: {target}")
+        normalized = {
+            "pages": normalized_pages,
+            "processed_sources": processed_paths,
+        }
+        return {**normalized, "patch_digest": self._digest(normalized)}
+
+    def _selection_superseded(
+            self, service, selection: Dict[str, Any],
+            entries: List[Dict[str, Any]]) -> List[str]:
+        current_dirty = self._manifest.get("dirty_sources", {}) or {}
+        root = str(selection.get("root") or ".")
+        superseded = []
+        for snapshot in entries:
+            path = snapshot["path"]
+            current = current_dirty.get(path)
+            if current is None or any(
+                    current.get(field) != snapshot.get(field)
+                    for field in ("state", "old_sha256", "sha256")):
+                superseded.append(path)
+                continue
+            relay_path = path if root in ("", ".") else posixpath.join(root, path)
+            if snapshot["state"] == "removed":
+                try:
+                    service.read_file(relay_path, local=False)
+                except Exception:
+                    continue
+                superseded.append(path)
+                continue
+            try:
+                raw = service.read_file(relay_path, local=False)
+                if not isinstance(raw, bytes):
+                    raw = bytes(raw)
+                if hashlib.sha256(raw).hexdigest() != snapshot["sha256"]:
+                    superseded.append(path)
+            except Exception:
+                superseded.append(path)
+        return sorted(set(superseded))
+
+    def preview_update_patch(
+            self, service, selection: Dict[str, Any], patch: Dict[str, Any],
+            local: bool = False) -> Dict[str, Any]:
+        """Recheck and classify a validated patch without writing or acknowledging."""
+        if not service:
+            raise ValueError("relay service is required")
+        if local:
+            raise ValueError("project wiki updates are forbidden on the "
+                             "local surface (local=true)")
+        entries = self._selection_entries(selection)
+        normalized = self.validate_update_patch(selection, {
+            name: patch.get(name)
+            for name in ("pages", "processed_sources")
+        })
+        with self._lock:
+            superseded = self._selection_superseded(service, selection, entries)
+            if superseded:
+                return {
+                    "status": "superseded", "sources": superseded,
+                    "remaining": len(
+                        self._manifest.get("dirty_sources", {}) or {}),
+                    "shadow": True,
+                }
+            created, updated, unchanged = [], [], []
+            for page in normalized["pages"]:
+                slug = page["slug"]
+                existing = None
+                if slug in (self._manifest.get("pages", {}) or {}):
+                    try:
+                        existing = self.get_page_data(slug)
+                    except (KeyError, OSError):
+                        existing = None
+                comparable = {
+                    name: page[name]
+                    for name in ("title", "summary", "content", "sources")}
+                if existing is not None and all(
+                        existing.get(name) == value
+                        for name, value in comparable.items()):
+                    unchanged.append(slug)
+                else:
+                    (updated if existing is not None else created).append(slug)
+            requested = set(normalized["processed_sources"])
+            stale = self.stale_pages()
+            blocked = sorted({
+                reason.split(":", 1)[-1]
+                for reasons in stale.values() for reason in reasons
+                if reason.split(":", 1)[-1] in requested
+            })
+            cleared = sorted(requested - set(blocked))
+            return {
+                "status": "shadow", "shadow": True,
+                "created": created, "updated": updated,
+                "unchanged": unchanged, "cleared": cleared,
+                "processed": len(cleared), "blocked": blocked,
+                "remaining": len(
+                    self._manifest.get("dirty_sources", {}) or {}),
+                "selection_digest": selection["selection_digest"],
+                "patch_digest": normalized["patch_digest"],
+            }
+
+    def apply_update_patch(
+            self, service, selection: Dict[str, Any], patch: Dict[str, Any],
+            idempotency_key: str, local: bool = False) -> Dict[str, Any]:
+        """CAS and idempotently commit one validated source-backed patch."""
+        if not service:
+            raise ValueError("relay service is required")
+        if local:
+            raise ValueError("project wiki updates are forbidden on the "
+                             "local surface (local=true)")
+        key = str(idempotency_key or "").strip()
+        if not key:
+            raise ValueError("project wiki patch idempotency_key is required")
+        entries = self._selection_entries(selection)
+        normalized = self.validate_update_patch(selection, {
+            name: patch.get(name)
+            for name in ("pages", "processed_sources")
+        })
+        patch_digest = normalized["patch_digest"]
+        with self._lock:
+            receipts = self._manifest.setdefault("applied_patches", {})
+            previous = receipts.get(key)
+            if previous is not None:
+                if (previous.get("selection_digest")
+                        != selection["selection_digest"]
+                        or previous.get("patch_digest") != patch_digest):
+                    raise ValueError(
+                        "project wiki idempotency key identifies another patch")
+                self._rebuild_index()
+                return {**dict(previous["result"]), "replayed": True}
+            superseded = self._selection_superseded(service, selection, entries)
+            if superseded:
+                return {
+                    "status": "superseded", "sources": superseded,
+                    "remaining": len(
+                        self._manifest.get("dirty_sources", {}) or {}),
+                }
+
+            created, updated, unchanged, page_paths = [], [], [], []
+            for page in normalized["pages"]:
+                slug = page["slug"]
+                existing = None
+                if slug in (self._manifest.get("pages", {}) or {}):
+                    try:
+                        existing = self.get_page_data(slug)
+                    except (KeyError, OSError):
+                        existing = None
+                comparable = {
+                    key_name: page[key_name]
+                    for key_name in ("title", "summary", "content", "sources")}
+                if existing is not None and all(
+                        existing.get(name) == value
+                        for name, value in comparable.items()):
+                    unchanged.append(slug)
+                    page_paths.append(
+                        str(self._manifest["pages"][slug]["path"]))
+                    continue
+                meta = self.upsert_page(**page)
+                page_paths.append(str(meta["path"]))
+                (updated if existing is not None else created).append(slug)
+
+            requested = set(normalized["processed_sources"])
+            stale = self.stale_pages()
+            blocked = sorted({
+                reason.split(":", 1)[-1]
+                for reasons in stale.values() for reason in reasons
+                if reason.split(":", 1)[-1] in requested
+            })
+            cleared = sorted(requested - set(blocked))
+            dirty = self._manifest.get("dirty_sources", {}) or {}
+            for path in cleared:
+                dirty.pop(path, None)
+            result = {
+                "status": "updated", "pages": page_paths,
+                "created": created, "updated": updated,
+                "unchanged": unchanged, "cleared": cleared,
+                "processed": len(cleared), "blocked": blocked,
+                "remaining": len(dirty), "replayed": False,
+            }
+            receipts[key] = {
+                "selection_digest": selection["selection_digest"],
+                "patch_digest": patch_digest,
+                "result": dict(result), "applied_at": _now(),
+            }
+            while len(receipts) > _MAX_APPLIED_PATCHES:
+                receipts.pop(next(iter(receipts)))
+            self._save()
+            self._rebuild_index()
+            self._append_log(
+                "apply", f"{len(page_paths)} page(s), {len(cleared)} source(s)")
+            return result
+
     def auto_update(self, service, llm_client, local: bool = False,
                     batch_files: int = _DEFAULT_BATCH_FILES) -> Dict[str, Any]:
         """Use one bounded ephemeral LLM call to process pending source changes."""
@@ -761,27 +1192,17 @@ class ProjectWiki:
                              "local surface (local=true)")
         if llm_client is None:
             return {"status": "pending", "reason": "no LLM client"}
-        with self._lock:
-            dirty = self._manifest.get("dirty_sources", {}) or {}
-            entries = [
-                (path, dict(meta))
-                for path, meta in sorted(dirty.items(), key=lambda item: (
-                    float(item[1].get("detected_at", 0) or 0), item[0]))[:
-                        max(1, min(int(batch_files or _DEFAULT_BATCH_FILES), 20))]
-            ]
-            if not entries:
-                return {"status": "unchanged", "processed": 0}
-            paths = {path for path, _ in entries}
-            source_text = self._source_batch_text(service, entries, local)
-            existing_pages = self._affected_pages_text(paths)
-            pending_count = len(dirty)
-            try:
-                index = (self.path / "index.md").read_text(encoding="utf-8")[:12_000]
-            except OSError:
-                index = "(empty)"
+        selection = self.select_update_batch(batch_files)
+        if not selection["entries"]:
+            return {"status": "unchanged", "processed": 0}
+        prepared = self.fetch_update_sources(service, selection, local=local)
+        if prepared["status"] == "superseded":
+            return {**prepared, "remaining": selection["pending_count"]}
+        pending_count = selection["pending_count"]
 
         prompt = _AUTO_UPDATE_PROMPT.format(
-            index=index, pages=existing_pages, sources=source_text,
+            index=selection["index"], pages=selection["affected_pages"],
+            sources=prepared["source_text"],
             response_token_budget=_AUTO_UPDATE_RESPONSE_TOKENS)
         from core.llm_client import LLMMessage
         try:
@@ -818,43 +1239,16 @@ class ProjectWiki:
                 str(getattr(response, "finish_reason", "") or ""))
             return {"status": "pending", "reason": "invalid LLM response",
                     "remaining": pending_count}
-        pages = payload.get("pages") if isinstance(payload, dict) else None
-        processed = payload.get("processed_sources") if isinstance(payload, dict) else None
-        if not isinstance(pages, list) or not isinstance(processed, list):
-            logger.warning("Project wiki LLM returned invalid fields relay=%s",
-                           self.relay_id)
+        try:
+            patch = self.validate_update_patch(selection, payload)
+        except (TypeError, ValueError) as exc:
+            logger.warning("Project wiki LLM returned invalid payload relay=%s: %s",
+                           self.relay_id, exc)
             return {"status": "pending", "reason": "invalid LLM payload",
                     "remaining": pending_count}
-        allowed = paths
-        with self._lock:
-            current_dirty = self._manifest.get("dirty_sources", {}) or {}
-            superseded = sorted(
-                path for path, snapshot in entries
-                if path not in current_dirty or any(
-                    current_dirty[path].get(field) != snapshot.get(field)
-                    for field in ("state", "old_sha256", "sha256")))
-            if superseded:
-                return {"status": "superseded", "sources": superseded,
-                        "remaining": len(current_dirty)}
-
-            updated = []
-            for page in pages[:12]:
-                if not isinstance(page, dict):
-                    continue
-                page_sources = [
-                    str(path) for path in (page.get("sources") or [])
-                    if str(path) in (self._manifest.get("sources", {}) or {})]
-                meta = self.upsert_page(
-                    str(page.get("slug") or page.get("title") or ""),
-                    str(page.get("title") or ""),
-                    str(page.get("summary") or ""),
-                    str(page.get("content") or ""),
-                    page_sources,
-                )
-                updated.append(meta["path"])
-            acknowledged = self.acknowledge(
-                [str(path) for path in processed if str(path) in allowed])
-            return {"status": "updated", "pages": updated,
-                    "processed": len(acknowledged["cleared"]),
-                    "blocked": acknowledged["blocked"],
-                    "remaining": acknowledged["remaining"]}
+        key = "auto:" + self._digest({
+            "selection": selection["selection_digest"],
+            "patch": patch["patch_digest"],
+        })
+        return self.apply_update_patch(
+            service, selection, patch, key, local=local)

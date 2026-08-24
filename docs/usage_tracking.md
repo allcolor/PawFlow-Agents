@@ -40,8 +40,16 @@ Channels attribute where the tokens went:
 | `subagent` | `delegate` / `flash_delegate` sub-agent run |
 | `aggregator_advisor` | `llmAggregator` advisor call |
 | `realtime` | LiveKit realtime voice/video session (worker metrics) |
+| `workflow` | one committed `agentLLMCall` step in a durable workflow-agent run |
 | `system` | internal calls (title generation, ...) |
 | `migrated` | synthetic events imported from the legacy `token_usage.json` |
+
+Workflow events retain the normal user, conversation, agent, service, model, and
+provider dimensions and add `run_id` and `task_id`. Their stable event ID is
+derived from the run, task, and accepted input hash, so replaying a committed
+step or recovering after a crash does not double-charge usage. Both real and
+subscription-equivalent costs are also aggregated into the redacted workflow
+run inspector and `workflow_operations` projection.
 
 ## Query surface
 

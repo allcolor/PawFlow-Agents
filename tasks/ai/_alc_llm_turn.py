@@ -437,6 +437,12 @@ class _ALCLlmTurnMixin:
                 "[agent:%s] the process is alive — rebuilding this turn as a "
                 "delta instead of a cold start",
                 st.conversation_id[:8])
+            st._retrigger_payload = st.ctx.get("_active_retrigger_messages")
+            if st._retrigger_payload is not None:
+                st._rebuild_args["preloaded_messages"] = st._retrigger_payload
+                st._rebuild_args["preloaded_conversation_id"] = (
+                    st.conversation_id)
+                st._rebuild_args["skip_current_user_inject"] = True
             st._delta_ctx = self._prepare_agent_context(
                 st._rebuild_ff, force_delta=True,
                 resume_checkpoint=st.ctx.get("_consumed_cancel_checkpoint"),

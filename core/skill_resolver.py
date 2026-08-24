@@ -23,6 +23,12 @@ def normalize_skill_entry(entry) -> Tuple[str, Dict[str, str], str]:
     if isinstance(entry, str):
         return entry, {}, ""
     if isinstance(entry, dict):
+        if entry.get("schema_version") == 2 and isinstance(entry.get("ref"), dict):
+            return (
+                entry["ref"].get("name", ""),
+                entry.get("params") or {},
+                entry.get("condition") or "",
+            )
         return entry.get("name", ""), entry.get("params") or {}, entry.get("condition", "")
     return "", {}, ""
 
@@ -83,6 +89,24 @@ def _get_skill_any(rs, skill_name: str, user_id: str,
                    conversation_id: str = ""):
     return rs.get_any(
         "skill", skill_name, user_id, conversation_id=conversation_id)
+
+
+def _resolve_skill_entry(rs, entry, user_id: str, conversation_id: str = ""):
+    if isinstance(entry, dict) and entry.get("schema_version") == 2:
+        try:
+            from core.resource_binding_migration import validate_assigned_skill
+            assignment = validate_assigned_skill(
+                entry, conversation_id, resource_store=rs)
+            if assignment.invocation_policy_override in {"disabled", "explicit_only"}:
+                return None
+            from core.resource_binding_migration import resolve_exact_skill
+            return resolve_exact_skill(
+                assignment.ref, conversation_id, resource_store=rs)
+        except (TypeError, ValueError) as exc:
+            logger.warning("Skipping broken assigned skill binding: %s", exc)
+            return None
+    name, _params, _condition = normalize_skill_entry(entry)
+    return _get_skill_any(rs, name, user_id, conversation_id)
 
 
 def _resolve_prompt_chain(skill_name: str, rs, user_id: str,
@@ -258,22 +282,21 @@ def resolve_skill_prompts(
     blocks = []
     seen = set()
     for entry in skill_entries:
-        name, params, condition = normalize_skill_entry(entry)
+        name, _params, condition = normalize_skill_entry(entry)
         if not name or name in seen:
             continue
         seen.add(name)
         if condition and not _evaluate_condition_for_scope(
                 condition, user_id, conversation_id):
             continue
-        skill_def = _get_skill_any(rs, name, user_id, conversation_id)
+        skill_def = _resolve_skill_entry(rs, entry, user_id, conversation_id)
         if skill_def and skill_def.get("_invalid"):
             logger.warning("Skipping invalid skill %r: %s",
                            name, skill_def.get("_invalid"))
             continue
         if not skill_def or not _skill_instructions(skill_def):
             continue
-        prompt = _resolve_prompt_chain(
-            name, rs, user_id, conversation_id=conversation_id)
+        prompt = _skill_instructions(skill_def)
         desc = skill_def.get("description", "")
         skill_dir = skill_mount_dir(name, skill_def)
         blocks.append(
@@ -349,7 +372,7 @@ def resolve_skill_manifests(
         if condition and not _evaluate_condition_for_scope(
                 condition, user_id, conversation_id):
             continue
-        skill_def = _get_skill_any(rs, name, user_id, conversation_id)
+        skill_def = _resolve_skill_entry(rs, entry, user_id, conversation_id)
         if not skill_def:
             continue
         if skill_def.get("_invalid"):

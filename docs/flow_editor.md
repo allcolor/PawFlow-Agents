@@ -319,6 +319,31 @@ reference, validates mapped ports against the child definition and retains the
 existing recursion guard. Subflows and inline groups share the normal canvas,
 repository draft, validation, diff, autosave, undo/redo and publish paths.
 
+## Workflow agent authoring
+
+The New Flow dialog includes an **Agent workflow** starter. It creates one
+`kind: "agent_workflow"` document with an `agent_contract`, exact input and
+terminal ports, safe request/response stages, bounded preemption policies, and
+normal editable layout. There is no second workflow editor.
+
+The contract editor defines typed parameters, service references, allowed
+effects, and supported preemption policies. Draft **Validate** and **Publish**
+both call the shared server validator. Publication fails when ports disagree
+with their `inputPort`/`outputPort` tasks, a task cannot reach the terminal,
+a cycle is unbounded, or a task falls outside the closed workflow-safe catalog.
+
+Conversation agents bind an immutable published FQN such as
+`pawflow.agents.wiki:1.0.0`. Their configuration dialog shows that exact
+identity and exposes **Upgrade workflow** only when another compatible version
+is visible. Upgrading validates and stores a new binding; it never mutates an
+active run or silently follows `latest`.
+
+The workflow badge opens the redacted run inspector. Operators can view stages,
+status, generation, aggregate usage, terminal state, and authorization decisions
+without seeing prompts, source bodies, requests, credentials, or service
+snapshots. **Retry** appears only for the current recoverable generation, and a
+lost durable acquisition race returns a conflict rather than claiming success.
+
 ## Safe runtime editing (Phase 9)
 
 The context menu of a running, repository-backed instance exposes **Edit

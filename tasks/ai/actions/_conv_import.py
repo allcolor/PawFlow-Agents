@@ -18,6 +18,25 @@ from tasks.ai.actions._conv_base import (
 logger = logging.getLogger(__name__)
 
 
+def _validate_imported_agent_runtimes(
+        extras, user_id: str = "", conversation_id: str = ""):
+    """Reject archive-owned runtime kinds that this server cannot activate."""
+    from core.agent_feature_flags import validate_agent_runtime_kind
+
+    configs = extras.get("conv_agents") or {}
+    if not isinstance(configs, dict):
+        raise ValueError("Imported conv_agents must be an object")
+    for name, config in configs.items():
+        if not isinstance(config, dict):
+            raise ValueError(f"Imported agent '{name}' config must be an object")
+        runtime_kind = validate_agent_runtime_kind(
+            config.get("runtime_kind") or "llm")
+        if runtime_kind == "workflow" and user_id and conversation_id:
+            from core.workflow_agent_resources import bind_agent_workflow
+            config["workflow"] = bind_agent_workflow(
+                config.get("workflow") or {}, user_id, conversation_id)
+
+
 def _handle_conv_import(self, action, body, store, user_id, flowfile):
     """Conversation actions cluster: _conv_import. Returns result or _UNHANDLED."""
     if action == "conv_compare_branches":
@@ -200,6 +219,14 @@ def _handle_conv_import(self, action, body, store, user_id, flowfile):
                 extras = json.loads(extras_path.read_text(encoding="utf-8"))
             else:
                 extras = {}
+            try:
+                _validate_imported_agent_runtimes(extras, user_id, cid)
+            except ValueError as exc:
+                import shutil as _shutil
+                _shutil.rmtree(conv_dir, ignore_errors=True)
+                flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
             extras["conversation_id"] = cid
             extras["user_id"] = user_id
             extras["title"] = title or extras.get("title", "Imported")

@@ -136,7 +136,15 @@ class BaseFsHandler(ToolHandler):
             cached = self._scratchdir_service
             if (cached is not None
                     and getattr(cached, "_service_id", "") == relay_id):
-                return (cached, None)
+                from core.scratchdir_store import ScratchDirStore
+                record = ScratchDirStore.instance().get(
+                    self._user_id, self._conversation_id,
+                    self._agent_name, relay_id)
+                ticket = getattr(cached, "_ticket", {})
+                if (record is not None and record.state == "active"
+                        and ticket.get("scratch_id") == record.id
+                        and ticket.get("epoch") == record.epoch):
+                    return (cached, None)
             from core.scratchdir_manager import ScratchDirManager
             self._scratchdir_service = ScratchDirManager(relay).bind(
                 self._user_id, self._conversation_id, self._agent_name)

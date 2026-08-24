@@ -52,7 +52,8 @@ class _PACPhase3Mixin:
         #      because append_message only routes privately when the SOURCE
         #      is agent_delegate (and we'd need to coordinate that precisely).
         # Simplest contract: our ctx is authoritative on load. Skip.
-        st._skip_user_inject = bool(st._ms_src)
+        st._skip_user_inject = bool(
+            st._ms_src or getattr(st, "skip_current_user_inject", False))
 
         if (st.user_text.strip() or st.attachments) and not st._skip_user_inject:
             if st.attachments:

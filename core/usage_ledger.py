@@ -46,7 +46,8 @@ logger = logging.getLogger(__name__)
 # Whitelists — group/dimension names map to columns, never interpolate
 # caller strings into SQL.
 _GROUP_COLUMNS = ("llm_service", "agent_name", "model", "channel",
-                  "user_id", "conversation_id", "provider")
+                  "user_id", "conversation_id", "provider", "run_id",
+                  "task_id")
 _BUCKETS = {"hour": "%Y-%m-%d %H:00", "day": "%Y-%m-%d",
             "month": "%Y-%m"}
 
@@ -77,6 +78,8 @@ CREATE TABLE IF NOT EXISTS usage_events (
     ,route_plan_id TEXT NOT NULL DEFAULT ''
     ,route_attempt_id TEXT NOT NULL DEFAULT ''
     ,route_attempt_index INTEGER NOT NULL DEFAULT -1
+    ,run_id TEXT NOT NULL DEFAULT ''
+    ,task_id TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage_events (user_id, ts);
 CREATE INDEX IF NOT EXISTS idx_usage_conv_ts
@@ -134,6 +137,8 @@ class UsageLedger:
                 ("route_plan_id", "TEXT NOT NULL DEFAULT ''"),
                 ("route_attempt_id", "TEXT NOT NULL DEFAULT ''"),
                 ("route_attempt_index", "INTEGER NOT NULL DEFAULT -1"),
+                ("run_id", "TEXT NOT NULL DEFAULT ''"),
+                ("task_id", "TEXT NOT NULL DEFAULT ''"),
             ):
                 if name not in existing:
                     self._conn.execute(
@@ -183,6 +188,7 @@ class UsageLedger:
                physical_service_scope_id: str = "",
                route_plan_id: str = "", route_attempt_id: str = "",
                route_attempt_index: int = -1,
+               run_id: str = "", task_id: str = "", event_id: str = "",
                subscription: bool = False,
                ts: Optional[float] = None) -> float:
         """Record one usage event; returns the REAL cost recorded (USD).
@@ -209,28 +215,40 @@ class UsageLedger:
             cost = 0.0
         ts = float(ts if ts is not None else time.time())
         day = time.strftime("%Y-%m-%d", time.localtime(ts))
+        event_id = str(event_id or uuid.uuid4())
+        inserted = False
         with self._db_lock:
-            self._conn.execute(
-                "INSERT INTO usage_events (id, ts, day, user_id, "
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO usage_events (id, ts, day, user_id, "
                 "conversation_id, agent_name, llm_service, model, provider, "
                 "channel, tokens_in, tokens_out, cache_read, cache_write, "
                 "duration_ms, cost_usd, virtual_cost_usd,"
                 "physical_llm_service,logical_service_scope,"
                 "logical_service_scope_id,physical_service_scope,"
                 "physical_service_scope_id,route_plan_id,route_attempt_id,"
-                "route_attempt_index) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (str(uuid.uuid4()), ts, day, user_id, conversation_id,
+                "route_attempt_index,run_id,task_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (event_id, ts, day, user_id, conversation_id,
                  agent_name, llm_service, model, provider, channel,
                  int(tokens_in), int(tokens_out), int(cache_read),
                  int(cache_write), int(duration_ms), cost,
                  float(virtual_cost_usd or 0.0), physical_llm_service,
                  logical_service_scope, logical_service_scope_id,
                  physical_service_scope, physical_service_scope_id,
-                 route_plan_id, route_attempt_id, int(route_attempt_index)))
+                 route_plan_id, route_attempt_id, int(route_attempt_index),
+                 str(run_id or ""), str(task_id or "")))
+            inserted = cursor.rowcount == 1
+            if not inserted:
+                existing = self._conn.execute(
+                    "SELECT cost_usd FROM usage_events WHERE id=?",
+                    (event_id,)).fetchone()
+                cost = float(existing["cost_usd"] if existing else 0.0)
             self._conn.commit()
         # Best-effort: notify on any spend-budget threshold crossed by this
         # event (core/budget_store.py). Never affects usage recording.
         try:
+            if not inserted:
+                return cost
             from core.budget_store import check_and_notify
             check_and_notify(
                 self, user_id=user_id, conversation_id=conversation_id,
@@ -244,13 +262,14 @@ class UsageLedger:
     @staticmethod
     def _where(user_id="", conversation_id="", agent_name="",
                llm_service="", model="", channel="", since=0.0, until=0.0,
-               conversation_prefix=""):
+               conversation_prefix="", run_id="", task_id=""):
         clauses, params = [], []
         for col, val in (("user_id", user_id),
                          ("conversation_id", conversation_id),
                          ("agent_name", agent_name),
                          ("llm_service", llm_service),
-                         ("model", model), ("channel", channel)):
+                         ("model", model), ("channel", channel),
+                         ("run_id", run_id), ("task_id", task_id)):
             if val:
                 clauses.append(f"{col} = ?")
                 params.append(val)

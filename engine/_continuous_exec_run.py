@@ -253,6 +253,27 @@ class _ContinuousExecRunMixin:
             last_error = None
             result = None
 
+            workflow_context = self._runtime_context.get(
+                "workflow_run_context")
+            workflow_store = self._runtime_context.get("workflow_run_store")
+            if workflow_context is not None and workflow_store is not None:
+                workflow_run = workflow_store.get_run(workflow_context.run_id)
+                if workflow_run is None or workflow_run["status"] != "running":
+                    # The FlowFile was already dequeued. Discard it and halt the
+                    # isolated executor: a budget/cancel/force-stop boundary must
+                    # not route through an authored failure edge into later work.
+                    self._stop_event.set()
+                    return
+
+            # Workflow identity is a server-owned projection. A preceding task
+            # may alter arbitrary FlowFile attributes, so restore every reserved
+            # value at each task boundary from the executor's immutable context.
+            if dequeued_ff is not None:
+                for _key, _value in (
+                        self._runtime_context.get(
+                            "workflow_reserved_attributes") or {}).items():
+                    dequeued_ff.set_attribute(str(_key), str(_value))
+
             # Expose queue drain callback so long-running tasks (like agentLoop)
             # can pull pending user messages mid-execution
             if hasattr(task, '_drain_pending'):
@@ -275,8 +296,18 @@ class _ContinuousExecRunMixin:
                 task._drain_pending = _drain_fn
                 task._requeue_flowfiles = _requeue_fn
 
-            for attempt in range(1, self._max_retries + 1):
+            attempts = self._max_retries
+            retry_policy = getattr(task, "workflow_retry_attempts", None)
+            if callable(retry_policy) and self._runtime_context.get(
+                    "workflow_run_context") is not None:
+                attempts = retry_policy(attempts)
+            for attempt in range(1, attempts + 1):
                 try:
+                    if workflow_context is not None:
+                        from core.workflow_task_safety import authorize_workflow_task
+                        authorize_workflow_task(
+                            task, task_id, dequeued_ff,
+                            self._runtime_context, attempt)
                     start = time.time()
                     result = task.execute(dequeued_ff)
                     duration_ms = (time.time() - start) * 1000
@@ -305,10 +336,12 @@ class _ContinuousExecRunMixin:
                 except Exception as e:
                     last_error = e
                     logger.warning(
-                        f"Task '{task_id}' attempt {attempt}/{self._max_retries}: {e}"
+                        f"Task '{task_id}' attempt {attempt}/{attempts}: {e}"
                     )
-                    if attempt < self._max_retries:
+                    if attempt < attempts and getattr(e, "retryable", True):
                         time.sleep(min(attempt * 0.3, 3))
+                    elif not getattr(e, "retryable", True):
+                        break
 
             # All retries exhausted — ROLLBACK (FlowFile stays in queue)
             self._rollback(task_id, task_type, dequeued_ff, last_error)
@@ -470,6 +503,10 @@ class _ContinuousExecRunMixin:
         self._task_retry_counts.setdefault(task_id, 0)
         self._task_retry_counts[task_id] += 1
         consecutive = self._task_retry_counts[task_id]
+        self._discarded_flowfile_errors.append({
+            "task_id": task_id,
+            "error": error_msg,
+        })
 
         BulletinBoard.get_instance().post(
             "ERROR", task_id,

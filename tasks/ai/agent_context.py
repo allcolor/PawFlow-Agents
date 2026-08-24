@@ -85,6 +85,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
                                independent_context: bool = False,
                                force_cold: bool = False,
                                force_delta: bool = False,
+                               skip_current_user_inject: bool = False,
                                route_plan=None,
                                route_attempt: int = 0,
                                route_failures: Optional[List[Dict]] = None,
@@ -105,6 +106,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
                 after the probe said otherwise. Same reasoning in the other
                 direction: the provider observed the process at launch time,
                 which outranks anything the probe concluded a second earlier.
+            skip_current_user_inject: Do not add the FlowFile body as a user
+                message. Used only when a queued retrigger rebuild supplies its
+                complete next-turn delta through preloaded_messages.
             route_plan: Immutable route snapshot selected for this logical turn.
             route_attempt: Candidate index selected by an llmRouter handoff.
             route_failures: Sanitized failures accumulated before the selected
@@ -121,6 +125,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
         st.independent_context = independent_context
         st.force_cold = bool(force_cold)
         st.force_delta = bool(force_delta)
+        st.skip_current_user_inject = bool(skip_current_user_inject)
         st.route_plan = route_plan
         st.route_attempt = int(route_attempt)
         st.route_failures = list(route_failures or [])
@@ -198,6 +203,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
                 "preloaded_messages": preloaded_messages,
                 "preloaded_conversation_id": preloaded_conversation_id,
                 "independent_context": independent_context,
+                "skip_current_user_inject": skip_current_user_inject,
             },
             "_consumed_cancel_checkpoint": getattr(
                 st, "_consumed_cancel_checkpoint", None),

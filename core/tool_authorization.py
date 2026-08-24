@@ -30,8 +30,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from core.authorization_context import (
-    AuthorizationContextStore, AuthorizationRef, active_authority_ref,
-    get_current_ref)
+    AuthorizationContextStore,
+    AuthorizationRef,
+    active_authority_ref,
+    get_current_ref,
+)
 from core.gating_policy import build_envelope, classify_call, compose_final
 
 logger = logging.getLogger(__name__)
@@ -91,13 +94,15 @@ def list_decisions(conversation_id: str, limit: int = 50) -> List[Dict[str, Any]
     return rows
 
 
-def load_authority(user_id: str, conversation_id: str, agent_name: str):
-    """Return ``(doc, ref)`` for the running lineage; ``(None, None)`` when no
-    explicit reference exists. Always the newest revision (plan 14.2)."""
-    ref = get_current_ref() or active_authority_ref(conversation_id, agent_name)
+def load_authority(user_id: str, conversation_id: str, agent_name: str,
+                   authorization_ref: Optional[AuthorizationRef] = None):
+    """Return ``(doc, ref)`` for an explicit or active authority revision."""
+    ref = (authorization_ref or get_current_ref()
+           or active_authority_ref(conversation_id, agent_name))
     if ref is None:
         return None, None
-    doc = AuthorizationContextStore.instance().snapshot(user_id, conversation_id, ref.context_id)
+    doc = AuthorizationContextStore.instance().snapshot(
+        user_id, conversation_id, ref.context_id, revision=ref.revision)
     if doc is None:
         return None, ref
     return doc, AuthorizationContextStore.ref(doc)
@@ -108,8 +113,34 @@ def authorize_tool_call(*, tool_name: str, arguments: Dict[str, Any], user_id: s
                         call_id: str = "", permission_mode: str = "default",
                         tool_permission: str = "", read_only_override: bool = False,
                         secret_values: Iterable[str] = (),
-                        resolved_gates: Optional[Dict[str, Any]] = None) -> ToolAuthorizationResult:
+                        resolved_gates: Optional[Dict[str, Any]] = None,
+                        capability_effects: Optional[Iterable[Any]] = None,
+                        authorization_ref: Optional[AuthorizationRef] = None,
+                        attribution: Optional[Dict[str, Any]] = None,
+                        ) -> ToolAuthorizationResult:
     """Evaluate the bound policy gates for one prepared tool call."""
+    classification, why = classify_call(
+        tool_name, arguments, permission_mode=permission_mode,
+        tool_permission=tool_permission, read_only_override=read_only_override,
+        capability_effects=capability_effects)
+    if capability_effects is not None:
+        if classification == "internal_ungated":
+            return ToolAuthorizationResult("legacy", why, classification)
+        if classification == "hard_deny":
+            envelope = build_envelope(
+                user_id=user_id, conversation_id=conversation_id,
+                agent_name=agent_name, turn_id=turn_id,
+                tool_name=tool_name, arguments=arguments, call_id=call_id,
+                secret_values=secret_values, classification=classification,
+                capability_effects=capability_effects)
+            if attribution:
+                envelope["attribution"] = dict(attribution)
+            result = ToolAuthorizationResult(
+                "deny", f"structural guard: {why}", classification,
+                envelope=envelope, decision_id=envelope["decision_id"])
+            _audit(conversation_id, _record(
+                result, tool_name, user_id, agent_name, turn_id))
+            return result
     try:
         if resolved_gates is None:
             from core.gating_bindings import resolve_gates
@@ -120,10 +151,6 @@ def authorize_tool_call(*, tool_name: str, arguments: Dict[str, Any], user_id: s
         return ToolAuthorizationResult("legacy", "gate resolution failed")
     if not resolved_gates.get("bound"):
         return ToolAuthorizationResult("legacy")
-
-    classification, why = classify_call(
-        tool_name, arguments, permission_mode=permission_mode,
-        tool_permission=tool_permission, read_only_override=read_only_override)
     if classification == "internal_ungated":
         return ToolAuthorizationResult("legacy", why, classification)
     if classification == "hard_deny":
@@ -134,13 +161,18 @@ def authorize_tool_call(*, tool_name: str, arguments: Dict[str, Any], user_id: s
 
     doc, ref = None, None
     try:
-        doc, ref = load_authority(user_id, conversation_id, agent_name)
+        doc, ref = load_authority(
+            user_id, conversation_id, agent_name,
+            authorization_ref=authorization_ref)
     except Exception:
         logger.debug("authority load failed", exc_info=True)
     envelope = build_envelope(
         user_id=user_id, conversation_id=conversation_id, agent_name=agent_name,
         turn_id=turn_id, tool_name=tool_name, arguments=arguments, call_id=call_id,
-        authorization=doc, secret_values=secret_values, classification=classification)
+        authorization=doc, secret_values=secret_values,
+        classification=classification, capability_effects=capability_effects)
+    if attribution:
+        envelope["attribution"] = dict(attribution)
     ref_dict = ref.to_dict() if isinstance(ref, AuthorizationRef) else None
 
     if resolved_gates.get("broken"):
@@ -198,7 +230,9 @@ def _record(result: ToolAuthorizationResult, tool_name: str, user_id: str,
         "arguments": call.get("arguments"),
         "arguments_sha256": call.get("arguments_sha256", ""),
         "classification": result.classification,
+        "capability_effects": list(call.get("capability_effects") or ()),
         "authority": result.authority_ref,
+        "attribution": dict(env.get("attribution") or {}),
         "decision": result.decision,
         "reason": result.reason,
         "gates": [{"origin": g.get("origin"), "ref": g.get("ref"),
@@ -239,7 +273,8 @@ def gate_for_runtime(*, tool_name: str, arguments: Any, user_id: str, conversati
     from core.tool_approval import ToolApprovalGate
     approval = ToolApprovalGate.check(
         tool_name, f"[policy gate] {result.reason[:160]} — {tool_name}",
-        approval_cid or conversation_id, user_id, arguments=args, agent_name=agent_name)
+        approval_cid or conversation_id, user_id, arguments=args,
+        agent_name=agent_name, force_prompt=True)
     if approval != "approved":
         return (f"Error: Tool '{tool_name}' was {approval} by the user "
                 "(policy gate asked for confirmation).")

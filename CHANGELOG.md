@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Added exact-version workflow agents with durable run and inbox stores,
+  checkpoint/queue/restart preemption, idempotent multi-step LLM calls, strict
+  effect authorization, redacted run inspection, operational alerts, and safe
+  recovery.
+- Added the source-backed Wiki Agent reference workflow, including no-write
+  shadow comparison, silent automatic maintenance, server-owned staged cutover,
+  PendingQueue migration, authoring UI, and an operator runbook.
+
 ## [1.0.0-beta.243] — 2026-08-23
 
 ### Fixed

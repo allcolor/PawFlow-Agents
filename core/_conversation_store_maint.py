@@ -201,6 +201,16 @@ class _CsMaintMixin:
         if not conv_dir.is_dir():
             with self._cache_lock:
                 self._cache.pop(cid, None)
+            try:
+                from core.agent_inbox_store import AgentInboxStore
+                AgentInboxStore.instance().delete_conversation(cid)
+            except Exception:
+                logger.debug("workflow inbox cleanup failed", exc_info=True)
+            try:
+                from core.workflow_run_store import WorkflowRunStore
+                WorkflowRunStore.instance().delete_conversation(cid)
+            except Exception:
+                logger.debug("workflow run cleanup failed", exc_info=True)
             return False
 
         def _force_remove(func, path, _exc_info):
@@ -236,6 +246,16 @@ class _CsMaintMixin:
             FileStore.instance().delete_by(conversation_id=cid)
         except Exception:
             logger.debug("exception suppressed", exc_info=True)
+        try:
+            from core.agent_inbox_store import AgentInboxStore
+            AgentInboxStore.instance().delete_conversation(cid)
+        except Exception:
+            logger.debug("workflow inbox cleanup failed", exc_info=True)
+        try:
+            from core.workflow_run_store import WorkflowRunStore
+            WorkflowRunStore.instance().delete_conversation(cid)
+        except Exception:
+            logger.debug("workflow run cleanup failed", exc_info=True)
         # Drop edit-guard state for every agent in this conv — otherwise
         # the read-hashes / failed-edit counters leak until size eviction.
         try:

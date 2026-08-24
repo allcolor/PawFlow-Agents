@@ -532,6 +532,63 @@ Crosses the skill repository with `load_skill` usage statistics (`data/runtime/s
 |------|------|----------|---------|-------------|
 | `operation` | select | Yes | - | Operation (encode, decode) |
 
+### 11.7. Workflow Agent Tasks
+
+Workflow-agent flows use `kind: "agent_workflow"` and a closed first-party
+processor catalog. They are validated by the same strict validator in the Flow
+Editor and at publish/bind time; arbitrary source, script, nested-agent, or
+open-world package tasks are rejected.
+
+| Type | Purpose |
+|---|---|
+| `agentWorkflowInput` | Validate the immutable server-owned request and expose its bounded fields. |
+| `emitAgentProgress` | Publish a bounded stage label without adding transcript content. |
+| `agentLLMCall` | Run one recoverable LLM step against a snapshotted service, with strict output validation and idempotent usage accounting. |
+| `receiveAgentMessages` | Lease ordered messages from the durable agent inbox at a checkpoint. |
+| `groupDeliberationInput` | Validate the server-owned request for the exact first-party group flow. |
+| `resolveGroupSnapshot` | Require the group feature flag and attach the immutable run-start group/member snapshot. |
+| `selectGroupResponders` | Select only members from the immutable roster by all, mention, or bounded classifier policy. |
+| `initializeSharedRoom` | Create the bounded room from the explicit request and attachments, without private context. |
+| `agentParticipantCall` | Run one structured, idempotent, tool-free member call against its pinned API LLM service. |
+| `synthesizeGroupResult` | Produce one bounded terminal candidate by deterministic concatenation or a pinned synthesis LLM. |
+| `completeAgentTurn` | Stage the sole validated terminal result for the exactly-once commit saga. |
+| `inputPort` / `outputPort` | Declare the contract entry and terminal ports. |
+
+`agentLLMCall` requires a service from the run's accepted service snapshot.
+Its main parameters are `service`, `messages` or an input source,
+`response_format`/`json_schema`, model controls, `timeout`,
+`cache_policy`, `retry_attempts`, output target, progress label, and
+visibility. Retries greater than one require `run_idempotent` caching. Each
+`json_schema` call exposes one internal structured-output tool and forces that
+tool on Anthropic- and OpenAI-compatible transports; its arguments become the
+validated task result. Other transports retain the same schema prompt plus
+post-response validation and fail closed on mismatches. Each
+committed step is charged once to the usage ledger under `channel=workflow`
+with durable run/task dimensions.
+
+The six group processors are reserved for
+`pawflow.agents.group-deliberation:1.0.0` and require
+`PAWFLOW_AGENT_GROUPS_ENABLED=true` in addition to the workflow-agent rollout
+gate. They accept no task parameters. Their authority comes from the injected
+run context and exact group snapshot. WP6 participant calls have no tools or
+private context; token and cost allocations are enforced before durable step
+commit, cancellation aborts active provider clients, and only
+`completeAgentTurn` stages the single assistant result.
+
+The Wiki Agent adds deterministic workflow-only processors for bounded source
+scan/fetch/normalization, extraction merge, patch/review validation, source-byte
+CAS apply or shadow preview, wiki lint, and receipt-backed reporting.
+`prepareWikiIntent` builds a bounded classifier prompt before project access;
+`routeWikiIntent` validates `wiki_maintenance` versus `unsupported`, permits only
+a reduction of the configured batch limit, and terminates non-Wiki requests.
+The original accepted request focuses extractor/writer prompts but cannot expand
+the snapshot or change `write_mode`. `validateWikiPatch` derives
+`processed_sources` from the selected snapshot rather than accepting model paths.
+Their
+contract and production flow are documented in
+[Agent System](AGENT_SYSTEM.md) and
+[Workflow Agent Operations](WORKFLOW_AGENT_OPERATIONS.md).
+
 ---
 
 ## 12. Complete Service Reference

@@ -129,7 +129,9 @@ def _handle_flow_editor(self, action, body, store, user_id, flowfile):
             if action == "flow_editor_new":
                 draft = service.new(package, name, version, scope, user_id,
                                     conv_id=conv_id,
-                                    description=str(body.get("description", "") or ""))
+                                    description=str(body.get("description", "") or ""),
+                                    template_kind=str(
+                                        body.get("template_kind") or "standard"))
             else:
                 source_fqn = str(body.get("source_fqn", "") or "")
                 if not source_fqn:

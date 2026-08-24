@@ -1,0 +1,71 @@
+{
+  "id": "group-deliberation",
+  "name": "Group Deliberation",
+  "version": "1.0.0",
+  "fqn": "pawflow.agents.group-deliberation:1.0.0",
+  "kind": "agent_workflow",
+  "description": "Bounded first-party multi-agent deliberation with one terminal response.",
+  "group_contract": {"version": 1, "parameter": "group_name"},
+  "agent_contract": {
+    "version": 1,
+    "input": {"port": "group_request"},
+    "terminal": {"port": "group_terminal"},
+    "parameters": {
+      "group_name": {"type": "string", "required": true}
+    },
+    "supported_preempt_policies": ["queue", "restart"],
+    "allowed_effects": ["resource.read"]
+  },
+  "parameters": {},
+  "services": {},
+  "entries": ["group_request"],
+  "exits": ["group_terminal"],
+  "tasks": {
+    "group_request": {
+      "type": "inputPort",
+      "parameters": {"port_name": "group_request"}
+    },
+    "validate_group_request": {
+      "type": "groupDeliberationInput",
+      "parameters": {}
+    },
+    "resolve_group_snapshot": {
+      "type": "resolveGroupSnapshot",
+      "parameters": {}
+    },
+    "select_responders": {
+      "type": "selectGroupResponders",
+      "parameters": {}
+    },
+    "initialize_room": {
+      "type": "initializeSharedRoom",
+      "parameters": {}
+    },
+    "participant_calls": {
+      "type": "agentParticipantCall",
+      "parameters": {}
+    },
+    "synthesize": {
+      "type": "synthesizeGroupResult",
+      "parameters": {}
+    },
+    "complete_group_turn": {
+      "type": "completeAgentTurn",
+      "parameters": {}
+    },
+    "group_terminal": {
+      "type": "outputPort",
+      "parameters": {"port_name": "group_terminal"}
+    }
+  },
+  "relations": [
+    {"from": "group_request", "to": "validate_group_request", "type": "success"},
+    {"from": "validate_group_request", "to": "resolve_group_snapshot", "type": "success"},
+    {"from": "resolve_group_snapshot", "to": "initialize_room", "type": "success"},
+    {"from": "initialize_room", "to": "select_responders", "type": "success"},
+    {"from": "select_responders", "to": "participant_calls", "type": "success"},
+    {"from": "participant_calls", "to": "synthesize", "type": "success"},
+    {"from": "synthesize", "to": "complete_group_turn", "type": "success"},
+    {"from": "complete_group_turn", "to": "group_terminal", "type": "success"}
+  ]
+}

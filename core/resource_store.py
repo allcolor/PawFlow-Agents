@@ -12,6 +12,7 @@ Resource types:
 - private_gateway_skin: directory resource with skin.json and template.html
 - agent_hook: runtime hook selected by conversation bindings
 - service_template: preset values for the existing service creation form
+- agent_group: bounded multi-agent deliberation definition
 """
 
 import logging
@@ -58,6 +59,7 @@ _TYPE_MAP = {
     "theme": "theme",
     "private_gateway_skin": "private_gateway_skin",
     "service_template": "service_templates",
+    "agent_group": "agent_groups",
 }
 
 
@@ -76,6 +78,7 @@ _REQUIRED_FIELDS = {
     "theme": (),
     "private_gateway_skin": (),
     "service_template": ("service_type", "config"),
+    "agent_group": ("description", "members", "synthesis", "budgets"),
 }
 
 # Default values per type
@@ -152,6 +155,7 @@ _DEFAULTS = {
         "service_description": "",
         "config": {},
     },
+    "agent_group": {},
 }
 
 
@@ -197,6 +201,9 @@ class ResourceStore:
                conversation_id: str = "") -> Dict[str, Any]:
         """Create a resource. Raises ValueError if it already exists."""
         rtype = _repo_type(resource_type)
+        if resource_type == "agent_group":
+            from core.agent_group_resources import validate_agent_group_data
+            data = validate_agent_group_data(name, data)
         for field in _REQUIRED_FIELDS.get(resource_type, ()):
             if field not in data:
                 raise ValueError(f"Missing required field: {field}")
@@ -242,6 +249,19 @@ class ResourceStore:
         scope, uid, cid = self._map_scope(user_id, conversation_id)
 
         from core.repository import ScopedRepository
+        if resource_type == "agent_group":
+            repository = ScopedRepository.instance()
+            existing = repository.get(
+                rtype, name, scope, user_id=uid, conv_id=cid)
+            if existing is None:
+                raise KeyError(f"{rtype}/{name} not found in scope {scope}")
+            merged = {
+                key: value for key, value in existing.items()
+                if key not in {"created_at", "updated_at", "_scope"}
+            }
+            merged.update(data)
+            from core.agent_group_resources import validate_agent_group_data
+            data = validate_agent_group_data(name, merged)
         return ScopedRepository.instance().update(
             rtype, name, scope, data, user_id=uid, conv_id=cid)
 

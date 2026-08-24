@@ -102,6 +102,39 @@ Instrument few things. A trace where everything is a span costs money to store
 and hides the four rows that mattered. Add one only for a boundary that can be
 slow or fail on its own.
 
+### Workflow-agent maintenance rollout
+
+Wiki shadow and automatic maintenance runs are durable workflow runs. Inspect
+their exact flow identity, `invocation_mode`, status, failure reason, aggregate
+usage, authorization decisions, and ordered stage events through the workflow
+run inspector. Shadow results identify themselves as `shadow` and must leave
+the wiki dirty-source count, pages, and applied-patch receipts unchanged.
+
+The read-authorized agent-resource action `workflow_operations` accepts a
+`conversation_id`, optional `agent_name`, and optional `backlog_alert`.
+It returns redacted counts by run status and invocation mode, aggregate usage
+and recovery counts, inbox states, overall health, and stable alert codes:
+`workflow_failed_runs`, `workflow_overdue_runs`,
+`workflow_recovery_churn`, `workflow_inbox_backlog`, and
+`workflow_expired_claims`. Results never include requests, inbox payloads,
+source bodies, prompts, credentials, or service snapshots. A critical health
+state means an overdue live run or expired inbox claim; warning covers failures,
+recovery churn, or a backlog at or above the configured threshold.
+
+The automatic cutover is server-owned:
+
+- unset `PAWFLOW_WIKI_WORKFLOW_CUTOVER` (the default) keeps the legacy
+  maintainer active;
+- `PAWFLOW_WIKI_WORKFLOW_CUTOVER=1` submits
+  `pawflow.agents.wiki:1.0.0` as `silent_maintenance`;
+- remove the flag and restart or redeploy the server to roll back future runs.
+
+Treat repeated failed or skipped maintenance submissions, a growing dirty-source
+count, expired workflow leases, non-current generations attempting recovery, or
+any assistant transcript row from `silent_maintenance` as an operational
+incident. The cutover does not delete legacy code; embedded orchestration is
+removed only after the shadow and release gates pass.
+
 ```python
 from core.observability import span
 

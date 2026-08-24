@@ -6,6 +6,8 @@
 |----------|-------------|
 | [Architecture](architecture.md) | Internal architecture: FlowFile, Task, Service, Flow, engine |
 | [Agent System](AGENT_SYSTEM.md) | Agent loop, context management, plans, multi-agent, streaming |
+| [Workflow Agents Implementation Plan](WORKFLOW_AGENTS_IMPLEMENTATION_PLAN.md) | Implemented opt-in architecture for dedicated versioned-flow agents, preemption checkpoints, durable runs, and the Wiki Agent reference design |
+| [Agent Collaboration and Tool Safety Plan](AGENT_COLLABORATION_AND_TOOL_SAFETY_PLAN.md) | Implemented opt-in contracts for turn-scoped tool authorization, ordered lifecycle replay, bounded group deliberation, unified agent runs, and resource provenance |
 | [LLM Providers](llm_providers.md) | Provider selection, API/subscription credentials, compatible endpoints, and delegated vision for text-only models |
 | [Multi-LLM Aggregator](llm_aggregator.md) | Configure parallel read-only advisors and a final synthesis/execution LLM |
 | [Claude Code Interactive](CLAUDE_CODE_INTERACTIVE.md) | Recommended Claude Code provider: observable, tmux-backed interactive sessions |
@@ -54,6 +56,7 @@
 | [Relay Image Profiles](relay_images.md) | Server full relay image and configurable client relay image profiles |
 | [Security Model](security_model.md) | Trust boundaries, relay risk, desktop/VNC, provider egress, production checklist |
 | [Observability](OBSERVABILITY.md) | Session correlation in logs (always on) and optional OpenTelemetry tracing |
+| [Workflow Agent Operations](WORKFLOW_AGENT_OPERATIONS.md) | Operator runbook for feature flags, exact bindings, PendingQueue migration, run inspection/retry, Wiki shadow/cutover, rollback, and incident response |
 | [Development](development.md) | Creating custom tasks and services |
 | [Release Procedure](RELEASE_PROCEDURE.md) | Blocking release circuit: scoped commits, CI gates, tagging, publication, and recovery |
 | [Relay Server Filesystem](relay_server_fs.md) | Relay filesystem server details |

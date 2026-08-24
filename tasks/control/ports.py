@@ -6,6 +6,7 @@ Input and output ports for Process Groups.
 
 from typing import Dict, Any, List
 from core import FlowFile, TaskFactory
+from core.agent_contracts import CapabilityEffect, IdempotencyClass
 from core.base_task import BaseTask
 
 
@@ -17,6 +18,10 @@ class InputPortTask(BaseTask):
     NAME = "Input Port"
     DESCRIPTION = "Input port pour un Process Group"
     ICON = "log-in"
+    AGENT_WORKFLOW_SAFE = True
+    EFFECTS = (CapabilityEffect.RESOURCE_READ,)
+    IDEMPOTENCY = IdempotencyClass.PURE
+    AUTHORIZATION_TARGET_KIND = "workflow.runtime"
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -43,6 +48,10 @@ class OutputPortTask(BaseTask):
     NAME = "Output Port"
     DESCRIPTION = "Output port pour un Process Group"
     ICON = "log-out"
+    AGENT_WORKFLOW_SAFE = True
+    EFFECTS = (CapabilityEffect.RESOURCE_READ,)
+    IDEMPOTENCY = IdempotencyClass.PURE
+    AUTHORIZATION_TARGET_KIND = "workflow.runtime"
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)

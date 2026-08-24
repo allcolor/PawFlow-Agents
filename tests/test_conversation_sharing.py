@@ -1485,7 +1485,8 @@ class TestConversationResourcesAreGatedToo:
         root = Path(dispatcher.__file__).parent
         handled = set()
         for module in ("_agentres_k1", "_agentres_k2", "_agentres_k3",
-                       "_agentres_k4", "_agentres_k5"):
+                       "_agentres_k4", "_agentres_k5", "_agentres_k6",
+                       "_agentres_k7", "_agentres_k8"):
             source = (root / f"{module}.py").read_text(encoding="utf-8")
             # Anchored on the left: `pfp_action == "install"` also ends in
             # `action == "..."`, and counting those as top-level actions would

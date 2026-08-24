@@ -60,6 +60,28 @@ def test_agent_runtime_wait_timeout_keeps_live_callback_until_done():
     assert result.response == "late final"
 
 
+def test_workflow_done_resolves_all_answered_turn_aliases():
+    from core.agent_runtime_api import AgentResultWaiter
+    from core.conversation_event_bus import ConversationEventBus
+
+    ConversationEventBus.reset()
+    AgentResultWaiter._instance = None
+    waiter = AgentResultWaiter.instance()
+    waiter.register("conv1", "root")
+    waiter.register("conv1", "follow-up")
+
+    ConversationEventBus.instance().publish_event("conv1", "done", {
+        "turn_id": "root",
+        "answered_turn_ids": ["root", "follow-up"],
+        "response": "one terminal",
+    })
+
+    assert waiter.wait("conv1", "root", timeout=0.1).response == "one terminal"
+    alias = waiter.wait("conv1", "follow-up", timeout=0.1)
+    assert alias.response == "one terminal"
+    assert alias.turn_id == "follow-up"
+
+
 def test_submitted_turn_carries_the_authenticated_principal(monkeypatch):
     """Every non-HTTP transport gets its identity here, and only here.
 

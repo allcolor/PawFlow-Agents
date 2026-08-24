@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from copy import deepcopy
 from unittest.mock import MagicMock
 
 import pytest
@@ -206,7 +207,7 @@ def test_structured_page_listing_edit_data_and_safe_delete(wiki):
 
 
 def test_auto_update_writes_pages_and_acknowledges_sources(wiki):
-    scan = {"README.md": _source("overview")}
+    scan = {"README.md": _source("Project overview")}
     relay = _Relay([scan], files={"README.md": "Project overview"})
     wiki.scan_from_relay(relay)
     client = _Client({
@@ -235,7 +236,7 @@ def test_auto_update_writes_pages_and_acknowledges_sources(wiki):
 
 def test_auto_update_keeps_sources_pending_on_empty_llm_response(wiki):
     relay = _Relay(
-        [{"README.md": _source("overview")}],
+        [{"README.md": _source("Project overview")}],
         files={"README.md": "Project overview"})
     wiki.scan_from_relay(relay)
     client = _Client({})
@@ -253,7 +254,7 @@ def test_auto_update_keeps_sources_pending_on_empty_llm_response(wiki):
 
 def test_auto_update_accepts_json_object_inside_markdown(wiki):
     relay = _Relay(
-        [{"README.md": _source("overview")}],
+        [{"README.md": _source("Project overview")}],
         files={"README.md": "Project overview"})
     wiki.scan_from_relay(relay)
     payload = {
@@ -275,7 +276,7 @@ def test_auto_update_accepts_json_object_inside_markdown(wiki):
 
 def test_auto_update_keeps_sources_pending_when_llm_call_fails(wiki):
     relay = _Relay(
-        [{"README.md": _source("overview")}],
+        [{"README.md": _source("Project overview")}],
         files={"README.md": "Project overview"})
     wiki.scan_from_relay(relay)
     client = _Client({})
@@ -290,8 +291,8 @@ def test_auto_update_keeps_sources_pending_when_llm_call_fails(wiki):
 
 
 def test_auto_update_refuses_response_when_source_changed_during_llm_call(wiki):
-    first = {"README.md": _source("old")}
-    second = {"README.md": _source("new", 2)}
+    first = {"README.md": _source("Old overview")}
+    second = {"README.md": _source("New overview", 2)}
     relay = _Relay([first, second], files={"README.md": "Old overview"})
     wiki.scan_from_relay(relay)
     client = _Client({
@@ -304,6 +305,7 @@ def test_auto_update_refuses_response_when_source_changed_during_llm_call(wiki):
     original_complete = client.complete
 
     def mutate_then_complete(**kwargs):
+        relay.files["README.md"] = "New overview"
         wiki.scan_from_relay(relay)
         return original_complete(**kwargs)
 
@@ -316,6 +318,146 @@ def test_auto_update_refuses_response_when_source_changed_during_llm_call(wiki):
     assert wiki.status()["dirty_sources"] == 1
     with pytest.raises(KeyError):
         wiki.get_page("overview")
+
+
+def test_patch_validation_rejects_out_of_snapshot_citation_before_write(wiki):
+    relay = _Relay(
+        [{"README.md": _source("Project overview")}],
+        files={"README.md": "Project overview"})
+    wiki.scan_from_relay(relay)
+    selection = wiki.select_update_batch()
+
+    with pytest.raises(ValueError, match="outside the selected snapshot"):
+        wiki.validate_update_patch(selection, {
+            "pages": [{
+                "slug": "overview", "title": "Overview", "summary": "",
+                "content": "Unsupported facts.", "sources": ["core/other.py"],
+            }],
+            "processed_sources": ["README.md"],
+        })
+
+    assert wiki.status()["pages"] == 0
+    assert wiki.status()["dirty_sources"] == 1
+
+
+def test_apply_update_patch_is_replay_safe(wiki):
+    relay = _Relay(
+        [{"README.md": _source("Project overview")}],
+        files={"README.md": "Project overview"})
+    wiki.scan_from_relay(relay)
+    selection = wiki.select_update_batch()
+    patch = wiki.validate_update_patch(selection, {
+        "pages": [{
+            "slug": "overview", "title": "Overview", "summary": "Summary",
+            "content": "Current project facts.", "sources": ["README.md"],
+        }],
+        "processed_sources": ["README.md"],
+    })
+
+    first = wiki.apply_update_patch(relay, selection, patch, "run:snapshot:patch")
+    second = wiki.apply_update_patch(relay, selection, patch, "run:snapshot:patch")
+
+    assert first["created"] == ["overview"]
+    assert first["remaining"] == 0
+    assert second == {**first, "replayed": True}
+    assert wiki.list_pages()[0]["slug"] == "overview"
+
+
+def test_preview_update_patch_classifies_without_writes_or_acknowledgement(wiki):
+    relay = _Relay(
+        [{"README.md": _source("Project overview")}],
+        files={"README.md": "Project overview"})
+    wiki.scan_from_relay(relay)
+    selection = wiki.select_update_batch()
+    patch = wiki.validate_update_patch(selection, {
+        "pages": [{
+            "slug": "overview", "title": "Overview", "summary": "Summary",
+            "content": "Current project facts.", "sources": ["README.md"],
+        }],
+        "processed_sources": ["README.md"],
+    })
+    before = wiki.status()
+
+    result = wiki.preview_update_patch(relay, selection, patch)
+
+    assert result["status"] == "shadow"
+    assert result["created"] == ["overview"]
+    assert result["cleared"] == ["README.md"]
+    assert wiki.status() == before
+    assert wiki.list_pages() == []
+    assert wiki._manifest.get("applied_patches", {}) == {}
+
+
+@pytest.mark.parametrize(
+    ("existing_content", "classification"),
+    ((None, "created"), ("Old facts.", "updated"), ("Current facts.", "unchanged")),
+)
+def test_shadow_classification_matches_live_apply_without_mutation(
+        wiki, existing_content, classification):
+    relay = _Relay(
+        [{"README.md": _source("Project overview")}],
+        files={"README.md": "Project overview"})
+    wiki.scan_from_relay(relay)
+    if existing_content is not None:
+        wiki.upsert_page(
+            slug="overview", title="Overview", summary="Summary",
+            content=existing_content, sources=["README.md"])
+    selection = wiki.select_update_batch()
+    patch = wiki.validate_update_patch(selection, {
+        "pages": [{
+            "slug": "overview", "title": "Overview", "summary": "Summary",
+            "content": "Current facts.", "sources": ["README.md"],
+        }],
+        "processed_sources": ["README.md"],
+    })
+    before_manifest = deepcopy(wiki._manifest)
+    before_files = {
+        path.relative_to(wiki.path).as_posix(): path.read_bytes()
+        for path in wiki.path.rglob("*") if path.is_file()
+    }
+
+    shadow = wiki.preview_update_patch(relay, selection, patch)
+
+    after_files = {
+        path.relative_to(wiki.path).as_posix(): path.read_bytes()
+        for path in wiki.path.rglob("*") if path.is_file()
+    }
+    assert wiki._manifest == before_manifest
+    assert after_files == before_files
+
+    live = wiki.apply_update_patch(
+        relay, selection, patch, f"parity:{classification}")
+
+    for key in (
+            "created", "updated", "unchanged", "cleared", "processed", "blocked"):
+        assert shadow[key] == live[key]
+    assert shadow[classification] == ["overview"]
+    assert shadow["status"] == "shadow"
+    assert live["status"] == "updated"
+    assert live["remaining"] == 0
+
+
+def test_apply_rechecks_unscanned_source_bytes(wiki):
+    relay = _Relay(
+        [{"README.md": _source("Old overview")}],
+        files={"README.md": "Old overview"})
+    wiki.scan_from_relay(relay)
+    selection = wiki.select_update_batch()
+    patch = wiki.validate_update_patch(selection, {
+        "pages": [{
+            "slug": "overview", "title": "Overview", "summary": "Old",
+            "content": "Facts from the old source.", "sources": ["README.md"],
+        }],
+        "processed_sources": ["README.md"],
+    })
+    relay.files["README.md"] = "Changed without a manifest scan"
+
+    result = wiki.apply_update_patch(relay, selection, patch, "run:old:patch")
+
+    assert result["status"] == "superseded"
+    assert result["sources"] == ["README.md"]
+    assert wiki.status()["dirty_sources"] == 1
+    assert wiki.status()["pages"] == 0
 
 
 def test_relay_is_the_project_identity(tmp_path, monkeypatch):

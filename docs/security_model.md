@@ -181,6 +181,30 @@ unchanged. Commands: `/encrypt` (conversation) and `/relay encrypt|unlock`
 
 A `.pfp` is signed with an ed25519 key whose public half is embedded in the manifest, so the signature proves the package is internally consistent but not who authored it. PawFlow pins the developer key on first install (trust-on-first-use): an update to an already-installed package name signed by a different key is refused unless installed with `force=True`. This blocks a compromised or hijacked registry from shipping a malicious update under an existing package's name.
 
+### Workflow agents
+
+Workflow agents are disabled unless the server sets
+`PAWFLOW_WORKFLOW_AGENTS_ENABLED=1`; request data cannot enable the runtime.
+Bindings pin an exact flow version, resolved scope and digest plus immutable
+service and authorization snapshots. Every task's declared effects are
+intersected with the flow contract, conversation permission mode, authenticated
+authority revision, and current resource targets before execution. Recovery
+reuses that accepted authority and fails closed when its identity or revision is
+no longer valid.
+
+The runtime accepts only the closed workflow-safe task catalog and rejects
+unbounded cycles, arbitrary scripts/sources, nested agents, undeclared ports,
+unreachable terminals, open-world effects, and mismatched package capability
+metadata. Inbox messages are leased rather than destructively drained, and only
+turn IDs named by the validated terminal can be acknowledged.
+
+Inspector and operations APIs are conversation-scoped and return redacted
+projections: no requests, inbox payloads, prompts, source bodies, credentials,
+or service snapshots. Safe retry is limited to the current recoverable
+generation. The `silent_maintenance` invocation mode and Wiki scheduler
+cutover are server-owned; a client cannot suppress transcript or terminal
+delivery by setting request fields.
+
 ## Private Gateway
 
 The private gateway is configured as a `privateGateway` service and enabled for a listener through `httpListener.private_gateway_service_id`. Accepted challenge keys are explicit `secret_refs` on that service. HTTP and WebSocket clients may present a matching key in `X-PawFlow-Gateway-Key`; browser sessions continue to use the challenge cookie. The challenge skin is selected by the service `skin` field and resolved from repository resources under `data/repository/private_gateway_skin`. Each skin lives in a directory containing `skin.json` metadata and `template.html`; templates can use `{{ next_url }}`, `{{ error }}`, and `{{ cooldown }}` placeholders.
@@ -195,5 +219,7 @@ The private gateway is configured as a `privateGateway` service and enabled for 
 - Avoid local desktop mode for public demos.
 - Configure per-agent tool restrictions.
 - Set LLM budget caps.
+- Keep workflow agents disabled until their exact flow, service bindings,
+  migration, shadow comparison, monitoring, and recovery gates are validated.
 - Review OAuth redirect URLs and provider scopes.
 - For sensitive conversations, enable opt-in encryption at rest (`/encrypt on`) and store the passphrase safely (no recovery without an escrow/relay wrap).

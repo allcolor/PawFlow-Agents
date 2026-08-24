@@ -175,6 +175,13 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         _template_err = _validate_service_template_object(obj, package)
         if _template_err:
             status, reason, installable = "blocked", _template_err, False
+    elif obj_type == "agent_group":
+        try:
+            from core.agent_group_resources import validate_agent_group_data
+            validate_agent_group_data(
+                name, _load_resource_data(package, path, "agent_group", name))
+        except Exception as exc:
+            status, reason, installable = "blocked", str(exc), False
     elif obj_type == "service_provider":
         _provider_err = _validate_service_provider_object(obj, package)
         if _provider_err:
@@ -224,6 +231,10 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
     if installable and status == "new" and obj_type == "agent":
         try:
             data = _load_resource_data(package, _safe_relpath(path), "agent", name)
+            from core.workflow_agent_resources import (
+                validate_pfp_workflow_agent_dependency,
+            )
+            validate_pfp_workflow_agent_dependency(data, obj, package)
             missing_skills = _missing_agent_assigned_skills(
                 data, package, user_id, conversation_id, scope)
             if missing_skills:
@@ -426,6 +437,16 @@ def _load_flow_task_proxy_data(obj: Dict[str, Any], package: Dict[str, Any],
     parameters = obj.get("parameters") or metadata.get("parameters") or {}
     if not isinstance(parameters, dict):
         raise PfpError("flow task parameters must be a JSON object")
+    workflow_capabilities = obj.get(
+        "workflow_capabilities", metadata.get("workflow_capabilities"))
+    if workflow_capabilities is not None:
+        try:
+            from core.agent_contracts import CapabilityMetadata
+            workflow_capabilities = CapabilityMetadata.from_dict(
+                workflow_capabilities).to_dict()
+        except (TypeError, ValueError) as exc:
+            raise PfpError(
+                f"flow task workflow_capabilities is invalid: {exc}") from exc
     package_runtime = {
         "package": manifest["package"],
         "version": manifest["version"],
@@ -441,6 +462,7 @@ def _load_flow_task_proxy_data(obj: Dict[str, Any], package: Dict[str, Any],
         "secret_bindings": dict(secret_bindings or {}),
         "dev": bool(package.get("dev")),
         "review": obj.get("_review", {}),
+        "workflow_capabilities": workflow_capabilities,
     }
     return {
         "task_type": task_type,
@@ -449,6 +471,7 @@ def _load_flow_task_proxy_data(obj: Dict[str, Any], package: Dict[str, Any],
         "description": str(obj.get("description") or metadata.get("description") or ""),
         "icon": str(obj.get("icon") or metadata.get("icon") or "package"),
         "parameters": parameters,
+        "workflow_capabilities": workflow_capabilities,
         "installed_from": provenance,
         "package_runtime": package_runtime,
     }
@@ -859,6 +882,7 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
             "description": data["description"],
             "icon": data["icon"],
             "parameters": data["parameters"],
+            "workflow_capabilities": data["workflow_capabilities"],
             "installed_from": provenance,
             "package_runtime": data["package_runtime"],
             "dependencies": dependencies,

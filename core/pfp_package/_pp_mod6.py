@@ -12,7 +12,7 @@ from core.pfp_package._pp_mod2 import (  # noqa: F401
 from core.pfp_package._pp_mod3 import (  # noqa: F401
     _install_record_path, _remove_package_content_path, _review_object_for_install)
 from core.pfp_package._pp_mod4 import (  # noqa: F401
-    _package_update_diff, _record_is_locally_modified, _refresh_runtime, _selected_agent_missing_skills, _version_blocking_dependents, _write_install_record, _write_package_content_store, resolve_repository_type)
+    _package_update_diff, _record_is_locally_modified, _refresh_runtime, _selected_agent_missing_skills, _selected_agent_missing_workflow, _version_blocking_dependents, _write_install_record, _write_package_content_store, resolve_repository_type)
 from core.pfp_package._pp_mod5 import (  # noqa: F401
     _install_object, _load_package, _object_plan, _remove_obsolete_update_objects, _verify_pinned_developer_key, uninstall_pfp)
 
@@ -125,6 +125,15 @@ def install_pfp(path: str, *, user_id: str, conversation_id: str = "",
                 "missing_assigned_skills": selected_missing_skills,
             })
             continue
+        missing_workflow = _selected_agent_missing_workflow(
+            row, package, selected)
+        if missing_workflow:
+            skipped.append({
+                "id": obj_id,
+                "reason": "missing_dependency",
+                "missing_workflow": missing_workflow,
+            })
+            continue
         missing_repository_type = _missing_selected_repository_type(
             row, package, selected, user_id, conversation_id, scope)
         if missing_repository_type:
@@ -230,6 +239,15 @@ def dev_load_pfp(source_dir: str, *, user_id: str, conversation_id: str = "",
                 "id": obj_id,
                 "reason": "missing_dependency",
                 "missing_assigned_skills": selected_missing_skills,
+            })
+            continue
+        missing_workflow = _selected_agent_missing_workflow(
+            row, package, selected)
+        if missing_workflow:
+            skipped.append({
+                "id": obj_id,
+                "reason": "missing_dependency",
+                "missing_workflow": missing_workflow,
             })
             continue
         missing_repository_type = _missing_selected_repository_type(

@@ -168,10 +168,21 @@ class _AgentStreamingLoopMixin:
             while (ctx.pop("_retrigger_after_done", None) and not _had_error
                    and _retriggers < 5):
                 _retriggers += 1
+                _retrigger_payload = ctx.pop("_retrigger_messages", None)
+                if _retrigger_payload is not None:
+                    ctx["_active_retrigger_messages"] = _retrigger_payload
+                    if ctx.get("_is_cli_provider") and ctx.get("_cli_has_session"):
+                        ctx["messages"] = self._deserialize_messages(
+                            _retrigger_payload,
+                            conversation_id=conversation_id)
+                        ctx["_base_message_count"] = 0
                 logger.info(
                     "[agent:%s] re-triggering loop for queued messages "
                     "(retrigger %d)", conversation_id[:8], _retriggers)
-                result = self._run_agent_loop(ctx, emitter)
+                try:
+                    result = self._run_agent_loop(ctx, emitter)
+                finally:
+                    ctx.pop("_active_retrigger_messages", None)
                 _had_error = getattr(result, "finish_reason", "") == "error"
                 logger.info(
                     "[agent:%s] retrigger loop returned: had_error=%s "

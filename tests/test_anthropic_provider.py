@@ -36,6 +36,50 @@ def test_anthropic_groups_consecutive_tool_results_after_multi_tool_use():
     assert len(api_messages) == 3
 
 
+def test_anthropic_keeps_json_schema_output_tool_automatic_with_thinking(monkeypatch):
+    client = LLMClient(provider="anthropic", config={
+        "api_key": "test",
+        "default_model": "claude-test",
+    })
+    captured = {}
+
+    def fake_post(path, body, headers=None):
+        captured.update(body)
+        return {
+            "model": "claude-test",
+            "content": [{
+                "type": "tool_use",
+                "id": "structured-1",
+                "name": "submit_workflow_result",
+                "input": {"answer": "ok"},
+            }],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+
+    monkeypatch.setattr(client, "_http_post", fake_post)
+    response = client.complete(
+        messages=[LLMMessage("user", "answer", conversation_id="conv-a")],
+        response_format="json_schema",
+        tools=[LLMToolDefinition(
+            name="submit_workflow_result",
+            description="Submit result",
+            parameters={
+                "type": "object",
+                "required": ["answer"],
+                "properties": {"answer": {"type": "string"}},
+                "additionalProperties": False,
+            },
+        )],
+        thinking_budget=1024,
+    )
+
+    assert captured["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+    assert captured["tools"][0]["name"] == "submit_workflow_result"
+    assert "tool_choice" not in captured
+    assert response.tool_calls[0].arguments == {"answer": "ok"}
+
+
 def test_anthropic_image_ref_payload_includes_context_and_image(monkeypatch, caplog):
     class _Store:
         def get_required(self, file_id, user_id="", conversation_id=""):

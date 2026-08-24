@@ -1,5 +1,107 @@
 # PawFlow Agent System
 
+Workflow agent definitions may declare `runtime_defaults.kind: workflow` with
+an exact versioned `flow_fqn`, input and terminal ports, and a preemption policy.
+When attached to a conversation, PawFlow resolves the visible flow through
+conversation, user, then global scope, validates its `agent_workflow` contract,
+and stores the resolved scope plus a SHA-256 `ResourceRef`. Prompt-only agent
+definitions and clients that omit `runtime_kind` retain the existing LLM path.
+Published agent workflows are statically rejected when their declared ports do
+not match `inputPort`/`outputPort` tasks, when a task cannot reach the terminal,
+or when they contain unbounded cycles or unsafe source/script/agent tasks. Flow
+versions referenced by conversation agents cannot be deleted. A PFP workflow
+agent must bundle its exact flow and declare that flow object's ID in
+`requires`; selective installation refuses the agent when the flow is omitted.
+With the server capability enabled, the experimental runtime executes one
+isolated exact-version batch per turn. It supports `checkpoint`, `queue`, and
+`restart` preemption, uses a closed first-party task catalog, injects an
+immutable `WorkflowRunContext`, reasserts reserved identity attributes at every
+task boundary, and publishes only bounded progress. Workflow ingress is recorded
+in a SQLite `AgentInboxStore` before its idempotent transcript append. Pending
+items are claimed with renewable crash-recoverable leases; only turn IDs named
+by the validated terminal are acknowledged, after the assistant row commits and
+before the correlated `done` event. Unanswered claims are released for a
+successor. `receiveAgentMessages` can lease ordered messages and preserves
+attachments. Force stop cancels the generation and discards only inbox entries
+at or before its cutoff, so a racing later arrival is retained.
+
+Workflow runs are authoritative in SQLite rather than inferred from worker
+threads. `WorkflowRunStore` persists the exact request, flow digest, parameters,
+permission mode, service and authorization snapshots, generation, active lease,
+claimed IDs, step cache, ordered lifecycle events, and recovery count. Legacy
+records without a permission mode migrate to `read_only`, so recovery cannot
+widen their authority. Terminal completion is
+a recoverable saga: the coordinator CASes `running` to `committing`, stores
+the stamped assistant payload plus stable event ID, appends the message
+idempotently, acknowledges only answered claims, delivers the durable outbox
+event, and only then CASes to `completed`. A crash at any boundary resumes the
+same identities. Completed runs are immutable, while a stale generation becomes
+`superseded` without releasing or rewriting successor state. Startup repairs
+committing runs before restarting the newest accepted or running run from its
+stored input, permission mode, and exact flow.
+Startup also releases `wr_` inbox claims whose run is no longer recoverable,
+while preserving live and committing-run claims; a malformed recovery record is
+failed and released without preventing the remaining runs from resuming.
+
+The global `pawflow.agents.wiki:1.0.0` workflow is the first production
+reference. Every interactive request first passes a bounded structured LLM
+intent gate. Requests wholly dedicated to project-wiki inspection, audit,
+documentation, or maintenance continue; general coding, UI, deployment, debug,
+or mixed requests receive an orientation response before any project scan.
+The classifier may only reduce the configured batch size. It cannot change the
+relay, root, services, permissions, or `write_mode`. The original accepted
+request is then included in extractor and writer prompts as a focus constraint.
+
+The deterministic tasks scan only the linked relay (`local=false`),
+snapshot and fetch bounded dirty sources, validate strict extractor/writer and
+optional reviewer schemas, compare source hashes again before applying, lint,
+and format the terminal response from actual commit receipts. The writer returns
+pages only; the validator derives `processed_sources` exactly from the selected
+snapshot, so model-generated paths can neither be acknowledged nor trigger a
+spurious out-of-snapshot warning. The no-change and superseded branches bypass
+all extraction/writer/reviewer LLM nodes after the intent gate. Conversation runs persist one normal
+assistant result; `silent_maintenance` runs use the same durable terminal saga
+and inbox acknowledgement but intentionally write no assistant row and publish
+no unsolicited chat `done` event.
+
+Automatic project maintenance has a server-owned staged cutover. A
+`write_mode: shadow` binding runs the exact Wiki Agent flow through patch
+validation and the same source-byte CAS check, reports the pages and sources it
+would change, and writes or acknowledges nothing. The scheduler continues to
+use the legacy maintainer unless `PAWFLOW_WIKI_WORKFLOW_CUTOVER=1` is present
+in the server environment. After operators validate shadow runs, that flag
+switches automatic maintenance to the exact
+`pawflow.agents.wiki:1.0.0` flow with
+`invocation_mode: silent_maintenance`; request payloads cannot enable it.
+The scheduler supplies the explicit request `Refresh the project wiki from
+pending relay changes.`, which passes the same intent gate. The presence of a
+Wiki Agent in a conversation does not by itself switch automatic maintenance:
+the environment cutover flag alone selects workflow versus legacy execution.
+Submission fails closed if the authenticated authority, conversation agent,
+selected relay, summarizer LLM service, or exact flow binding is missing or has
+changed. Removing the flag restores the legacy scheduler path on the next run
+without changing stored wiki data or durable workflow records.
+
+The agent-resource API exposes a redacted workflow catalog for authoring. It
+lists every visible exact version that passes the production `agent_workflow`
+validator, applies conversation/user/global precedence, and returns only flow
+identity, scope, ports, contract parameters, preemption policies, and allowed
+effects. The add-agent dialog uses that catalog to render typed parameters and
+capability-filtered service references, run limits, and preemption controls. It
+never receives task bodies, prompts, embedded services, or package metadata;
+the completed binding is validated again by the server before persistence.
+The New Flow dialog also offers an Agent workflow starter with declared entry
+and terminal ports, safe request/response stages, bounded preemption policies,
+and editable graph layout. Draft Validate and Publish both invoke the same
+agent-workflow validator, so unsafe tasks, port mismatches, unreachable
+terminals, and unbounded cycles appear in the existing diagnostics drawer.
+Workflow-agent context menus expose a redacted run inspector. It shows exact
+flow identity, status, generation, aggregate usage, durable terminal state, and
+ordered stage events without request bodies, source text, prompts, credentials,
+or service snapshots. The recovery control is rendered only for the current
+recoverable generation and reports a conflict if another worker wins the
+durable reacquisition race.
+
 ## 1. Overview
 
 An **agent** in PawFlow is an LLM with a tool-use loop. It is not an abstract framework concept -- it is a concrete runtime: the agent receives a user message, builds a context (system prompt + conversation history), calls the LLM, executes any tool calls the LLM requests, feeds the results back, and repeats until the LLM produces a final text response with no further tool calls.
@@ -26,6 +128,66 @@ correlated `done` event using the request `turn_id`. The conversation event bus
 still broadcasts every event by `conversation_id` to all connected clients; the
 `turn_id` is only reply correlation for transports that need to answer a
 specific inbound message.
+
+### Workflow-agent rollout contracts and routing seam
+
+The workflow-agent and collaboration/tool-safety rollout has a WP0 contract
+foundation. It defines immutable, versioned schemas for turn identity,
+authorization, tool effects and lifecycle, exact resource references, run
+projections, bounded groups, workflow requests/results, inbox records, and
+workflow run events/errors. These models reject unknown versions, unknown
+fields, missing identities, invalid state transitions, and contradictory safety
+metadata.
+
+WP1 adds the workflow routing seam. The server-owned
+`PAWFLOW_WORKFLOW_AGENTS_ENABLED` capability defaults to false and uses strict
+boolean parsing. Disabled workflow instances fail closed after the accepted
+user row is persisted. WP3 lazily registers the process-resident adapter for
+enabled workflow instances; existing `llm`, `external_mcp`, and
+`external_agui` runtimes remain on their characterized direct paths. WP4 adds
+durable inbox receipts, boot reconciliation, lease recovery, explicit one-shot
+`PendingQueue` migration, and a behavior-compatible SQLite facade activated
+only for migrated callers. Legacy LLM agents continue writing JSONL by default;
+there is no dual writer. WP5 adds the authoritative run store, active
+generations, terminal CAS/outbox protocol, restart-from-input recovery,
+idempotent step-result cache, retention, and conversation-deletion cleanup.
+WP6 requires every workflow task to declare a non-empty shared effect set, an
+idempotency class, an authorization target kind, and an explicit workflow-safe
+marker. Publication rejects undeclared, forbidden, out-of-ceiling, and
+contradictory tasks. The continuous executor revalidates the declaration and
+the current authorization revision immediately before every attempt, enforces
+permission mode even when no policy-gating service is bound, constrains user,
+conversation, relay, service, and filesystem targets to the immutable run
+snapshot, and records a redacted authorization event. PFP task proxies are
+workflow-safe only when their package carries the identical validated
+`workflow_capabilities` declaration.
+
+Agent groups have an independent server-owned prerequisite flag,
+`PAWFLOW_AGENT_GROUPS_ENABLED`. It defaults to false and rejects invalid boolean
+values. Enabling it only makes group capabilities eligible for their versioned
+runtime and resource gates; it does not enable workflow agents, bind a group to
+a conversation, or migrate existing agent configuration.
+
+The tool-free group vertical slice stores reusable definitions as
+`agent_group` resources and binds them to exact conversation instances through
+`bind_agent_group`. Binding pins each public agent definition, LLM runtime
+configuration, compatible API service, and service-definition revision. A
+run revalidates those identities and snapshots them again before starting the
+exact first-party flow
+`pawflow.agents.group-deliberation:1.0.0`. `list_agent_groups` exposes visible
+resources and their binding state.
+
+Group participants receive only the initiating request, explicit attachments,
+public agent instructions and parameters, group policy, and bounded shared-room
+posts. WP6 does not load private transcripts, memory, diary, tools, delegation,
+or user-messaging capabilities. Selection and presentation order are
+deterministic, rounds and parallelism are bounded, provider usage is checked
+against the remaining group allocation before the idempotent step result is
+committed, and `completeAgentTurn` remains the only terminal writer. Participant
+posts are run-inspector events, not assistant transcript rows.
+
+See `docs/WORKFLOW_AGENTS_IMPLEMENTATION_PLAN.md` and
+`docs/AGENT_COLLABORATION_AND_TOOL_SAFETY_PLAN.md`.
 
 ---
 
@@ -224,7 +386,7 @@ _run_agent_loop()              -- The core loop
 3. **Response budget**: `max_tokens` limits only the visible terminal answer. Reasoning and tool-call turns do not consume it; the limit is enforced afresh after each tool turn.
 4. **Cost budget**: Cost limits cover total provider usage, including reasoning and tool-call turns. Persistent global, project, task, and agent scopes are configured in **Usage & Costs**; `max_budget_usd` is the per-run ceiling.
 5. **Generation tracking**: Each conversation+agent pair has a generation counter. If a new message arrives (bumping the generation), the current loop detects staleness and can yield.
-6. **Queue-based messaging**: New user messages do not cancel the running agent. They are queued and processed after the current turn completes. For Claude Code providers, messages can be injected directly into the active session (preemption). At turn end, the final drain pulls queued messages into context and sets `_retrigger_after_done`; the streaming wrapper then re-runs the loop and **re-checks the flag after every retrigger** (bounded at 5 per idle transition). A retrigger turn's own final drain can pull in fresh messages — e.g. a delegate result landing mid-retrigger — and a one-shot check used to drop them silently: they were already out of the PendingQueue (so the post-idle wake saw nothing) but no turn ever answered them.
+6. **Queue-based messaging**: New user messages do not cancel the running agent. They are queued and processed after the current turn completes. For Claude Code providers, messages can be injected directly into the active session (preemption). At turn end, the final drain serializes the exact unhandled user-message delta and sets `_retrigger_after_done`; the streaming wrapper then re-runs the loop and **re-checks the flag after every retrigger** (bounded at 5 per idle transition). A live CLI receives only that delta. If a cold context is corrected to a live-session delta during the retrigger, the rebuild uses the same serialized messages and suppresses reinjection of the stale wake FlowFile payload. A retrigger turn's own final drain can pull in fresh messages — e.g. a delegate result landing mid-retrigger — and a one-shot check used to drop them silently: they were already out of the PendingQueue (so the post-idle wake saw nothing) but no turn ever answered them.
 7. **Multi-round**: `max_rounds` allows the agent to run multiple consecutive turns before yielding (useful for autonomous tasks).
 8. **One iteration owns one heartbeat**: the heartbeat is a thread started per iteration, covering the LLM call and the tools. `_alc_iteration` starts it and stops it in a `finally`, because the body leaves by five different returns — a compact restart, a cold restart, an overflow retry, a break, the normal end — and by any exception the turn raises. Stopping it at each return is how threads were left behind, one per attempt, all publishing for the same conversation. The body still stops it early on purpose before the end-of-iteration bookkeeping; the handle is cleared on stop, so the `finally` then finds nothing to do and it is never stopped twice.
 9. **Tool scope isolation**: API-provider dispatch forks the tool registry immediately before execution and configures the fork with the current user, conversation, agent, client, and model. Handler objects therefore never share mutable conversation scope across concurrent turns; referenced services, locks, caches, and registry hooks remain shared intentionally.
@@ -415,6 +577,10 @@ Independently of the per-agent file, the relay project scan (`action_project_con
 Skills are effective only when they are listed in `assigned_skills` on the target entry in the conversation's `conv_agents` roster. The identity is `(conversation_id, instance_name)`: assigning a skill to `assistant` in one conversation never changes another `assistant` instance or the reusable agent definition. An agent definition or package may declare default `assigned_skills`; PawFlow copies those defaults when it creates a conversation instance. PawFlow does not inject a separate conversation-level `active_resources.skills` list. Assign or remove skills with `/skill assign @agent @skill` and `/skill unassign @agent @skill`.
 
 Assigned skills are lazy-loaded. Assigning a skill writes a lightweight context message to the target agent and rebuilt system prompts include only an availability manifest with the skill name and description. The full skill prompt is returned only when the agent calls `load_skill(name="skill-name")`, and `load_skill` refuses skills that are not assigned to the current agent. Updating a skill writes a lightweight context message to assigned conversation agents telling them to reload the skill if needed; deleting or uninstalling a skill removes it from visible agents' `assigned_skills` and writes the normal removal context message. Users can also invoke a visible skill immediately with `/skill run [@agent] <skill> [args...]` or the shortcut `//<skill> [@agent] [args...]`; this does not persist assignment, and queues the rendered skill prompt as a user message for the selected or explicit target agent.
+
+Assigned-skill v2 is disabled by default behind the server-owned `PAWFLOW_RESOURCE_BINDINGS_V2_ENABLED` flag. Enabling the flag alone does not migrate a conversation: v2 reads are selected only when that conversation also has an active `resource_bindings_v2` marker. `manage_resource(action="inspect_skill_bindings", resource_type="skill")` reports the redacted state and counts. `manage_resource(action="migrate_skill_bindings", resource_type="skill")` performs a serialized, idempotent preflight and activation: every legacy assignment is expanded to an exact scope, owner/package identity, version, and digest; unresolved, duplicate, invalid, or changed bindings block the whole activation without altering legacy runtime behavior. Activation rechecks both the roster and resource identities before one atomic marker write. A marker whose legacy roster later drifts fails closed and must be remigrated rather than silently falling back by name.
+
+`invocation_policy_override="auto"` follows the normal manifest and `load_skill` path. Both `explicit_only` and `disabled` are excluded from the model's assigned-skill manifest and assigned-skill load path. An `explicit_only` skill remains available only through an explicit user invocation such as `/skill run`; the assignment itself never advertises it to the model. `manage_resource(action="rollback_skill_bindings", resource_type="skill")` restores legacy reads only before the first successful v2 assignment mutation. That first write records `first_write_at`, increments the mutation revision, removes the rollback snapshot, and makes rollback unavailable.
 
 Skill directories are bind-mounted read-only into CLI provider containers under `/skills`, mirroring the server repository layout (`/skills/global/<name>`, `/skills/users/<uid>/<name>`, `/skills/users/<uid>/<conv>/<name>`). The scope parents are mounted once, so a skill assigned mid-session — or a skill run one-shot while unassigned — becomes visible without recreating the container. `SKILL.md` content is delivered to the agent verbatim — PawFlow does not substitute placeholders. The skill's mounted directory is given as an explicit `Skill directory:` line, and `/skill run` adds an explicit `Arguments:` line; asset references such as `${CLAUDE_SKILL_DIR}/scripts/foo.py` are read by the agent against that stated directory. The loaded skill block also appends a `### Skill assets` section that enumerates every file bundled with the skill and inlines small text assets (≤12 KB each, ≤48 KB total) — a context-only fallback so the assets remain usable when the skill directory is not mounted (e.g. an agent with no connected relay).
 

@@ -1282,6 +1282,9 @@ class TestAgentServiceActions:
                 ],
                 "strategy": "ordered",
             })
+        self.reg.install(
+            self.SCOPE, "testuser", "summary", "summarizer",
+            config={"llm_service": "direct_llm"})
         self.reg.install(self.SCOPE, "testuser", "db1", SVC_TYPE)
 
         from tasks.ai.actions.service_flow import _handle_service_flow
@@ -1297,7 +1300,24 @@ class TestAgentServiceActions:
         assert by_id["direct_llm"]["service_type"] == "llmConnection"
         assert by_id["council"]["service_type"] == "llmAggregator"
         assert by_id["resilient"]["service_type"] == "llmRouter"
+        assert "summary" not in by_id
         assert "db1" not in by_id
+
+        ff = self._make_flowfile({
+            "action": "list_services",
+            "service_type": "llm_resolvable",
+        })
+        result = _handle_service_flow(
+            None, "list_services", json.loads(ff.get_content()),
+            None, "testuser", ff)
+        resolvable = {
+            service["service_id"]: service
+            for service in json.loads(result[0].get_content())["services"]
+        }
+        assert set(resolvable) >= {
+            "direct_llm", "council", "resilient", "summary"}
+        assert resolvable["summary"]["service_type"] == "summarizer"
+        assert "db1" not in resolvable
 
     def test_service_list_marks_stateless_tts_started_when_enabled(self):
         self.reg.install(

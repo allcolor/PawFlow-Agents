@@ -7,9 +7,9 @@ Locks down the contract that:
     shown, opt-in fail-open via PAWFLOW_APPROVAL_FAIL_OPEN.
 """
 
+import threading
 
 from core.tool_approval import ToolApprovalGate
-
 
 # ---------------------------------------------------------------------------
 # read_only allowlist
@@ -193,3 +193,53 @@ def test_approval_fail_open_env_values(monkeypatch):
             conversation_id="convC", user_id="alice",
             arguments={"path": "/x", "content": "y"}) == "denied", (
             f"FAIL_OPEN={val!r} must keep fail-closed")
+
+
+def test_forced_group_approval_projects_attribution_and_retires_on_cancel(
+    monkeypatch,
+):
+    import core.conversation_event_bus as bus_mod
+
+    published = []
+
+    class _Bus:
+        @classmethod
+        def instance(cls):
+            return cls()
+
+        @staticmethod
+        def subscriber_count(_conversation_id):
+            return 1
+
+        @staticmethod
+        def publish_event(conversation_id, event_type, data):
+            published.append((conversation_id, event_type, data))
+
+    monkeypatch.setattr(bus_mod, "ConversationEventBus", _Bus, raising=True)
+    cancel = threading.Event()
+    cancel.set()
+    attribution = {
+        "group_run_id": "group-run-1",
+        "run_id": "workflow-run-1",
+        "round": 3,
+        "member_id": "operations",
+        "turn_id": "turn-1",
+    }
+
+    result = ToolApprovalGate.check(
+        "read",
+        "[group policy] read",
+        conversation_id="conv-group",
+        user_id="alice",
+        arguments={"path": "/workspace/README.md"},
+        agent_name="Review Board",
+        attribution=attribution,
+        cancel_event=cancel,
+        force_prompt=True,
+    )
+
+    assert result == "cancelled"
+    assert published[0][1] == "tool_approval_request"
+    assert published[0][2]["agent_name"] == "Review Board"
+    assert published[0][2]["attribution"] == attribution
+    assert ToolApprovalGate._pending == {}

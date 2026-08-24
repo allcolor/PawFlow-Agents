@@ -633,7 +633,8 @@ class LLMAnthropicMixin:
             if deep_idx < last_user_idx - 1:
                 _set_cache(api_messages[deep_idx])
 
-    def _complete_anthropic(self, messages, model, temperature, max_tokens, tools=None, thinking_budget: int = 0,
+    def _complete_anthropic(self, messages, model, temperature, max_tokens,
+                             tools=None, thinking_budget: int = 0,
                              *, call_user_id: str = "", call_conversation_id: str = ""):
         """Send a non-streaming completion to the Anthropic API."""
         from core.llm_client import LLMResponse, LLMToolCall
@@ -675,7 +676,6 @@ class LLMAnthropicMixin:
             if _tool_list:
                 _tool_list[-1]["cache_control"] = _cc
             body["tools"] = _tool_list
-
         data = self._http_post(
             "/v1/messages",
             body,

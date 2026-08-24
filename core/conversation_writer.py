@@ -169,6 +169,34 @@ class ConversationWriter:
             evt.wait(timeout=30)
         return evt
 
+    def enqueue_message_if_absent(self, msg: Dict, agent_name: str = "",
+                                  user_id: str = "", ttl: int = 0,
+                                  sse_events: List[Dict] = None) -> bool:
+        """Synchronously cross the idempotent transcript durability boundary.
+
+        Workflow ingress receipts are promoted to inbox rows only after this
+        returns.  Unlike the legacy asynchronous API, write failures therefore
+        propagate to the caller and leave the prepared receipt recoverable.
+        """
+        _require_ts_seq(msg)
+        self._ensure_can_accept_writes()
+        evt = threading.Event()
+        item = {
+            "op": "append_message_if_absent",
+            "msg": msg,
+            "agent_name": agent_name,
+            "user_id": user_id,
+            "ttl": ttl,
+            "sse_events": sse_events,
+            "_done_event": evt,
+        }
+        self._queue.put(item)
+        if not evt.wait(timeout=30):
+            raise TimeoutError("idempotent conversation write timed out")
+        if item.get("_error") is not None:
+            raise RuntimeError("idempotent conversation write failed") from item["_error"]
+        return bool(item.get("_inserted"))
+
     def flush(self, timeout: float = 10.0) -> bool:
         """Return whether all queued messages were written before timeout."""
         self._ensure_can_accept_writes()
@@ -357,6 +385,25 @@ class ConversationWriter:
                         written.append(write_item)
                         i += 1
                         continue
+                    if op == "append_message_if_absent":
+                        _prewarm_started = time.monotonic()
+                        prewarm_before_write(write_item.get("agent_name", ""))
+                        _prewarm_ms += ((time.monotonic() - _prewarm_started)
+                                        * 1000.0)
+                        _write_started = time.monotonic()
+                        write_item["_inserted"] = store.append_message_if_absent(
+                            self._cid, write_item["msg"],
+                            agent_name=write_item.get("agent_name", ""),
+                            user_id=write_item.get("user_id", ""),
+                            ttl=write_item.get("ttl", 0))
+                        _write_ms += ((time.monotonic() - _write_started)
+                                      * 1000.0)
+                        written.append(write_item)
+                        if write_item["_inserted"]:
+                            flush_before_sse()
+                            self._publish_sse_events(write_item)
+                        i += 1
+                        continue
                     if op != "append_message":
                         raise ValueError(
                             f"[conv-writer] unknown op: {op!r}")
@@ -415,6 +462,7 @@ class ConversationWriter:
                                     * 1000.0)
                     i += 1
                 except Exception as e:
+                    write_item["_error"] = e
                     logger.error("[conv-writer:%s] write failed: %s",
                                  self._cid[:8], e, exc_info=True)
                     i += 1

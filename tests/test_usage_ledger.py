@@ -40,6 +40,21 @@ def conv_store(tmp_path):
 
 
 class TestRecord:
+    def test_stable_event_id_is_idempotent_and_keeps_run_dimensions(self, ledger):
+        first = ledger.record(
+            user_id="alice", channel="workflow", conversation_id="c1",
+            run_id="wr_1", task_id="writer", event_id="workflow:wr_1:writer",
+            tokens_in=100, cost_per_1m_input=10.0)
+        second = ledger.record(
+            user_id="alice", channel="workflow", conversation_id="c1",
+            run_id="wr_1", task_id="writer", event_id="workflow:wr_1:writer",
+            tokens_in=999, cost_per_1m_input=10.0)
+
+        rows = ledger.export_rows(run_id="wr_1", task_id="writer")
+        assert first == second == pytest.approx(0.001)
+        assert len(rows) == 1
+        assert rows[0]["tokens_in"] == 100
+
     def test_route_dimensions_are_stored_without_duplicate_cost(self, ledger):
         cost = ledger.record(
             user_id="alice", channel="chat", conversation_id="c1",

@@ -166,6 +166,25 @@ def test_new_flow_publishes_through_create_flow(svc):
         svc.new("bad package!", "x", "1.0.0", "user", "alice")
 
 
+def test_new_agent_workflow_starter_is_runnable_and_strictly_validated(svc):
+    draft = svc.new(
+        "my_flows", "specialist", "1.0.0", "user", "alice",
+        template_kind="agent_workflow")
+    definition = draft["definition"]
+    assert definition["kind"] == "agent_workflow"
+    assert definition["agent_contract"]["input"]["port"] == "agent_request"
+    assert definition["agent_contract"]["terminal"]["port"] == "agent_terminal"
+    assert svc.validate(definition)["ok"] is True
+
+    broken = copy.deepcopy(definition)
+    broken["tasks"]["validate_request"]["type"] = "executeScript"
+    report = svc.validate(broken)
+    assert "workflow_task_forbidden" in {
+        problem["code"] for problem in report["problems"]}
+    published = svc.publish(draft["draft_id"], "alice")
+    assert published["fqn"] == "my_flows.specialist:1.0.0"
+
+
 def test_fork_read_only_flow_to_user_scope(svc):
     _seed(svc, scope="global", user_id="")
     draft = svc.fork("my_flows.demo", "global", "alice_flows", "demo_copy",

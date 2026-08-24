@@ -15,6 +15,7 @@ Thread-safe. Uses ConversationStore.extra for persistence.
 import logging
 import shlex
 import threading
+import time
 import uuid
 from typing import Any, Dict, Optional
 
@@ -201,6 +202,9 @@ class ToolApprovalGate:
         arguments: dict = None,
         agent_name: str = "",
         allow_prompt: bool = True,
+        attribution: Optional[Dict[str, Any]] = None,
+        cancel_event: threading.Event = None,
+        force_prompt: bool = False,
     ) -> str:
         """Check if tool execution is approved.
 
@@ -250,13 +254,16 @@ class ToolApprovalGate:
             is_exempt = False
             needs_ask = True
 
+        if force_prompt:
+            is_exempt = False
+            needs_ask = True
         if is_exempt:
             return "approved"
 
         # ── Dangerous bash content check ─────────────────────────────
         # Even with session_allow, dangerous patterns force re-approval.
         # Catastrophic patterns get a visible warning hint in the dialog.
-        _force_ask = False
+        _force_ask = bool(force_prompt)
         _catastrophic_hint = False
         if cls.is_command_bearing_tool(tool_name) and arguments:
             _cmd = arguments.get("command", "") or arguments.get("code", "")
@@ -322,6 +329,7 @@ class ToolApprovalGate:
                 "effective_name": effective_name,
                 "conversation_id": conversation_id,
                 "agent_name": agent_name,
+                "attribution": dict(attribution or {}),
             }
 
         # Publish SSE event for approval dialog. If nobody is connected,
@@ -345,6 +353,7 @@ class ToolApprovalGate:
                     "action_summary": action_summary,
                     "agent_name": agent_name,
                     "arguments": cls._truncate_args(arguments or {}),
+                    "attribution": dict(attribution or {}),
                 },
             )
         except Exception as e:
@@ -364,8 +373,18 @@ class ToolApprovalGate:
                     return "approved"
             return "denied"
 
-        # Block until user responds (60 seconds)
-        if not event.wait(timeout=60):
+        # Wait for the user while allowing an owning workflow to retire this
+        # exact request promptly on cancellation.
+        deadline = time.monotonic() + 60
+        while not event.wait(timeout=min(0.1, max(0.0, deadline - time.monotonic()))):
+            if cancel_event is not None and cancel_event.is_set():
+                with cls._lock:
+                    cls._pending.pop(request_id, None)
+                    cls._results.pop(request_id, None)
+                return "cancelled"
+            if time.monotonic() >= deadline:
+                break
+        if not event.is_set():
             with cls._lock:
                 cls._pending.pop(request_id, None)
                 cls._results.pop(request_id, None)

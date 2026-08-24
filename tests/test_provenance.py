@@ -315,6 +315,10 @@ class TestProvenanceIntegration(unittest.TestCase):
         # Task errors are now discarded (task continues processing)
         # The flow itself still completes successfully
         self.assertTrue(result.success)
+        self.assertEqual(result.statistics["discarded_flowfile_errors"], [{
+            "task_id": "A",
+            "error": "Echec volontaire",
+        }])
 
     def test_no_provenance_when_disabled(self):
         """Sans ProvenanceRepository, aucune erreur ne survient."""

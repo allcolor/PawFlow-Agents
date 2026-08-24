@@ -24,6 +24,13 @@ def register_package_task_proxy(task_type: str, metadata: Dict[str, Any]) -> typ
         "required": True,
         "description": "Filesystem relay service id used to execute this package task.",
     }
+    package_runtime = dict(metadata.get("package_runtime") or {})
+    workflow_capabilities = (
+        metadata.get("workflow_capabilities")
+        or package_runtime.get("workflow_capabilities"))
+    if workflow_capabilities is not None and not isinstance(
+            workflow_capabilities, dict):
+        raise ValueError("workflow_capabilities must be an object")
 
     class PackageTaskProxy(Task):
         TYPE = task_type
@@ -31,8 +38,23 @@ def register_package_task_proxy(task_type: str, metadata: Dict[str, Any]) -> typ
         NAME = str(metadata.get("name") or task_type)
         DESCRIPTION = str(metadata.get("description") or "PFP package flow task proxy")
         ICON = str(metadata.get("icon") or "package")
-        PACKAGE_RUNTIME = dict(metadata.get("package_runtime") or {})
+        PACKAGE_RUNTIME = package_runtime
         INSTALLED_FROM = dict(metadata.get("installed_from") or {})
+        AGENT_WORKFLOW_SAFE = bool(
+            (workflow_capabilities or {}).get("workflow_safe", False))
+        EFFECTS = tuple((workflow_capabilities or {}).get("effects") or ())
+        IDEMPOTENCY = (workflow_capabilities or {}).get("idempotency")
+        OPEN_WORLD = bool((workflow_capabilities or {}).get("open_world", False))
+        AUTHORIZATION_TARGET_KIND = str(
+            (workflow_capabilities or {}).get("authorization_target_kind") or "")
+
+        def workflow_authorization_target(self, _flowfile: FlowFile) -> Dict[str, Any]:
+            return {
+                "user_id": str(self.config.get("_user_id") or ""),
+                "conversation_id": str(
+                    self.config.get("_conversation_id") or ""),
+                "relay_id": str(self.config.get("relay") or ""),
+            }
 
         def get_parameter_schema(self) -> Dict[str, Any]:
             return dict(schema)

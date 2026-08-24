@@ -28,6 +28,8 @@ Design choices:
 import json
 import logging
 import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -48,6 +50,42 @@ class PendingQueue:
         # Make sure parent dir exists (may be a fresh conv + agent)
         if self._path is not None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _inbox_backend(self):
+        """Return the SQLite facade only after an explicit one-shot migration."""
+        if not self.agent_name:
+            return None
+        try:
+            from core.agent_inbox_store import AgentInboxStore
+            store = AgentInboxStore.instance()
+            return store if store.migration_status(
+                self.conv_id, self.agent_name) is not None else None
+        except Exception:
+            logger.debug("[pending-queue] inbox facade lookup failed",
+                         exc_info=True)
+            return None
+
+    @classmethod
+    def migrate_agent_to_inbox(cls, conv_id: str, agent_name: str):
+        """Explicitly migrate one caller and activate its compatible facade."""
+        queue = cls.for_agent(conv_id, agent_name)
+        from core.agent_inbox_store import AgentInboxStore
+        store = AgentInboxStore.instance()
+        previous = store.migration_status(conv_id, agent_name)
+        if previous is not None:
+            return {
+                "migrated": False,
+                "count": int(previous["item_count"]),
+                "sha256": previous["source_sha256"],
+            }
+        if queue._path is None:
+            raise ValueError("pending queue path is unavailable")
+        result = store.migrate_pending_jsonl(
+            conv_id, agent_name, queue._path)
+        if result["migrated"] and queue._path.exists():
+            migrated_path = queue._path.with_suffix(".jsonl.migrated")
+            queue._path.replace(migrated_path)
+        return result
 
     @classmethod
     def for_agent(cls, conv_id: str, agent_name: str) -> "PendingQueue":
@@ -99,6 +137,17 @@ class PendingQueue:
                 f"PendingQueue.enqueue: message must be stamped "
                 f"(msg_id+ts). Got keys: {list(message.keys())}")
 
+        inbox = self._inbox_backend()
+        if inbox is not None:
+            entry = dict(message)
+            if source:
+                entry["_pending_source"] = source
+            entry["_pending_enqueued_at"] = time.time()
+            inbox.enqueue(
+                self.conv_id, self.agent_name, entry,
+                source or "legacy_pending")
+            return True
+
         if self._path is None:
             self._path = self._resolve_path()
             if self._path is None:
@@ -127,6 +176,16 @@ class PendingQueue:
 
     def drain(self) -> List[Dict]:
         """Remove and return all pending messages. Atomic (read + truncate)."""
+        inbox = self._inbox_backend()
+        if inbox is not None:
+            run_id = f"pending-drain:{uuid.uuid4().hex}"
+            _claim, items = inbox.claim(
+                self.conv_id, self.agent_name, run_id, "legacy_drain",
+                max_messages=100000, lease_seconds=60)
+            inbox.acknowledge(
+                self.conv_id, self.agent_name, run_id,
+                [item.msg_id for item in items])
+            return [dict(item.payload) for item in items]
         entries = self._read_and_truncate()
         if entries:
             # Diagnostic: log age of each drained entry. Fresh entries
@@ -149,6 +208,10 @@ class PendingQueue:
 
     def clear(self, reason: str = "") -> int:
         """Drop queued work without replaying it, used by force stop."""
+        inbox = self._inbox_backend()
+        if inbox is not None:
+            return inbox.discard_through(
+                self.conv_id, self.agent_name, time.time())
         removed = len(self._read_and_truncate())
         if removed:
             logger.info("[pending-queue] cleared %d message(s) from %s/%s%s",
@@ -192,6 +255,10 @@ class PendingQueue:
         """
         ids = {str(mid) for mid in (msg_ids or []) if mid}
         source_set = {str(s) for s in (sources or []) if s} if sources else None
+        inbox = self._inbox_backend()
+        if inbox is not None:
+            return inbox.discard_msg_ids(
+                self.conv_id, self.agent_name, ids, source_set)
         if not ids or self._path is None or not self._path.exists():
             return 0
         with self._lock:
@@ -233,6 +300,9 @@ class PendingQueue:
 
     def peek_count(self) -> int:
         """How many messages are waiting (no side effects)."""
+        inbox = self._inbox_backend()
+        if inbox is not None:
+            return inbox.pending_count(self.conv_id, self.agent_name)
         if self._path is None or not self._path.exists():
             return 0
         with self._lock:
@@ -287,4 +357,17 @@ class PendingQueue:
                     if n > 0:
                         agent = sub.name if sub.name != "_shared" else ""
                         out.append((conv_dir.name, agent, n))
-        return out
+        try:
+            from core.agent_inbox_store import AgentInboxStore
+            migrated = AgentInboxStore.instance().list_migrated_nonempty()
+            merged = {(cid, agent): count for cid, agent, count in out}
+            for cid, agent, count in migrated:
+                merged[(cid, agent)] = count
+            return [
+                (cid, agent, count)
+                for (cid, agent), count in sorted(merged.items())
+            ]
+        except Exception:
+            logger.debug("[pending-queue] migrated recovery scan failed",
+                         exc_info=True)
+            return out

@@ -35,6 +35,7 @@ from tasks.ai.actions._agentres_k4 import _handle_agentres_k4
 from tasks.ai.actions._agentres_k5 import _handle_agentres_k5
 from tasks.ai.actions._agentres_k6 import _handle_agentres_k6
 from tasks.ai.actions._agentres_k7 import _handle_agentres_k7
+from tasks.ai.actions._agentres_k8 import _handle_agentres_k8
 
 logger = logging.getLogger(__name__)
 
@@ -97,10 +98,17 @@ _ACTION_ROLES = {
     "activate_resource": "write",
     "deactivate_resource": "write",
     "add_agent_to_conv": "write",
+    "bind_agent_group": "write",
+    "list_agent_groups": "read",
     "get_agent_conv_config": "read",
     "update_agent_conv_config": "write",
     "remove_agent_from_conv": "write",
     "list_repo_agents": "read",
+    "list_agent_workflow_versions": "read",
+    "list_workflow_runs": "read",
+    "inspect_workflow_run": "read",
+    "workflow_operations": "read",
+    "retry_workflow_run": "write",
     # _agentres_k6 — publication delegates the owner's tool authority, so all
     # mutations are write-gated and then additionally owner-only in the handler.
     "mcp_server_get": "read",
@@ -198,7 +206,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         return _denied
     for _handler in (_handle_agentres_k1, _handle_agentres_k2, _handle_agentres_k3,
                      _handle_agentres_k4, _handle_agentres_k5,
-                     _handle_agentres_k6, _handle_agentres_k7):
+                     _handle_agentres_k6, _handle_agentres_k7,
+                     _handle_agentres_k8):
         _res = _handler(self, action, body, store, user_id, flowfile)
         if _res is not _UNHANDLED:
             return _res

@@ -75,6 +75,8 @@ PawFlow gives agents a real operating surface without handing your workspace to 
   agent.
 - **Delegated vision**: pair a strong text-only reasoning model with a separate vision-enabled LLM so uploads, screenshots, and desktop views become detailed descriptions with UI coordinates before the reasoning turn. Images sent to a text-only model are never silently dropped: any model — including free-tier ones — gets vision, and clicks stay accurate because coordinates come from the vision model, verified locally by the pre-click screen guard.
 - **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, the Android app, API clients, or channel integrations.
+- **Workflow Agents (opt-in)**: bind an agent identity to an exact versioned Flow, freeze its service and resource bindings per run, checkpoint progress, inspect durable run history, and recover only generations that remain safe to retry. Enable the server-owned capability with `PAWFLOW_WORKFLOW_AGENTS_ENABLED=1`.
+- **Bounded agent collaboration (opt-in)**: run a reviewed group-deliberation workflow with concrete member identities, turn-scoped tool authority, ordered lifecycle events, and explicit budgets instead of sharing ambient permissions between agents. Enable groups and v2 bindings deliberately with `PAWFLOW_AGENT_GROUPS_ENABLED=1` and `PAWFLOW_RESOURCE_BINDINGS_V2_ENABLED=1`.
 - **Deterministic flows**: turn repeated work into NiFi-style DAGs with scheduling, backpressure, checkpoints, approvals, and explicit LLM steps.
 - **Package ecosystem**: distribute agents, skills, tools, services, flow tasks, flows, and UI extensions as signed `.pfp` packages or import skills from supported marketplaces.
 
@@ -82,6 +84,8 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 
 - Agentic coding sessions against a linked workspace, with persistent context and auditable tool output.
 - Multi-agent operations where planners, coders, reviewers, researchers, and verifiers work in the same conversation.
+- Durable Workflow Agents for long-running, interruptible operations such as project-Wiki maintenance, with exact flow versions, finite limits, run inspection, and safe recovery.
+- Bounded group deliberation where named agents contribute under independent tool policy and one workflow produces the final result.
 - MCP, A2A, and AG-UI gateways that expose an existing PawFlow conversation to external clients, embed a published agent into a CopilotKit/AG-UI frontend, or connect remote agents to the same durable runtime.
 - Browser and desktop automation for workflows that do not have clean APIs.
 - Vision-guided desktop agents built from a text-only reasoning model and an independently selected vision model.

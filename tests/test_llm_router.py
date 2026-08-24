@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from core import ServiceError, ServiceFactory
+from core._llm_types import DeltaContextRequired
 from core._service_defs import ServiceDef
 from core.llm_client import LLMMessage, LLMResponse, LLMToolCall
 from core.llm_routing_store import LLMRoutingStore
@@ -420,3 +421,34 @@ def test_agentloop_flushes_then_cold_rebuilds_with_same_plan(tmp_path):
     assert harness.prepare_calls[0][1]["route_plan"] is plan
     assert harness.prepare_calls[0][1]["route_attempt"] == 1
     assert "outcome is unknown" in harness.rebound["messages"][2].content
+
+
+def test_retrigger_delta_rebuild_uses_exact_queued_payload():
+    payload = [{
+        "role": "user", "content": "queued", "msg_id": "q1",
+        "ts": 1001.0, "seq": 7,
+    }]
+    state = SimpleNamespace(
+        _budget_precheck_done=True, total_tokens_in=0, total_tokens_out=0,
+        total_cache_read=0, total_cache_write=0, user_id="alice",
+        conversation_id="conv-1", iteration=1,
+        ctx={
+            "active_agent_name": "assistant",
+            "_context_rebuild_args": {"flowfile": "wake-flowfile"},
+            "_active_retrigger_messages": payload,
+            "_consumed_cancel_checkpoint": None,
+        },
+        _llm_call=lambda _: (_ for _ in ()).throw(DeltaContextRequired()),
+        _call_context=user_message(),
+        emitter=SimpleNamespace(check_interrupt=lambda: False),
+    )
+    harness = TurnHarness()
+
+    assert harness._alc_llm_turn(state) is _ALC_CONTINUE
+
+    flowfile, kwargs = harness.prepare_calls[0]
+    assert flowfile == "wake-flowfile"
+    assert kwargs["force_delta"] is True
+    assert kwargs["preloaded_messages"] is payload
+    assert kwargs["preloaded_conversation_id"] == "conv-1"
+    assert kwargs["skip_current_user_inject"] is True

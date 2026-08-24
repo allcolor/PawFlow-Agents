@@ -1,0 +1,53 @@
+{
+  "id": "demo",
+  "name": "Workflow Agent Demo",
+  "version": "1.0.0",
+  "fqn": "pawflow.agents.demo:1.0.0",
+  "kind": "agent_workflow",
+  "description": "Experimental WP3 queue-only workflow-agent vertical slice.",
+  "agent_contract": {
+    "version": 1,
+    "input": {"port": "turn_in"},
+    "terminal": {"port": "turn_out"},
+    "parameters": {},
+    "supported_preempt_policies": ["queue"],
+    "allowed_effects": ["resource.read"]
+  },
+  "parameters": {},
+  "services": {},
+  "entries": ["turn_in"],
+  "exits": ["turn_out"],
+  "tasks": {
+    "turn_in": {
+      "type": "inputPort",
+      "parameters": {"port_name": "agent_turn"}
+    },
+    "validate_request": {
+      "type": "agentWorkflowInput",
+      "parameters": {}
+    },
+    "progress": {
+      "type": "emitAgentProgress",
+      "parameters": {"stage": "compose"}
+    },
+    "fake_llm": {
+      "type": "workflowFakeLLM",
+      "parameters": {"response_prefix": "Workflow completed: "}
+    },
+    "complete": {
+      "type": "completeAgentTurn",
+      "parameters": {}
+    },
+    "turn_out": {
+      "type": "outputPort",
+      "parameters": {"port_name": "agent_terminal"}
+    }
+  },
+  "relations": [
+    {"from": "turn_in", "to": "validate_request", "type": "success"},
+    {"from": "validate_request", "to": "progress", "type": "success"},
+    {"from": "progress", "to": "fake_llm", "type": "success"},
+    {"from": "fake_llm", "to": "complete", "type": "success"},
+    {"from": "complete", "to": "turn_out", "type": "success"}
+  ]
+}

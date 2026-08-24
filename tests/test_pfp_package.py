@@ -38,7 +38,7 @@ def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the packa
                        include_service_provider=False, include_flow_task=False,
                        include_agent_hook=False,
                        tool_runner="python", service_runner="python", flow_task_runner="python",
-                       tool_secrets=None):
+                       tool_secrets=None, flow_task_workflow_capabilities=None):
     pkg = root / "wavespeed-provider.pfpdir"
     skill_dir = pkg / "content" / "skills" / skill_name
     agent_dir = pkg / "content" / "agents"
@@ -154,6 +154,9 @@ def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the packa
         }
         if flow_task_runner:
             flow_task_object["runner"] = flow_task_runner
+        if flow_task_workflow_capabilities is not None:
+            flow_task_object["workflow_capabilities"] = (
+                flow_task_workflow_capabilities)
         manifest["objects"].append(flow_task_object)
     if include_agent_hook:
         manifest["objects"].append({
@@ -1037,6 +1040,38 @@ def test_pfp_flow_task_is_visible_to_flow_editor(tmp_path, monkeypatch):
     assert [(p["code"], p["entity_id"], p["field"]) for p in missing["problems"]] == [
         ("missing_required_parameter", "resize", "relay"),
     ]
+
+
+def test_pfp_flow_task_binds_validated_workflow_capabilities(
+        tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    capabilities = {
+        "schema_version": 1,
+        "effects": ["filesystem.read", "resource.read"],
+        "read_only": True,
+        "destructive": False,
+        "idempotency": "natural",
+        "open_world": False,
+        "authorization_target_kind": "filesystem.paths",
+        "workflow_safe": True,
+        "group_safe": False,
+    }
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, include_flow_task=True,
+        flow_task_workflow_capabilities=capabilities)
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice",
+        include=["flow_task:resize-image"], force=True)
+
+    from core import TaskFactory
+    from core.workflow_task_safety import workflow_task_metadata
+
+    task_class = TaskFactory.get("packageResizeImage")
+    assert workflow_task_metadata(task_class).to_dict() == capabilities
+    assert task_class.PACKAGE_RUNTIME["workflow_capabilities"] == capabilities
 
 
 def test_pfp_runtime_task_result_rebuilds_flowfiles(tmp_path, monkeypatch):

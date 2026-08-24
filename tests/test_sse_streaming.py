@@ -2223,6 +2223,90 @@ class TestRetriggerLoop(unittest.TestCase):
             f"expected main turn + 2 retriggers, got {len(calls)} run(s)"
         assert "_retrigger_after_done" not in ctx
 
+    def test_live_cli_retrigger_receives_exact_drained_delta(self):
+        from core.llm_client import LLMMessage
+
+        calls = []
+        drained = [
+            LLMMessage(role="user", content="first queued", msg_id="q1",
+                       timestamp=1001.0, conversation_id="c"),
+            LLMMessage(role="user", content="second queued", msg_id="q2",
+                       timestamp=1002.0, conversation_id="c"),
+        ]
+
+        def _run(ctx, emitter):
+            calls.append([message.content for message in ctx["messages"]])
+            if len(calls) == 1:
+                ctx["_retrigger_messages"] = task._serialize_messages(drained)
+                ctx["_retrigger_after_done"] = True
+            return SimpleNamespace(finish_reason="")
+
+        task = self._make_task(_run)
+        with patch("tasks.ai.agent_emitter.StreamEmitter",
+                   return_value=MagicMock()), \
+                patch("core.conversation_store.ConversationStore.instance",
+                      return_value=MagicMock(get_extra=lambda *a, **k: {})):
+            ctx = {
+                "active_agent_name": "assistant", "user_id": "u",
+                "_gen_key": "c:assistant", "_generation": 0,
+                "_is_cli_provider": True, "_cli_has_session": True,
+                "_base_message_count": 0,
+                "messages": [
+                    LLMMessage(role="user", content="old wake payload",
+                               msg_id="old", timestamp=999.0,
+                               conversation_id="c"),
+                ],
+            }
+            task._streaming_agent_loop_inner(
+                ctx, "c", ConversationEventBus.instance())
+
+        assert calls == [
+            ["old wake payload"],
+            ["first queued", "second queued"],
+        ]
+        assert ctx["_base_message_count"] == 0
+        assert "_active_retrigger_messages" not in ctx
+
+    def test_api_retrigger_keeps_full_context(self):
+        from core.llm_client import LLMMessage
+
+        calls = []
+        queued = LLMMessage(
+            role="user", content="queued", msg_id="q1",
+            timestamp=1001.0, conversation_id="c")
+
+        def _run(ctx, emitter):
+            calls.append([message.content for message in ctx["messages"]])
+            if len(calls) == 1:
+                ctx["messages"].append(queued)
+                ctx["_retrigger_messages"] = task._serialize_messages([queued])
+                ctx["_retrigger_after_done"] = True
+            return SimpleNamespace(finish_reason="")
+
+        task = self._make_task(_run)
+        with patch("tasks.ai.agent_emitter.StreamEmitter",
+                   return_value=MagicMock()), \
+                patch("core.conversation_store.ConversationStore.instance",
+                      return_value=MagicMock(get_extra=lambda *a, **k: {})):
+            ctx = {
+                "active_agent_name": "api", "user_id": "u",
+                "_gen_key": "c:api", "_generation": 0,
+                "_is_cli_provider": False, "_cli_has_session": False,
+                "messages": [
+                    LLMMessage(role="user", content="original", msg_id="u1",
+                               timestamp=999.0, conversation_id="c"),
+                    LLMMessage(role="assistant", content="answer", msg_id="a1",
+                               timestamp=1000.0, conversation_id="c"),
+                ],
+            }
+            task._streaming_agent_loop_inner(
+                ctx, "c", ConversationEventBus.instance())
+
+        assert calls == [
+            ["original", "answer"],
+            ["original", "answer", "queued"],
+        ]
+
     def test_retrigger_budget_is_bounded(self):
         calls = []
 

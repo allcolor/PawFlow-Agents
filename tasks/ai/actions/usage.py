@@ -258,6 +258,17 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                         _row["active_llm_provider"] = _provider
                     active_by_key[_key] = _row
             active.extend(active_by_key.values())
+        # Workflow agents use their own runtime rather than AgentLoopTask, but
+        # the Active Agents endpoint remains the single UI source of truth.
+        # Do not instantiate the workflow runtime from a status poll: when it
+        # exists, merge only its user-visible conversation runs.
+        try:
+            from core.workflow_agent_runtime import WorkflowAgentRuntime
+            _workflow_runtime = WorkflowAgentRuntime._instance
+            if _workflow_runtime is not None:
+                active.extend(_workflow_runtime.active_snapshot(conv_id))
+        except Exception:
+            logger.debug("workflow active snapshot failed", exc_info=True)
         # The LIVE badge means "this turn reuses a warm CLI container" -- not
         # "an active provider turn is running". That distinction lives in the
         # registry/pool reuse_count (>0 only once the warm container is

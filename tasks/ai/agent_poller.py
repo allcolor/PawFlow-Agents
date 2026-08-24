@@ -70,6 +70,23 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         from core.conv_agent_config import get_agent_config
         runtime_kind = str(get_agent_config(
             conversation_id, agent).get("runtime_kind") or "llm")
+        if runtime_kind == "workflow":
+            # WP1 owns the fail-closed start boundary. WP3 will turn this into
+            # a PreparedAgentTurn and submit the workflow coordinator; until
+            # then a scheduled wake must never fall through to AgentLoopTask.
+            from core.agent_runtime_router import (
+                AgentRuntimeRouter,
+                AgentRuntimeRoutingError,
+            )
+            try:
+                AgentRuntimeRouter.instance().resolve(conversation_id, agent)
+                code = "workflow_coordinator_unavailable"
+            except AgentRuntimeRoutingError as exc:
+                code = exc.code
+            logger.warning(
+                "[poller] refusing workflow wake for %s/%s: %s",
+                conversation_id[:8], agent, code)
+            return True
         if runtime_kind not in {"external_mcp", "external_agui"}:
             return False
 

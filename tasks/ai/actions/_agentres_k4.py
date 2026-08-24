@@ -65,11 +65,14 @@ def _handle_agentres_k4(self, action, body, store, user_id, flowfile):
         if not rtype or not rname:
             flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
             return [flowfile]
-        # Agent definitions in the repository hold only prompt + description.
+        # Agent definitions may also provide typed parameters and workflow defaults.
         # Runtime params (llm_service, model, tools, skills, max_depth, timeout)
         # live in conv_agents — edited via update_agent_conv_config.
         if rtype == "agent":
-            data = {k: v for k, v in data.items() if k in ("prompt", "description")}
+            data = {k: v for k, v in data.items()
+                    if k in ("prompt", "description", "parameters", "runtime_defaults")}
+            from core.workflow_agent_resources import validate_agent_definition_data
+            validate_agent_definition_data(data)
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
         uid = user_id
@@ -145,7 +148,10 @@ def _handle_agentres_k4(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
             return [flowfile]
         if rtype == "agent":
-            data = {k: v for k, v in data.items() if k in ("prompt", "description")}
+            data = {k: v for k, v in data.items()
+                    if k in ("prompt", "description", "parameters", "runtime_defaults")}
+            from core.workflow_agent_resources import validate_agent_definition_data
+            validate_agent_definition_data(data)
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
         # Admin may create on behalf of another owner. Default = caller.

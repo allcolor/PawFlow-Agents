@@ -116,8 +116,9 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
 
     if action == "list_services":
         # Canonical service listing. Optional `service_type` filter returns
-        # only services of that type. The `llm` capability includes direct and
-        # aggregate and failover LLM services for agent pickers.
+        # only services of that type. The `llm` capability includes direct,
+        # aggregate, and routed LLM services. `llm_resolvable` additionally
+        # includes Summarizers whose configured LLM is resolved at run start.
         # Consumers needing a subset (LLM dropdowns, relay pickers, etc.) call
         # this action with the appropriate filter — never embedded inside
         # unrelated actions.
@@ -131,6 +132,11 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
                 if filter_type == "llm":
                     return sdef.service_type in {
                         "llmConnection", "llmAggregator", "llmRouter"}
+                if filter_type == "llm_resolvable":
+                    return sdef.service_type in {
+                        "llmConnection", "llmAggregator", "llmRouter",
+                        "summarizer",
+                    }
                 return sdef.service_type == filter_type
             conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
             services = []

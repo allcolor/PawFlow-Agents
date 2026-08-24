@@ -7,6 +7,7 @@ let _themeLoadSeq = 0;
 let _themeApplySeq = 0;
 let _activeThemeRef = window.PAWFLOW_INITIAL_THEME_REF || '';
 let _activeThemeContext = '';
+let _conversationThemeRef = '';
 
 function _themeGetCookie(name) {
   const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)'));
@@ -50,21 +51,27 @@ function _themeValidRef(ref, refs, fallback) {
   return refs.has(ref) ? ref : fallback;
 }
 
-function _themeConversationSelectors() {
-  if (typeof document.querySelectorAll === 'function') {
-    return Array.from(document.querySelectorAll('[data-conversation-theme-select]'));
-  }
-  return ['conversationThemeSelect', 'conversationQuickThemeSelect']
-    .map(id => document.getElementById(id)).filter(Boolean);
+function _themeSyncAppearanceSelector() {
+  const select = document.getElementById('appearanceThemeSelect');
+  if (!select) return;
+  const themes = window._chatThemes || [];
+  const conversationScope = typeof _appearanceScope !== 'undefined'
+    && _appearanceScope === 'conversation' && !!conversationId;
+  const available = conversationScope
+    ? themes : themes.filter(theme => theme.scope !== 'conversation');
+  select.innerHTML = (conversationScope
+    ? '<option value="">' + escapeHtml(t('useGlobalTheme')) + '</option>' : '')
+    + available.map(_themeOption).join('');
+  select.value = conversationScope ? (_conversationThemeRef || '') : _themeGetGlobalRef();
+  const label = document.getElementById('appearanceThemeLabel');
+  if (label) label.textContent = t(conversationScope ? 'convThemeLabel' : 'globalThemeTitle');
 }
 
 async function loadThemeSelector() {
   const seq = ++_themeLoadSeq;
   const requestedConversationId = conversationId || '';
-  const globalSel = document.getElementById('themeSelect');
-  const convSels = _themeConversationSelectors();
-  const globalControl = document.getElementById('themeSelectControl');
-  if (!globalSel && !convSels.length) return;
+  const appearanceSelect = document.getElementById('appearanceThemeSelect');
+  if (!appearanceSelect) return;
 
   try {
     const data = await rxjs.firstValueFrom(action$('list_chat_themes', {
@@ -87,30 +94,8 @@ async function loadThemeSelector() {
     if (convRef && !allRefs.has(convRef)) {
       convRef = '';
     }
-
-    if (globalSel) {
-      globalSel.innerHTML = globalThemes.map(_themeOption).join('');
-      globalSel.value = globalRef;
-      globalSel.style.display = '';
-      if (globalControl) globalControl.style.display = 'flex';
-    }
-
-    convSels.forEach((convSel) => {
-      convSel.innerHTML = '<option value="">' + escapeHtml(t('useGlobalTheme')) + '</option>'
-        + themes.map(_themeOption).join('');
-      convSel.value = convRef || '';
-      convSel.style.display = requestedConversationId ? '' : 'none';
-      const quickControl = typeof convSel.closest === 'function'
-        ? convSel.closest('.conversation-quick-theme') : null;
-      if (quickControl) {
-        const selected = convSel.options[convSel.selectedIndex];
-        quickControl.title = t('convThemeLabel') + ' — '
-          + (selected ? selected.textContent : t('useGlobalTheme'));
-        quickControl.style.display = requestedConversationId ? 'inline-flex' : 'none';
-      }
-    });
-    const label = document.getElementById('convThemeLabel');
-    if (label) label.style.display = requestedConversationId ? '' : 'none';
+    _conversationThemeRef = convRef;
+    _themeSyncAppearanceSelector();
 
     const effectiveRef = convRef || globalRef;
     await applyThemeRef(effectiveRef, false, !!convRef, requestedConversationId);
@@ -152,18 +137,18 @@ function onGlobalThemeSelectChange(value) {
 
 function onConversationThemeSelectChange(value) {
   if (!conversationId) return;
-  _themeConversationSelectors().forEach((select) => {
-    select.value = value || '';
-    const quickControl = typeof select.closest === 'function'
-      ? select.closest('.conversation-quick-theme') : null;
-    const selected = select.options[select.selectedIndex];
-    if (quickControl && selected) {
-      quickControl.title = t('convThemeLabel') + ' — ' + selected.textContent;
-    }
-  });
+  _conversationThemeRef = value || '';
+  _themeSyncAppearanceSelector();
   applyThemeRef(value || _themeGetGlobalRef(), true, !!value)
     .then(() => loadResources())
     .catch(e => addMsg('error', t('themeApplyFailed', { error: e.message })));
+}
+
+function onAppearanceThemeSelectChange(value) {
+  const conversationScope = typeof _appearanceScope !== 'undefined'
+    && _appearanceScope === 'conversation' && !!conversationId;
+  if (conversationScope) onConversationThemeSelectChange(value);
+  else onGlobalThemeSelectChange(value);
 }
 
 function _applyThemeFromResource(ref) {

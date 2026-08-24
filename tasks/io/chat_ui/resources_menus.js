@@ -440,7 +440,7 @@ function _saveAgentHooksDialog() {
   });
 }
 
-function showAgentMenu(e, name, scope, autoconv) {
+function showAgentMenu(e, name, scope, autoconv, runtimeKind) {
   e.preventDefault();
   const old = document.querySelector('.ctx-menu');
   if (old) old.remove();
@@ -462,6 +462,9 @@ function showAgentMenu(e, name, scope, autoconv) {
   item('\u{1F441} ' + t('viewDefinitionMenu'), () => showResourceEditor('agent', name, true));
   if (_canEditScope(scope)) item('\u270F ' + t('editDefinitionMenu'), () => showResourceEditor('agent', name));
   item('\u2699 ' + t('configureConversationMenu'), () => _showAgentConvConfigDialog(name));
+  if (runtimeKind === 'workflow') {
+    item('\u{1F4CA} ' + t('workflowRunsMenu'), () => showWorkflowRunInspector(name));
+  }
   item('\u2699 ' + t('toolsMcpOverrideMenu'), () => _showToolMcpFilterDialog(name, 'agent'));
   item('\u25B6 ' + t('select'), () => {
     const result = cmdAgentSelect(name);
@@ -522,10 +525,13 @@ function _showAgentConvConfigDialog(agentName) {
     rxjs.firstValueFrom(listServices$('llm')),
     rxjs.firstValueFrom(listServices$('aguiConnection')),
     rxjs.firstValueFrom(action$('list_realtime_services', { conversation_id: conversationId }, { silent: true })).catch(function() { return {}; }),
+    rxjs.firstValueFrom(action$('list_agent_workflow_versions', { conversation_id: conversationId })),
   ]).then(function(results) {
     var data = results[0], svcData = results[1];
     var aguiServices = (results[2] && results[2].services || []).filter(function(s) { return s.enabled; });
     var rtServices = (results[3] && results[3].services) || [];
+    var workflowData = results[4] || {};
+    var workflowOptions = workflowData.workflows || [];
     if (data.error) { addMsg('error', data.error); return; }
     var cfg = data.config || {};
     var paramsSchema = data.parameters_schema || {};
@@ -579,9 +585,10 @@ function _showAgentConvConfigDialog(agentName) {
     html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('agentRuntime')) + '</label>'
       + '<select id="acc-runtime" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
       + '<option value="llm"' + (runtimeKind === 'llm' ? ' selected' : '') + '>' + escapeHtml(t('agentRuntimeLlm')) + '</option>'
+      + ((workflowData.enabled || runtimeKind === 'workflow') ? '<option value="workflow"' + (runtimeKind === 'workflow' ? ' selected' : '') + '>' + escapeHtml(t('agentRuntimeWorkflow')) + '</option>' : '')
       + '<option value="external_mcp"' + (runtimeKind === 'external_mcp' ? ' selected' : '') + '>' + escapeHtml(t('agentRuntimeMcp')) + '</option>'
       + '<option value="external_agui"' + (runtimeKind === 'external_agui' ? ' selected' : '') + '>' + escapeHtml(t('agentRuntimeAgui')) + '</option></select></div>'
-      + '<div id="acc-llm-wrap" style="margin-bottom:8px;' + (runtimeKind === 'external_agui' ? 'display:none;' : '') + '"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('llmServiceRequired')) + '</label>'
+      + '<div id="acc-llm-wrap" style="margin-bottom:8px;' + (runtimeKind === 'external_agui' || runtimeKind === 'workflow' ? 'display:none;' : '') + '"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('llmServiceRequired')) + '</label>'
       + '<select id="acc-llm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
       + '<option value=""></option>' + serviceOpts + '</select></div>'
       + '<div id="acc-agui-wrap" style="margin-bottom:8px;padding:8px;border:1px solid var(--pf-border);border-radius:4px;' + (runtimeKind === 'external_agui' ? '' : 'display:none;') + '">'
@@ -589,6 +596,7 @@ function _showAgentConvConfigDialog(agentName) {
       + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiEndpointUrl')) + '</label><input id="acc-agui-url" value="' + escapeHtml(cfg.agui_url || '') + '" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
       + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiMaxToolRounds')) + '</label><input id="acc-agui-rounds" type="number" min="0" max="32" value="' + (cfg.agui_max_tool_rounds == null ? 8 : cfg.agui_max_tool_rounds) + '" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
       + '</div>'
+      + '<div id="acc-workflow-wrap" style="margin-bottom:8px;padding:8px;border:1px solid var(--pf-border);border-radius:4px;' + (runtimeKind === 'workflow' ? '' : 'display:none;') + '"></div>'
       + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('flashDelegateLlmService')) + '</label>'
       + '<select id="acc-flash-llm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
       + flashServiceOpts + '</select></div>'
@@ -624,17 +632,27 @@ function _showAgentConvConfigDialog(agentName) {
     html += ''
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
       + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+      + '<button id="acc-upgrade" style="display:none;background:var(--pf-warning,#d29922);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('workflowUpgrade')) + '</button>'
       + '<button id="acc-save" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextSave')) + '</button>'
       + '</div>';
     panel.innerHTML = html;
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
+    var upgradeBtn = document.getElementById('acc-upgrade');
+    var workflowController = mountWorkflowAgentForm(
+      document.getElementById('acc-workflow-wrap'), workflowOptions,
+      cfg.workflow || {}, { prefix: 'acc-workflow', onSelectionChange: function(next, original) {
+        upgradeBtn.style.display = runtimeKind === 'workflow' && original && next !== original ? '' : 'none';
+      }});
     document.getElementById('acc-runtime').onchange = function() {
       var agui = this.value === 'external_agui';
-      document.getElementById('acc-llm-wrap').style.display = agui ? 'none' : '';
+      var workflow = this.value === 'workflow';
+      document.getElementById('acc-llm-wrap').style.display = (agui || workflow) ? 'none' : '';
       document.getElementById('acc-agui-wrap').style.display = agui ? '' : 'none';
+      document.getElementById('acc-workflow-wrap').style.display = workflow ? '' : 'none';
+      upgradeBtn.style.display = workflow && workflowController.isUpgrade() ? '' : 'none';
     };
-    document.getElementById('acc-save').onclick = function() {
+    function _saveAgentConfig() {
       var llm = document.getElementById('acc-llm').value;
       var runtime = document.getElementById('acc-runtime').value;
       var flashLlm = document.getElementById('acc-flash-llm').value;
@@ -648,8 +666,14 @@ function _showAgentConvConfigDialog(agentName) {
       panel.querySelectorAll('[data-param]').forEach(function(inp) {
         params[inp.dataset.param] = inp.value;
       });
+      var workflow = null;
+      if (runtime === 'workflow') {
+        try { workflow = workflowController.getBinding(); }
+        catch (error) { alert(error.message); return; }
+      }
       var newCfg = { llm_service: llm, flash_delegate_llm_service: flashLlm,
                      runtime_kind: runtime,
+                     workflow: workflow,
                      agui_service: document.getElementById('acc-agui-service').value,
                      agui_url: document.getElementById('acc-agui-url').value.trim(),
                      agui_max_tool_rounds: (function(v) { v = parseInt(v); return isNaN(v) ? 8 : v; })(document.getElementById('acc-agui-rounds').value),
@@ -666,7 +690,9 @@ function _showAgentConvConfigDialog(agentName) {
         overlay.remove();
         loadResources();
       });
-    };
+    }
+    document.getElementById('acc-save').onclick = _saveAgentConfig;
+    upgradeBtn.onclick = _saveAgentConfig;
   });
 }
 

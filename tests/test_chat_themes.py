@@ -241,16 +241,15 @@ def test_theme_ui_selector_and_repository_entries_exist():
         for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     themes_js = open("tasks/io/chat_ui/themes.js", encoding="utf-8").read()
 
-    header_start = template.index('<div class="header" id="headerBar">')
-    dock_start = template.index('id="actionMenuWrap"', header_start)
-    dock_end = template.index('<!-- /action dock -->', dock_start)
-    assert header_start < template.index('id="themeSelect"') < dock_start
-    assert 'id="themeSelect"' not in template[dock_start:dock_end]
-    assert 'id="conversationThemeSelect"' in template
-    assert 'id="conversationQuickThemeSelect"' in template
-    assert template.count('data-conversation-theme-select') == 2
+    appearance_start = template.index('id="appearanceDialog"')
+    assert appearance_start < template.index('id="appearanceThemeSelect"')
+    assert 'id="themeSelectControl"' not in template
+    assert 'id="themeSelect"' not in template
+    assert 'id="conversationThemeSelect"' not in template
+    assert 'id="conversationQuickThemeSelect"' not in template
+    assert 'data-conversation-theme-select' not in template
     assert 'id="conversationAppearanceBtn"' in template
-    assert template.index('id="resourcesPanel"') < template.index('id="conversationThemeSelect"')
+    assert template.count('data-i18n-aria-label="appearanceTitle"') >= 2
     assert '"themes.js"' in serve
     assert "Themes Repository" in resources
     assert "showThemeCreator" in resources
@@ -260,6 +259,7 @@ def test_theme_ui_selector_and_repository_entries_exist():
     assert "global:pawflow_dark" in themes_js
     assert "onGlobalThemeSelectChange" in themes_js
     assert "onConversationThemeSelectChange" in themes_js
+    assert "onAppearanceThemeSelectChange" in themes_js
 
 
 def test_shipped_theme_css_is_complete_theme_package():

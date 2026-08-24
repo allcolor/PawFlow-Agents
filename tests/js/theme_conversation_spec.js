@@ -11,10 +11,8 @@ function deferred() {
 }
 
 const elements = {
-  themeSelect: {innerHTML: '', value: '', style: {}},
-  conversationThemeSelect: {innerHTML: '', value: '', style: {}},
-  themeSelectControl: {style: {}},
-  convThemeLabel: {style: {}},
+  appearanceThemeSelect: {innerHTML: '', value: '', style: {}},
+  appearanceThemeLabel: {textContent: ''},
   'custom-theme': {textContent: ''},
 };
 const requests = [];

@@ -191,10 +191,7 @@ function applyI18n(root) {
   _setText('.sidebar-header h2', t('conversations'));
   _setText('.btn-new', t('newChat'));
   _setText('#ttlLabel', t('ttlLabel'));
-  _setText('#convThemeLabel', t('convThemeLabel'));
-  document.querySelectorAll('[data-conversation-theme-select]').forEach((convTheme) => {
-    if (convTheme.options.length) convTheme.options[0].textContent = t('useGlobalTheme');
-  });
+  if (typeof _themeSyncAppearanceSelector === 'function') _themeSyncAppearanceSelector();
   const ttl = document.getElementById('ttlSelect');
   if (ttl && ttl.options.length >= 5) {
     ttl.options[0].textContent = t('ttlNone');

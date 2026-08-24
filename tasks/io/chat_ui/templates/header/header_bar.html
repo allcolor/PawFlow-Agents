@@ -4,16 +4,6 @@
 <div class="header" id="headerBar">
   <h1 class="header-logo"><a href="https://pawflow.allcolor.org/" target="_blank" rel="noopener"
       title="PawFlow" aria-label="PawFlow"><img src="/chat/js/assets/pawflow-logo-32.png" alt="PawFlow"></a></h1>
-  <label class="header-select-control header-dock-item" id="themeSelectControl"
-         aria-label="Global chat theme"
-         data-i18n-aria-label="globalThemeTitle" style="display:none">
-    <span class="header-select-icon ami-icon" aria-hidden="true">&#x1F3A8;</span>
-    <div><div class="ami-label" data-i18n="globalThemeTitle">Global chat theme</div><div class="ami-desc" data-i18n="globalThemeDesc">Choose the interface theme</div></div>
-    <select class="header-icon-select" id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)"
-            aria-label="Global chat theme" data-i18n-aria-label="globalThemeTitle">
-      <option value="global:pawflow_dark">PawFlow Dark</option>
-    </select>
-  </label>
   <button class="btn header-auth-btn header-dock-item" id="appearanceBtn" type="button"
           onclick="showAppearanceDialog()" aria-label="Appearance"
           data-i18n-aria-label="appearanceTitle">

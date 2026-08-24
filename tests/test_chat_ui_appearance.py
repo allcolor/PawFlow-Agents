@@ -31,7 +31,11 @@ def test_appearance_panel_is_loaded_with_theme_safe_tokens():
     assert 'id="appearanceBtn"' in html
     assert 'id="appearanceDialog"' in html
     assert 'id="appearanceScope"' in html
+    assert 'id="appearanceThemeSelect"' in html
     assert 'id="conversationAppearanceBtn"' in html
+    assert 'id="themeSelectControl"' not in html
+    assert 'id="conversationQuickThemeControl"' not in html
+    assert 'id="conversationThemeSelect"' not in html
     assert 'id="pfAtmosphere"' in html
     assert "--pf-atmosphere-panel-opacity" in html
     assert '"appearance.js"' in serve
@@ -56,6 +60,8 @@ def test_atmosphere_keeps_desktop_tab_bar_fixed_as_an_overlay():
 
     assert 'body > .tab-bar { position: relative' not in css
     assert 'body > .tab-bar { z-index: 190; }' in css
+    assert 'body:has(.hdr-pop.open) > .main' in css
+    assert 'z-index: 200' in css
 
 
 def test_appearance_preferences_are_user_scoped_and_motion_aware():

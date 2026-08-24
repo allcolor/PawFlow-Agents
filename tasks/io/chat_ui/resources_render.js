@@ -98,6 +98,7 @@ async function _renderResourcesData(data) {
         var aNameHtml = escapeHtml(aName);
         var aNameAttr = _pfpAttr(aName);
         var aKeyLc = aName.toLowerCase();
+        var aRuntime = a.runtime_kind || 'llm';
         var primaryColor = isPrimary ? 'var(--pf-success)' : 'var(--pf-muted)';
         var textColor = isPrimary ? 'var(--pf-text)' : 'var(--pf-muted)';
         var primaryTitle = isPrimary ? t('primaryAgent') : t('setPrimaryAgent');
@@ -107,7 +108,7 @@ async function _renderResourcesData(data) {
         // Resource polling must not touch the context gauge. The gauge is
         // updated only by live context events and the explicit /context view.
         liveHtml += '<div data-agent-name="' + aNameAttr + '" style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"'
-          + ' oncontextmenu="showAgentMenu(event,' + _pfpJsArg(aName) + ',' + _pfpJsArg(a.scope || '') + ',' + (a.autoconv ? 'true' : 'false') + ');return false;">'
+          + ' oncontextmenu="showAgentMenu(event,' + _pfpJsArg(aName) + ',' + _pfpJsArg(a.scope || '') + ',' + (a.autoconv ? 'true' : 'false') + ',' + _pfpJsArg(aRuntime) + ');return false;">'
           + '<span style="cursor:pointer;color:' + primaryColor + ';font-size:11px;" title="' + _pfpAttr(primaryTitle) + '"'
           + ' onclick="_selectAgentAndRefresh(this.dataset.n)" data-n="' + aNameAttr + '">' + primaryArrow + '</span>'
           + _scopeBadge(a.scope)
@@ -127,7 +128,6 @@ async function _renderResourcesData(data) {
           + '</div>';
         // Show LLM service + assigned skills as small tags
         var aLlm = a.llm_service || '';
-        var aRuntime = a.runtime_kind || 'llm';
         var aSkills = a.assigned_skills || [];
         if (aLlm || aSkills.length || aRuntime !== 'llm') {
           liveHtml += '<div style="margin-left:24px;margin-bottom:3px;display:flex;flex-wrap:wrap;gap:3px;">';
@@ -136,6 +136,10 @@ async function _renderResourcesData(data) {
           }
           if (aRuntime === 'external_agui') {
             liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb, #4ecdc4 18%, var(--pf-panel));color:#4ecdc4;">AG-UI</span>';
+          }
+          if (aRuntime === 'workflow') {
+            var flowFqn = ((a.workflow || {}).flow_fqn || 'Workflow');
+            liveHtml += '<span title="' + escapeHtml(flowFqn) + '" style="font-size:9px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb, #a371f7 18%, var(--pf-panel));color:#a371f7;">' + escapeHtml(flowFqn) + '</span>';
           }
           aSkills.forEach(function(sk) {
             liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb, var(--pf-accent) 16%, var(--pf-panel));color:var(--pf-accent);">' + escapeHtml(sk) + '</span>';

@@ -23,15 +23,6 @@
           </div>
         </div>
         <button class="btn-attach conversation-control-button" id="refreshConvBtn" onclick="refreshCurrentConversation()" title="Refresh conversation" data-i18n-title="refreshConversationTitle">&#x21BB;</button>
-        <span class="conversation-quick-theme" id="conversationQuickThemeControl"
-              title="Conversation theme" data-i18n-title="convThemeLabel">
-          <span aria-hidden="true">&#x1F3AD;</span>
-          <select id="conversationQuickThemeSelect" data-conversation-theme-select
-                  onchange="onConversationThemeSelectChange(this.value)"
-                  aria-label="Conversation theme" data-i18n-aria-label="convThemeLabel">
-            <option value="" data-i18n="useGlobalTheme">Use global theme</option>
-          </select>
-        </span>
         <button class="conversation-quick-btn conversation-control-button" id="conversationAppearanceBtn" type="button"
                 onclick="showConversationAppearanceDialog()"
                 title="Conversation appearance" data-i18n-title="appearanceTitle"

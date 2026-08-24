@@ -380,6 +380,7 @@ function _appearanceSyncDialog() {
     const option = scope.querySelector('option[value="conversation"]');
     if (option) option.disabled = !_appearanceConversationId();
   }
+  if (typeof _themeSyncAppearanceSelector === 'function') _themeSyncAppearanceSelector();
 }
 
 function showAppearanceDialog() {
@@ -427,6 +428,7 @@ async function setAppearanceScope(scope) {
       }
     }
     await applyAppearance();
+    if (typeof _themeSyncAppearanceSelector === 'function') _themeSyncAppearanceSelector();
     return;
   }
   const conversationKey = _appearanceConversationStorageKey();
@@ -451,6 +453,7 @@ async function setAppearanceScope(scope) {
     _appearancePrefs = Object.assign({}, APPEARANCE_DEFAULTS);
   }
   await applyAppearance();
+  if (typeof _themeSyncAppearanceSelector === 'function') _themeSyncAppearanceSelector();
 }
 
 function setAppearanceScale(value) {

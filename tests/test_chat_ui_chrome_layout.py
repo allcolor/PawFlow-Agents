@@ -21,24 +21,25 @@ def _between(start: str, end: str) -> str:
 HEADER_OPEN = '<div class="header" id="headerBar">'
 
 
-def test_theme_and_language_are_compact_controls_in_the_header():
+def test_appearance_and_language_are_compact_controls_in_the_header():
     header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
     header_lead = header[:header.index('id="actionMenuWrap"')]
     dock = _between('<div class="action-menu-wrap action-dock"', '<!-- /action dock -->')
 
-    for element_id in ("themeSelect", "languageSelect"):
+    for element_id in ("appearanceBtn", "languageSelect"):
         marker = f'id="{element_id}"'
         assert marker in header_lead
         assert marker not in dock
     assert header_lead.count(
         'class="header-select-control header-dock-item"'
-    ) == 2
-    assert header_lead.count('class="header-icon-select"') == 2
-    assert '&#x1F3A8;' in header_lead
+    ) == 1
+    assert header_lead.count('class="header-icon-select"') == 1
+    assert 'id="appearanceBtn"' in header_lead
+    assert '<path d="M12 3a9 9 0 1 0' in header_lead
     assert '&#x1F310;' in header_lead
     assert (
         header_lead.index('<h1 class="header-logo">')
-        < header_lead.index('id="themeSelect"')
+        < header_lead.index('id="appearanceBtn"')
         < header_lead.index('id="languageSelect"')
         < header_lead.index('id="actionLoading"')
         < header_lead.index('id="activeAgentBadge"')
@@ -47,11 +48,11 @@ def test_theme_and_language_are_compact_controls_in_the_header():
     )
 
 
-def test_theme_and_language_reuse_dock_tooltips_and_hover_zoom():
+def test_appearance_and_language_reuse_dock_tooltips_and_hover_zoom():
     header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
     header_controls = header[:header.index('id="actionMenuWrap"')]
 
-    for control_id in ("themeSelectControl", "languageSelectControl"):
+    for control_id in ("languageSelectControl",):
         control_index = header_controls.index(f'id="{control_id}"')
         start = header_controls.rindex("<label", 0, control_index)
         control = header_controls[start:header_controls.index("</label>", start)]
@@ -63,6 +64,8 @@ def test_theme_and_language_reuse_dock_tooltips_and_hover_zoom():
 
     assert ".header-dock-item" in TOOLTIPS_JS
     assert "transform: scale(1.4);" in TEMPLATE_HTML
+    assert 'id="themeSelectControl"' not in header_controls
+    assert 'id="appearanceBtn"' in header_controls
 
 
 def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
@@ -152,7 +155,7 @@ def test_linked_account_dialog_keeps_identity_visible_beside_unlink_action():
     assert "width: auto;" in TEMPLATE_HTML
 
 
-def test_conversation_expiry_and_theme_open_from_the_context_menu():
+def test_conversation_expiry_opens_from_context_menu_but_theme_lives_in_appearance():
     sidebar = _between(
         '<div class="sidebar collapsed"',
         '<div class="dialog-bg" id="conversationSettingsDialog"',
@@ -163,7 +166,8 @@ def test_conversation_expiry_and_theme_open_from_the_context_menu():
     assert 'id="conversationThemeSelect"' not in sidebar
     assert 'id="conversationSettingsDialog"' in TEMPLATE_HTML
     assert 'id="ttlSelect"' in TEMPLATE_HTML
-    assert 'id="conversationThemeSelect"' in TEMPLATE_HTML
+    assert 'id="conversationThemeSelect"' not in TEMPLATE_HTML
+    assert 'id="appearanceThemeSelect"' in TEMPLATE_HTML
     assert "#conversationSettingsDialog select { width: 100%;" in TEMPLATE_HTML
     assert "showConversationSettings(cid)" in menu_js
     assert "function showConversationSettings(cid)" in menu_js
@@ -229,12 +233,12 @@ def test_view_audio_and_permissions_live_in_left_prompt_panel_but_dictation_does
         assert marker in controls
         assert marker not in header
 
-    assert controls.index('id="refreshConvBtn"') < controls.index('id="conversationQuickThemeControl"')
+    assert controls.index('id="refreshConvBtn"') < controls.index('id="conversationAppearanceBtn"')
 
     composer_css = Path("tasks/io/chat_ui/css/50_composer.css").read_text(encoding="utf-8")
     state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
     assert '<select id="permissionMode"' not in controls
-    assert ".conversation-quick-theme { position: relative; width: 30px;" in composer_css
+    assert ".conversation-quick-theme" not in composer_css
     assert "button.setAttribute('aria-label', accessibleLabel)" in state_js
     assert "function togglePermissionModeMenu(force)" in state_js
     assert "function closePermissionModeMenu()" in state_js
@@ -357,7 +361,8 @@ def test_conversation_control_buttons_are_thin_and_share_dock_motion():
 
     assert "padding: 2px 4px 3px" in css
     assert ".conversation-control-button { width: 30px !important; min-width: 30px; height: 30px;" in css
-    assert ".conversation-control-button, .conversation-quick-theme" in css
+    assert ".conversation-control-button {" in css
+    assert ".conversation-quick-theme" not in css
     assert "background: var(--pf-sidebar) !important" in css
     assert "border: 1px solid var(--pf-accent) !important" in css
     assert "transform: scale(1.4)" in css

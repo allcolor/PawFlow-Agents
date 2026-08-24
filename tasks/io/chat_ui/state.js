@@ -795,12 +795,6 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
 
 function updateDeleteBtn() {
   const show = conversationId ? '' : 'none';
-  const themeControl = document.getElementById('themeSelectControl');
-  if (themeControl) themeControl.style.display = '';
-  const convThemeSel = document.getElementById('conversationThemeSelect');
-  if (convThemeSel) convThemeSel.style.display = show;
-  const convThemeLabel = document.getElementById('convThemeLabel');
-  if (convThemeLabel) convThemeLabel.style.display = show;
   const permissionControl = document.getElementById('permissionModeWrap');
   if (permissionControl) permissionControl.style.display = show ? 'inline-flex' : 'none';
   document.getElementById('actionMenuWrap').style.display = show;

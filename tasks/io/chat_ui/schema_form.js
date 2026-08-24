@@ -99,8 +99,8 @@ function _renderSchemaFields(schema, values, readonly) {
       const fp = (pdef.provider || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       const aliases = JSON.stringify(pdef.provider_aliases || {}).replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       if (fillHelper) html += '<div style="display:flex;gap:4px;align-items:flex-start;">';
-      html += '<select id="svc-p-' + pname + '" data-service-ref="1" data-service-type="' + st + '" data-provider-field="' + pf + '" data-provider="' + fp + '" data-provider-aliases=\'' + aliases + '\' data-current="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + (fillHelper ? 'flex:1;min-width:0;' : '') + '">';
-      html += '<option value="' + escaped + '">' + (escaped || '(auto)') + '</option>';
+      html += '<select id="svc-p-' + pname + '" data-service-ref="1" data-service-type="' + st + '" data-service-required="' + (pdef.required ? '1' : '0') + '" data-provider-field="' + pf + '" data-provider="' + fp + '" data-provider-aliases=\'' + aliases + '\' data-current="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + (fillHelper ? 'flex:1;min-width:0;' : '') + '">';
+      html += '<option value="' + escaped + '">' + (escaped || (pdef.required ? t('workflowServiceSelect') : t('workflowServiceDisabled'))) + '</option>';
       html += '</select>';
       if (fillHelper) html += fillHelper + '</div>';
     } else if (ptype === 'textarea' || ptype === 'map' || ptype === 'object' || ptype === 'json') {
@@ -176,6 +176,7 @@ async function _populateServiceRefs(container) {
   const refs = Array.from(container.querySelectorAll('select[data-service-ref="1"]'));
   for (const sel of refs) {
     const serviceType = sel.dataset.serviceType || '';
+    const required = sel.dataset.serviceRequired === '1';
     const providerField = sel.dataset.providerField || '';
     const providerEl = providerField ? container.querySelector('#svc-p-' + providerField) : null;
     const wantedProvider = (sel.dataset.provider || '') || (providerEl ? providerEl.value : '');
@@ -185,7 +186,7 @@ async function _populateServiceRefs(container) {
     try {
       const data = await _schemaFormServices(serviceType);
       const services = (data.services || []).filter(s => _serviceRefProviderMatches(s.provider, wantedProvider, aliases));
-      let html = '<option value="">(auto)</option>';
+      let html = '<option value="">' + escapeHtml(t(required ? 'workflowServiceSelect' : 'workflowServiceDisabled')) + '</option>';
       for (const s of services) {
         const id = String(s.service_id || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
         const label = id + (s.scope ? ' [' + s.scope + ']' : '');

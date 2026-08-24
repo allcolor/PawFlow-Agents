@@ -219,6 +219,21 @@ function trackAgentToolDone(agentName, toolName, taskId) {
   updateActivePanel();
 }
 
+function trackWorkflowProgress(data) {
+  data = data || {};
+  const agentName = data.agent_name || '';
+  if (!agentName) return;
+  const turnId = data.turn_id || data.request_msg_id || '';
+  trackAgentStart(agentName, '', '', turnId);
+  const key = activeAgentKey(agentName, '');
+  const info = activeInteractions[key];
+  if (!info) return;
+  const status = String(data.label || data.stage || '').trim();
+  if (status) info.status = status.replace(/_/g, ' ');
+  info.updatedAt = Date.now();
+  updateActivePanel();
+}
+
 function isAgentTerminalCurrent(agentName, taskId, turnId) {
   const key = activeAgentKey(agentName, taskId || '');
   if (!key) return true;

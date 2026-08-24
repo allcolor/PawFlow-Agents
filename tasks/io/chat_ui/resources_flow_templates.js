@@ -133,6 +133,9 @@ function _showNewFlowDialog() {
     + _flowDialogField(t('name'), '_feName', '')
     + _flowDialogField(t('version'), '_feVersion', '1.0.0')
     + _flowDialogField(t('description'), '_feDescription', '', true)
+    + '<label style="display:block;margin:8px 0;color:var(--pf-muted);font-size:12px;">' + escapeHtml(t('flowTemplateKind'))
+    + '<select id="_feTemplateKind" style="width:100%;"><option value="standard">' + escapeHtml(t('flowTemplateStandard')) + '</option>'
+    + '<option value="agent_workflow">' + escapeHtml(t('flowTemplateAgentWorkflow')) + '</option></select></label>'
     + _flowDialogScope('user')
     + '<div class="exec-btns"><button class="exec-deny" data-cancel>' + escapeHtml(t('contextCancel')) + '</button>'
     + '<button class="exec-approve" data-create>' + escapeHtml(t('flowNew')) + '</button></div>');
@@ -144,6 +147,7 @@ function _showNewFlowDialog() {
       name: overlay.querySelector('#_feName').value.trim(),
       version: overlay.querySelector('#_feVersion').value.trim(),
       description: overlay.querySelector('#_feDescription').value,
+      template_kind: overlay.querySelector('#_feTemplateKind').value,
     });
     action$('flow_editor_new', payload, { skipConversationId: scope !== 'conversation' }).subscribe({
       next: d => { if (d.error) addMsg('error', d.error); else { overlay.remove(); _openFlowEditorTab(d.draft.draft_id); } },

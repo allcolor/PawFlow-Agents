@@ -177,6 +177,12 @@ function _sseWireA() {
     if (typeof turnViewIngest === 'function') turnViewIngest('thinking_delta', data, el);
   });
 
+  eventSource.addEventListener('workflow_progress', (e) => {
+    lastSSEActivity = Date.now();
+    const data = e.data ? JSON.parse(e.data) : {};
+    trackWorkflowProgress(data);
+  });
+
   eventSource.addEventListener('agui_activity', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data || '{}');

@@ -23,6 +23,14 @@
         </select>
       </section>
       <section class="appearance-section">
+        <label id="appearanceThemeLabel" for="appearanceThemeSelect" data-i18n="globalThemeTitle">Global chat theme</label>
+        <select id="appearanceThemeSelect" onchange="onAppearanceThemeSelectChange(this.value)"
+                aria-label="Chat theme" data-i18n-aria-label="globalThemeTitle">
+          <option value="global:pawflow_dark">PawFlow Dark</option>
+        </select>
+        <p class="appearance-help" data-i18n="globalThemeDesc">Choose the interface theme</p>
+      </section>
+      <section class="appearance-section">
         <div class="appearance-section-head">
           <label for="appearanceScale" data-i18n="uiScale">Interface scale</label>
           <output id="appearanceScaleValue" for="appearanceScale">100%</output>

@@ -142,6 +142,10 @@ Smoke-test the newly built wheel in a clean virtual environment. Before
 committing, ensure the staged file list contains only permitted release
 metadata:
 
+When that virtual environment lives in ScratchDir, create it with
+`python -m venv --copies`; the default POSIX interpreter symlinks point outside
+the scoped root and are rejected by ScratchDir's fail-closed accounting.
+
 ```bash
 git add pyproject.toml CHANGELOG.md PROJECT_SUMMARY.md
 git diff --cached --name-only

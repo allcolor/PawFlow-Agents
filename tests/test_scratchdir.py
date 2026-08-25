@@ -10,6 +10,7 @@ from core.scratchdir_models import (
     MAX_TTL_HOURS,
     ScratchDirError,
     ScratchDirState,
+    context_hint,
     require_scope,
     validate_quotas,
     validate_ttl,
@@ -126,12 +127,20 @@ def test_context_hint_is_metadata_only(store):
     assert "secret-physical-path" not in hint
 
 
+def test_context_hint_requires_copied_virtual_environments():
+    hint = context_hint()
+
+    assert "python -m venv --copies" in hint
+    assert "symlinks escape" in hint
+
+
 def test_handler_schema_and_fail_closed_before_lifecycle_wiring():
     handler = ScratchDirHandler()
     assert handler.name == "scratchdir"
     assert handler.parameters_schema["required"] == ["action"]
     assert set(handler.parameters_schema["properties"]["action"]["enum"]) == {
         "status", "ensure", "renew", "clear"}
+    assert "python -m venv --copies" in handler.description
     assert "scratchdir_context_missing" in handler.execute({"action": "status"})
     handler.set_user_id("u")
     handler.set_conversation_id("c")

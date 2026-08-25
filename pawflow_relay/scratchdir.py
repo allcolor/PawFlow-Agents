@@ -119,11 +119,16 @@ def _usage(files_root: Path, quota_bytes: int, quota_files: int) -> tuple[int, i
             except (OSError, RuntimeError) as exc:
                 raise ScratchDirRelayError(
                     "scratchdir_unsafe_entry",
-                    "ScratchDir contains an unsafe symbolic link") from exc
+                    "ScratchDir contains an unsafe symbolic link; create Python "
+                    "virtual environments with `python -m venv --copies`, or "
+                    "clear the ScratchDir to recover") from exc
             if target != resolved_root and not target.is_relative_to(resolved_root):
                 raise ScratchDirRelayError(
                     "scratchdir_unsafe_entry",
-                    "ScratchDir contains an unsafe symbolic link")
+                    "ScratchDir contains a symbolic link outside its scoped "
+                    "root; create Python virtual environments with "
+                    "`python -m venv --copies`, or clear the ScratchDir to "
+                    "recover")
             # The target is already visited and counted at its canonical path.
             # Skipping the alias supports standard in-tree links such as a
             # virtualenv lib64-to-lib link without double-counting its files.

@@ -37,6 +37,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Native Claude Code and Codex interactive sessions now keep their own
   pre-compaction context instead of adopting PawFlow-generated summaries when a
   compact event is intercepted.
+- ScratchDir guidance and release validation now require copied Python virtual
+  environments and explain recovery after an unsafe link, preventing a default
+  POSIX venv from leaving the scoped temporary filesystem unusable.
 
 ### Security
 

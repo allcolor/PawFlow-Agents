@@ -180,6 +180,10 @@ Required behavior:
   listing use the same scoped route;
 - `bash`, `run_tests`, `security_scan`, and composite relay tools can set
   their working directory to `fs://scratchdir/<subdir>`;
+- Python virtual environments inside ScratchDir must be created with
+  `python -m venv --copies`; the default POSIX interpreter symlinks point
+  outside the scoped root and are rejected, while the confined `lib64 -> lib`
+  alias remains valid;
 - an explicit ordinary relay ID cannot bypass ScratchDir scope;
 - `local=true` cannot reinterpret a ScratchDir URL against the host;
 - checkpoints and project graph/wiki refresh are disabled for ScratchDir writes;

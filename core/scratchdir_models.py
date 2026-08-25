@@ -111,6 +111,9 @@ def context_hint() -> str:
         "scoped to this user + conversation + agent, survives tool calls, "
         "compaction and provider restarts, and expires on its own. Manage its "
         "lifecycle with the `scratchdir` tool (status, ensure, renew, clear). "
+        "Create Python virtual environments inside it with "
+        "`python -m venv --copies`; the default interpreter symlinks escape "
+        "the scoped root and are rejected. "
         "Use FileStore for durable deliverables and the workspace for source "
         "changes."
     )

@@ -1,6 +1,8 @@
 """Relay lifecycle and server coordinator tests for ScratchDir."""
 
 import base64
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -131,6 +133,48 @@ def test_relay_usage_allows_in_tree_symlinks_without_double_counting(
 
     assert current["observed_files"] == 1
     assert current["observed_bytes"] == 5
+
+
+def test_relay_usage_accepts_a_copied_python_virtual_environment(
+        relay_root, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    message = _message(quota_bytes=50 * 1024 * 1024, quota_files=1000)
+    relay_scratchdir.ensure(message, workspace_root=str(workspace))
+    files = relay_root / message["scratch_id"] / "files"
+    subprocess.run(
+        [
+            sys.executable, "-m", "venv", "--copies", "--without-pip",
+            str(files / ".venv"),
+        ],
+        check=True,
+    )
+
+    current = relay_scratchdir.status(
+        message, workspace_root=str(workspace))
+
+    assert current["observed_files"] > 0
+    assert current["observed_bytes"] > 0
+
+
+def test_relay_usage_explains_default_python_venv_symlink_recovery(
+        relay_root, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    message = _message(quota_bytes=50 * 1024 * 1024, quota_files=1000)
+    relay_scratchdir.ensure(message, workspace_root=str(workspace))
+    files = relay_root / message["scratch_id"] / "files"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", str(files / ".venv")],
+        check=True,
+    )
+
+    with pytest.raises(relay_scratchdir.ScratchDirRelayError) as exc:
+        relay_scratchdir.status(message, workspace_root=str(workspace))
+
+    assert exc.value.code == "scratchdir_unsafe_entry"
+    assert "python -m venv --copies" in str(exc.value)
+    assert "clear the ScratchDir" in str(exc.value)
 
 
 @pytest.mark.parametrize("target", ("outside", "broken", "loop"))

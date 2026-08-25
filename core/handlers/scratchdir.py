@@ -31,7 +31,9 @@ class ScratchDirHandler(ToolHandler):
             "compaction, or provider restarts. Use FileStore for durable "
             "deliverables and the workspace for source changes. ScratchDir "
             "expires automatically and never falls back to /tmp or a hidden "
-            "project directory. Actions: status, ensure, renew, clear.")
+            "project directory. Python virtual environments must use "
+            "`python -m venv --copies` because escaping symlinks are rejected. "
+            "Actions: status, ensure, renew, clear.")
 
     @property
     def parameters_schema(self) -> dict[str, Any]:

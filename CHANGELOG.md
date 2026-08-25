@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.245] — 2026-08-25
+
+### Added
+
+- Added one canonical declarative workflow model over ordinary PawFlow tasks,
+  with semantic server-owned editing, deterministic lowering for conditions,
+  branches, parallel work, joins, retries, bounded loops, subflows, typed human
+  interactions, Workflow Agent calls, and durable one-shot `FlowRun` execution.
+- Added versioned multi-view Flow layouts with persisted positions, edge routing,
+  annotations, styles, and functional frames shared by editor, viewer, and
+  runtime projections.
+- Added durable `WorkflowProposal` review and approval, exact draft-revision
+  pinning, immutable publication, replay lineage, and shared UiSurface rendering
+  across Web, PawCode, and VS Code.
+- Added the complete PlanStore migration circuit with five disabled-by-default
+  feature flags, idempotent import and activation manifests, single-writer
+  cutover, canary verification, compensation, and an operator runbook.
+
+### Changed
+
+- Typed questions and confirmations now use one durable interaction authority
+  with schema-validated answers and resumable Web, terminal, and VS Code
+  projections.
+- The Wiki Agent graph now presents all 23 tasks in five labeled and described
+  functional frames, with stable relation identities and stored positions
+  instead of one long technical row.
+
+### Fixed
+
+- Preserved the historical zero-output behavior of `splitJSON` for empty
+  objects while allowing declarative lowering to request an explicit empty
+  relationship.
+- Imported waiting runs now trigger the irreversible migration fence on their
+  first live recovery or checkpoint write, closing a rollback bypass.
+
+### Security
+
+- Workflow approval and continuation fail closed on stale revisions, actors,
+  schemas, authorization snapshots, prepared-call digests, or resource
+  references; import, rollback compensation, reads, and outbox acknowledgements
+  remain isolated from live-write fencing.
+- Legacy PlanStore writers and surfaces are mutually exclusive with canonical
+  workflow proposals, preventing silent dual-writer divergence during rollout.
+
 ## [1.0.0-beta.244] — 2026-08-25
 
 ### Added

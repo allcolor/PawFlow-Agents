@@ -15,6 +15,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added the source-backed Wiki Agent reference workflow, including no-write
   shadow comparison, silent automatic maintenance, server-owned staged cutover,
   PendingQueue migration, authoring UI, and an operator runbook.
+- Added bounded multi-agent groups with exact resource bindings, durable inboxes,
+  correlated turn identities, a unified run projection, and a first-party
+  group-deliberation workflow.
+- Added chat authoring and live run inspection for workflow agents, including
+  progress, checkpoints, outputs, usage, warnings, cancellation, and localized
+  run-state rendering.
+
+### Changed
+
+- The product website now presents a more focused interactive story across its
+  landing page, feature pages, demonstrations, and navigation.
+- Active Agents now includes workflow runs, while global and
+  conversation-scoped appearance controls share one consistent Appearance
+  surface.
+- Added implementation plans for AnyDoc ingestion, FastCRW packaging, and OOMOL
+  OpenConnectors integration.
+
+### Fixed
+
+- Native Claude Code and Codex interactive sessions now keep their own
+  pre-compaction context instead of adopting PawFlow-generated summaries when a
+  compact event is intercepted.
+
+### Security
+
+- Turn-scoped authorization, ordered tool lifecycle events, immutable resource
+  provenance, and generation-safe run identities now fail closed on stale or
+  mismatched execution context; the new collaboration paths remain disabled by
+  default pending rollout gates.
 
 ## [1.0.0-beta.243] — 2026-08-23
 

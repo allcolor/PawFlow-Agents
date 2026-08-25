@@ -266,7 +266,7 @@ class AgentInboxStore:
             return []
         marks = ",".join("?" for _ in ids)
         query = (
-            f"SELECT * FROM agent_inbox_items WHERE conversation_id=? "
+            f"SELECT * FROM agent_inbox_items WHERE conversation_id=? "  # nosec B608 - placeholders only
             f"AND agent_key=? AND msg_id IN ({marks})")
         params: list[Any] = [conversation_id, agent_key, *ids]
         if run_id is not None:
@@ -341,7 +341,7 @@ class AgentInboxStore:
                 params.append(max(0, int(max_sequence)))
             params.append(int(max_messages))
             rows = connection.execute(
-                "SELECT msg_id FROM agent_inbox_items WHERE "
+                "SELECT msg_id FROM agent_inbox_items WHERE "  # nosec B608 - fixed clauses only
                 + " AND ".join(clauses) + " ORDER BY sequence LIMIT ?",
                 params).fetchall()
             ids = tuple(row["msg_id"] for row in rows)
@@ -350,11 +350,11 @@ class AgentInboxStore:
             claim_id = str(uuid.uuid4())
             marks = ",".join("?" for _ in ids)
             connection.execute(
-                f"""UPDATE agent_inbox_items
-                    SET state='claimed', owner_run_id=?, owner_task_id=?,
-                        lease_expires_at=?, updated_at=?
-                    WHERE conversation_id=? AND agent_key=? AND state='pending'
-                      AND msg_id IN ({marks})""",
+                f"UPDATE agent_inbox_items "  # nosec B608 - placeholders only
+                "SET state='claimed', owner_run_id=?, owner_task_id=?, "
+                "lease_expires_at=?, updated_at=? "
+                "WHERE conversation_id=? AND agent_key=? AND state='pending' "
+                f"AND msg_id IN ({marks})",
                 (run_id, task_id, expires, timestamp,
                  conversation_id, agent_key, *ids))
             connection.execute(
@@ -390,11 +390,10 @@ class AgentInboxStore:
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             cursor = connection.execute(
-                """UPDATE agent_inbox_items
-                   SET state='pending', owner_run_id=NULL, owner_task_id=NULL,
-                       lease_expires_at=NULL, updated_at=?
-                   WHERE state='claimed'
-                     AND substr(owner_run_id, 1, 3)='wr_'""" + clause,
+                "UPDATE agent_inbox_items "  # nosec B608 - fixed optional clause
+                "SET state='pending', owner_run_id=NULL, owner_task_id=NULL, "
+                "lease_expires_at=NULL, updated_at=? WHERE state='claimed' "
+                "AND substr(owner_run_id, 1, 3)='wr_'" + clause,
                 params)
             claim_clause = ""
             claim_params: list[Any] = []
@@ -403,8 +402,8 @@ class AgentInboxStore:
                     "?" for _ in run_ids) + ")"
                 claim_params.extend(run_ids)
             connection.execute(
-                """DELETE FROM agent_inbox_claims
-                   WHERE substr(run_id, 1, 3)='wr_'""" + claim_clause,
+                "DELETE FROM agent_inbox_claims "  # nosec B608 - fixed optional clause
+                "WHERE substr(run_id, 1, 3)='wr_'" + claim_clause,
                 claim_params)
             return int(cursor.rowcount)
 
@@ -428,11 +427,11 @@ class AgentInboxStore:
         marks = ",".join("?" for _ in ids)
         with self._lock, self._connect() as connection:
             cursor = connection.execute(
-                f"""UPDATE agent_inbox_items
-                    SET state='acknowledged', owner_run_id=NULL,
-                        owner_task_id=NULL, lease_expires_at=NULL, updated_at=?
-                    WHERE conversation_id=? AND agent_key=? AND state='claimed'
-                      AND owner_run_id=? AND msg_id IN ({marks})""",
+                f"UPDATE agent_inbox_items "  # nosec B608 - placeholders only
+                "SET state='acknowledged', owner_run_id=NULL, "
+                "owner_task_id=NULL, lease_expires_at=NULL, updated_at=? "
+                "WHERE conversation_id=? AND agent_key=? AND state='claimed' "
+                f"AND owner_run_id=? AND msg_id IN ({marks})",
                 (timestamp, conversation_id, agent_key, run_id, *ids))
             self._drop_claims(
                 connection, conversation_id, agent_key, run_id)
@@ -534,9 +533,9 @@ class AgentInboxStore:
             params.extend(source_values)
         with self._lock, self._connect() as connection:
             cursor = connection.execute(
-                """UPDATE agent_inbox_items SET state='discarded',
-                   owner_run_id=NULL, owner_task_id=NULL,
-                   lease_expires_at=NULL, updated_at=? WHERE """
+                "UPDATE agent_inbox_items SET state='discarded', "  # nosec B608 - fixed clauses only
+                "owner_run_id=NULL, owner_task_id=NULL, "
+                "lease_expires_at=NULL, updated_at=? WHERE "
                 + " AND ".join(clauses), (timestamp, *params))
             return int(cursor.rowcount)
 
@@ -554,7 +553,8 @@ class AgentInboxStore:
         params.append(max(1, int(limit)))
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM agent_inbox_items WHERE " + " AND ".join(clauses)
+                "SELECT * FROM agent_inbox_items WHERE "  # nosec B608 - fixed clauses only
+                + " AND ".join(clauses)
                 + " ORDER BY sequence LIMIT ?", params).fetchall()
         return tuple(self._item(row) for row in rows)
 
@@ -680,8 +680,8 @@ class AgentInboxStore:
             if rows:
                 ids = tuple(dict.fromkeys(str(row["msg_id"]) for row in rows))
                 count = connection.execute(
-                    """SELECT count(*) AS n FROM agent_inbox_items
-                       WHERE conversation_id=? AND agent_key=? AND msg_id IN ("""
+                    "SELECT count(*) AS n FROM agent_inbox_items "  # nosec B608 - placeholders only
+                    "WHERE conversation_id=? AND agent_key=? AND msg_id IN ("
                     + ",".join("?" for _ in ids) + ")",
                     (conversation_id, agent_key, *ids)).fetchone()["n"]
                 if count != len(ids):
@@ -708,7 +708,7 @@ class AgentInboxStore:
                 "agent_ingress_receipts", "agent_inbox_migrations",
             ):
                 deleted += connection.execute(
-                    f"DELETE FROM {table} WHERE conversation_id=?",
+                    f"DELETE FROM {table} WHERE conversation_id=?",  # nosec B608 - table whitelist
                     (conversation_id,)).rowcount
         return int(deleted)
 

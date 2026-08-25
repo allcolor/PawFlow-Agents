@@ -1017,7 +1017,7 @@ class ProjectWiki:
             if snapshot["state"] == "removed":
                 try:
                     service.read_file(relay_path, local=False)
-                except Exception:
+                except Exception:  # nosec B112 - unreadable confirms removed snapshot
                     continue
                 superseded.append(path)
                 continue

@@ -49,8 +49,8 @@ class CapabilityEffect(str, Enum):
     MESSAGING_SEND = "messaging.send"
     RESOURCE_READ = "resource.read"
     RESOURCE_WRITE = "resource.write"
-    SECRET_USE = "secret.use"
-    SECRET_WRITE = "secret.write"
+    SECRET_USE = "secret.use"  # nosec B105 - capability identifier, not a password
+    SECRET_WRITE = "secret.write"  # nosec B105 - capability identifier, not a password
     AGENT_SPAWN = "agent.spawn"
     AGENT_CONTROL = "agent.control"
     WORKFLOW_EXECUTE = "workflow.execute"

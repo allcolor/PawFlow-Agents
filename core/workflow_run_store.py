@@ -491,8 +491,8 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
             raise ValueError("unsupported commit marker")
         with self._lock, self._connect() as connection:
             cursor = connection.execute(
-                f"""UPDATE workflow_runs SET {field}=1, updated_at=?
-                    WHERE run_id=? AND status='committing'""",
+                f"UPDATE workflow_runs SET {field}=1, updated_at=? "  # nosec B608 - field whitelist
+                "WHERE run_id=? AND status='committing'",
                 (time.time(), run_id))
             return cursor.rowcount == 1
 
@@ -634,10 +634,10 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
         marks = ",".join("?" for _ in values)
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                f"""SELECT * FROM workflow_runs
-                    WHERE status IN ({marks})
-                    ORDER BY CASE status WHEN 'committing' THEN 0 ELSE 1 END,
-                             created_at""", values).fetchall()
+                f"SELECT * FROM workflow_runs "  # nosec B608 - placeholders only
+                f"WHERE status IN ({marks}) "
+                "ORDER BY CASE status WHEN 'committing' THEN 0 ELSE 1 END, "
+                "created_at", values).fetchall()
         return tuple(self._row(row) for row in rows)
 
     def list_runs(self, conversation_id: str, agent_name: str = "",
@@ -653,7 +653,7 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
         values.append(count)
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                f"SELECT * FROM workflow_runs WHERE {where} "
+                f"SELECT * FROM workflow_runs WHERE {where} "  # nosec B608 - fixed clauses only
                 "ORDER BY created_at DESC LIMIT ?", values).fetchall()
         return tuple(self._row(row) for row in rows)
 
@@ -710,8 +710,8 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
         marks = ",".join("?" for _ in values)
         with self._lock, self._connect() as connection:
             cursor = connection.execute(
-                f"""DELETE FROM workflow_runs
-                    WHERE status IN ({marks}) AND updated_at < ?""",
+                f"DELETE FROM workflow_runs "  # nosec B608 - placeholders only
+                f"WHERE status IN ({marks}) AND updated_at < ?",
                 (*values, cutoff))
             return int(cursor.rowcount)
 

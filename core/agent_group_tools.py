@@ -253,7 +253,7 @@ class GroupReadOnlyToolRuntime:
                         for hook in list(kill_hooks):
                             try:
                                 hook()
-                            except Exception:
+                            except Exception:  # nosec B110 - best-effort cancellation hook
                                 pass
                         return
 

@@ -1977,6 +1977,13 @@ gate is green. The full manual webchat, PawCode, VS Code, channel, MCP, PFP,
 delegate, workflow, and group matrix remains an external rollout gate; legacy
 reads must not be removed before that evidence and a compatibility release.
 
+The declarative workflow rollout reuses these boundaries: exact agent/group
+resource references and authority snapshots are pinned into workflow runs,
+typed interactions use the shared durable client protocol, and UiSurfaces never
+become an authorization authority. PlanStore cutover and resource-binding
+migration have independent first-write fences; neither rollback path may merge
+post-activation canonical mutations back into legacy state.
+
 Deliver:
 
 - concurrency and fault-injection suite;

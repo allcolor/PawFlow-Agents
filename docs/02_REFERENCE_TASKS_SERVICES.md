@@ -1118,6 +1118,23 @@ PawFlow provides a unified filesystem abstraction layer. See `docs/filesystem.md
 
 ---
 
+## 19. Declarative Workflow Runtime Tasks
+
+| Type | Purpose | Relationships |
+|------|---------|---------------|
+| `boundedLoopGuard` | Enforce aggregate duration, FlowFile count, and cancellation bounds before a declarative collection iteration. | `continue`, `exhausted`, `cancelled`, `failure` |
+| `repeatUntil` | Run one isolated child iteration, test a condition, and durably queue or time the bounded continuation. | `success`, `exhausted`, `cancelled`, `failure` |
+| `invokeWorkflowAgent` | Invoke an exact Workflow Agent resource with pinned authority and optionally park the parent until one terminal result. | `submitted` plus typed child terminal relationships and `failure` |
+| `completeFlowRun` | Stage and commit the sole typed terminal result of a durable one-shot FlowRun. | `completed`, `failure` |
+
+These tasks require injected runtime context; request parameters cannot invent a
+run, authority, or conversation scope. Declarative lowering also reuses the
+durable interaction tasks documented in
+[confirmations.md](confirmations.md). Only the closed workflow-safe task
+catalog is accepted inside Workflow Agent definitions.
+
+---
+
 **End of Technical Documentation**
 
 *Version: 2.1.0*

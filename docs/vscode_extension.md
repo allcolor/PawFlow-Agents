@@ -30,6 +30,19 @@ The PawFlow VS Code extension is a first-class PawFlow client, like webchat and 
 
 The extension does not own relay lifecycle. Install Relay Desktop or Relay CLI separately when a workspace needs filesystem, terminal, screen, desktop, or browser access.
 
+## Workflow proposals
+
+The `/plan` command probes the server with `workflow_proposal_list`. When
+enabled, the extension hydrates canonical proposal UiSurface cards and routes
+their actions through the shared authenticated action pipeline. New free-form
+requests instruct the planner to `propose_workflow`; the legacy PlanStore
+history panel is not activated.
+
+Only an explicit disabled/404 response enables the legacy panel and commands.
+Other errors remain visible and never trigger a second writer. Proposal and
+durable-interaction cards are restored from server state after reload or SSE
+reconnect.
+
 ## Build The VSIX Locally
 
 ```bash

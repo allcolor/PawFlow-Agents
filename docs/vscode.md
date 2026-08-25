@@ -47,6 +47,16 @@ The extension is a client, not a separate agent implementation. It shares:
 
 A conversation started in the browser can be resumed from VS Code. If that conversation has a linked relay, relay-backed file and shell tools operate through the server-side relay binding, not a VS Code-owned relay process.
 
+## Workflow Proposals
+
+The `/plan` command probes `workflow_proposal_list`. When enabled, VS Code
+hydrates canonical proposal UiSurface cards, sends free-form requests through
+the planner's `propose_workflow` path, and keeps the legacy PlanStore history
+panel inactive. Only an explicit disabled/404 response enables legacy behavior;
+authentication, transport, validation, and server errors never select a second
+writer. Proposal and durable-interaction cards rehydrate after reload or SSE
+reconnect.
+
 ## Security Notes
 
 VS Code does not start workspace relays. Expose local files or desktops through the standalone PawFlow Relay client only when you trust the server, the active conversation, and the selected agent/tool permissions.

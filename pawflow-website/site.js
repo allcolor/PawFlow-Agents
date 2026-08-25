@@ -351,7 +351,7 @@ document.querySelectorAll('.site-nav a').forEach((link) => {
       eyebrow: '07 / FLOWS',
       title: 'Turn useful agent work into explicit automation.',
       copy: 'Design with agents, then schedule and operate repeatable work as durable Flows.',
-      recipes: ['flows-explained', 'agent-flow-main', 'workflow-agents', 'tasks-plans', 'daily-digest'],
+      recipes: ['flows-explained', 'agent-flow-main', 'workflow-agents', 'workflow-proposals', 'tasks-plans', 'daily-digest'],
     },
     {
       id: 'media-voice',

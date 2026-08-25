@@ -1,7 +1,13 @@
-# Durable Confirmations & Durable Flow Wait/Notify
+# Durable User Interactions, Timers, and Flow Wait/Notify
 
-Two first-class asynchronous primitives backed by one SQLite store
+Typed user interactions and durable flow continuations share one SQLite store
 (`data/confirmations.db`, `core/confirmation_store.py`).
+
+The versioned `pawflow.user-interaction.v1` record is the durable semantic
+contract. Webchat, PawCode, and VS Code render that record according to their
+capabilities; presentation is never the authority for the answer or continuation.
+Every client restores pending records after reconnect and submits answers through
+the generic `respond_interaction` server action.
 
 ## Confirmation requests
 
@@ -28,6 +34,51 @@ reloads and server restarts, and the user answers **whenever they want**
   `confirmation.request_id` and `confirmation.signal_id` on the FlowFile,
   and passes it on. Chain a `durableWait` to suspend the branch until the
   answer (see below).
+
+## Typed user input
+
+The `requestUserInput` flow task extends confirmations without creating a second
+store or continuation mechanism. It supports `confirm`, `choice`, `multi`,
+`text`, `multiline`, `integer`, `decimal`, `date`, `datetime`, `file`, and
+structured `form` input. `response_schema` carries validation constraints such as
+text length, numeric bounds, choice options, required form fields, and field
+types. The server validates and normalizes every answer before atomically moving
+the request out of `pending`; invalid answers do not resume the requester.
+
+The task accepts only the user and conversation scope injected by the flow
+runtime. Configuration and FlowFile attributes cannot redirect a request to
+another user or conversation. It stamps `interaction.request_id` and
+`interaction.signal_id`; chain `durableWait` on that signal when the branch must
+pause for the response.
+
+Generic actions are `list_interactions`, `respond_interaction`, and
+`cancel_interaction`. The legacy confirmation actions remain aliases for the
+three original input kinds. Reads are scoped to the authenticated owner; writes
+also allow conversation collaborators with write access. Unknown and
+unauthorized IDs both return 404 so the endpoint is not an existence oracle.
+
+The schema migration is in-place and additive: existing confirmation rows are
+preserved, backfilled as contract version 1, and retain their
+`confirmation:<request_id>` signals. Initialization verifies row count, foreign
+keys, and that every pending row has a kind and signal before recording the
+migration marker.
+
+### Client behavior
+
+- Webchat, PawCode, and VS Code hydrate pending interactions from durable server
+  state after reload or SSE reconnect.
+- Each client renders the supported semantic input kinds and returns the typed
+  value through `respond_interaction`; server-side validation remains canonical.
+- Rich UI surfaces use the separate generic `pawflow.ui-surface.v1` capability
+  contract. A client that cannot safely render a rich surface uses its declared
+  semantic fallback or shows an explicit handoff instead of silently accepting.
+
+## User notifications
+
+`notifyUser` publishes a non-blocking notification in the runtime-injected
+conversation. It never parks the FlowFile and routes to `sent` when a live client
+is subscribed, `queued` when durable replay will deliver it later, or `failure`
+on a delivery error. `urgency` is `low`, `normal`, or `high`.
 
 ### Answering (webchat)
 
@@ -88,6 +139,16 @@ everything longer:
   run cannot receive the re-injection and fails at execute time with an
   explicit error.
 
+### Durable timers
+
+`durableTimer` parks a FlowFile until exactly one configured deadline: a
+relative `duration` (`30s`, `5m`, `2h`, and the same long-duration units as
+`durableWait`) or an absolute timezone-aware ISO-8601 `until` timestamp. It
+does not sleep in a task worker. The SQLite continuation is swept, restored,
+and re-injected at the timer task with `durable.timer.status=elapsed` and
+`route.relationship=elapsed`; cancellation uses the `cancelled` relationship.
+An undelivered timer or signal continuation prevents idle auto-stop.
+
 ### Canonical pattern
 
 ```text
@@ -100,12 +161,18 @@ want — and the branch resumes with the answer.
 
 ## Implementation
 
-- `core/confirmation_store.py` — store, sweeper (expiry, wait timeouts,
-  delivery retries), agent wake routing, `parse_timeout_seconds`.
+- `core/confirmation_store.py` — versioned typed interaction validation and
+  migration, store, sweeper (expiry, wait timeouts, delivery retries), agent wake
+  routing, and timeout parsing.
 - `core/handlers/user_interaction.py` — `request_confirmation` tool.
-- `tasks/control/durable_confirm.py` — the three flow tasks.
-- `tasks/ai/actions/confirmations.py` — webchat actions.
+- `tasks/control/durable_confirm.py` — typed input, notification, confirmation,
+  timer, wait, and notify flow tasks.
+- `tasks/ai/actions/confirmations.py` — authenticated generic interaction and
+  compatibility confirmation actions.
 - `tasks/io/chat_ui/confirmations_panel.js` — inline blocks, pending panel,
   badge, hydration.
+- `pawflow_cli/` and `pawflow-vscode/` — terminal and editor interaction
+  restoration/rendering/response paths.
 - Tests: `tests/test_confirmation_store.py`,
-  `tests/test_chat_ui_confirmations.py`.
+  `tests/test_chat_ui_confirmations.py`, `tests/test_pawcode_event_dispatch.py`,
+  and `tests/test_ui_surface_clients.py`.

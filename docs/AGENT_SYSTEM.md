@@ -6,6 +6,24 @@ When attached to a conversation, PawFlow resolves the visible flow through
 conversation, user, then global scope, validates its `agent_workflow` contract,
 and stores the resolved scope plus a SHA-256 `ResourceRef`. Prompt-only agent
 definitions and clients that omit `runtime_kind` retain the existing LLM path.
+Legacy PlanStore cutover begins with a read-only WP9 preflight. It inventories
+every per-plan JSON record, derives ownership from its storage path, validates
+the embedded conversation identity, classifies all seven legacy lifecycle
+states, and records a canonical source digest. Active records require exact
+adapters for every assigned agent and verifier; mid-step and verification
+records additionally require an explicit checkpoint mapping. Missing mappings
+block activation, while unresolved identities on terminal history are retained
+as warnings. Importing the preflight module never writes or activates migration
+state.
+
+The preflight report can be prepared in a `PlanMigrationManifestStore`. Prepare
+rechecks every canonical source digest and backs up the exact source bytes
+atomically. Activation rechecks blockers and source digests again, records every
+created artifact, and is idempotent. Rollback removes recorded artifacts in
+reverse order and restores exact legacy bytes only before the first
+post-activation write; that first write permanently fences rollback. Preparing
+or inspecting a manifest never switches runtime readers or writers.
+
 Published agent workflows are statically rejected when their declared ports do
 not match `inputPort`/`outputPort` tasks, when a task cannot reach the terminal,
 or when they contain unbounded cycles or unsafe source/script/agent tasks. Flow
@@ -42,6 +60,24 @@ stored input, permission mode, and exact flow.
 Startup also releases `wr_` inbox claims whose run is no longer recoverable,
 while preserving live and committing-run claims; a malformed recovery record is
 failed and released without preventing the remaining runs from resuming.
+
+Declarative workflow proposals use a separate `WorkflowProposalStore` review
+record and `FlowRunStore` one-shot lifecycle. The proposal pins every planner and
+user handoff to an exact draft revision plus SHA-256 digest; saving a newer draft
+invalidates acceptance but does not transfer the turn until **Send to planner**.
+Approval revalidates and publishes that exact revision as an immutable
+conversation-scoped flow, snapshots fresh authenticated authority, and starts one
+uniquely identified `durable_one_shot` run. `completeFlowRun` commits the sole
+typed terminal into a durable outbox. Delivery projects only coarse run state
+back into the proposal and portable UI surface, then acknowledges the event;
+task progress remains authoritative in the executor and run record. Missing
+proposal rows leave events pending for repair. Start failures become durable
+failed runs rather than stranded approved proposals. Terminal proposal cards
+retain scoped inspection and replay actions; replay uses the same exact flow
+digest, a new run identity, and fresh authorization. The Web card derives a
+bounded parameter-free mini graph from the current draft at render time, while
+VS Code and PawCode use the same semantic fallback without a second executable
+proposal format.
 
 The global `pawflow.agents.wiki:1.0.0` workflow is the first production
 reference. Every interactive request first passes a bounded structured LLM
@@ -128,6 +164,20 @@ correlated `done` event using the request `turn_id`. The conversation event bus
 still broadcasts every event by `conversation_id` to all connected clients; the
 `turn_id` is only reply correlation for transports that need to answer a
 specific inbound message.
+
+### Durable UI surfaces
+
+Tasks and Workflow Agents can publish a validated `pawflow.ui-surface.v1`
+document through the context-bound `present_ui_surface` tool or
+`core.ui_surface_store.publish_ui_surface`. The registry stores
+the latest monotone revision per authenticated user and conversation, and every
+client reloads the same producer-independent state through `ui_surface_list`.
+Semantic fields and server-dispatched actions are the portable baseline. Webchat
+may select a signed PFP component declared by the package manifest; VS Code uses
+the semantic form fallback; PawCode renders the semantic state and explicit
+handoff/action information. A component never grants action authority: the
+declared dispatch still enters the normal authenticated server handler, including
+the PFP extension namespace and its installed permissions.
 
 ### Workflow-agent rollout contracts and routing seam
 
@@ -446,7 +496,7 @@ The system prompt is assembled in layers during `_prepare_agent_context()`:
    ambiguous delegation, work, waiting, and cognition families, generated from
    `core/tool_selection.py` using only tools present in this agent's filtered
    registry. Exact parameters remain lazy.
-10. **Plan mode directive** -- If plan mode is active, forces the agent to call `create_plan` before executing tools.
+10. **Plan mode directive** -- If plan mode is active, the primary planner may use `ask_user` or `request_confirmation` to resolve material ambiguity, then must call `create_plan` and wait for approval before executing or using any other tool. Read-only advisors remain non-interactive.
 11. **Claude Code rules** -- For CC providers, rules about using MCP tools exclusively.
 
 ### Prompt cache prefix

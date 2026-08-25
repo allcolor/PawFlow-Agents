@@ -7,6 +7,8 @@
 | [Architecture](architecture.md) | Internal architecture: FlowFile, Task, Service, Flow, engine |
 | [Agent System](AGENT_SYSTEM.md) | Agent loop, context management, plans, multi-agent, streaming |
 | [Workflow Agents Implementation Plan](WORKFLOW_AGENTS_IMPLEMENTATION_PLAN.md) | Implemented opt-in architecture for dedicated versioned-flow agents, preemption checkpoints, durable runs, and the Wiki Agent reference design |
+| [Declarative Workflows Implementation Plan](DECLARATIVE_WORKFLOWS_IMPLEMENTATION_PLAN.md) | Implemented opt-in unified declarative/technical authoring, per-block execution, multi-view layouts, durable interactions, Workflow Agent composition, one-shot runs, and PlanStore cutover |
+| [PlanStore Migration Runbook](PLANSTORE_MIGRATION_RUNBOOK.md) | Operator preflight, activation, exclusive writer cutover, canary, irreversible first-write fence, and rollback procedure |
 | [Agent Collaboration and Tool Safety Plan](AGENT_COLLABORATION_AND_TOOL_SAFETY_PLAN.md) | Implemented opt-in contracts for turn-scoped tool authorization, ordered lifecycle replay, bounded group deliberation, unified agent runs, and resource provenance |
 | [LLM Providers](llm_providers.md) | Provider selection, API/subscription credentials, compatible endpoints, and delegated vision for text-only models |
 | [Multi-LLM Aggregator](llm_aggregator.md) | Configure parallel read-only advisors and a final synthesis/execution LLM |
@@ -26,6 +28,7 @@
 | Document | Description |
 |----------|-------------|
 | [Task Catalog](tasks.md) | Built-in flow tasks and `tool.*` flow task adapter |
+| [Durable User Interactions](confirmations.md) | Versioned typed input, confirmations, notifications, timers, durable wait/notify, three-client recovery, and authorization contract |
 | [Agent Tool Catalog](tool_catalog.md) | Agent-facing tools grouped by purpose |
 | [Agent Tool Selection](TOOL_SELECTION.md) | Decision guide for overlapping tool families: files, delegation, work orchestration, continuations, and state |
 | [Services Catalog](services.md) | Service types: LLM, relay, media, messaging, auth, storage |

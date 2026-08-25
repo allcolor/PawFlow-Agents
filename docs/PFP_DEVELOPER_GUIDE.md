@@ -103,6 +103,13 @@ When releasing a new flow version, add a new immutable flow object and update
 the agent default explicitly. Existing conversation bindings remain pinned until
 the user chooses **Upgrade workflow**.
 
+Exercise the same flow through a WorkflowProposal before release: create the
+proposal, edit and re-review one draft revision, approve, complete one durable
+run, reconnect a client to rehydrate its UiSurface, and replay the terminal run.
+This catches proposal/runtime metadata mistakes that a direct flow start does
+not cover. Package tests must keep `workflow_capabilities` truthful for every
+custom `flow_task`; package metadata cannot widen runtime effects.
+
 ### Developing an agent-group resource
 
 Declare an `agent_group` object whose path is

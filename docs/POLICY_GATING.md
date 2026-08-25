@@ -90,6 +90,19 @@ executing (`deny`, or `ask` answered negatively; voice cannot prompt, so `ask`
 becomes a needs-confirmation message). `interim_guard` remains for any runtime
 added later that is not yet wired (plan decision 19).
 
+## Declarative workflows
+
+Workflow and Workflow Agent tasks carry their declared effects and resolved
+targets through the same authorization intersection as ordinary tool calls.
+Proposal approval captures a fresh immutable authorization reference; recovery
+reuses that accepted authority and fails closed if its identity or revision is
+stale. A workflow cannot turn a policy `deny` into `ask` or `allow`, bypass
+a hard confirmation, or widen conversation/resource scope.
+
+Typed Ask/Confirm interactions are durable continuation records. The rendered
+Web, PawCode, or VS Code UiSurface is only a projection; the server validates
+actor, scope, schema, state revision, and prepared-call digest before resuming.
+
 ## Limits of V0
 
 - audit is a JSONL file per conversation (SQLite store, metrics and the

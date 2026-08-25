@@ -117,6 +117,11 @@ selected. Installed bindings resolve within the target conversation/user scope,
 record the resolved scope and digest, and do not follow a later package update
 until the user explicitly upgrades the conversation agent.
 
+Packaged flows may also be used by the declarative proposal path. Approval
+publishes or resolves one exact immutable FQN; active and replayed runs retain
+that exact package version and digest. A package update never retargets an
+existing proposal, run, or Workflow Agent binding.
+
 ### Agent group resources
 
 An `agent_group` manifest object points to

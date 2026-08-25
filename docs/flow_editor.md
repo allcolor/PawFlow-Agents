@@ -389,3 +389,28 @@ Runtime actions are owner-scoped (admin-only for global instances):
 | `flow_runtime_create_draft` | `instance_id` | `{draft, instance_id}` |
 | `flow_runtime_update_preview` | `instance_id`, published `fqn` | diff + live impact + `preview_token` |
 | `flow_runtime_update_apply` | preview fields + explicit risk policies when required | `{ok, updated, fqn, impact}`, HTTP 409 with fresh impact, or HTTP 500 `runtime_update_failed` when the rebuild itself failed |
+
+## Declarative authoring, views, and proposals
+
+When `PAWFLOW_DECLARATIVE_WORKFLOWS_ENABLED` is enabled, the editor can lower
+supported semantic blocks into the same technical `FlowDefinition` shown by
+the graph. Declarative and technical views never maintain separate executable
+graphs: edits round-trip through one draft revision and unsupported structures
+fall back to a Custom Group instead of being dropped.
+
+With `PAWFLOW_MULTI_VIEW_LAYOUTS_ENABLED`, named layouts, geometry, routing,
+frames, annotations, and viewport state are versioned presentation metadata.
+Layout-only changes do not rebuild a running executor.
+
+The template and runtime viewers project the selected layout as well as the
+executable graph. Task `label` and `description` fields are shown on processor
+cards, while layout `frames` render non-executable functional sections with a
+title and description behind their member nodes. Stored node positions win over
+automatic Dagre placement; frames never become tasks, queue endpoints, or
+runtime controls.
+
+Planner output is saved as a `WorkflowProposal` tied to the exact draft
+revision and definition digest. User edits invalidate stale planner review;
+acceptance and approval fail on revision drift. Approval publishes the
+immutable flow and starts a durable one-shot run. Current proposal and run
+UiSurfaces are rehydrated from server state after reconnect.

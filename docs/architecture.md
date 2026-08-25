@@ -344,3 +344,24 @@ UI/runtime integrations use the listener routes above and the PawFlow relay/clie
 PawFlow provides a `Dockerfile` and a `docker-compose.yml` to run the listener/UI on port `PORT`, with persistence under `data/` and support for provider/relay containers when Docker is available.
 
 See **[deployment.md](deployment.md)** for the full guide.
+
+---
+
+## Declarative Workflows and Durable One-Shot Runs
+
+Declarative authoring lowers semantic blocks into an ordinary validated
+`FlowDefinition`; the technical graph remains the only executable authority.
+Published definitions are immutable and referenced by exact `ResourceRef`
+scope, version, digest, and source identity.
+
+`WorkflowProposalStore` owns planner/user review state and exact draft
+revisions. Approval publishes the accepted definition and creates a
+`FlowRunStore` record with immutable input, parameter, service, and
+authorization snapshots. `FlowRunCoordinator` owns execution, terminal
+outbox delivery, recovery, and replay identity. Durable interactions park
+FlowFiles in `ConfirmationStore`; UiSurfaces are projections, never state
+authorities.
+
+The PlanStore cutover is a one-shot compensating migration with a single-writer
+flag boundary. See
+[PlanStore Migration Runbook](PLANSTORE_MIGRATION_RUNBOOK.md).

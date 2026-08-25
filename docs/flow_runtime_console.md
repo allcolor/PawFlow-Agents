@@ -89,3 +89,17 @@ Edges now carry `connection_id`, `queue_bytes`, `max_queue_bytes`,
 Runtime control of tasks/queues inside nested process groups
 (`group_path`) is a later phase; hot-swap task editing (`update_task`)
 stays out until the read-only drawer has mileage.
+
+## Durable FlowRun inspection
+
+Approved workflow proposals create durable one-shot FlowRuns. The runtime
+surface shows the immutable flow reference, generation, coarse state, linked
+proposal, recovery count, terminal summary, artifacts, and redacted errors.
+Input bodies, prompts, credentials, authorization snapshots, and service
+snapshots are not projected.
+
+Terminal staging and outbox delivery are separate durable commits, so a
+projection failure can be retried without rerunning the flow. Replay creates a
+new run identity and fresh authorization snapshot; it never rewinds a terminal
+record. Imported legacy history is marked with provenance and does not emit a
+live terminal event.

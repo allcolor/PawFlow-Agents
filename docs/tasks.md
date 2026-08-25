@@ -212,7 +212,7 @@ may override the current agent service for one call.
 
 ---
 
-## Control Tasks (11)
+## Control Tasks (19)
 
 | Type | Description |
 |------|-------------|
@@ -228,7 +228,14 @@ may override the current agent service for one call.
 | `stopFlow` | Stop the current flow execution |
 | `waitForSignal` | Wait for a signal from the SignalRegistry before continuing |
 | `requestConfirmation` | Publish a durable confirmation request into a conversation (yes/no, single/multi choice) and stamp `confirmation.signal_id` |
+| `requestUserInput` | Publish a versioned durable typed input request (text, choices, numbers, dates, file reference, or form), validate server-side, and stamp `interaction.signal_id` |
+| `notifyUser` | Publish a non-blocking user notification and route to `sent`, `queued`, or `failure` without parking the FlowFile |
 | `durableWait` | Park the FlowFile durably on a signal — timeout from seconds to years, or forever; resumes with `durable.wait.status`/`durable.wait.value`, surviving restarts |
+| `durableTimer` | Park without blocking a worker until a relative duration or absolute timezone-aware time; resumes on `elapsed`/`cancelled` and survives restarts |
+| `boundedLoopGuard` | Enforce aggregate duration, collection cardinality, and runtime cancellation before a declarative loop iteration |
+| `repeatUntil` | Execute one isolated child iteration, evaluate a stop condition, and queue or durably park the bounded continuation without a graph back-edge |
+| `invokeWorkflowAgent` | Invoke one exact Workflow Agent through its durable runtime, optionally park the parent FlowFile, and resume once on a typed child terminal relationship |
+| `completeFlowRun` | Stage and atomically commit the single typed terminal of a `durable_one_shot` run; normal continuous or batch flows reject this task |
 | `durableNotify` | Fire a durable signal: parked FlowFiles resume across flows and restarts; the latest value is remembered for late waiters |
 
 ---

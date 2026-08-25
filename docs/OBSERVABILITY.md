@@ -181,3 +181,17 @@ answers the questions that have actually cost time here. Tracing pays once
 there is more than one node, once latency needs to be compared *over time*
 rather than case by case, or once somebody other than the author operates the
 server.
+
+## Declarative workflow operations
+
+Correlate proposal and one-shot execution records with `conversation_id`,
+`proposal_id`, `run_id`, immutable flow FQN/digest, generation, and terminal
+event ID. Operators should alert on repeated recovery, a terminal outbox that
+remains pending, migration blockers, source-digest drift, compensation failure,
+or any attempt to roll back a manifest whose `first_write_at` is set.
+
+Projections and logs must contain identifiers, state transitions, bounded
+counts, and redacted errors only. Do not emit prompt/input bodies, credentials,
+service snapshots, authorization payloads, or package source. Migration
+manifests provide the audit link from each imported artifact to its exact legacy
+source digest; imported history deliberately creates no live outbox event.

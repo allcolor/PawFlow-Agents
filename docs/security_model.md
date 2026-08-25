@@ -205,6 +205,21 @@ generation. The `silent_maintenance` invocation mode and Wiki scheduler
 cutover are server-owned; a client cannot suppress transcript or terminal
 delivery by setting request fields.
 
+### Declarative workflow and PlanStore cutover
+
+Declarative layouts, lowering, FlowRuns, proposals, and migration are controlled
+by independent server environment flags; all default to disabled and reject
+invalid boolean values. Enabling WorkflowProposal cutover makes canonical and
+legacy writers mutually exclusive: all 18 legacy PlanStore actions fail with
+404 before PlanStore is opened, and legacy Web scripts and listeners are not
+rendered.
+
+Migration imports are provenance-pinned, idempotent, and never emit live
+terminal events. Rollback restores exact backed-up bytes only before the first
+canonical live proposal/run mutation. Every live store mutation first marks
+`first_write_at` on all active manifests; rollback then fails closed. See the
+[PlanStore Migration Runbook](PLANSTORE_MIGRATION_RUNBOOK.md).
+
 ## Private Gateway
 
 The private gateway is configured as a `privateGateway` service and enabled for a listener through `httpListener.private_gateway_service_id`. Accepted challenge keys are explicit `secret_refs` on that service. HTTP and WebSocket clients may present a matching key in `X-PawFlow-Gateway-Key`; browser sessions continue to use the challenge cookie. The challenge skin is selected by the service `skin` field and resolved from repository resources under `data/repository/private_gateway_skin`. Each skin lives in a directory containing `skin.json` metadata and `template.html`; templates can use `{{ next_url }}`, `{{ error }}`, and `{{ cooldown }}` placeholders.

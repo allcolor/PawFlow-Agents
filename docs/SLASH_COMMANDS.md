@@ -993,24 +993,31 @@ Minimum interval: 5 seconds.
 ### /plan
 
 ```
-/plan [list | approve <id> | cancel <id> | delete <id> | reset <id> | <description>]
+/plan [list | show <id> | create <description> | accept <id> |
+       approve <id> | cancel <id> | replay <id> | <description>]
 ```
 
 | Subcommand | Description |
 |------------|-------------|
-| (none) | Open the plans panel |
-| `list` | List all plans with status |
-| `approve <id>` | Approve a pending plan |
-| `cancel <id>` | Cancel a plan |
-| `delete <id>` | Delete a plan |
-| `reset <id>` | Reset a plan |
-| `<description>` | Ask the agent to create a plan for the given description |
+| (none) / `list` | Reload and show current WorkflowProposal UiSurfaces |
+| `show <id>` | Show one proposal and its current actions |
+| `create <description>` | Ask the planner to create a canonical workflow proposal |
+| `accept <id>` | Accept the exact planner-reviewed draft revision |
+| `approve <id>` | Publish the accepted revision and start its durable FlowRun |
+| `cancel <id>` | Cancel a reviewable proposal |
+| `replay <id>` | Replay the latest linked terminal run with fresh authorization |
+| `<description>` | Ask the planner to create a canonical workflow proposal |
 
 ```
 /plan list
-/plan approve abc123
+/plan show wp_abc123
+/plan approve wp_abc123
 /plan Build a REST API for user management
 ```
+
+Clients negotiate this surface with `workflow_proposal_list`. They use legacy
+PlanStore behavior only when the server explicitly reports the feature disabled;
+other errors do not fall back.
 
 ---
 

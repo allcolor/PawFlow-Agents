@@ -2047,6 +2047,14 @@ That slice proves the product model, but it must be labeled experimental because
 
 The first production-ready release is WP0 through WP8. WP9 is required for general availability because dedicated agents must be authorable and operable without hand-editing repository JSON. WP10 is the release gate.
 
+Implementation note (2026-08-25): WP0-WP10 are implemented behind server-owned
+flags, including exact package bindings, durable typed interactions, invocation
+and terminal continuation, inspector/recovery surfaces, declarative
+WorkflowProposal/FlowRun composition, and Web/PawCode/VS Code UiSurface
+rehydration. The remaining release decision is operational: full green
+validation, authenticated Web plus non-HTTP canaries, and staged activation.
+Legacy removal remains deferred until those gates and the compatibility release.
+
 ## 32. Final product example
 
 After implementation, a user installs the first-party Wiki Agent package, selects three optional service roles, and adds Wiki to a conversation.

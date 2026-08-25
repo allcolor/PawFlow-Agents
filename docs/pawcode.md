@@ -73,7 +73,7 @@ The standalone binary keeps PawCode's existing behavior: it stores sessions unde
 | `/run <command>` | Execute through the conversation's linked relay, if one exists. |
 | `/terminal` | Run terminal commands through a linked relay, if available. |
 | `/diff` | Show git diff through a linked relay, if available. |
-| `/plan <description>` | Enter plan mode. |
+| `/plan [list|show|create|accept|approve|cancel|replay|description]` | Negotiate the canonical WorkflowProposal surface, with legacy fallback only when the server explicitly reports the feature disabled. |
 | `/call <tool> ...` | Invoke a PawFlow tool directly. |
 | `/explore` | Browse files interactively. |
 | `/compact` | Compact conversation context. |
@@ -85,6 +85,19 @@ The standalone binary keeps PawCode's existing behavior: it stores sessions unde
 PawCode does not create a separate silo. A conversation can be opened in the web UI, continued in PawCode, and then inspected in VS Code. Events are streamed through the same backend and persisted through the conversation store.
 
 `/new` uses the same server-side `create_conversation` action as webchat. If no agent is provided, PawCode uses the first available agent definition and picks a matching `{agent}_llm_service` when present, otherwise the first enabled `llmConnection` service. Use `--relay` to link a relay at creation time; the first relay passed becomes the default relay for the conversation.
+
+## Workflow proposals
+
+`/plan` first probes `workflow_proposal_list`. On success, PawCode renders
+server-projected UiSurfaces and supports `list`, `show`, `create`,
+`accept`, `approve`, `cancel`/`reject`, and `replay`. A free-form
+description asks the planner to use `propose_workflow`; PawCode never builds a
+parallel client-side plan.
+
+Legacy PlanStore commands are used only when the server explicitly reports that
+workflow proposals are disabled. Authentication, network, validation, and
+server errors propagate instead of silently falling back to a second writer.
+Proposal and interaction surfaces rehydrate after reconnect.
 
 ## Stream JSON Mode
 

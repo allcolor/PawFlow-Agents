@@ -255,7 +255,7 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         return elide_echoed_results(result, echoed)
 
     def run(self, abort_event=None):
-        from core.llm_client import LLMResponse
+        from core.llm_client import CCCompactDetected, LLMResponse
 
         if self._consumer_refused:
             logger.info(
@@ -322,7 +322,15 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                 continue
             if etype == "hook":
                 self.lifecycle_events.append(event)
-                if event.get("hook_event_name") == "Stop":
+                hook_name = event.get("hook_event_name", "")
+                if hook_name in {"PreCompact", "PostCompact"}:
+                    logger.warning(
+                        "[codex-interactive] %s detected — rejecting native "
+                        "compaction and handing context to PawFlow",
+                        hook_name)
+                    raise CCCompactDetected(
+                        f"Codex interactive {hook_name} hook detected")
+                if hook_name == "Stop":
                     self._stop_seen = True
                     self._post_stop_last_event_at = time.time()
                 continue

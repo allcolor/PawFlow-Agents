@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.llm_client import LLMClient
+from core.llm_client import CCCompactDetected, LLMClient
 from core.llm_providers.claude_code_interactive import _CCITurnCoordinator
 from core.llm_providers.claude_code_interactive import _loads_tolerant
 from tests._agent_core_src import agent_core_src
@@ -144,6 +144,82 @@ def test_claude_provider_releases_request_lease_when_coordinator_raises(
             agent_name="assistant")
 
     assert released == [("lease-token", 7), ("lease-token", 7)]
+
+
+def test_claude_provider_kills_native_session_when_compaction_hook_fires(
+        monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    client = LLMClient("claude-code-interactive")
+    state = SimpleNamespace(
+        session_token="compact-token", initial_context_loaded=False,
+        workdir="/tmp/compact", container_workdir="/cc_sessions/compact",
+        emitted_tool_use_ids=set(), emitted_tool_result_ids=set(),
+        service_id="svc")
+    killed = []
+    released = []
+    pool = SimpleNamespace(
+        ensure_started=lambda *_args, **_kwargs: state,
+        touch=lambda _state: None,
+        begin_turn=lambda _state: None, end_turn=lambda _state: None,
+        send_text=lambda _state, _prompt: True,
+        send_interrupt=lambda _state, _text: True,
+        destroy_ephemeral=lambda _state: None,
+        kill_session=lambda *args: killed.append(args) or True)
+    events = SimpleNamespace(
+        claim_consumer=lambda _token: 8,
+        drain_session=lambda _token: None,
+        release_consumer=lambda token, epoch: released.append((token, epoch)))
+
+    class _CompactCoordinator:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, _abort=None):
+            raise CCCompactDetected("PreCompact")
+
+    monkeypatch.setattr(
+        InteractiveClaudeCodePool, "instance", classmethod(lambda cls: pool))
+    monkeypatch.setattr(client, "_cci_prompt", lambda *_args, **_kwargs: "prompt")
+    monkeypatch.setattr(client, "_cci_session_state", lambda **_kwargs: state)
+    monkeypatch.setattr(
+        "core.llm_providers.claude_code_interactive._CCITurnCoordinator",
+        _CompactCoordinator)
+    monkeypatch.setattr(
+        "services.cc_interactive_event_service."
+        "get_or_create_cc_interactive_event_service",
+        lambda: ("", "", events))
+
+    with pytest.raises(CCCompactDetected, match="PreCompact"):
+        client._stream_claude_code_interactive(
+            [], "", call_user_id="user", call_conversation_id="conv",
+            call_agent_name="assistant")
+    with pytest.raises(CCCompactDetected, match="PreCompact"):
+        client.interrupt_claude_code_interactive(
+            "stop", user_id="user", conversation_id="conv",
+            agent_name="assistant")
+
+    assert killed == [
+        ("user", "conv", "assistant", "svc"),
+        ("user", "conv", "assistant", "svc"),
+    ]
+    assert released == [("compact-token", 8), ("compact-token", 8)]
+
+
+@pytest.mark.parametrize("hook_name", ["PreCompact", "PostCompact"])
+def test_turn_coordinator_hands_native_compaction_to_pawflow(hook_name):
+    events = _Events([
+        {"type": "request_start", "request_id": "req-1",
+         "path": "/v1/messages"},
+        {"type": "hook", "hook_event_name": hook_name,
+         "input": {"trigger": "auto"}},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ])
+
+    with pytest.raises(CCCompactDetected, match=hook_name):
+        _CCITurnCoordinator(events, "session").run()
+
+    assert events.q.qsize() == 1
 
 
 def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():

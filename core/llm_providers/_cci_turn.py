@@ -332,7 +332,7 @@ class _CCITurnCoordinator:
         return self.event_service.wait_event(self.session_token, timeout=timeout)
 
     def run(self, abort_event=None):
-        from core.llm_client import LLMResponse
+        from core.llm_client import CCCompactDetected, LLMResponse
 
         if self._consumer_refused:
             # Another coordinator owns this session's stream. Reading it too
@@ -442,6 +442,13 @@ class _CCITurnCoordinator:
             if etype == "hook":
                 self.lifecycle_events.append(event)
                 hook_name = event.get("hook_event_name", "")
+                if hook_name in {"PreCompact", "PostCompact"}:
+                    logger.warning(
+                        "[cci-provider] %s detected — rejecting native "
+                        "compaction and handing context to PawFlow",
+                        hook_name)
+                    raise CCCompactDetected(
+                        f"Claude Code interactive {hook_name} hook detected")
                 if hook_name == "Stop":
                     self._stop_seen = True
                     self._post_stop_last_event_at = time.time()

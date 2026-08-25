@@ -196,7 +196,7 @@ class LLMCodexInteractiveMixin:
         call_conversation_id=None, call_agent_name=None, call_event_cid=None,
         call_ephemeral_stream=None,
     ):
-        from core.llm_client import LLMClientError
+        from core.llm_client import CCCompactDetected, LLMClientError
         from services.cc_interactive_event_service import (
             get_or_create_cc_interactive_event_service)
 
@@ -280,6 +280,14 @@ class LLMCodexInteractiveMixin:
                             user_id=user_id,
                             event_cid=call_event_cid or conversation_id)))
                 response = coord.run(getattr(self, "_abort", None))
+            except CCCompactDetected:
+                # PreCompact is synchronous, but Codex resumes as soon as the
+                # hook process exits. Remove the pooled session immediately so
+                # its native summarizer cannot race PawFlow's forced compact.
+                pool.kill_session(
+                    user_id, pool_conversation_id, agent_name,
+                    getattr(state, "service_id", "") or "")
+                raise
             finally:
                 event_service.release_consumer(
                     state.session_token, consumer_epoch)
@@ -297,7 +305,7 @@ class LLMCodexInteractiveMixin:
         turn_callback=None, block_callback=None, user_id: str = "",
         conversation_id: str = "", agent_name: str = "", model: str = "",
     ):
-        from core.llm_client import LLMClientError, LLMResponse
+        from core.llm_client import CCCompactDetected, LLMClientError, LLMResponse
         from services.cc_interactive_event_service import (
             get_or_create_cc_interactive_event_service)
 
@@ -333,6 +341,11 @@ class LLMCodexInteractiveMixin:
                         state, conversation_id, agent_name, tokens,
                         user_id=user_id, event_cid=conversation_id)))
             response = coord.run(getattr(self, "_abort", None))
+        except CCCompactDetected:
+            pool.kill_session(
+                user_id, conversation_id, agent_name,
+                getattr(state, "service_id", "") or "")
+            raise
         finally:
             event_service.release_consumer(state.session_token, consumer_epoch)
         self.record_codex_context_window(

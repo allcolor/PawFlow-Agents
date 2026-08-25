@@ -459,7 +459,9 @@ The provider assembles responses from those events:
 - `message_delta.usage` updates token usage.
 - Claude Code command hooks publish `Stop`, `StopFailure`, `PreCompact`,
   `PostCompact`, `SessionEnd`, and `UserPromptSubmit` lifecycle events over the
-  same WebSocket.
+  same WebSocket. `PreCompact` and the defensive `PostCompact` fallback are
+  terminal signals: PawFlow removes the native session and runs its own forced
+  compact before cold-starting the provider from the canonical context.
 - Only the Claude Code `Stop` hook closes a PawFlow turn. Anthropic
   `message_stop` events are observed for diagnostics but do not terminate the
   interactive turn, because Claude Code can issue intermediate model requests
@@ -868,6 +870,19 @@ reuse. If the CLI or tmux is terminated while the container remains alive (for
 example by pressing `Ctrl-C` in an attached terminal), PawFlow evicts that stale
 container, rebuilds the turn as a cold start with full context, launches a fresh
 interactive session, and submits the same user turn automatically.
+
+PawFlow also owns compaction for normal `codex-interactive` agent sessions.
+Codex's `PreCompact` lifecycle hook is a terminal control signal: the turn
+coordinator rejects the native compact, removes the pooled Codex container
+immediately, and raises `CCCompactDetected`. The common agent loop then flushes
+the transcript, runs PawFlow's forced compact, adopts that canonical context,
+and cold-starts Codex from it. `PostCompact` is handled by the same path as a
+defensive fallback, so a missed or reordered pre-hook cannot make Codex's native
+summary authoritative. Claude Code interactive uses the same hook handoff; the
+legacy Claude Code stream detects its equivalent `compact_boundary` event.
+The detection channel differs, but PawFlow remains the sole owner of the
+resulting context.
+
 The provider shares the OAuth credential pool used by `codex-app-server`:
 
 - one OAuth credential may back any number of concurrent agents and containers;

@@ -37,7 +37,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         block_callback=None, *, call_user_id=None, call_conversation_id=None,
         call_agent_name=None, call_event_cid=None, call_ephemeral_stream=None,
     ):
-        from core.llm_client import LLMClientError
+        from core.llm_client import CCCompactDetected, LLMClientError
 
         user_id = call_user_id or getattr(self, "_user_id", "") or ""
         conversation_id = call_conversation_id or getattr(self, "_conversation_id", "") or ""
@@ -123,6 +123,11 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name))
                 response = coord.run(getattr(self, "_abort", None))
+            except CCCompactDetected:
+                pool.kill_session(
+                    user_id, pool_conversation_id, agent_name,
+                    getattr(state, "service_id", "") or "")
+                raise
             finally:
                 event_service.release_consumer(
                     state.session_token, consumer_epoch)
@@ -140,7 +145,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         turn_callback=None, block_callback=None, user_id: str = "",
         conversation_id: str = "", agent_name: str = "", model: str = "",
     ):
-        from core.llm_client import LLMClientError, LLMResponse
+        from core.llm_client import CCCompactDetected, LLMClientError, LLMResponse
         from services.cc_interactive_event_service import get_or_create_cc_interactive_event_service
 
         state = self._cci_session_state(
@@ -188,6 +193,11 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name))
                 response = coord.run(getattr(self, "_abort", None))
+            except CCCompactDetected:
+                pool.kill_session(
+                    user_id, conversation_id, agent_name,
+                    getattr(state, "service_id", "") or "")
+                raise
             finally:
                 event_service.release_consumer(
                     state.session_token, consumer_epoch)

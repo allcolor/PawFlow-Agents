@@ -244,6 +244,14 @@ class ConversationEventBus:
                     del self._clients[key]
         writer.close()
 
+    def has_subscribers(self, conversation_id: str) -> bool:
+        """Return whether a conversation currently has a live SSE subscriber."""
+        with self._lock:
+            return any(
+                not writer.is_closed
+                for writer in self._subscribers.get(conversation_id, set())
+            )
+
     def publish(self, conversation_id: str, event: SSEEvent):
         """Publish an event to all subscribers of a conversation.
 

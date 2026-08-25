@@ -26,9 +26,9 @@ Config:
 import logging
 import threading
 import time
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
-from core import FlowFile, TaskFactory
+from core import FlowFile, TaskError, TaskFactory
 from core.base_task import BaseTask
 
 logger = logging.getLogger(__name__)
@@ -53,11 +53,17 @@ class MergeContentTask(BaseTask):
             'correlation_attribute', 'fragment.identifier'
         )
         self.max_bin_age = int(self.config.get('max_bin_age', 300))
+        self.expected_count_attribute = str(
+            self.config.get('expected_count_attribute', '') or '')
+        self.max_bin_flowfiles = int(self.config.get('max_bin_flowfiles', 1000))
+        self.max_bin_bytes = int(self.config.get('max_bin_bytes', 64 * 1024 * 1024))
         self.header = self.config.get('header', '').encode('utf-8')
         self.footer = self.config.get('footer', '').encode('utf-8')
         # Bins: correlation_key -> list of FlowFiles
         self._bins: Dict[str, List[FlowFile]] = {}
         self._bin_created: Dict[str, float] = {}
+        self._bin_expected: Dict[str, int] = {}
+        self._bin_bytes: Dict[str, int] = {}
         self._lock = threading.Lock()
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
@@ -76,14 +82,45 @@ class MergeContentTask(BaseTask):
             if key not in self._bins:
                 self._bins[key] = []
                 self._bin_created[key] = time.time()
+                self._bin_bytes[key] = 0
+            expected = self.min_entries
+            if self.expected_count_attribute:
+                raw_expected = flowfile.get_attribute(self.expected_count_attribute)
+                try:
+                    expected = int(raw_expected or "")
+                except (TypeError, ValueError) as exc:
+                    raise TaskError(
+                        f"Invalid expected count attribute '{self.expected_count_attribute}'"
+                    ) from exc
+                if expected < 1:
+                    raise TaskError("Expected merge count must be >= 1")
+            if expected > self.max_bin_flowfiles:
+                raise TaskError(
+                    f"Expected merge count {expected} exceeds max_bin_flowfiles "
+                    f"{self.max_bin_flowfiles}")
+            previous_expected = self._bin_expected.setdefault(key, expected)
+            if previous_expected != expected:
+                raise TaskError(
+                    f"Inconsistent expected merge count for bin '{key}': "
+                    f"{previous_expected} != {expected}")
+            next_count = len(self._bins[key]) + 1
+            next_bytes = self._bin_bytes[key] + flowfile.size()
+            if next_count > self.max_bin_flowfiles:
+                raise TaskError(
+                    f"Merge bin '{key}' exceeds max_bin_flowfiles "
+                    f"{self.max_bin_flowfiles}")
+            if next_bytes > self.max_bin_bytes:
+                raise TaskError(
+                    f"Merge bin '{key}' exceeds max_bin_bytes {self.max_bin_bytes}")
             self._bins[key].append(flowfile)
+            self._bin_bytes[key] = next_bytes
             logger.debug(
                 "mergeContent: bin '%s' now %d/%d items (%d bytes)",
-                key, len(self._bins[key]), self.min_entries, len(flowfile.get_content()),
+                key, len(self._bins[key]), expected, flowfile.size(),
             )
 
             # Flush if ready
-            if len(self._bins[key]) >= self.min_entries:
+            if len(self._bins[key]) >= expected:
                 logger.debug("mergeContent: flushing bin '%s' with %d items", key, len(self._bins[key]))
                 return self._flush_bin(key)
 
@@ -119,6 +156,8 @@ class MergeContentTask(BaseTask):
         """Merge all FlowFiles in a bin. Must hold self._lock."""
         buf = self._bins.pop(key, [])
         self._bin_created.pop(key, None)
+        self._bin_expected.pop(key, None)
+        self._bin_bytes.pop(key, None)
         if not buf:
             return []
 
@@ -157,6 +196,8 @@ class MergeContentTask(BaseTask):
             )
             self._bins.pop(k, None)
             self._bin_created.pop(k, None)
+            self._bin_expected.pop(k, None)
+            self._bin_bytes.pop(k, None)
 
     def reset(self):
         """Clear all bins. Called when queues are cleared."""
@@ -169,6 +210,61 @@ class MergeContentTask(BaseTask):
                 )
             self._bins.clear()
             self._bin_created.clear()
+            self._bin_expected.clear()
+            self._bin_bytes.clear()
+
+    def checkpoint_state(self, serialize_flowfile) -> Dict[str, Any]:
+        """Return a versioned snapshot of incomplete correlation bins."""
+        with self._lock:
+            return {
+                "schema_version": 1,
+                "bins": {
+                    key: [serialize_flowfile(flowfile) for flowfile in flowfiles]
+                    for key, flowfiles in self._bins.items()
+                },
+                "bin_created": dict(self._bin_created),
+                "bin_expected": dict(self._bin_expected),
+            }
+
+    def restore_checkpoint_state(self, state, deserialize_flowfile) -> None:
+        """Restore incomplete bins before queue recovery resumes scheduling."""
+        if not isinstance(state, dict) or state.get("schema_version") != 1:
+            raise ValueError("mergeContent checkpoint schema_version must be 1")
+        raw_bins = state.get("bins")
+        raw_created = state.get("bin_created")
+        raw_expected = state.get("bin_expected", {})
+        if (not isinstance(raw_bins, dict) or not isinstance(raw_created, dict)
+                or not isinstance(raw_expected, dict)):
+            raise ValueError("mergeContent checkpoint bins are invalid")
+        bins: Dict[str, List[FlowFile]] = {}
+        for key, rows in raw_bins.items():
+            if not isinstance(rows, list):
+                raise ValueError("mergeContent checkpoint bin must be a list")
+            restored = [deserialize_flowfile(row) for row in rows]
+            if any(flowfile is None for flowfile in restored):
+                raise ValueError("mergeContent checkpoint FlowFile is invalid")
+            bins[str(key)] = restored
+        created = {}
+        expected = {}
+        sizes = {}
+        for key in bins:
+            value = raw_created.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("mergeContent checkpoint timestamp is invalid")
+            created[key] = float(value)
+            expected_value = raw_expected.get(key, self.min_entries)
+            if (isinstance(expected_value, bool) or not isinstance(expected_value, int)
+                    or expected_value < 1 or expected_value > self.max_bin_flowfiles):
+                raise ValueError("mergeContent checkpoint expected count is invalid")
+            expected[key] = expected_value
+            sizes[key] = sum(flowfile.size() for flowfile in bins[key])
+            if sizes[key] > self.max_bin_bytes:
+                raise ValueError("mergeContent checkpoint bin exceeds max_bin_bytes")
+        with self._lock:
+            self._bins = bins
+            self._bin_created = created
+            self._bin_expected = expected
+            self._bin_bytes = sizes
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
@@ -191,6 +287,18 @@ class MergeContentTask(BaseTask):
             'max_bin_age': {
                 'type': 'integer', 'required': False, 'default': 300,
                 'description': 'Max seconds before incomplete bin is discarded (0=no timeout)',
+            },
+            'expected_count_attribute': {
+                'type': 'string', 'required': False, 'default': '',
+                'description': 'FlowFile attribute containing the expected bin size',
+            },
+            'max_bin_flowfiles': {
+                'type': 'integer', 'required': False, 'default': 1000,
+                'description': 'Hard maximum FlowFiles accumulated per bin',
+            },
+            'max_bin_bytes': {
+                'type': 'integer', 'required': False, 'default': 67108864,
+                'description': 'Hard maximum content bytes accumulated per bin',
             },
             'header': {
                 'type': 'string', 'required': False,

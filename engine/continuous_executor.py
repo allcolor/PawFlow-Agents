@@ -15,19 +15,18 @@ The single execution engine for PawFlow:
 import logging
 import threading
 import time
-from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional
 
-from core import Flow, FlowFile, Task, FlowError
-from core.task_state import TaskStateManager
+from core import Flow, FlowError, FlowFile, Task
 from core.connection import Connection, ConnectionManager
 from core.parameter_context import ParameterContext
-from engine.provenance import ProvenanceRepository
-from engine.checkpoint import CheckpointManager
-
-from engine._exec_types import TaskStats, ExecutionResult
-from engine._continuous_exec_run import _ContinuousExecRunMixin
+from core.task_state import TaskStateManager
 from engine._continuous_exec_control import _ContinuousExecControlMixin
+from engine._continuous_exec_run import _ContinuousExecRunMixin
+from engine._exec_types import ExecutionResult, TaskStats
+from engine.checkpoint import CheckpointManager
+from engine.provenance import ProvenanceRepository
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +248,14 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
                     "workflow_preempt_policy"),
                 visible_through_sequence=self._runtime_context.get(
                     "workflow_visible_through_sequence"),
+            )
+
+        flow_run_context = self._runtime_context.get("flow_run_context")
+        if flow_run_context is not None and hasattr(task, "set_flow_run_context"):
+            task.set_flow_run_context(
+                flow_run_context,
+                store=self._runtime_context.get("flow_run_store"),
+                coordinator=self._runtime_context.get("flow_run_coordinator"),
             )
 
         if not getattr(task, "PACKAGE_RUNTIME", None):

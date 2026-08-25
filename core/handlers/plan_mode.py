@@ -5,8 +5,9 @@ Pawflow replacements for the Claude Code built-ins of the same name.
 Plan mode is a conv-scoped flag (ConversationStore.set_extra(plan_mode))
 that, when enabled, makes ``agent_context.build_context`` append a PLAN
 MODE directive to the system prompt (see tasks/ai/agent_context.py).
-While the directive is active, the agent MUST call ``create_plan`` before
-any other tools and wait for ``approve_plan`` before executing.
+While the directive is active, the agent may use ``ask_user`` or
+``request_confirmation`` to resolve material ambiguity, then MUST call
+``create_plan`` and wait for ``approve_plan`` before executing.
 
 Until now the flag was only reachable via the user-facing ``/plan on|off``
 slash command. These handlers let the agent toggle its own plan mode when
@@ -22,6 +23,24 @@ from core.tool_handler import ToolHandler
 logger = logging.getLogger(__name__)
 
 
+def _workflow_proposal_cutover() -> bool:
+    from core.flow_feature_flags import workflow_proposals_enabled
+
+    return workflow_proposals_enabled()
+
+
+def _plan_mode_protocol() -> tuple[str, str]:
+    if _workflow_proposal_cutover():
+        return (
+            "propose_workflow(package, name, version, title, definition)",
+            "the user to accept the workflow proposal",
+        )
+    return (
+        "create_plan(title, steps)",
+        "the user to call approve_plan",
+    )
+
+
 class EnterPlanModeHandler(ToolHandler):
     """Enable plan mode for the current conversation."""
 
@@ -34,11 +53,14 @@ class EnterPlanModeHandler(ToolHandler):
 
     @property
     def description(self) -> str:
+        proposal, approval = _plan_mode_protocol()
         return (
             "Switch this conversation into PLAN MODE. While plan mode is "
-            "active, you must call create_plan(title, steps) to propose a "
-            "plan and wait for the user to call approve_plan before "
-            "executing any other tools. Use this when the task is complex "
+            "active, you may first use ask_user or request_confirmation to "
+            "resolve material ambiguity. You must then call "
+            f"{proposal} and wait for {approval} before executing or using "
+            "any other tools. Use "
+            "this when the task is complex "
             "enough that proposing a plan up-front is safer than diving "
             "straight in. Call ExitPlanMode when the plan is executed (or "
             "rejected) and you want to return to normal operation."
@@ -64,11 +86,13 @@ class EnterPlanModeHandler(ToolHandler):
                         user_id=self._user_id or "")
         logger.info("[plan-mode] ENTERED conv=%s user=%s",
                     self._conversation_id[:8], self._user_id or "?")
+        proposal, approval = _plan_mode_protocol()
         return (
-            "Plan mode ENABLED. You must now call create_plan(title, steps) "
-            "to propose your plan. Do NOT call any other tools until the "
-            "user runs approve_plan. Call ExitPlanMode when you want to "
-            "leave plan mode."
+            "Plan mode ENABLED. You may use ask_user or "
+            "request_confirmation to resolve material ambiguity, then you "
+            f"must call {proposal}. Do NOT execute or call "
+            f"other tools until {approval}. Call "
+            "ExitPlanMode when you want to leave plan mode."
         )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from typing import Any
 
 from core.workflow_run_store import WorkflowRunStore, new_terminal_identities
@@ -61,11 +62,90 @@ class WorkflowTurnCoordinator:
             "agent_name": context.agent_name,
             "channel": context.channel,
             "response": response,
+            "status": result.status,
+            "artifacts": [
+                artifact.to_dict() for artifact in result.artifacts],
+            "metrics": dict(result.metrics),
             "finish_reason": "workflow_complete",
         }
         self.run_store.stage_terminal(
             context.run_id, result=result, assistant_payload=message,
             terminal_event=terminal)
+        return self.commit(context.run_id)
+
+    def finalize_status(
+        self,
+        context,
+        *,
+        status: str,
+        reason: str,
+    ) -> dict[str, Any] | None:
+        """Stage a non-success flow terminal through the same durable saga."""
+
+        from core.workflow_agent_contracts import WORKFLOW_TERMINAL_STATUSES
+
+        if context.invocation_mode != "flow":
+            raise ValueError("typed failure terminals are reserved for flow invocation")
+        if status not in WORKFLOW_TERMINAL_STATUSES or status == "completed":
+            raise ValueError("flow terminal status is invalid")
+        existing = self.run_store.get_run(context.run_id)
+        if existing is None:
+            raise KeyError("workflow run does not exist")
+        if existing["status"] == "committing":
+            return self.commit(context.run_id)
+        if existing["status"] in WORKFLOW_TERMINAL_STATUSES:
+            return existing["terminal_event"]
+        response = str(reason or status).strip()[:4000]
+        assistant_msg_id, event_id = new_terminal_identities(context.run_id)
+        from core.llm_client import stamp_message
+        message = stamp_message({
+            "role": "assistant",
+            "content": response,
+            "source": {
+                "type": "agent", "name": context.agent_name,
+                "runtime_kind": "workflow", "run_id": context.run_id,
+                "flow_fqn": context.flow_ref.name,
+            },
+            "turn_id": context.root_turn_id,
+            "channel": context.channel,
+            "msg_id": assistant_msg_id,
+        }, context.conversation_id)
+        terminal = {
+            "event_id": event_id,
+            "turn_id": context.root_turn_id,
+            "answered_turn_ids": [context.root_turn_id],
+            "run_id": context.run_id,
+            "runtime_kind": "workflow",
+            "flow_fqn": context.flow_ref.name,
+            "agent_name": context.agent_name,
+            "channel": context.channel,
+            "response": response,
+            "status": status,
+            "artifacts": [],
+            "metrics": {},
+            "finish_reason": f"workflow_{status}",
+        }
+        result = SimpleNamespace(
+            status=status,
+            response=response,
+            artifacts=(),
+            metrics={},
+            answered_turn_ids=(context.root_turn_id,),
+            to_dict=lambda: {
+                "schema_version": 1,
+                "status": status,
+                "response": response,
+                "artifacts": [],
+                "metrics": {},
+                "answered_turn_ids": [context.root_turn_id],
+            },
+        )
+        self.run_store.stage_terminal(
+            context.run_id,
+            result=result,
+            assistant_payload=message,
+            terminal_event=terminal,
+        )
         return self.commit(context.run_id)
 
     def commit(self, run_id: str) -> dict[str, Any] | None:
@@ -86,7 +166,13 @@ class WorkflowTurnCoordinator:
                 run["conversation_id"], run["agent_name"], run_id)
             return None
 
-        silent = run["invocation_mode"] == "silent_maintenance"
+        silent = (
+            run["invocation_mode"] == "silent_maintenance"
+            or (
+                run["invocation_mode"] == "flow"
+                and not run["publish_to_conversation"]
+            )
+        )
         if not run["message_committed"] and silent:
             self.run_store.mark_message_committed(run_id)
         elif not run["message_committed"]:
@@ -107,6 +193,32 @@ class WorkflowTurnCoordinator:
             self.run_store.mark_inbox_acknowledged(run_id)
 
         for outbox in self.run_store.pending_outbox(run_id):
+            if run["invocation_mode"] == "flow":
+                parent = run["parent_invocation"] or {}
+                if not parent.get("await_terminal", True):
+                    self.run_store.record_outbox_attempt(
+                        outbox["event_id"], True)
+                    continue
+                invocation_id = str(parent.get("invocation_id") or "")
+                if not invocation_id:
+                    raise RuntimeError(
+                        "flow invocation terminal has no parent continuation")
+                delivered = False
+                try:
+                    from core.workflow_agent_invocation import (
+                        WorkflowParentInvocationStore,
+                    )
+                    delivered = (
+                        WorkflowParentInvocationStore.instance().deliver_terminal(
+                            invocation_id, dict(outbox["event"])))
+                except Exception:
+                    logger.exception(
+                        "workflow parent delivery failed for %s", run_id)
+                self.run_store.record_outbox_attempt(
+                    outbox["event_id"], delivered)
+                if not delivered:
+                    return None
+                continue
             if silent:
                 self.run_store.record_outbox_attempt(outbox["event_id"], True)
                 continue

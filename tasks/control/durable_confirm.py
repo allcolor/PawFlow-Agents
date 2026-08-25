@@ -1,4 +1,4 @@
-"""Durable confirmation and wait/notify tasks.
+"""Durable typed user interaction, notification, timer, and signal tasks.
 
 Unlike ``waitForSignal``/``notify`` (in-memory SignalRegistry, seconds-scale
 timeouts), these tasks are DURABLE: a parked FlowFile survives restarts and
@@ -23,9 +23,11 @@ re-injected through the ExecutorRegistry); a batch run cannot resume after
 its process returned.
 """
 
-from typing import Any, Dict, List
+import time
+from datetime import datetime, timezone
+from typing import Any, ClassVar, Dict, List
 
-from core import FlowFile, TaskFactory, TaskError
+from core import FlowFile, TaskError, TaskFactory
 from core.base_task import BaseTask
 
 
@@ -42,8 +44,7 @@ class RequestConfirmationTask(BaseTask):
     ICON = "question"
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        from core.confirmation_store import (
-            ConfirmationStore, parse_timeout_seconds)
+        from core.confirmation_store import ConfirmationStore, parse_timeout_seconds
         conversation_id = (self.config.get("conversation_id", "")
                            or self.config.get("_conversation_id", "")
                            or flowfile.get_attribute("conversation_id", ""))
@@ -115,6 +116,144 @@ class RequestConfirmationTask(BaseTask):
         }
 
 
+class RequestUserInputTask(BaseTask):
+    """Create one versioned typed interaction using injected runtime scope."""
+
+    TYPE = "requestUserInput"
+    VERSION = "1.0.0"
+    NAME = "Request Typed User Input"
+    DESCRIPTION = (
+        "Creates a durable typed request for text, multiline text, a choice, "
+        "multiple choices, a number, date/datetime, file reference, or form. "
+        "Chain durableWait on interaction.signal_id to suspend until answered.")
+    ICON = "question"
+    RELATIONSHIPS: ClassVar = ["success", "failure"]
+
+    def execute(self, flowfile: FlowFile) -> List[FlowFile]:
+        import json
+
+        from core.confirmation_store import (
+            UserInteractionStore,
+            parse_timeout_seconds,
+        )
+
+        conversation_id = getattr(self, "_runtime_conversation_id", "")
+        user_id = getattr(self, "_runtime_user_id", "")
+        if not conversation_id or not user_id:
+            raise TaskError(
+                "requestUserInput requires injected conversation and user runtime context")
+        message = str(self.config.get("message") or "").strip()
+        if not message:
+            raise TaskError("The 'message' parameter is required")
+        options_raw = self.config.get("options", [])
+        if isinstance(options_raw, str):
+            options = [item.strip() for item in options_raw.split(",") if item.strip()]
+        else:
+            options = options_raw
+        response_schema = self.config.get("response_schema", {})
+        if isinstance(response_schema, str):
+            try:
+                response_schema = json.loads(response_schema or "{}")
+            except ValueError as exc:
+                raise TaskError("response_schema must be valid JSON") from exc
+        try:
+            record = UserInteractionStore.instance().create_interaction(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                requester_kind="flow",
+                requester=str(self.config.get("requester_label") or self.TYPE),
+                message=message,
+                title=str(self.config.get("title") or ""),
+                kind=str(self.config.get("kind") or "text"),
+                options=options,
+                response_schema=response_schema,
+                expires_in_seconds=parse_timeout_seconds(
+                    self.config.get("expires_in", "")),
+            )
+        except ValueError as exc:
+            raise TaskError(f"Invalid user interaction: {exc}") from exc
+        flowfile.set_attribute("interaction.request_id", record["request_id"])
+        flowfile.set_attribute("interaction.signal_id", record["signal_id"])
+        flowfile.set_attribute("interaction.kind", record["kind"])
+        return [flowfile]
+
+    def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
+                            scope: str = "", agent_name: str = ""):
+        self._runtime_user_id = user_id
+        self._runtime_conversation_id = conversation_id
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "message": {"type": "string", "required": True,
+                        "description": "Prompt shown to the user"},
+            "title": {"type": "string", "required": False,
+                      "description": "Short pending-inbox title"},
+            "kind": {"type": "string", "required": True, "default": "text",
+                     "description": "confirm | choice | multi | text | multiline | "
+                                    "integer | decimal | date | datetime | file | form"},
+            "options": {"type": "array", "required": False,
+                        "description": "Choice values or value/label objects"},
+            "response_schema": {"type": "object", "required": False,
+                                "description": "Validation bounds or form fields"},
+            "expires_in": {"type": "string", "required": False,
+                           "description": "Optional durable expiry"},
+            "requester_label": {"type": "string", "required": False,
+                                "description": "Label shown in the pending inbox"},
+        }
+
+
+class NotifyUserTask(BaseTask):
+    """Publish a non-blocking user notification and route by delivery state."""
+
+    TYPE = "notifyUser"
+    VERSION = "1.0.0"
+    NAME = "Notify User"
+    DESCRIPTION = (
+        "Publishes a notification to the injected conversation without parking "
+        "the FlowFile. Routes to sent when a live client exists, queued when the "
+        "event is buffered for replay, and failure on delivery errors.")
+    ICON = "bell"
+    RELATIONSHIPS: ClassVar = ["sent", "queued", "failure"]
+
+    def execute(self, flowfile: FlowFile) -> List[FlowFile]:
+        from core.conversation_event_bus import ConversationEventBus
+
+        conversation_id = getattr(self, "_runtime_conversation_id", "")
+        user_id = getattr(self, "_runtime_user_id", "")
+        if not conversation_id or not user_id:
+            raise TaskError("notifyUser requires injected conversation and user runtime context")
+        message = str(self.config.get("message") or "").strip()
+        if not message:
+            raise TaskError("The 'message' parameter is required")
+        urgency = str(self.config.get("urgency") or "normal").strip().lower()
+        if urgency not in {"low", "normal", "high"}:
+            raise TaskError("urgency must be low, normal, or high")
+        bus = ConversationEventBus.instance()
+        relationship = "sent" if bus.has_subscribers(conversation_id) else "queued"
+        bus.publish_event(conversation_id, "notification", {
+            "message": message,
+            "urgency": urgency,
+            "user_id": user_id,
+            "source": "flow",
+        })
+        flowfile.set_attribute("notification.status", relationship)
+        flowfile.set_attribute("route.relationship", relationship)
+        return [flowfile]
+
+    def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
+                            scope: str = "", agent_name: str = ""):
+        self._runtime_user_id = user_id
+        self._runtime_conversation_id = conversation_id
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "message": {"type": "string", "required": True,
+                        "description": "Notification message"},
+            "urgency": {"type": "string", "required": False,
+                        "default": "normal", "description": "low | normal | high"},
+        }
+
+
 class DurableWaitTask(BaseTask):
     """Park the FlowFile durably until a signal fires (or timeout)."""
 
@@ -131,7 +270,10 @@ class DurableWaitTask(BaseTask):
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         from core.confirmation_store import (
-            ConfirmationStore, find_own_flow_ids, parse_timeout_seconds)
+            ConfirmationStore,
+            find_own_flow_ids,
+            parse_timeout_seconds,
+        )
         # Resumed FlowFile (re-injected at this very task): pass through.
         if flowfile.get_attribute("durable.wait.status", ""):
             return [flowfile]
@@ -184,6 +326,71 @@ class DurableWaitTask(BaseTask):
         }
 
 
+class DurableTimerTask(BaseTask):
+    """Park a FlowFile durably until a duration or absolute UTC time elapses."""
+
+    TYPE = "durableTimer"
+    VERSION = "1.0.0"
+    NAME = "Durable Timer"
+    DESCRIPTION = ("Parks a FlowFile without blocking a worker until either a "
+                   "duration or an absolute timezone-aware UTC time. Survives "
+                   "restarts and routes to elapsed or cancelled.")
+    ICON = "clock"
+    RELATIONSHIPS: ClassVar = ["elapsed", "cancelled", "failure"]
+
+    def execute(self, flowfile: FlowFile) -> List[FlowFile]:
+        from core.confirmation_store import (
+            ConfirmationStore,
+            find_own_flow_ids,
+            parse_timeout_seconds,
+            parse_utc_deadline,
+        )
+        status = flowfile.get_attribute("durable.timer.status", "")
+        if status:
+            flowfile.set_attribute("route.relationship", status)
+            return [flowfile]
+        duration = self.config.get("duration")
+        until = self.config.get("until")
+        has_duration = duration is not None and str(duration).strip() != ""
+        has_until = until is not None and str(until).strip() != ""
+        if has_duration == has_until:
+            raise TaskError(
+                "durableTimer requires exactly one of 'duration' or 'until'")
+        try:
+            if has_duration:
+                seconds = parse_timeout_seconds(duration)
+                if seconds <= 0:
+                    raise ValueError("duration must be > 0")
+                deadline_at = time.time() + seconds
+            else:
+                deadline_at = parse_utc_deadline(until)
+        except ValueError as exc:
+            raise TaskError(f"Invalid durableTimer deadline: {exc}") from exc
+        flowfile.set_attribute(
+            "durable.timer.scheduled_at",
+            datetime.fromtimestamp(deadline_at, timezone.utc).isoformat())
+        ids = find_own_flow_ids(self)
+        if not ids:
+            raise TaskError(
+                "durableTimer requires a DEPLOYED continuous flow: the parked "
+                "FlowFile must be re-injected after the deadline")
+        wait_id = ConfirmationStore.instance().park_timer(
+            instance_id=ids["instance_id"], task_id=ids["task_id"],
+            flowfile=flowfile, deadline_at=deadline_at)
+        if wait_id is None:
+            return [flowfile]
+        flowfile.set_attribute("durable.timer.id", wait_id)
+        return []
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "duration": {"type": "string", "required": False,
+                         "description": "Relative duration such as 30s, 5m, or 2h"},
+            "until": {"type": "string", "required": False,
+                      "description": "Absolute timezone-aware ISO-8601 timestamp"},
+        }
+
+
 class DurableNotifyTask(BaseTask):
     """Fire a durable signal (resumes parked durableWait FlowFiles)."""
 
@@ -229,5 +436,8 @@ class DurableNotifyTask(BaseTask):
 
 
 TaskFactory.register(RequestConfirmationTask)
+TaskFactory.register(RequestUserInputTask)
+TaskFactory.register(NotifyUserTask)
 TaskFactory.register(DurableWaitTask)
+TaskFactory.register(DurableTimerTask)
 TaskFactory.register(DurableNotifyTask)

@@ -1,14 +1,20 @@
 """Durable confirmations + durable flow wait/notify."""
 
 import json
+import sqlite3
 import time
 
 import pytest
 
 from core import FlowFile
 from core.confirmation_store import (
-    ConfirmationStore, find_own_flow_ids, normalize_options,
-    parse_timeout_seconds)
+    ConfirmationStore,
+    UserInteractionStore,
+    find_own_flow_ids,
+    normalize_options,
+    parse_timeout_seconds,
+    parse_utc_deadline,
+)
 
 
 @pytest.fixture
@@ -36,6 +42,114 @@ def test_parse_timeout_accepts_days_months_years():
         parse_timeout_seconds("soon")
     with pytest.raises(ValueError):
         parse_timeout_seconds(-5)
+
+
+def test_parse_utc_deadline_requires_an_absolute_timezone():
+    assert parse_utc_deadline("2030-01-02T03:04:05Z") == pytest.approx(1893553445)
+    with pytest.raises(ValueError, match="timezone"):
+        parse_utc_deadline("2030-01-02T03:04:05")
+
+
+def test_existing_wait_table_is_migrated_to_typed_continuations(tmp_path):
+    database = tmp_path / "legacy.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE durable_waits (wait_id TEXT PRIMARY KEY, "
+            "signal_id TEXT NOT NULL, instance_id TEXT NOT NULL, "
+            "task_id TEXT NOT NULL, flowfile_json TEXT NOT NULL, "
+            "created_at REAL NOT NULL, expires_at REAL NOT NULL DEFAULT 0, "
+            "status TEXT NOT NULL DEFAULT 'waiting', "
+            "resolution_json TEXT NOT NULL DEFAULT '')")
+    migrated = ConfirmationStore(database_path=database)
+    with migrated._connect() as connection:
+        columns = {
+            row["name"] for row in connection.execute(
+                "PRAGMA table_info(durable_waits)")}
+    assert "kind" in columns
+    assert "import_metadata_json" in columns
+
+
+def test_flowfile_wait_serialization_preserves_process_identity(store):
+    original = FlowFile(
+        content=b"payload", attributes={"a": "1"},
+        process_id="flowfile-stable-id")
+
+    restored = store._restore_flowfile(store._serialize_flowfile(original))
+
+    assert restored.process_id == original.process_id
+    assert restored.created_at == original.created_at
+    assert restored.get_content() == b"payload"
+    assert restored.get_attributes() == {"a": "1"}
+
+
+def test_imported_timer_is_idempotent_and_provenance_guarded(store):
+    metadata = {
+        "schema_version": 1,
+        "source_type": "legacy_plan",
+        "source_id": "p_1234",
+        "source_digest": "a" * 64,
+    }
+    arguments = {
+        "wait_id": "timer_legacy_" + "b" * 20,
+        "instance_id": "flowrun__legacy__fr_legacy_abc",
+        "task_id": "step_1_verify",
+        "flowfile": FlowFile(process_id="legacy-flowfile"),
+        "created_at": 10.0,
+        "deadline_at": 20.0,
+        "import_metadata": metadata,
+    }
+
+    first = store.import_timer(**arguments)
+    second = store.import_timer(**arguments)
+
+    assert first == second
+    assert first["status"] == "waiting"
+    assert first["import_metadata"]["source_id"] == "p_1234"
+    with pytest.raises(ValueError, match="different imported timer"):
+        store.import_timer(**{
+            **arguments,
+            "task_id": "step_2_verify",
+        })
+    with pytest.raises(ValueError, match="provenance"):
+        store.delete_imported_wait(
+            arguments["wait_id"],
+            import_metadata={**metadata, "source_id": "different"},
+        )
+    assert store.delete_imported_wait(
+        arguments["wait_id"], import_metadata=metadata) is True
+    assert store.delete_imported_wait(
+        arguments["wait_id"], import_metadata=metadata) is False
+
+
+def test_existing_confirmation_table_is_migrated_in_place(tmp_path):
+    database = tmp_path / "legacy-confirmations.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE confirmations (request_id TEXT PRIMARY KEY, "
+            "conversation_id TEXT NOT NULL, user_id TEXT NOT NULL, "
+            "requester_kind TEXT NOT NULL, requester TEXT NOT NULL DEFAULT '', "
+            "title TEXT NOT NULL DEFAULT '', message TEXT NOT NULL, "
+            "mode TEXT NOT NULL DEFAULT 'confirm', "
+            "options_json TEXT NOT NULL DEFAULT '[]', created_at REAL NOT NULL, "
+            "expires_at REAL NOT NULL DEFAULT 0, "
+            "status TEXT NOT NULL DEFAULT 'pending', "
+            "answer_json TEXT NOT NULL DEFAULT '', "
+            "answered_by TEXT NOT NULL DEFAULT '', answered_at REAL NOT NULL DEFAULT 0)")
+        connection.execute(
+            "INSERT INTO confirmations VALUES "
+            "('req_legacy','c1','u1','flow','legacy','Old','Continue?',"
+            "'confirm','[]',1,0,'pending','','',0)")
+    migrated = UserInteractionStore(database_path=database)
+    record = migrated.get_interaction("req_legacy")
+    assert record["kind"] == "confirm"
+    assert record["contract_version"] == 1
+    assert record["signal_id"] == "confirmation:req_legacy"
+    assert migrated.list_interactions(user_id="u1")[0]["request_id"] == "req_legacy"
+    with migrated._connect() as connection:
+        marker = connection.execute(
+            "SELECT value FROM confirmation_store_metadata "
+            "WHERE key='user_interaction_schema'").fetchone()["value"]
+    assert marker == "1"
 
 
 def test_normalize_options_mixes_shapes():
@@ -79,6 +193,68 @@ def test_choice_and_multi_validate_against_options(store, monkeypatch):
         store.respond(rec["request_id"], ["red", "purple"])
     out = store.respond(rec["request_id"], ["red", "blue"])
     assert out["answer"] == ["red", "blue"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "schema", "answer", "normalized"),
+    [
+        ("text", {"min_length": 2, "max_length": 8}, " hello ", " hello "),
+        ("multiline", {"max_length": 40}, "one\ntwo", "one\ntwo"),
+        ("integer", {"minimum": 2, "maximum": 5}, "3", 3),
+        ("decimal", {"minimum": 0.5, "maximum": 2}, "1.25", 1.25),
+        ("date", {}, "2030-01-02", "2030-01-02"),
+        ("datetime", {}, "2030-01-02T03:04:05Z", "2030-01-02T03:04:05+00:00"),
+        ("file", {}, {"file_id": "abc123", "name": "report.pdf"},
+         {"file_id": "abc123", "name": "report.pdf"}),
+    ],
+)
+def test_typed_interactions_validate_and_normalize(
+    store, monkeypatch, kind, schema, answer, normalized,
+):
+    monkeypatch.setattr(ConfirmationStore, "_resume_requester",
+                        lambda self, rec: None)
+    record = store.create_interaction(
+        conversation_id="c1", user_id="u1", requester_kind="flow",
+        requester="requestUserInput", message="Value?", kind=kind,
+        response_schema=schema,
+    )
+    assert record["contract_version"] == 1
+    assert record["signal_id"] == f"interaction:{record['request_id']}"
+    assert store.respond_interaction(record["request_id"], answer)["answer"] == normalized
+
+
+def test_typed_interactions_reject_invalid_values_without_resuming(store, monkeypatch):
+    resumed = []
+    monkeypatch.setattr(ConfirmationStore, "_resume_requester",
+                        lambda self, rec: resumed.append(rec))
+    integer = store.create_interaction(
+        conversation_id="c1", user_id="u1", requester_kind="flow",
+        requester="requestUserInput", message="Count?", kind="integer",
+        response_schema={"minimum": 1, "maximum": 3},
+    )
+    with pytest.raises(ValueError, match="maximum"):
+        store.respond_interaction(integer["request_id"], 4)
+    assert store.get_interaction(integer["request_id"])["status"] == "pending"
+    assert resumed == []
+
+
+def test_structured_form_validates_required_fields_and_types(store, monkeypatch):
+    monkeypatch.setattr(ConfirmationStore, "_resume_requester",
+                        lambda self, rec: None)
+    record = store.create_interaction(
+        conversation_id="c1", user_id="u1", requester_kind="flow",
+        requester="requestUserInput", message="Deployment", kind="form",
+        response_schema={"fields": [
+            {"name": "environment", "type": "choice", "required": True,
+             "options": ["staging", "production"]},
+            {"name": "replicas", "type": "integer", "minimum": 1},
+        ]},
+    )
+    with pytest.raises(ValueError, match="environment"):
+        store.respond_interaction(record["request_id"], {"replicas": 2})
+    answered = store.respond_interaction(
+        record["request_id"], {"environment": "staging", "replicas": "2"})
+    assert answered["answer"] == {"environment": "staging", "replicas": 2}
 
 
 def test_answer_resolves_the_confirmation_signal(store, monkeypatch):
@@ -195,6 +371,17 @@ def test_notify_before_wait_passes_through_immediately(store):
                            task_id="t", flowfile=FlowFile()) is not None
 
 
+def test_interaction_resolution_stamps_normalized_route_attributes(store):
+    store.notify_signal("interaction:req_1", {
+        "status": "answered", "answer": ["red", "blue"]})
+    ff = FlowFile()
+    assert store.park_wait(
+        signal_id="interaction:req_1", instance_id="i", task_id="t",
+        flowfile=ff) is None
+    assert ff.get_attribute("interaction.status") == "answered"
+    assert json.loads(ff.get_attribute("interaction.answer")) == ["red", "blue"]
+
+
 def test_delivery_waits_for_the_flow_to_run_again(store, monkeypatch):
     from core.executor_registry import ExecutorRegistry
 
@@ -230,6 +417,31 @@ def test_wait_timeout_delivers_with_timeout_status(store, fake_registry):
     assert restored.get_attribute("durable.wait.status") == "timeout"
 
 
+def test_timer_elapsed_delivery_is_typed_and_restart_safe(store, fake_registry):
+    wait_id = store.park_timer(
+        instance_id="inst1", task_id="timer", flowfile=FlowFile(content=b"x"),
+        deadline_at=time.time() + 0.01)
+    assert wait_id and store.has_pending_waits("inst1")
+    time.sleep(0.05)
+    store.sweep_once()
+    restored, entry = fake_registry.injected[0]
+    assert entry == "timer"
+    assert restored.get_content() == b"x"
+    assert restored.get_attribute("durable.timer.status") == "elapsed"
+    assert restored.get_attribute("route.relationship") == "elapsed"
+    assert store.has_pending_waits("inst1") is False
+
+
+def test_timer_cancel_routes_cancelled(store, fake_registry):
+    wait_id = store.park_timer(
+        instance_id="inst1", task_id="timer", flowfile=FlowFile(),
+        deadline_at=time.time() + 60)
+    assert store.cancel_wait(wait_id) is True
+    restored, _ = fake_registry.injected[0]
+    assert restored.get_attribute("durable.timer.status") == "cancelled"
+    assert restored.get_attribute("route.relationship") == "cancelled"
+
+
 # ── Flow tasks ───────────────────────────────────────────────────
 
 def test_durable_wait_task_parks_and_resumes(store, monkeypatch, fake_registry):
@@ -260,6 +472,21 @@ def test_durable_wait_task_requires_deployed_flow(store, monkeypatch):
         DurableWaitTask({"signal_id": "s"}).execute(FlowFile())
 
 
+def test_durable_timer_task_parks_without_sleeping(store, monkeypatch, fake_registry):
+    import core.confirmation_store as mod
+    monkeypatch.setattr(mod.ConfirmationStore, "instance",
+                        classmethod(lambda cls: store))
+    monkeypatch.setattr(mod, "find_own_flow_ids",
+                        lambda task: {"instance_id": "inst1", "task_id": "timer"})
+    from tasks.control.durable_confirm import DurableTimerTask
+    ff = FlowFile(content=b"payload")
+    assert DurableTimerTask({"duration": "30s"}).execute(ff) == []
+    assert store.list_waits(status="waiting")[0]["kind"] == "timer"
+    with pytest.raises(Exception, match="exactly one"):
+        DurableTimerTask({"duration": "1s", "until": "2030-01-01T00:00:00Z"}).execute(
+            FlowFile())
+
+
 def test_request_confirmation_task_stamps_signal(store, monkeypatch):
     import core.confirmation_store as mod
     monkeypatch.setattr(mod.ConfirmationStore, "instance",
@@ -277,6 +504,54 @@ def test_request_confirmation_task_stamps_signal(store, monkeypatch):
     rec = store.get_confirmation(request_id)
     assert rec["requester_kind"] == "flow"
     assert [o["value"] for o in rec["options"]] == ["go", "stop", "retry"]
+
+
+def test_request_user_input_task_uses_only_injected_scope(store, monkeypatch):
+    import core.confirmation_store as mod
+    monkeypatch.setattr(mod.UserInteractionStore, "instance",
+                        classmethod(lambda cls: store))
+    from tasks.control.durable_confirm import RequestUserInputTask
+    task = RequestUserInputTask({
+        "message": "How many?", "kind": "integer",
+        "response_schema": {"minimum": 1, "maximum": 5},
+        "conversation_id": "attacker-conversation", "user_id": "attacker",
+    })
+    task.set_runtime_context(user_id="u1", conversation_id="c9")
+    ff = FlowFile(attributes={"conversation_id": "flowfile-conversation"})
+    out = task.execute(ff)[0]
+    request_id = out.get_attribute("interaction.request_id")
+    record = store.get_interaction(request_id)
+    assert record["conversation_id"] == "c9"
+    assert record["user_id"] == "u1"
+    assert record["kind"] == "integer"
+    assert out.get_attribute("interaction.signal_id") == f"interaction:{request_id}"
+
+
+def test_notify_user_task_routes_sent_or_queued_without_parking(monkeypatch):
+    from core.conversation_event_bus import ConversationEventBus
+    from tasks.control.durable_confirm import NotifyUserTask
+
+    class _Bus:
+        def __init__(self, live):
+            self.live = live
+            self.events = []
+
+        def has_subscribers(self, conversation_id):
+            return self.live
+
+        def publish_event(self, conversation_id, event_type, payload):
+            self.events.append((conversation_id, event_type, payload))
+
+    for live, expected in ((True, "sent"), (False, "queued")):
+        bus = _Bus(live)
+        monkeypatch.setattr(
+            ConversationEventBus, "instance", classmethod(lambda cls, bus=bus: bus))
+        task = NotifyUserTask({"message": "Finished", "urgency": "high"})
+        task.set_runtime_context(user_id="u1", conversation_id="c1")
+        ff = task.execute(FlowFile())[0]
+        assert ff.get_attribute("route.relationship") == expected
+        assert ff.get_attribute("notification.status") == expected
+        assert bus.events[0][1] == "notification"
 
 
 def test_durable_notify_task_fires_signal(store, monkeypatch):
@@ -338,6 +613,41 @@ def test_actions_list_respond_and_authz(store, monkeypatch):
     assert data["ok"] and data["confirmation"]["answer"] == "yes"
     assert _handle_confirmations(None, "unrelated", {}, None, "u1",
                                  FlowFile()) is None
+
+
+def test_generic_interaction_actions_are_typed_and_fail_closed(store, monkeypatch):
+    import core.confirmation_store as mod
+    monkeypatch.setattr(mod.UserInteractionStore, "instance",
+                        classmethod(lambda cls: store))
+    monkeypatch.setattr(ConfirmationStore, "_resume_requester",
+                        lambda self, rec: None)
+    from tasks.ai.actions.confirmations import _handle_confirmations
+    record = store.create_interaction(
+        conversation_id="c1", user_id="u1", requester_kind="flow",
+        requester="requestUserInput", message="Count?", kind="integer",
+        response_schema={"minimum": 1, "maximum": 3},
+    )
+
+    def call(action, body, user_id):
+        ff = FlowFile()
+        _handle_confirmations(None, action, body, None, user_id, ff)
+        return json.loads(ff.get_content().decode()), ff
+
+    listed, _ = call("list_interactions", {}, "u1")
+    assert listed["interactions"][0]["kind"] == "integer"
+    denied, ff = call("respond_interaction", {
+        "request_id": record["request_id"], "answer": 2}, "intruder")
+    assert denied["error"] == "Unknown user interaction request"
+    assert ff.get_attribute("http.response.status") == "404"
+    invalid, _ = call("respond_interaction", {
+        "request_id": record["request_id"], "answer": 9}, "u1")
+    assert "maximum" in invalid["error"]
+    answered, _ = call("respond_interaction", {
+        "request_id": record["request_id"], "answer": "2"}, "u1")
+    assert answered["interaction"]["answer"] == 2
+    late, _ = call("respond_interaction", {
+        "request_id": record["request_id"], "answer": "2"}, "u1")
+    assert "already answered" in late["error"]
 
 
 def test_find_own_flow_ids_matches_identity(monkeypatch):

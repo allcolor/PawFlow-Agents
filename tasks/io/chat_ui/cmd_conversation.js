@@ -287,6 +287,22 @@ function cmdDiff(text, parts) {
 
 function cmdPlan(text, parts, cmd) {
   const arg = text.slice(cmd.length).trim();
+  if (window.PAWFLOW_WORKFLOW_PROPOSALS_ENABLED) {
+    if (!arg || arg === 'list') {
+      if (typeof loadUiSurfaces === 'function') loadUiSurfaces(conversationId);
+      if (arg === 'list') addMsg('system', 'Workflow proposals are shown in this conversation.');
+      return true;
+    }
+    const proposalMsg = '[Create a canonical workflow proposal using the propose_workflow tool. Analyze the request, build the complete FlowDefinition, then call propose_workflow.]\n\n' + arg;
+    addMsg('user', '/plan ' + arg);
+    const proposalBody = { message: proposalMsg };
+    if (conversationId) proposalBody.conversation_id = conversationId;
+    fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(proposalBody) })
+      .then(r => r.json())
+      .then(data => { if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); } })
+      .catch(e => addMsg('error', e.message));
+    return true;
+  }
   if (!arg || arg === 'list') {
     const panel = document.getElementById('plansPanel');
     if (panel.style.display === 'none') panel.style.display = 'block';

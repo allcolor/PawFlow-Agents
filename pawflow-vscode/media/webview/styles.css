@@ -78,3 +78,21 @@ code { font-family: var(--vscode-editor-font-family); }
 .trace-entry.tool { color: #f4a261; }
 .trace-entry.done { color: #3fb950; }
 .trace-content { margin-top: 4px; padding: 4px; background: var(--vscode-textBlockQuote-background); border-radius: 3px; white-space: pre-wrap; font-size: 11px; color: var(--vscode-editor-foreground); }
+.ui-surface-card { border: 1px solid var(--vscode-panel-border); background: var(--vscode-textBlockQuote-background); }
+.ui-surface-status { float: right; color: var(--vscode-descriptionForeground); font-size: 10px; }
+.ui-surface-body { white-space: pre-wrap; margin: 5px 0; color: var(--vscode-descriptionForeground); }
+.ui-surface-field { display: grid; gap: 3px; margin: 6px 0; font-size: 11px; }
+.ui-surface-field textarea, .ui-surface-field input { width: 100%; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 3px; padding: 4px; }
+.ui-surface-actions { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ui-surface-actions button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; border-radius: 3px; padding: 4px 8px; cursor: pointer; }
+.ui-surface-actions button:disabled { opacity: .5; cursor: default; }
+.ui-surface-handoff { width: 100%; color: var(--vscode-descriptionForeground); font-size: 10px; }
+.interaction-card { border: 1px solid var(--vscode-inputValidation-warningBorder); background: var(--vscode-inputValidation-warningBackground); }
+.interaction-message { margin: 5px 0; white-space: pre-wrap; }
+.interaction-actions { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.interaction-actions button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; border-radius: 3px; padding: 4px 8px; cursor: pointer; }
+.interaction-input { min-width: 160px; max-width: 100%; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 3px; padding: 4px; }
+.interaction-form { display: grid; gap: 6px; width: 100%; }
+.interaction-field { display: grid; gap: 3px; font-size: 11px; }
+.interaction-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.interaction-cancel { background: var(--vscode-button-secondaryBackground) !important; color: var(--vscode-button-secondaryForeground) !important; }

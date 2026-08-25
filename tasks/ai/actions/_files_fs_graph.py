@@ -92,6 +92,8 @@ def _static_flow_graph(raw: Dict[str, Any]):
     for tid, tdef in (raw.get("tasks") or {}).items():
         nodes[tid] = {
             "type": tdef.get("type", "?"),
+            "label": tdef.get("label", tid),
+            "description": tdef.get("description", ""),
             "state": "stopped",
             "in": 0,
             "out": 0,
@@ -130,6 +132,32 @@ def _static_flow_graph(raw: Dict[str, Any]):
     _add_declared_ports_to_graph(raw, nodes, edges)
     _add_runtime_links_to_graph(raw, nodes, edges)
     return nodes, edges
+
+
+def _apply_definition_node_metadata(raw: Dict[str, Any],
+                                    nodes: Dict[str, Any]) -> None:
+    """Overlay human presentation metadata on static or live graph nodes."""
+    for task_id, task in (raw.get("tasks") or {}).items():
+        if task_id not in nodes or not isinstance(task, dict):
+            continue
+        nodes[task_id]["label"] = task.get("label", task_id)
+        nodes[task_id]["description"] = task.get("description", "")
+    for group_id, group in (raw.get("groups") or {}).items():
+        if group_id not in nodes or not isinstance(group, dict):
+            continue
+        nodes[group_id]["description"] = group.get("description", "")
+
+
+def _graph_layout(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the selected presentation layout without changing the flow."""
+    layouts = raw.get("layouts")
+    if isinstance(layouts, dict) and layouts:
+        layout_id = str(raw.get("default_layout_id") or "")
+        selected = layouts.get(layout_id)
+        if isinstance(selected, dict):
+            return selected
+    legacy = raw.get("layout")
+    return legacy if isinstance(legacy, dict) else {}
 
 
 def _add_declared_ports_to_graph(raw: Dict[str, Any], nodes: Dict[str, Any],

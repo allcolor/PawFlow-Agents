@@ -56,7 +56,10 @@ _DRAFT_ID_RE = re.compile(r"^d_[0-9a-f]{12}$")
 _REPO_KEYS = {"fqn", "package", "created_at", "updated_at", "_scope"}
 # Top-level collections diffed by member, everything else is metadata.
 _COLLECTIONS = ("tasks", "services", "parameters", "groups")
-_STRUCTURAL = set(_COLLECTIONS) | {"relations", "entries", "exits", "layout", "version"}
+_STRUCTURAL = set(_COLLECTIONS) | {
+    "relations", "entries", "exits", "layout", "layouts",
+    "layout_schema_version", "default_layout_id", "version",
+}
 
 
 class DraftNotFound(KeyError):
@@ -312,6 +315,36 @@ class FlowAuthoringService:
                                conv_id=conv_id, base_version="",
                                definition=definition)
 
+    def new_from_definition(
+        self, package: str, name: str, version: str, scope: str,
+        user_id: str, definition: Dict[str, Any], conv_id: str = "",
+    ) -> Dict[str, Any]:
+        """Create an unpublished draft from a complete canonical definition."""
+        self._check_identifiers(package, name, version)
+        scope = normalize_scope(scope)
+        if scope == "conv" and not conv_id:
+            raise ValueError("conv_id is required for conversation scope")
+        if not isinstance(definition, dict):
+            raise ValueError("definition must be a JSON object")
+        flow = f"{package}.{name}"
+        if self._flow_exists(flow, scope, user_id, conv_id):
+            raise ValueError(f"Flow already exists: {flow}")
+        canonical = copy.deepcopy(definition)
+        canonical["name"] = str(canonical.get("name") or name)
+        canonical["version"] = version
+        canonical.setdefault("tasks", {})
+        canonical.setdefault("services", {})
+        canonical.setdefault("parameters", {})
+        canonical.setdefault("groups", {})
+        canonical.setdefault("relations", [])
+        canonical.setdefault("entries", [])
+        canonical.setdefault("exits", [])
+        return self._new_draft(
+            user_id=user_id, flow=flow, scope=scope, conv_id=conv_id,
+            base_version="", definition=canonical,
+            extra={"new_flow": True},
+        )
+
     def fork(self, source_fqn: str, source_scope: str, package: str, name: str,
              version: str, scope: str, user_id: str, conv_id: str = "",
              source_user_id: str = "", source_conv_id: str = "") -> Dict[str, Any]:
@@ -418,6 +451,38 @@ class FlowAuthoringService:
             self._write_draft(draft)
             return copy.deepcopy(draft)
 
+    def apply_declarative_operation(
+        self, draft_id: str, user_id: str, operation: Dict[str, Any],
+        base_revision: int, *, preview: bool = False,
+    ) -> Dict[str, Any]:
+        """Apply one server-owned semantic edit to an exact draft revision."""
+        from core.declarative_flow.operations import apply_operation
+        draft = self.load_draft(draft_id, user_id)
+        current = int(draft.get("revision", 0) or 0)
+        try:
+            expected = int(base_revision)
+        except (TypeError, ValueError):
+            raise ValueError("base_revision is required")
+        if expected != current:
+            raise DraftConflict(draft_id, expected, current)
+        definition, change = apply_operation(draft["definition"], operation)
+        validation = self.validate(definition)
+        result = {
+            "draft_id": draft_id,
+            "base_revision": current,
+            "definition": definition,
+            "change": change,
+            "validation": validation,
+        }
+        if preview:
+            result["revision"] = current
+            return result
+        saved = self.save_draft(
+            draft_id, user_id, definition, base_revision=current)
+        result["revision"] = saved["revision"]
+        result["updated_at"] = saved["updated_at"]
+        return result
+
     def discard_draft(self, draft_id: str, user_id: str) -> bool:
         with self._lock:
             try:
@@ -482,7 +547,9 @@ class FlowAuthoringService:
             for rel in rels or []:
                 if isinstance(rel, dict):
                     norm = normalize_relation(rel)
-                    out[relation_connection_id(norm["from"], norm["type"], norm["to"])] = rel
+                    ident = str(rel.get("relation_id") or "") or relation_connection_id(
+                        norm["from"], norm["type"], norm["to"])
+                    out[ident] = rel
             return out
 
         before_rel, after_rel = _rel_map(base.get("relations")), _rel_map(definition.get("relations"))
@@ -505,6 +572,33 @@ class FlowAuthoringService:
 
         if (base.get("layout") or {}) != (definition.get("layout") or {}):
             _emit("changed", "layout", "layout", impact=False)
+        if (
+            base.get("layout_schema_version")
+            != definition.get("layout_schema_version")
+        ):
+            _emit("changed", "layout_schema", "layout_schema", impact=False)
+        if (
+            base.get("default_layout_id")
+            != definition.get("default_layout_id")
+        ):
+            _emit("changed", "layout_default", "default_layout_id", impact=False)
+        before_layouts = base.get("layouts") or {}
+        after_layouts = definition.get("layouts") or {}
+        if not isinstance(before_layouts, dict):
+            before_layouts = {}
+        if not isinstance(after_layouts, dict):
+            after_layouts = {}
+        for layout_id in sorted(set(before_layouts) | set(after_layouts)):
+            if layout_id not in before_layouts:
+                _emit("added", "layout", layout_id, impact=False)
+            elif layout_id not in after_layouts:
+                _emit("removed", "layout", layout_id, impact=False)
+            elif before_layouts[layout_id] != after_layouts[layout_id]:
+                _emit(
+                    "changed", "layout", layout_id, impact=False,
+                    fields=FlowAuthoringService._changed_fields(
+                        before_layouts[layout_id], after_layouts[layout_id]),
+                )
 
         meta_keys = (set(base) | set(definition)) - _STRUCTURAL - _REPO_KEYS
         for key in sorted(meta_keys):

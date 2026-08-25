@@ -30,6 +30,8 @@ from tasks.ai.actions.files_fs import _handle_files_fs
 from tasks.ai.actions.confirmations import _handle_confirmations
 from tasks.ai.actions.flow_runtime import _handle_flow_runtime
 from tasks.ai.actions.flow_editor import _handle_flow_editor
+from tasks.ai.actions.ui_surfaces import _handle_ui_surfaces
+from tasks.ai.actions.workflow_proposals import _handle_workflow_proposals
 from tasks.ai.actions.misc import _handle_misc
 from tasks.ai.actions.account_linking import _handle_account_linking
 from tasks.ai.actions.memory_prompts import _handle_memory_prompts
@@ -281,6 +283,8 @@ _ACTION_HANDLERS = [
     _handle_confirmations,
     _handle_flow_runtime,
     _handle_flow_editor,
+    _handle_ui_surfaces,
+    _handle_workflow_proposals,
     _handle_misc,
     _handle_account_linking,
     _handle_memory_prompts,

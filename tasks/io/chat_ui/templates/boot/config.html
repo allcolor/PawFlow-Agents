@@ -4,4 +4,5 @@ const AGENT_PATH = {{ agent_path|tojson }};
 const API = window.location.origin + {{ agent_path|tojson }};
 const SSE_URL = window.location.origin + {{ sse_path|tojson }};
 const LOGIN_URL = {{ login_url|tojson }};
+window.PAWFLOW_WORKFLOW_PROPOSALS_ENABLED={{ workflow_proposals_enabled|tojson }};
 </script>

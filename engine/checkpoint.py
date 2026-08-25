@@ -35,18 +35,17 @@ import json
 import logging
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
+import core.paths as _paths
 from core import FlowFile
 
 logger = logging.getLogger(__name__)
 
 # Max content size to inline as base64 in checkpoint JSON
 INLINE_MAX_BYTES = 256 * 1024  # 256KB
-
-import core.paths as _paths
-
 
 class CheckpointManager:
     """Manages periodic checkpointing and recovery of executor state.
@@ -76,7 +75,9 @@ class CheckpointManager:
         self._content_dir.mkdir(exist_ok=True)
 
     def save_checkpoint(self, connections, task_states_dict: Dict[str, dict],
-                        flow_version: int) -> str:
+                        flow_version: int,
+                        task_checkpoint_data: Optional[Dict[str, dict]] = None
+                        ) -> str:
         """Save a checkpoint of all queue contents and task states.
 
         Args:
@@ -93,11 +94,13 @@ class CheckpointManager:
             conn_list = connections
 
         checkpoint = {
+            "checkpoint_schema_version": 2,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "flow_id": self._flow_id,
             "flow_version": flow_version,
             "queues": [],
             "task_states": task_states_dict,
+            "task_checkpoint_data": task_checkpoint_data or {},
         }
 
         for conn in conn_list:
@@ -111,7 +114,7 @@ class CheckpointManager:
             # Peek all FlowFiles without removing (no stat corruption)
             all_ffs = conn.peek_all(limit=conn.max_queue_size)
             for ff in all_ffs:
-                ff_data = self._serialize_flowfile(ff)
+                ff_data = self.serialize_flowfile(ff)
                 queue_data["flowfiles"].append(ff_data)
 
             if queue_data["flowfiles"]:
@@ -176,7 +179,7 @@ class CheckpointManager:
                    queue_data.get("relationship") or "success")
             flowfiles = []
             for ff_data in queue_data.get("flowfiles", []):
-                ff = self._deserialize_flowfile(ff_data)
+                ff = self.deserialize_flowfile(ff_data)
                 if ff:
                     flowfiles.append(ff)
             result[key] = flowfiles
@@ -239,11 +242,12 @@ class CheckpointManager:
                 except OSError:
                     pass
 
-    def _serialize_flowfile(self, ff: FlowFile) -> Dict[str, Any]:
+    def serialize_flowfile(self, ff: FlowFile) -> Dict[str, Any]:
         """Serialize a FlowFile for checkpointing."""
         data = {
             "process_id": ff.process_id,
             "attributes": ff.get_attributes(),
+            "created_at": ff.created_at.isoformat(),
             "size": ff.size(),
         }
 
@@ -259,7 +263,7 @@ class CheckpointManager:
 
         return data
 
-    def _deserialize_flowfile(self, data: Dict[str, Any]) -> Optional[FlowFile]:
+    def deserialize_flowfile(self, data: Dict[str, Any]) -> Optional[FlowFile]:
         """Deserialize a FlowFile from checkpoint data."""
         try:
             if "content_b64" in data:
@@ -278,11 +282,20 @@ class CheckpointManager:
             ff = FlowFile(
                 content=content,
                 attributes=data.get("attributes", {}),
+                process_id=data.get("process_id") or None,
+                created_at=(
+                    datetime.fromisoformat(data["created_at"])
+                    if data.get("created_at") else None
+                ),
             )
             return ff
         except Exception as e:
             logger.error(f"Failed to deserialize FlowFile: {e}")
             return None
+
+    # Kept for callers that used the old private helpers.
+    _serialize_flowfile = serialize_flowfile
+    _deserialize_flowfile = deserialize_flowfile
 
     def _trim_checkpoints(self):
         """Keep only the most recent checkpoints."""

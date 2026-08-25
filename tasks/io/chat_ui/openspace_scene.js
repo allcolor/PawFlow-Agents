@@ -379,8 +379,10 @@ const OSV_POSTERS = [
    () => { if (typeof showUsageCostPanel === 'function') showUsageCostPanel(); }],
   ['context', '\u{1F9FE}', 'context',
    () => { if (typeof cmdShowContext === 'function') cmdShowContext(); }],
-  ['plans', '\u{1F5C2}\uFE0F', 'plans',
-   () => { if (typeof togglePlansPanel === 'function') togglePlansPanel(); }],
+  ...(window.PAWFLOW_WORKFLOW_PROPOSALS_ENABLED ? [] : [[
+    'plans', '\u{1F5C2}\uFE0F', 'plans',
+    () => { if (typeof togglePlansPanel === 'function') togglePlansPanel(); },
+  ]]),
   ['scheduled', '\u23F0', 'scheduledTasks',
    () => { if (typeof toggleSchedsPanel === 'function') toggleSchedsPanel(); }],
   ['files', '\u{1F4C1}', 'files',

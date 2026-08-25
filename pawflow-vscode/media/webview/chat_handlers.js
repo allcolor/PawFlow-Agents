@@ -240,6 +240,15 @@ function handleSSE(event) {
       showAskUser(data);
       break;
 
+    case 'interaction_request':
+    case 'confirmation_request':
+    case 'interaction_answered':
+    case 'confirmation_answered':
+      if (typeof vscodeInteractionEvent === 'function') {
+        vscodeInteractionEvent(evType, data);
+      }
+      break;
+
     case 'sub_agent_start':
       addMsg('system', 'Sub-agent [' + agent + '] started');
       break;
@@ -260,6 +269,10 @@ function handleSSE(event) {
 
     case 'notification':
       addMsg('system', data.message || '');
+      break;
+
+    case 'ui_surface_upserted':
+      if (typeof vscodeUiSurfaceEvent === 'function') vscodeUiSurfaceEvent(data);
       break;
 
     case 'command_result': {

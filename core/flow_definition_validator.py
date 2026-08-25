@@ -200,7 +200,7 @@ class FlowDefinitionValidator:
             return cls._report(problems)
 
         if task_types is None or service_types is None:
-            from core import TaskFactory, ServiceFactory
+            from core import ServiceFactory, TaskFactory
             if task_types is None:
                 task_types = set(TaskFactory.list_types())
             if service_types is None:
@@ -240,6 +240,17 @@ class FlowDefinitionValidator:
         # synthesizes an executeFlow task under the group id).
         endpoint_ids = set(all_task_ids)
 
+        from core.flow_feature_flags import declarative_workflows_enabled
+        from core.flow_layout_contracts import (
+            validate_executor_profiles,
+            validate_flow_presentation,
+        )
+        problems.extend(validate_flow_presentation(
+            definition,
+            require_relation_ids=declarative_workflows_enabled(),
+        ))
+        problems.extend(validate_executor_profiles(definition))
+
         cls._validate_services(services, service_types, problems)
         cls._validate_tasks(tasks, task_types, services, problems)
         group_rows = list(_iter_groups(groups))
@@ -275,6 +286,46 @@ class FlowDefinitionValidator:
                             f"Process group '{group_id}' {field} entry "
                             f"'{port_id}' is not a {expected_type} task",
                             entity_type="group", entity_id=group_id, field=field))
+
+        if definition.get("execution_mode") == "batch":
+            durable_types = {"durableWait", "durableTimer"}
+            all_tasks = list(tasks.items())
+            for _, group in group_rows:
+                if not group.get("flow_ref") and isinstance(group.get("tasks"), dict):
+                    all_tasks.extend(group["tasks"].items())
+            for task_id, task in all_tasks:
+                if isinstance(task, dict) and task.get("type") in durable_types:
+                    problems.append(problem(
+                        ERROR, "durable_wait_in_batch_flow",
+                        f"Task '{task_id}' requires a continuous or durable one-shot "
+                        "execution mode",
+                        entity_type="task", entity_id=str(task_id),
+                        field="execution_mode"))
+
+        all_tasks = list(tasks.items())
+        for _, group in group_rows:
+            if not group.get("flow_ref") and isinstance(group.get("tasks"), dict):
+                all_tasks.extend(group["tasks"].items())
+        terminal_ids = [
+            str(task_id) for task_id, task in all_tasks
+            if isinstance(task, dict) and task.get("type") == "completeFlowRun"
+        ]
+        run_contract = definition.get("run_contract") or {}
+        durable_one_shot = (
+            definition.get("execution_mode") == "durable_one_shot"
+            or (isinstance(run_contract, dict)
+                and run_contract.get("mode") == "durable_one_shot"))
+        if durable_one_shot and len(terminal_ids) != 1:
+            problems.append(problem(
+                ERROR, "invalid_flow_run_terminal_count",
+                "durable_one_shot flows require exactly one completeFlowRun task",
+                field="run_contract"))
+        elif terminal_ids and not durable_one_shot:
+            problems.append(problem(
+                ERROR, "complete_flow_run_without_contract",
+                "completeFlowRun requires a durable_one_shot run contract",
+                entity_type="task", entity_id=terminal_ids[0],
+                field="run_contract"))
 
         connected = set()
         seen_connections = set()

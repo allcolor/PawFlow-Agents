@@ -70,8 +70,8 @@
   @keyframes edgeFlow { to { stroke-dashoffset: -20; } }
 
   /* Custom node */
-  .flow-node { background: #1a1a2e; border: 2px solid #333; border-radius: 8px; padding: 8px 12px;
-    min-width: 150px; font-size: 11px; text-align: center; color: #e0e0e0; transition: border-color 0.3s, background 0.3s; }
+  .flow-node { background: #1a1a2e; border: 2px solid #333; border-radius: 8px; padding: 10px 14px;
+    width: 210px; font-size: 11px; text-align: left; color: #e0e0e0; transition: border-color 0.3s, background 0.3s; }
   .flow-node.running { border-color: #28a745; }
   .flow-node.error { border-color: #dc3545; }
   .flow-node.disabled { border-color: #343a40; opacity: 0.5; }
@@ -79,7 +79,9 @@
   .flow-node.runtime-port { border-color: #b088ff; border-style: dashed; background: #201a35; }
   .flow-node.in-flight { border-style: dashed; border-color: #28a745; box-shadow: 0 0 10px rgba(40,167,69,0.5); animation: pulse 1.5s infinite; }
   .flow-node .node-type { font-size: 10px; color: #888; margin-bottom: 2px; }
-  .flow-node .node-id { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+  .flow-node .node-id { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .flow-node .node-description { color: #aeb7d5; font-size: 10px; line-height: 1.35;
+    margin: 5px 0 8px; min-height: 27px; }
   .flow-node .node-stats { font-size: 10px; color: #666; display: flex; justify-content: center; gap: 8px; }
   .flow-node .node-stats span { display: flex; align-items: center; gap: 2px; }
   .flow-node .node-error { font-size: 9px; color: #e94560; margin-top: 3px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -90,6 +92,12 @@
   .flow-node .state-dot.running { background: #28a745; }
   .flow-node .state-dot.stopped { background: #6c757d; }
   .flow-node .state-dot.error { background: #dc3545; }
+  .flow-frame { border: 1px solid rgba(126, 145, 220, 0.45); border-radius: 14px;
+    background: rgba(31, 38, 66, 0.42); color: #eef1ff; padding: 16px 20px;
+    pointer-events: none; box-sizing: border-box; }
+  .flow-frame-title { font-size: 15px; font-weight: 700; letter-spacing: 0.01em; }
+  .flow-frame-description { color: #aeb7d5; font-size: 11px; line-height: 1.4;
+    margin-top: 4px; max-width: 760px; }
 
   /* Loading */
   #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -744,6 +752,7 @@ const CONVERSATION_ID = params.get('conversation_id') || window.__PAWFLOW_FLOW_C
 // Flow Editor: a draft_id switches the SAME canvas into edit mode
 // (view = template / flow_ref, runtime = instance, edit = draft).
 const DRAFT_ID = params.get('draft_id') || window.__PAWFLOW_FLOW_DRAFT_ID || '';
+const WORKFLOW_PROPOSAL_ID = params.get('proposal_id') || window.__PAWFLOW_WORKFLOW_PROPOSAL_ID || '';
 const IS_EDIT = !!DRAFT_ID;
 const AUTOSAVE_DELAY = 800;
 const HISTORY_LIMIT = 100;
@@ -782,12 +791,17 @@ function layoutGraph(nodes, edges) {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'LR', nodesep: 60, ranksep: 120, marginx: 40, marginy: 40 });
-  nodes.forEach(n => g.setNode(n.id, { width: 170, height: 80 }));
-  edges.filter(e => !e?.data?.runtimeLink).forEach(e => g.setEdge(e.source, e.target));
+  const graphNodes = nodes.filter(n => !n?.data?.isFrame);
+  const graphIds = new Set(graphNodes.map(n => n.id));
+  graphNodes.forEach(n => g.setNode(n.id, { width: 238, height: 112 }));
+  const layoutEdges = edges.filter(e => !e?.data?.runtimeLink);
+  layoutEdges.filter(e => graphIds.has(e.source) && graphIds.has(e.target))
+    .forEach(e => g.setEdge(e.source, e.target));
   dagre.layout(g);
   const laid = nodes.map(n => {
+    if (n?.data?.isFrame) return n;
     const pos = g.node(n.id);
-    return { ...n, position: { x: pos.x - 85, y: pos.y - 40 } };
+    return { ...n, position: { x: pos.x - 119, y: pos.y - 56 } };
   });
   const byId = Object.fromEntries(laid.map(n => [n.id, n]));
   edges.filter(e => e?.data?.runtimeLink).forEach(e => {
@@ -851,6 +865,8 @@ const FlowNode = memo(({ data }) => {
     jsxs('div', { className: 'node-id', children: [
       jsx('span', { className: 'state-dot ' + st }), data.label
     ] }),
+    data.description && jsx('div', { className: 'node-description',
+      title: data.description, children: data.description }),
     jsxs('div', { className: 'node-stats', children: [
       jsxs('span', { children: ['\u2B07 ', data.stats_in] }),
       jsxs('span', { children: ['\u2B06 ', data.stats_out] }),
@@ -870,20 +886,38 @@ const FlowNode = memo(({ data }) => {
 });
 FlowNode.displayName = 'FlowNode';
 
-const nodeTypes = { flowNode: FlowNode };
+const FlowFrame = memo(({ data }) => jsxs('div', {
+  className: 'flow-frame',
+  style: { width: data.width, height: data.height,
+           borderColor: data.border || undefined,
+           background: data.fill || undefined },
+  children: [
+    jsx('div', { className: 'flow-frame-title', children: data.label }),
+    data.description && jsx('div', { className: 'flow-frame-description',
+      children: data.description }),
+  ],
+}));
+FlowFrame.displayName = 'FlowFrame';
+
+const nodeTypes = { flowNode: FlowNode, flowFrame: FlowFrame };
 
 // ── Convert API data to React Flow format ──
-function toRFNodes(apiNodes, onOpenSubflow) {
+function toRFNodes(apiNodes, onOpenSubflow, layout = {}) {
+  const layoutNodes = layout?.nodes || {};
   const entries = Array.isArray(apiNodes)
     ? apiNodes.map((n, i) => [String(n?.id || n?.name || `node-${i}`), n || {}])
     : Object.entries(apiNodes && typeof apiNodes === 'object' ? apiNodes : {});
-  return entries.map(([id, n]) => ({
+  const nodes = entries.map(([id, n]) => ({
     id: String(id),
     type: 'flowNode',
     className: n?.subflow_ref && n.subflow_ref.path ? 'nopan' : '',
-    position: { x: 0, y: 0 },
+    position: layoutNodes[id]
+      ? { x: Number(layoutNodes[id].x) || 0, y: Number(layoutNodes[id].y) || 0 }
+      : null,
     data: {
-      label: n?.group_name || String(id), taskType: n?.type || '?', state: n?.state || 'stopped',
+      label: n?.label || n?.group_name || String(id),
+      description: n?.description || '',
+      taskType: n?.type || '?', state: n?.state || 'stopped',
       stats_in: n?.in || 0, stats_out: n?.out || 0,
       error_count: n?.error_count || 0, error: n?.error || '',
       in_flight: !!n?.in_flight, pending: n?.pending || 0,
@@ -895,6 +929,29 @@ function toRFNodes(apiNodes, onOpenSubflow) {
       onOpenSubflow,
     },
   }));
+  Object.entries(layout?.frames || {}).forEach(([id, frame]) => {
+    if (!frame || typeof frame !== 'object') return;
+    nodes.push({
+      id: `frame:${id}`, type: 'flowFrame', position: {
+        x: Number(frame.x) || 0, y: Number(frame.y) || 0,
+      }, zIndex: Number(frame.z_index) || -10, selectable: false,
+      draggable: false, connectable: false, deletable: false,
+      data: { isFrame: true, label: frame.label || frame.name || String(id),
+        description: frame.description || '', width: Number(frame.width) || 400,
+        height: Number(frame.height) || 240, fill: frame.style?.fill || '',
+        border: frame.style?.border || '' },
+    });
+  });
+  return nodes;
+}
+
+function positionRuntimeNodes(nodes, edges) {
+  if (!nodes.some(n => !n.position && !n?.data?.isFrame)) return nodes;
+  const auto = safeLayoutGraph(nodes.map(n => ({ ...n,
+    position: n.position || { x: 0, y: 0 } })), edges);
+  const byId = Object.fromEntries(auto.map(n => [n.id, n.position]));
+  return nodes.map(n => n.position ? n : { ...n,
+    position: byId[n.id] || { x: 0, y: 0 } });
 }
 
 function toRFEdges(apiEdges, validNodeIds) {
@@ -995,7 +1052,9 @@ function topGroupMembership(groups) {
 
 function flowToReactFlow(def, onOpenSubflow) {
   const tasks = def.tasks && typeof def.tasks === 'object' ? def.tasks : {};
-  const layoutNodes = (def.layout && def.layout.nodes) || {};
+  const selectedLayout = (def.layouts && def.layouts[def.default_layout_id])
+    || def.layout || {};
+  const layoutNodes = selectedLayout.nodes || {};
   const nodeData = (id, extra) => ({
     label: id, taskType: '?', state: 'stopped', stats_in: 0, stats_out: 0,
     error_count: 0, error: '', in_flight: false, pending: 0,
@@ -1005,7 +1064,8 @@ function flowToReactFlow(def, onOpenSubflow) {
   const nodes = Object.entries(tasks).map(([id, t]) => ({
     id: String(id), type: 'flowNode', className: '',
     position: layoutNodes[id] ? { x: Number(layoutNodes[id].x) || 0, y: Number(layoutNodes[id].y) || 0 } : null,
-    data: nodeData(String(id), { label: (t && t.label) || String(id), taskType: (t && t.type) || '?' }),
+    data: nodeData(String(id), { label: (t && t.label) || String(id),
+      description: (t && t.description) || '', taskType: (t && t.type) || '?' }),
   }));
   // Process groups stay collapsed in the parent projection and drill down in
   // this same canvas. flow_ref groups are executable relation endpoints;
@@ -1021,6 +1081,17 @@ function flowToReactFlow(def, onOpenSubflow) {
         inlineGroupId: g.flow_ref ? '' : String(gid), isInlineGroup: !g.flow_ref,
         isSubflow: true }),
     });
+  });
+  Object.entries(selectedLayout.frames || {}).forEach(([id, frame]) => {
+    if (!frame || typeof frame !== 'object') return;
+    nodes.push({ id: `frame:${id}`, type: 'flowFrame', position: {
+      x: Number(frame.x) || 0, y: Number(frame.y) || 0,
+    }, zIndex: Number(frame.z_index) || -10, selectable: false,
+    draggable: false, connectable: false, deletable: false,
+    data: { isFrame: true, label: frame.label || frame.name || String(id),
+      description: frame.description || '', width: Number(frame.width) || 400,
+      height: Number(frame.height) || 240, fill: frame.style?.fill || '',
+      border: frame.style?.border || '' } });
   });
   const ids = new Set(nodes.map(n => n.id));
   const membership = topGroupMembership(def.groups || {});
@@ -1059,7 +1130,8 @@ function patchLayoutNode(def, id, pos) {
 function autoLayoutDraft(def, rfNodes, rfEdges) {
   const laid = safeLayoutGraph(rfNodes, rfEdges);
   let next = def;
-  laid.forEach(n => { next = patchLayoutNode(next, n.id, n.position); });
+  laid.filter(n => !n?.data?.isFrame)
+    .forEach(n => { next = patchLayoutNode(next, n.id, n.position); });
   return next;
 }
 
@@ -2043,13 +2115,13 @@ function App() {
         return;
       }
       stage = 'normalize graph data';
-      const rfNodes = toRFNodes(data.nodes, openSubflow);
+      const rfNodes = toRFNodes(data.nodes, openSubflow, data.layout || {});
       const validNodeIds = new Set(rfNodes.map(n => n.id));
       const rfEdges = toRFEdges(data.edges, validNodeIds);
 
       stage = 'layout graph';
       if (!layoutDone.current && rfNodes.length > 0) {
-        const laid = safeLayoutGraph(rfNodes, rfEdges);
+        const laid = positionRuntimeNodes(rfNodes, rfEdges);
         setNodes(laid);
         layoutDone.current = true;
       } else {
@@ -2059,7 +2131,7 @@ function App() {
           (Array.isArray(prev) ? prev : []).forEach(n => { posMap[n.id] = n.position; });
           const newIds = rfNodes.filter(n => !posMap[n.id]);
           if (newIds.length > 0) {
-            const laid = safeLayoutGraph(rfNodes, rfEdges);
+            const laid = positionRuntimeNodes(rfNodes, rfEdges);
             return laid.map(n => posMap[n.id] ? { ...n, position: posMap[n.id] } : n);
           }
           return rfNodes.map(n => ({ ...n, position: posMap[n.id] || { x: 0, y: 0 } }));
@@ -2130,6 +2202,28 @@ function App() {
     setSaveState('saved');
     return true;
   }, []);
+
+  const sendToPlanner = useCallback(async () => {
+    if (!WORKFLOW_PROPOSAL_ID || !CONVERSATION_ID) return;
+    const comment = window.prompt('Comment for the planner (optional)', '');
+    if (comment === null) return;
+    if (!await saveNow()) return;
+    const loaded = await apiCall({
+      action: 'workflow_proposal_get', conversation_id: CONVERSATION_ID,
+      proposal_id: WORKFLOW_PROPOSAL_ID,
+    });
+    if (loaded.error) { setError(loaded.message || loaded.error); return; }
+    const proposal = loaded.proposal || {};
+    const result = await apiCall({
+      action: 'workflow_proposal_submit_to_planner',
+      conversation_id: CONVERSATION_ID,
+      proposal_id: WORKFLOW_PROPOSAL_ID,
+      state_revision: proposal.state_revision,
+      comment,
+    });
+    if (result.error) { setError(result.message || result.error); return; }
+    setSaveState('submitted');
+  }, [saveNow]);
 
   const scheduleSave = useCallback(() => {
     if (lockedRef.current) return;
@@ -2372,6 +2466,7 @@ function App() {
     conflict: 'Draft changed elsewhere', published: `Published as ${published}`,
     applied: `Applied ${published} to ${INSTANCE_ID}`,
     discarded: 'Draft discarded \u00B7 close this tab',
+    submitted: 'Submitted to planner',
   }[saveState] || '';
   const editBtn = (label, onClick, opts = {}) => jsx('button', {
     id: opts.id, className: 'rt-x', title: opts.title || label, disabled: !!opts.disabled,
@@ -2405,6 +2500,9 @@ function App() {
             editBtn('Ports', () => { setShowProblems(false); setDrawer({ kind: 'ports' }); }),
             editBtn('${…}', () => { setShowProblems(false); setDrawer({ kind: 'expressions' }); }, { title: 'Expression helper' }),
             editBtn('\u2713 Validate', validateDraft),
+            WORKFLOW_PROPOSAL_ID && editBtn('Send to planner', sendToPlanner, {
+              primary: true, disabled: lockedRef.current || saveState === 'saving',
+            }),
             editBtn('Problems', () => problems ? setShowProblems(true) : validateDraft()),
             editBtn('\u2B06 Publish', publishDraft, { primary: true, disabled: lockedRef.current }),
             editBtn('\u{1F5D1} Discard draft', discardDraft, { disabled: lockedRef.current, title: 'Delete this draft (published versions are untouched)' }),

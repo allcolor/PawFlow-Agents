@@ -1,4 +1,4 @@
-"""Webchat actions for durable confirmation requests.
+"""Webchat actions for durable typed user interactions.
 
 A confirmation is created by an agent (``request_confirmation`` tool) or a
 flow (``requestConfirmation`` task) and answered here — whenever the user
@@ -11,8 +11,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_ACTIONS = {"list_confirmations", "respond_confirmation",
-            "cancel_confirmation"}
+_ACTIONS = {
+    "list_interactions", "respond_interaction", "cancel_interaction",
+    "list_confirmations", "respond_confirmation", "cancel_confirmation",
+}
 
 
 def _can_touch(record, user_id: str) -> bool:
@@ -40,32 +42,36 @@ def _handle_confirmations(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", status)
         return [flowfile]
 
-    if action == "list_confirmations":
-        rows = cstore.list_confirmations(
+    if action in {"list_interactions", "list_confirmations"}:
+        rows = cstore.list_interactions(
             user_id=user_id,
             conversation_id=body.get("conversation_id", ""),
             status=body.get("status", "pending"),
             limit=int(body.get("limit", 100) or 100))
-        return _reply({"confirmations": rows})
+        key = "interactions" if action == "list_interactions" else "confirmations"
+        return _reply({key: rows})
 
     request_id = str(body.get("request_id", "") or "")
     if not request_id:
         return _reply({"error": "request_id is required"}, "400")
-    record = cstore.get_confirmation(request_id)
+    record = cstore.get_interaction(request_id)
     if not record or not _can_touch(record, user_id):
         # Same answer for unknown and unauthorized: no existence oracle.
-        return _reply({"error": "Unknown confirmation request"}, "404")
+        noun = ("user interaction request"
+                if action.endswith("_interaction") else "confirmation request")
+        return _reply({"error": f"Unknown {noun}"}, "404")
 
-    if action == "respond_confirmation":
+    if action in {"respond_interaction", "respond_confirmation"}:
         try:
-            updated = cstore.respond(request_id, body.get("answer"),
-                                     answered_by=user_id)
+            updated = cstore.respond_interaction(
+                request_id, body.get("answer"), answered_by=user_id)
         except (KeyError, ValueError) as exc:
             return _reply({"error": str(exc)}, "400")
-        return _reply({"ok": True, "confirmation": updated})
+        key = "interaction" if action == "respond_interaction" else "confirmation"
+        return _reply({"ok": True, key: updated})
 
-    if action == "cancel_confirmation":
-        ok = cstore.cancel(request_id, cancelled_by=user_id)
+    if action in {"cancel_interaction", "cancel_confirmation"}:
+        ok = cstore.cancel_interaction(request_id, cancelled_by=user_id)
         return _reply({"ok": bool(ok)} if ok else
                       {"error": "Confirmation is not pending"}, "" if ok else "400")
 

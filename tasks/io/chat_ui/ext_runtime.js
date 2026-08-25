@@ -8,6 +8,7 @@
 //       pfp.context()      frozen snapshot of current UI context
 //       pfp.t(key)        i18n lookup (namespaced)
 //       pfp.ui.slot(slot, entryId, renderFn)
+//       pfp.ui.component(componentId, renderFn)
 //       pfp.ui.openDialog(title, contentNode, opts?)
 //       pfp.ui.closeDialog()
 //       pfp.ui.openPanel(id, renderFn)   // right-side panel
@@ -67,6 +68,9 @@
   var _slotEntries = Object.create(null);
   // Per-extension slash commands: name -> {pkg, spec}
   var _commands = Object.create(null);
+  // Qualified package:component -> {pkg, id, render}. Components render
+  // server-declared UiSurface instances; they never own action authority.
+  var _components = Object.create(null);
   var _unregisteredPackages = Object.create(null);
   // Active agent-downlink media sources. Descriptors are shallow-frozen
   // snapshots; browser track/element references remain observation handles.
@@ -321,6 +325,33 @@
         return key;
       },
       ui: {
+        component: function (componentId, renderFn) {
+          var localId = String(componentId || '').trim();
+          var entry = _manifestEntry(packageId);
+          var declared = entry && Array.isArray(entry.components)
+            ? entry.components : [];
+          var owns = declared.some(function (row) {
+            return row && String(row.id || '') === localId;
+          });
+          if (!owns) {
+            _logExtError(packageId, 'component', 'undeclared component: ' + localId);
+            return false;
+          }
+          if (!_isFn(renderFn) || localId.indexOf(':') >= 0) {
+            _logExtError(packageId, 'component', 'local id and render function are required');
+            return false;
+          }
+          var qualified = packageId + ':' + localId;
+          if (_components[qualified]) {
+            _logExtError(packageId, 'component', 'duplicate component: ' + localId);
+            return false;
+          }
+          _components[qualified] = {
+            pkg: packageId, id: localId, render: renderFn,
+          };
+          pkg.components.push(qualified);
+          return true;
+        },
         slot: function (slotName, entryId, renderFn) {
           if (KNOWN_SLOTS.indexOf(slotName) < 0) {
             _logExtError(packageId, 'slot', 'unknown slot: ' + slotName);
@@ -529,7 +560,8 @@
     if (!_packages[packageId]) {
       _packages[packageId] = {
         ready: false, callback: null, pfp: null,
-        slots: [], hooks: {}, commands: [], localBus: Object.create(null),
+        slots: [], hooks: {}, commands: [], components: [],
+        localBus: Object.create(null),
       };
     }
     return _packages[packageId];
@@ -587,6 +619,7 @@
       _renderSlot(slotName);
     });
     pkg.commands.forEach(function (name) { delete _commands[name]; });
+    pkg.components.forEach(function (name) { delete _components[name]; });
     var modal = document.getElementById('pf-ext-modal-host');
     if (modal && modal.querySelector('[data-pf-ext="' + packageId + '"]')) {
       modal.innerHTML = '';
@@ -625,6 +658,7 @@
         slots: p.slots.slice(),
         hooks: Object.keys(p.hooks),
         commands: p.commands.slice(),
+        components: p.components.slice(),
       };
     });
   }
@@ -641,6 +675,25 @@
     });
   }
 
+  function renderComponent(componentRef, mount, context) {
+    var row = _components[String(componentRef || '')];
+    if (!row || !(mount instanceof Node)) return false;
+    mount.innerHTML = '';
+    var output;
+    try {
+      output = row.render(Object.freeze(context || {}));
+    } catch (err) {
+      _logExtError(row.pkg, 'component(' + row.id + ')', err);
+      return false;
+    }
+    if (output instanceof Node) mount.appendChild(output);
+    else if (typeof output === 'string') mount.textContent = output;
+    else return false;
+    mount.setAttribute('data-pf-ext', row.pkg);
+    mount.setAttribute('data-pf-component', row.id);
+    return true;
+  }
+
   // Internal accessors used by hook firing points in other JS modules.
   var _internal = {
     fireHook: _fireHook,
@@ -654,6 +707,10 @@
     mediaAudioFrame: _mediaAudioFrame,
     mediaStateChanged: _mediaStateChanged,
     resetMedia: _resetMedia,
+    renderComponent: renderComponent,
+    hasComponent: function (componentRef) {
+      return !!_components[String(componentRef || '')];
+    },
     markBooted: function (payload) {
       _bootPayload = payload || {};
       _booted = true;

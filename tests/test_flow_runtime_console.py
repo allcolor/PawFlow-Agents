@@ -222,6 +222,18 @@ def test_checkpoint_recovery_restores_each_relationship_queue(tmp_path):
     assert failure.peek().get_content() == b"failure-only"
 
 
+def test_manual_checkpoint_refuses_an_in_flight_snapshot(tmp_path):
+    from engine.checkpoint import CheckpointManager
+    from engine.continuous_executor import ContinuousFlowExecutor
+
+    executor = ContinuousFlowExecutor(_hot_swap_flow(), enable_checkpoints=False)
+    executor._checkpoint_mgr = CheckpointManager(
+        "hot_swap", checkpoint_dir=str(tmp_path))
+    executor._in_flight["a"] = 1
+    assert executor.save_checkpoint_now() is None
+    assert executor._checkpoint_mgr.load_latest_checkpoint() is None
+
+
 # ── Scheduler is pause-aware ─────────────────────────────────────
 
 def test_scheduler_ignores_paused_queues_source_invariants():

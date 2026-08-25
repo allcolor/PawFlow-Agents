@@ -3,6 +3,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -178,10 +179,51 @@ def test_terminal_saga_requires_every_durable_boundary(store):
     assert store.complete(context.run_id) is False
     assert store.record_outbox_attempt(event_id, delivered=True)
     assert store.complete(context.run_id)
-    assert store.complete(context.run_id)
 
     record = store.get_record(context.run_id)
     assert record.status == "completed"
+    assert record.assistant_msg_id == message_id
+    assert record.terminal_event_id == event_id
+    assert record.answered_turn_ids == ("m1",)
+
+
+def test_terminal_saga_commits_the_typed_failure_status(store):
+    context = _create_running(store)
+    message_id, event_id = new_terminal_identities(context.run_id)
+    result = SimpleNamespace(
+        status="failed",
+        answered_turn_ids=("m1",),
+        to_dict=lambda: {
+            "status": "failed", "response": "boom",
+            "artifacts": [], "metrics": {},
+            "answered_turn_ids": ["m1"],
+        },
+    )
+    store.stage_terminal(
+        context.run_id,
+        result=result,
+        assistant_payload={
+            "role": "assistant", "content": "boom", "msg_id": message_id,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        },
+        terminal_event={
+            "event_id": event_id,
+            "run_id": context.run_id,
+            "status": "failed",
+            "response": "boom",
+            "answered_turn_ids": ["m1"],
+        },
+    )
+    assert store.mark_message_committed(context.run_id)
+    assert store.mark_inbox_acknowledged(context.run_id)
+    assert store.record_outbox_attempt(event_id, delivered=True)
+
+    assert store.complete(context.run_id)
+    assert store.get_run(context.run_id)["status"] == "failed"
+    assert store.complete(context.run_id)
+
+    record = store.get_record(context.run_id)
+    assert record.status == "failed"
     assert record.assistant_msg_id == message_id
     assert record.terminal_event_id == event_id
     assert record.answered_turn_ids == ("m1",)

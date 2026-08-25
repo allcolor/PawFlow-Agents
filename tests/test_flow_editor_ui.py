@@ -38,9 +38,19 @@ def test_one_canvas_switches_to_edit_mode_by_draft_id():
     assert "function autoLayoutDraft(def, rfNodes, rfEdges)" in source
 
 
+def test_canvas_renders_layout_frames_and_human_task_metadata():
+    source = _text("tasks/io/chat_ui/flow_graph.html")
+    assert "const FlowFrame = memo" in source
+    assert "flowFrame: FlowFrame" in source
+    assert "Object.entries(layout?.frames || {})" in source
+    assert "description: n?.description || ''" in source
+    assert "data.description && jsx('div', { className: 'node-description'" in source
+    assert "positionRuntimeNodes(rfNodes, rfEdges)" in source
+
+
 def test_repository_menu_opens_a_draft_in_the_same_canvas():
     services = _text("tasks/io/chat_ui/services.js")
-    assert "function _openFlowEditorTab(draftId, instanceId)" in services
+    assert "function _openFlowEditorTab(draftId, instanceId, proposalId)" in services
     assert "'/chat/js/flow_graph.html?draft_id='" in services
     assert "action$('flow_editor_create_draft', payload" in services
     # Repository items carry a bare directory id; the draft must be created on

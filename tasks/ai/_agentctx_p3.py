@@ -2,11 +2,9 @@
 import json
 import logging
 
-
 from core.llm_client import (
     LLMMessage, LLMToolDefinition,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -720,12 +718,27 @@ class _PACPhase3Mixin:
                 st._plan_mode = ConversationStore.instance().get_extra(
                     st.conversation_id, "plan_mode")
                 if st._plan_mode:
-                    st.system_prompt += (
-                        "\n\nPLAN MODE: Before executing any tools, you MUST first "
-                        "call create_plan(title, steps) to propose your plan. "
-                        "Wait for the user to approve_plan() before executing. "
-                        "Do NOT call any other tools until the plan is approved."
-                    )
+                    from core.flow_feature_flags import workflow_proposals_enabled
+                    if workflow_proposals_enabled():
+                        st.system_prompt += (
+                            "\n\nPLAN MODE: You may call ask_user or "
+                            "request_confirmation only when a material ambiguity "
+                            "must be resolved before planning. Then you MUST call "
+                            "propose_workflow(package, name, version, title, definition) "
+                            "with a complete canonical FlowDefinition. "
+                            "Wait for the user to accept the workflow proposal "
+                            "before executing. Do NOT call any other tools until "
+                            "the proposal is accepted."
+                        )
+                    else:
+                        st.system_prompt += (
+                            "\n\nPLAN MODE: You may call ask_user or "
+                            "request_confirmation only when a material ambiguity "
+                            "must be resolved before planning. Then you MUST call "
+                            "create_plan(title, steps) to propose your plan. Wait "
+                            "for the user to approve_plan() before executing. Do "
+                            "NOT call any other tools until the plan is approved."
+                        )
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 

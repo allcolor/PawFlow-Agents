@@ -14,6 +14,14 @@ from core.plan_store import PlanStore
 logger = logging.getLogger(__name__)
 
 
+LEGACY_PLAN_ACTIONS = {
+    "get_plans", "get_plan", "create_plan_user", "approve_plan",
+    "reject_plan", "cancel_plan", "delete_plan", "update_plan_step",
+    "assign_plan", "cancel_step", "resume_step", "set_plan_verifier",
+    "reset_plan", "verify_plan_step", "pause_plan_step",
+}
+
+
 def _get_plan(conv_id, plan_id, user_id):
     """Load a plan from PlanStore."""
     return PlanStore.instance().get(user_id, conv_id, plan_id)
@@ -70,6 +78,16 @@ def _force_stop_agent(self, conv_id, agent_name=""):
 
 def _handle_plans(self, action, body, store, user_id, flowfile):
     """Handle plan management actions. Returns [flowfile] or None."""
+
+    if action not in LEGACY_PLAN_ACTIONS:
+        return None
+    from core.flow_feature_flags import workflow_proposals_enabled
+    if workflow_proposals_enabled():
+        flowfile.set_content(json.dumps({
+            "error": "Legacy plans are disabled",
+        }).encode())
+        flowfile.set_attribute("http.response.status", "404")
+        return [flowfile]
 
     conv_id = body.get("conversation_id", "")
     ps = PlanStore.instance()

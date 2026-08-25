@@ -136,3 +136,40 @@
 @media (prefers-reduced-motion: reduce) {
   .operation-progress-mark, .operation-progress-track span { animation-duration: 2.4s; }
 }
+
+/* Portable durable UI surfaces. */
+.ui-surface-stack { position: fixed; right: 18px; bottom: 18px; z-index: 950;
+  display: flex; flex-direction: column; gap: 10px; width: min(420px, calc(100vw - 36px));
+  max-height: min(70vh, 620px); overflow-y: auto; }
+.ui-surface-card { padding: 13px; border: 1px solid var(--pf-border); border-left: 4px solid var(--pf-accent);
+  border-radius: 10px; background: color-mix(in srgb, var(--pf-panel) 96%, var(--pf-bg));
+  color: var(--pf-text); box-shadow: 0 12px 34px var(--pf-shadow); }
+.ui-surface-waiting_for_compatible_client { border-left-color: #f0c040; }
+.ui-surface-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ui-surface-head strong { min-width: 0; overflow-wrap: anywhere; }
+.ui-surface-status { flex: none; padding: 2px 7px; border-radius: 999px;
+  background: color-mix(in srgb, var(--pf-accent) 16%, transparent); color: var(--pf-accent);
+  font-size: 10px; font-weight: 700; }
+.ui-surface-summary { margin-top: 6px; color: var(--pf-text); font-size: 12px; line-height: 1.4; }
+.ui-surface-meta { margin-top: 7px; color: var(--pf-muted); font-size: 10px; }
+.ui-surface-mini-graph { display: block; width: 100%; max-height: 220px;
+  margin-top: 9px; border: 1px solid var(--pf-border); border-radius: 7px;
+  background: color-mix(in srgb, var(--pf-panel) 84%, var(--pf-bg)); }
+.ui-surface-mini-edge { stroke: var(--pf-muted); stroke-width: 1.5; opacity: .7; }
+.ui-surface-mini-graph rect { fill: color-mix(in srgb, var(--pf-accent) 14%, var(--pf-panel));
+  stroke: var(--pf-accent); stroke-width: 1; }
+.ui-surface-mini-graph text { fill: var(--pf-text); font-size: 9px;
+  text-anchor: middle; pointer-events: none; }
+.ui-surface-field { display: grid; gap: 4px; margin-top: 9px; color: var(--pf-muted); font-size: 10px; }
+.ui-surface-input { box-sizing: border-box; width: 100%; min-height: 34px;
+  padding: 7px 8px; resize: vertical; border: 1px solid var(--pf-border); border-radius: 6px;
+  background: var(--pf-sidebar); color: var(--pf-text); font: inherit; font-size: 11px; }
+.ui-surface-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; margin-top: 10px; }
+.ui-surface-actions button { padding: 6px 9px; border: 1px solid var(--pf-border); border-radius: 6px;
+  background: var(--pf-sidebar); color: var(--pf-text); cursor: pointer; font-size: 11px; }
+.ui-surface-actions button.primary { border-color: var(--pf-accent); color: var(--pf-accent); }
+.ui-surface-actions button.success { border-color: #52b788; color: #52b788; }
+.ui-surface-actions button.danger { border-color: var(--pf-danger); color: var(--pf-danger); }
+.ui-surface-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.ui-surface-handoff { flex-basis: 100%; color: var(--pf-muted); font-size: 10px; }
+.ui-surface-handoff a { color: var(--pf-accent); }

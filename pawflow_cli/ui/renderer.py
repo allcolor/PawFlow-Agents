@@ -1,6 +1,6 @@
 """Terminal rendering for PawCode using Rich."""
+import json
 import logging
-
 import re
 import sys
 from typing import Dict, Optional
@@ -27,6 +27,7 @@ from pawflow_cli.ui._render_helpers import (  # noqa: F401
     _syn_diff_line,
     _tool_summary,
 )
+
 
 class TerminalRenderer:
     """Renders PawFlow chat events to the terminal."""
@@ -370,8 +371,8 @@ class TerminalRenderer:
                 _lang = _lang_from_path(path) if path else ""
                 if _lang and len(result) > 50:
                     try:
-                        from rich.syntax import Syntax
                         from rich.panel import Panel
+                        from rich.syntax import Syntax
                         _fname = path.rsplit("/", 1)[-1] if "/" in path else path
                         syntax = Syntax(result, _lang, theme="monokai",
                                         line_numbers=True, word_wrap=True)
@@ -488,6 +489,68 @@ class TerminalRenderer:
             print(f"\n[QUESTION] {question}")
             for i, opt in enumerate(options, 1):
                 print(f"  [{i}] {opt}")
+
+    def print_interaction(self, interaction: dict):
+        """Render one durable typed request without blocking the SSE thread."""
+        kind = interaction.get("kind") or interaction.get("mode") or "confirm"
+        lines = [str(interaction.get("message") or "")]
+        for index, option in enumerate(interaction.get("options") or [], 1):
+            lines.append(f"[{index}] {option.get('label', option.get('value', ''))}")
+        if kind == "multi":
+            lines.append("Enter comma-separated numbers or values.")
+        elif kind in {"form", "file"}:
+            lines.append("Enter a JSON value (or /cancel).")
+        else:
+            lines.append("Enter the answer on the next prompt (or /cancel).")
+        title = interaction.get("title") or f"User input · {kind}"
+        body = "\n".join(lines)
+        if self.console:
+            self.console.print(Panel(
+                body, title=f"[bold cyan]{title}[/bold cyan]",
+                border_style="cyan"))
+        else:
+            print(f"\n[INTERACTION: {title}]\n{body}")
+
+    def print_ui_surface(self, surface: dict):
+        """Render semantic state without claiming rich-component support."""
+        if surface.get("format") != "pawflow.ui-surface.v1":
+            return
+        semantic = surface.get("semantic") or {}
+        lines = []
+        if semantic.get("summary"):
+            lines.append(str(semantic["summary"]))
+        if semantic.get("body"):
+            lines.append(str(semantic["body"]))
+        for field in semantic.get("fields") or []:
+            value = field.get("value", "<input in a semantic UI client>")
+            lines.append(f"{field.get('label', field.get('id', 'field'))}: {value}")
+        capabilities = {"client.terminal", "semantic.basic"}
+        for action in semantic.get("actions") or []:
+            missing = sorted(set(action.get("requires") or []) - capabilities)
+            if missing:
+                handoff = action.get("handoff") or {}
+                message = handoff.get("message") or (
+                    "requires " + ", ".join(missing))
+                lines.append(f"{action.get('label', action.get('id'))}: {message}")
+                if handoff.get("uri"):
+                    lines.append(f"  {handoff['uri']}")
+                continue
+            dispatch = action.get("dispatch") or {}
+            args = json.dumps(
+                dispatch.get("arguments") or {}, ensure_ascii=False,
+                sort_keys=True)
+            lines.append(
+                f"{action.get('label', action.get('id'))}: "
+                f"server action {dispatch.get('action', '')} {args}")
+        body = "\n".join(lines) or "No available actions."
+        title = semantic.get("title") or "Interactive surface"
+        status = str(surface.get("status") or "").replace("_", " ")
+        if self.console:
+            self.console.print(Panel(
+                body, title=f"[bold cyan]{title}[/bold cyan]",
+                subtitle=status, border_style="cyan"))
+        else:
+            print(f"\n[SURFACE] {title} [{status}]\n{body}")
 
     # ── Exec output ──
 

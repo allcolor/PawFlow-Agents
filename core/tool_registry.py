@@ -115,6 +115,11 @@ from core.handlers.plan_handlers import (  # noqa: F401
     UpdatePlanHandler,
     VerifyPlanStepHandler,
 )
+from core.handlers.workflow_proposals import (  # noqa: F401
+    GetWorkflowProposalHandler,
+    ProposeWorkflowHandler,
+    ReviewWorkflowProposalHandler,
+)
 from core.handlers.resource_agent import (  # noqa: F401
     DelegateResultHandler,
     DelegateStatusHandler,
@@ -135,6 +140,7 @@ from core.handlers.user_interaction import (  # noqa: F401
     NotifyUserHandler,
     RequestConfirmationHandler,
 )
+from core.handlers.ui_surfaces import PresentUiSurfaceHandler  # noqa: F401
 from core.handlers.web_fetch import (  # noqa: F401
     ExecuteScriptHandler,
     ScraplingFetchHandler,
@@ -685,13 +691,19 @@ def create_default_registry() -> ToolRegistry:
 
     # Memory navigation
 
-    registry.register(CreatePlanHandler())
-    registry.register(UpdatePlanHandler())
-    registry.register(ApprovePlanHandler())
-    registry.register(AssignPlanHandler())
-    registry.register(CancelPlanHandler())
-    registry.register(DeletePlanHandler())
-    registry.register(VerifyPlanStepHandler())
+    from core.flow_feature_flags import workflow_proposals_enabled
+    if not workflow_proposals_enabled():
+        registry.register(CreatePlanHandler())
+        registry.register(UpdatePlanHandler())
+        registry.register(ApprovePlanHandler())
+        registry.register(AssignPlanHandler())
+        registry.register(CancelPlanHandler())
+        registry.register(DeletePlanHandler())
+        registry.register(VerifyPlanStepHandler())
+    registry.register(ProposeWorkflowHandler())
+    registry.register(GetWorkflowProposalHandler())
+    registry.register(ReviewWorkflowProposalHandler())
+    registry.register(PresentUiSurfaceHandler())
     from core.handlers.plan_mode import EnterPlanModeHandler, ExitPlanModeHandler
     registry.register(EnterPlanModeHandler())
     registry.register(ExitPlanModeHandler())

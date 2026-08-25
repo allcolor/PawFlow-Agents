@@ -10,6 +10,7 @@ import jsonschema
 import yaml
 
 from core import FlowFile
+from core.flow_layout_contracts import validate_flow_presentation
 from core.workflow_agent_contracts import AgentWorkflowResult
 from core.workflow_agent_resources import validate_agent_workflow_definition
 from tasks import register_all_tasks
@@ -77,6 +78,24 @@ def test_shipped_wiki_flow_and_agent_defaults_are_valid():
     assert defaults["parameters"]["write_mode"] == "live"
     assert defaults["parameters"]["extractor_llm"] == "summarizer_service"
     assert defaults["parameters"]["writer_llm"] == "summarizer_service"
+
+
+def test_shipped_wiki_flow_has_readable_functional_presentation():
+    flow = _flow()
+    assert validate_flow_presentation(flow, require_relation_ids=True) == []
+    assert flow["default_layout_id"] == "functional"
+    layout = flow["layouts"]["functional"]
+    frames = layout["frames"]
+    assert len(frames) == 5
+    assert all(frame["label"] and frame["description"] for frame in frames.values())
+    members = [task_id for frame in frames.values()
+               for task_id in frame["member_ids"]]
+    assert len(members) == len(set(members))
+    assert set(members) == set(flow["tasks"])
+    assert set(layout["nodes"]) == set(flow["tasks"])
+    for task in flow["tasks"].values():
+        assert task["label"]
+        assert task["description"]
 
 
 def test_intent_gate_precedes_project_access_and_terminal_routes_stop_llm_work():

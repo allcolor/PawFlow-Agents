@@ -1,14 +1,16 @@
 """PawCode SSE event consumer / approvals / scripted run_prompt."""
 
+import json
 import logging
 import queue
 import sys
 import threading
 import time
 
-from pawflow_cli.auth import authenticate
 from pawflow_cli.api import AgentAPIClient, SSEClient
+from pawflow_cli.auth import authenticate
 from pawflow_cli.config import load_config, save_config
+
 # Split out of pawflow_cli/app.py for the <=800-line rule; composed back into
 # PawCode (invariant 2: MRO/shared state).
 
@@ -21,6 +23,21 @@ class _PawCodeEventsMixin:
         if self.conversation_id and (not self.sse or not self.sse.connected):
             self.sse = SSEClient(self.server_url, self.session_token, self.gateway_cookie)
             self.sse.connect(self.conversation_id)
+            try:
+                data = self.api.send_action(
+                    "ui_surface_list", conversation_id=self.conversation_id)
+                for surface in data.get("surfaces", []):
+                    self.renderer.print_ui_surface(surface)
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "UI-surface reload failed", exc_info=True)
+            try:
+                data = self.api.send_action("list_interactions", status="pending")
+                for interaction in data.get("interactions", []):
+                    self._remember_interaction(interaction)
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "Pending-interaction reload failed", exc_info=True)
 
     def _start_event_consumer(self):
         """Start the event consumer thread (idempotent)."""
@@ -201,6 +218,74 @@ class _PawCodeEventsMixin:
                                  conversation_id=self.conversation_id)
         except Exception as e:
             self.renderer.print_error(f"Approval error: {e}")
+
+    def _remember_interaction(self, interaction: dict):
+        request_id = str(interaction.get("request_id") or "")
+        if not request_id:
+            return
+        pending = getattr(self, "_pending_interactions", None)
+        if pending is None:
+            self._pending_interactions = {}
+            pending = self._pending_interactions
+        if interaction.get("status") == "pending":
+            first_seen = request_id not in pending
+            pending[request_id] = interaction
+            if first_seen:
+                self.renderer.print_interaction(interaction)
+        else:
+            pending.pop(request_id, None)
+
+    @staticmethod
+    def _parse_interaction_answer(interaction: dict, text: str):
+        kind = interaction.get("kind") or interaction.get("mode") or "confirm"
+        options = interaction.get("options") or []
+        values = [str(option.get("value")) for option in options]
+        labels = [str(option.get("label", option.get("value"))) for option in options]
+
+        def choice(value):
+            if value.isdigit() and 1 <= int(value) <= len(values):
+                return values[int(value) - 1]
+            for index, label in enumerate(labels):
+                if value.casefold() == label.casefold():
+                    return values[index]
+            return value
+
+        if kind in {"confirm", "choice"}:
+            return choice(text.strip())
+        if kind == "multi":
+            return [choice(item.strip()) for item in text.split(",") if item.strip()]
+        if kind in {"form", "file"} and text.lstrip().startswith(("{", "[")):
+            return json.loads(text)
+        return text
+
+    def _respond_to_pending_interaction(self, text: str) -> bool:
+        pending = getattr(self, "_pending_interactions", {})
+        if not pending:
+            return False
+        request_id = next(iter(pending))
+        interaction = pending[request_id]
+        action = "cancel_interaction" if text.strip() == "/cancel" else "respond_interaction"
+        payload = {"request_id": request_id,
+                   "conversation_id": interaction.get("conversation_id", "")}
+        if action == "respond_interaction":
+            try:
+                payload["answer"] = self._parse_interaction_answer(interaction, text)
+            except (TypeError, ValueError) as exc:
+                self.renderer.print_error(f"Invalid interaction answer: {exc}")
+                return True
+        try:
+            result = self.api.send_action(action, **payload)
+        except Exception as exc:
+            self.renderer.print_error(f"Interaction response failed: {exc}")
+            return True
+        if result.get("error"):
+            self.renderer.print_error(result["error"])
+            return True
+        pending.pop(request_id, None)
+        self.renderer.print_system("Interaction answered" if action.startswith("respond")
+                                   else "Interaction cancelled")
+        return True
+
     def run_prompt(self, prompt: str, conversation_id: str = None,
                    output_format: str = "text"):
         """Prompt mode: send one prompt, stream response, exit."""

@@ -377,6 +377,11 @@ def _object_capabilities(obj_type: str, obj: Dict[str, Any],
                 for s in (obj.get("slots") or []) if isinstance(s, dict)
             ],
             "hooks": [str(h) for h in (obj.get("hooks") or [])],
+            "components": [
+                str(row.get("id") or "")
+                for row in (obj.get("components") or [])
+                if isinstance(row, dict)
+            ],
             "asset_count": len(assets),
         }
     if obj_type == "web_app":

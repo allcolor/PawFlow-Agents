@@ -6,17 +6,16 @@ continuous_executor.py for the <=800-line rule; mixed into
 ContinuousFlowExecutor (one MRO, shared self state).
 """
 
-import time
 import logging
 import threading
-from typing import Dict, Any, List, Optional
+import time
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from core import Flow, FlowFile, TaskFactory, FlowError
+from core import Flow, FlowError, FlowFile, TaskFactory
 from core.task_state import TaskState
-from engine.provenance import ProvenanceRepository
-
 from engine._exec_types import ExecutionResult
+from engine.provenance import ProvenanceRepository
 
 logger = logging.getLogger(__name__)
 
@@ -429,6 +428,44 @@ class _ContinuousExecControlMixin:
 
     # -- Checkpoint / Recovery --
 
+    def _checkpoint_is_quiescent(self) -> bool:
+        """A FlowFile must be in a queue or processor state, never between both."""
+        with self._lock:
+            return not any(count > 0 for count in self._in_flight.values())
+
+    def _task_checkpoint_data(self) -> Dict[str, dict]:
+        """Snapshot processor-owned durable state through explicit hooks."""
+        if not self._checkpoint_mgr:
+            return {}
+        result = {}
+        for task_id, task in self._tasks.items():
+            hook = getattr(task, "checkpoint_state", None)
+            if callable(hook):
+                state = hook(self._checkpoint_mgr.serialize_flowfile)
+                if not isinstance(state, dict):
+                    raise TypeError(
+                        f"Task '{task_id}' checkpoint_state must return an object")
+                result[task_id] = state
+        return result
+
+    def _restore_task_checkpoint_data(self, data: Dict[str, Any]) -> None:
+        """Restore processor state before any queued FlowFile is re-enqueued."""
+        if not self._checkpoint_mgr:
+            return
+        if not self._checkpoint_is_quiescent():
+            logger.debug("Checkpoint deferred: tasks are in flight")
+            return
+        states = data.get("task_checkpoint_data") or {}
+        if not isinstance(states, dict):
+            raise ValueError("task_checkpoint_data must be an object")
+        for task_id, state in states.items():
+            task = self._tasks.get(task_id)
+            hook = getattr(task, "restore_checkpoint_state", None) if task else None
+            if not callable(hook):
+                raise ValueError(
+                    f"Checkpoint contains unrestorable state for task '{task_id}'")
+            hook(state, self._checkpoint_mgr.deserialize_flowfile)
+
     def _save_checkpoint(self):
         """Save a checkpoint of current queue state."""
         if not self._checkpoint_mgr:
@@ -438,6 +475,7 @@ class _ContinuousExecControlMixin:
                 self._connections,
                 self._task_states.get_all_states(),
                 self._flow_version,
+                self._task_checkpoint_data(),
             )
             self._last_checkpoint_time = time.time()
         except Exception as e:
@@ -461,6 +499,7 @@ class _ContinuousExecControlMixin:
             return
 
         try:
+            self._restore_task_checkpoint_data(data)
             restored_queues = self._checkpoint_mgr.restore_flowfiles(data)
         except Exception as e:
             logger.error(f"Checkpoint restore failed, skipping: {e}")
@@ -515,10 +554,14 @@ class _ContinuousExecControlMixin:
         """Manually trigger a checkpoint. Returns checkpoint path."""
         if not self._checkpoint_mgr:
             return None
+        if not self._checkpoint_is_quiescent():
+            logger.warning("Manual checkpoint refused: tasks are in flight")
+            return None
         return self._checkpoint_mgr.save_checkpoint(
             self._connections,
             self._task_states.get_all_states(),
             self._flow_version,
+            self._task_checkpoint_data(),
         )
 
     # -- Run Once (debug) --

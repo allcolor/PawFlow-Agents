@@ -5,6 +5,83 @@ import os
 import threading
 
 
+def _workflow_proposal_list(app):
+    """Return canonical proposal surfaces, or None when the feature is off."""
+    try:
+        return app.api.send_action(
+            "workflow_proposal_list", conversation_id=app.conversation_id)
+    except Exception as exc:
+        if "Workflow proposals are disabled" in str(exc):
+            return None
+        raise
+
+
+def _send_workflow_proposal_request(app, request):
+    app._send_message(
+        "[Create a canonical workflow proposal using the propose_workflow "
+        "tool. Analyze the request, build the complete FlowDefinition, then "
+        "call propose_workflow.]\n\n" + request)
+
+
+def _handle_workflow_proposal_command(app, subcmd, subarg, raw_arg, listed):
+    """Handle /plan through WorkflowProposal actions after capability probe."""
+    if subcmd == "list" or not raw_arg:
+        surfaces = listed.get("surfaces", [])
+        if not surfaces:
+            app.renderer.print_system("No workflow proposals.")
+        for surface in surfaces:
+            app.renderer.print_ui_surface(surface)
+        return
+    if subcmd == "create":
+        if not subarg:
+            app.renderer.print_error("Usage: /plan create <description>")
+            return
+        _send_workflow_proposal_request(app, subarg)
+        return
+    if subcmd not in {"show", "accept", "approve", "cancel", "reject", "replay"}:
+        _send_workflow_proposal_request(app, raw_arg)
+        return
+    proposal_id, _, comment = subarg.partition(" ")
+    if not proposal_id:
+        app.renderer.print_error(f"Usage: /plan {subcmd} <proposal_id>")
+        return
+    data = app.api.send_action(
+        "workflow_proposal_get", conversation_id=app.conversation_id,
+        proposal_id=proposal_id)
+    proposal = data.get("proposal", {})
+    if subcmd == "show":
+        surface = data.get("surface")
+        if surface:
+            app.renderer.print_ui_surface(surface)
+        return
+    action = {
+        "accept": "workflow_proposal_accept",
+        "approve": "workflow_proposal_approve",
+        "cancel": "workflow_proposal_cancel",
+        "reject": "workflow_proposal_cancel",
+        "replay": "workflow_proposal_replay",
+    }[subcmd]
+    arguments = {
+        "conversation_id": app.conversation_id,
+        "proposal_id": proposal_id,
+        "state_revision": proposal.get("state_revision"),
+    }
+    if comment:
+        arguments["comment"] = comment
+    if subcmd == "replay":
+        run_ids = proposal.get("run_ids") or []
+        if not run_ids:
+            app.renderer.print_error("This proposal has no run to replay.")
+            return
+        arguments["run_id"] = run_ids[-1]
+    result = app.api.send_action(action, **arguments)
+    surface = result.get("surface")
+    if surface:
+        app.renderer.print_ui_surface(surface)
+    else:
+        app.renderer.print_system(f"Workflow proposal {subcmd} complete.")
+
+
 def handle_files_commands(app, cmd, arg, text):
     """Handle file and dev tool commands. Returns True if handled, False otherwise."""
 
@@ -199,6 +276,11 @@ def handle_files_commands(app, cmd, arg, text):
         subarg = parts[1] if len(parts) > 1 else ""
 
         try:
+            proposals = _workflow_proposal_list(app)
+            if proposals is not None:
+                _handle_workflow_proposal_command(
+                    app, subcmd, subarg, arg, proposals)
+                return True
             if subcmd == "list" or not arg:
                 data = app.api.send_action("get_plans", conversation_id=app.conversation_id)
                 plans_list = data.get("plans", [])

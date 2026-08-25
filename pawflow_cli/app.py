@@ -91,6 +91,7 @@ class PawCode(_PawCodeMessagingMixin, _PawCodeEventsMixin, _PawCodeCommandsMixin
         self._last_responses = []  # last N agent responses for /copy
         self._approval_queue = queue.Queue()  # background → main thread approval requests
         self._approval_response = queue.Queue()  # main thread → background approval responses
+        self._pending_interactions = {}  # durable request_id -> typed request
         self._active_agents = {}  # server-polled active agents (single source of truth for typing)
         # Message ids already rendered (our own sends + finished turns), so
         # new_message SSE echoes from the shared conversation don't duplicate.
@@ -359,6 +360,8 @@ class PawCode(_PawCodeMessagingMixin, _PawCodeEventsMixin, _PawCodeCommandsMixin
             result = approval["result_map"].get(text.lower(), "denied")
             self._approval_response.put(result)
             self.renderer.print_system(f"Approval: {result}")
+            return
+        if self._respond_to_pending_interaction(text):
             return
         # Detect @filepath references and auto-upload
         import re

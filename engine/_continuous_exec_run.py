@@ -5,13 +5,13 @@ rollback. Split out of continuous_executor.py for the <=800-line rule; mixed
 into ContinuousFlowExecutor (one MRO, shared self state).
 """
 
-import time
 import logging
+import time
 from typing import List, Optional
 
 from core import FlowFile
-from core.connection import Connection
 from core.bulletin import BulletinBoard
+from core.connection import Connection
 from engine.provenance import ProvenanceEventType
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,41 @@ class _ContinuousExecRunMixin:
             except (TypeError, ValueError):
                 logger.warning("Invalid max_queue for root source task '%s': %r", task_id, max_queue)
         return True
+
+    def _has_pending_durable_continuations(self) -> bool:
+        """Keep a deployed executor alive while its parked FlowFiles are undelivered."""
+        instance_id = getattr(self, "_instance_id", "")
+        if not instance_id:
+            return False
+        try:
+            from core.confirmation_store import ConfirmationStore
+            if ConfirmationStore.instance().has_pending_waits(instance_id):
+                return True
+            from core.workflow_agent_invocation import (
+                WorkflowParentInvocationStore,
+            )
+            if WorkflowParentInvocationStore.instance().has_pending(instance_id):
+                return True
+            flow_run_store = self._runtime_context.get("flow_run_store")
+            if flow_run_store is None or not flow_run_store.has_pending_instance(
+                    instance_id):
+                return False
+            flow_run_context = self._runtime_context.get("flow_run_context") or {}
+            run_id = (
+                str(flow_run_context.get("run_id") or "")
+                if isinstance(flow_run_context, dict)
+                else str(getattr(flow_run_context, "run_id", "") or ""))
+            run = flow_run_store.get(run_id) if run_id else None
+            if run and run["status"] in {"starting", "running", "waiting"}:
+                flow_run_store.transition(
+                    run_id, "failed",
+                    "flow drained without reaching completeFlowRun")
+                return False
+            return bool(run and run["status"] in {"cancelling", "committing"})
+        except Exception:
+            logger.exception(
+                "Failed to inspect durable continuations for %s", instance_id)
+            return True
 
     def _scheduler_loop(self):
         """Main scheduling loop.
@@ -135,6 +170,9 @@ class _ContinuousExecRunMixin:
                         if all_empty:
                             self._idle_cycles += 1
                             if self._idle_cycles >= self._auto_stop_threshold:
+                                if self._has_pending_durable_continuations():
+                                    self._idle_cycles = 0
+                                    continue
                                 logger.info(
                                     f"Auto-stopping flow '{self._flow.id}': "
                                     "no persistent sources and all queues empty"
@@ -476,6 +514,9 @@ class _ContinuousExecRunMixin:
             # Route to failure connection
             input_ff.set_attribute("error.message", error_msg)
             input_ff.set_attribute("error.task", task_id)
+            error_code = str(getattr(error, "code", "") or "")
+            if error_code:
+                input_ff.set_attribute("error.code", error_code)
             for i, fc in enumerate(failure_conns):
                 ff_to_send = input_ff if i == 0 else input_ff.clone()
                 fc.enqueue(ff_to_send)

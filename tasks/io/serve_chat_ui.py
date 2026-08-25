@@ -61,6 +61,7 @@ _JS_MODULES = [
     # sse.js was split (<=800 lines each); load order matters: sse_state.js
     # (globals + per-connection state + shared helpers) before the wire
     # files, then sse.js (connectSSE resets state + calls _sseWireA/B).
+    "ui_surfaces.js", "ui_surface_loader.js",
     "sse_state.js", "sse_handlers_a.js", "sse_handlers_b.js", "sse.js",
     "dialogs.js",
     "admin_settings.js",
@@ -370,6 +371,7 @@ def _initial_extensions_block(user_id: str = "", conversation_id: str = "",
             "templates": templates,
             "slots": rec.get("slots", []),
             "hooks": rec.get("hooks", []),
+            "components": rec.get("components", []),
             "i18n": rec.get("i18n", {}),
         })
     context_json = json.dumps(context, ensure_ascii=False).replace("<", "\\u003c")
@@ -514,12 +516,19 @@ def render_chat_page(*, agent_path: str = "/api/agent",
     every other value is autoescaped by the template (paths go through
     ``tojson`` in scripts).
     """
+    from core.flow_feature_flags import workflow_proposals_enabled
+
+    proposals_enabled = workflow_proposals_enabled()
     sig = _asset_signature()
     if extensions_block is None:
         extensions_block = _initial_extensions_block(records=[])
     return _env.get_template("chat.html").render(
         asset_version=_compute_js_version(sig),
-        js_modules=[mod for mod in _JS_MODULES if (_CHAT_UI_DIR / mod).exists()],
+        js_modules=[
+            mod for mod in _JS_MODULES
+            if (_CHAT_UI_DIR / mod).exists()
+            and not (proposals_enabled and mod == "plans_panel.js")
+        ],
         css_modules=list(_CSS_MODULES),
         i18n_block=_initial_i18n_block(),
         theme_block=theme_block or "",
@@ -529,6 +538,7 @@ def render_chat_page(*, agent_path: str = "/api/agent",
         sse_path=sse_path,
         login_url=login_url,
         custom_css=_safe_style_text(custom_css),
+        workflow_proposals_enabled=proposals_enabled,
     )
 
 

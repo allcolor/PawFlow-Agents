@@ -3,8 +3,8 @@
 import json
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from core.executor_registry import ExecutorRegistry
 
@@ -37,6 +37,7 @@ class TestExecutorRegistry(unittest.TestCase):
         mock_ex = MagicMock()
         self.registry.register("flow_1", mock_ex)
         assert self.registry.get("flow_1") is mock_ex
+        assert mock_ex._instance_id == "flow_1"
         assert self.registry.count() == 1
 
     def test_unregister(self):

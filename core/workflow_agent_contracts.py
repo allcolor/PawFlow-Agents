@@ -60,7 +60,7 @@ _WORKFLOW_TRANSITIONS = {
         "budget_exceeded", "force_stopped",
     }),
     "cancelling": frozenset({"cancelled", "force_stopped", "failed"}),
-    "committing": frozenset({"completed", "superseded", "recovery_failed"}),
+    "committing": WORKFLOW_TERMINAL_STATUSES,
 }
 
 
@@ -329,7 +329,8 @@ class WorkflowRunContext(VersionedContract):
     run_generation: int
     flow_ref: ResourceRef
     channel: str
-    invocation_mode: Literal["conversation", "automation", "silent_maintenance"]
+    invocation_mode: Literal[
+        "conversation", "automation", "silent_maintenance", "flow"]
     permission_mode: str
     authorization_ref: AuthorizationRefContract
     deadline_at: str
@@ -337,6 +338,11 @@ class WorkflowRunContext(VersionedContract):
     service_snapshot: dict[str, Any]
     cancel_token: str
     event_sink: str
+    parent_invocation: dict[str, Any] | None = None
+    publish_to_conversation: StrictBool = False
+    invocation_depth: int = 0
+    ancestor_agent_refs: tuple[ResourceRef, ...] = ()
+    ancestor_flow_refs: tuple[ResourceRef, ...] = ()
 
     @field_validator(
         "run_id", "conversation_id", "agent_name", "user_id", "root_turn_id",
@@ -368,6 +374,13 @@ class WorkflowRunContext(VersionedContract):
             raise ValueError("run_generation must match turn_identity")
         if self.authorization_ref.root_turn_id != self.root_turn_id:
             raise ValueError("authorization_ref root turn does not match")
+        if self.invocation_mode == "flow":
+            if not self.parent_invocation:
+                raise ValueError("flow invocation requires a parent invocation")
+            if self.invocation_depth < 1:
+                raise ValueError("flow invocation depth must be positive")
+        elif self.parent_invocation is not None:
+            raise ValueError("only flow invocation may carry a parent invocation")
         return self
 
 

@@ -1,6 +1,6 @@
 """Interactive SSE dispatcher: thinking render, cross-client messages, dedup."""
 
-from pawflow_cli.event_handler import dispatch_event, _flatten_multipart
+from pawflow_cli.event_handler import _flatten_multipart, dispatch_event
 
 
 class _Renderer:
@@ -12,6 +12,8 @@ class _Renderer:
         self.markdown = []
         self.badges = []
         self.done_footers = []
+        self.surfaces = []
+        self.interactions = []
 
     def start_thinking(self, agent):
         self._thinking[agent] = ""
@@ -38,6 +40,12 @@ class _Renderer:
     def print_done(self, *a, **k):
         self.done_footers.append(a)
 
+    def print_ui_surface(self, surface):
+        self.surfaces.append(surface)
+
+    def print_interaction(self, interaction):
+        self.interactions.append(interaction)
+
 
 class _App:
     def __init__(self):
@@ -46,6 +54,13 @@ class _App:
         self._seen_msg_ids = set()
         self._last_responses = []
         self._status = ""
+        self._pending_interactions = {}
+
+    def _remember_interaction(self, interaction):
+        request_id = interaction["request_id"]
+        if request_id not in self._pending_interactions:
+            self.renderer.print_interaction(interaction)
+        self._pending_interactions[request_id] = interaction
 
     def _update_status(self, text):
         self._status = text
@@ -100,6 +115,32 @@ def test_new_message_own_echo_is_deduped():
     _dispatch(app, "new_message",
               {"role": "user", "content": "typed locally", "msg_id": "mine"})
     assert app.renderer.user_messages == []
+
+
+def test_generic_ui_surface_event_reaches_terminal_renderer():
+    app = _App()
+    surface = {
+        "format": "pawflow.ui-surface.v1", "surface_id": "uis_custom",
+        "producer": {"kind": "task", "id": "custom"},
+        "semantic": {"title": "Custom task UI"},
+    }
+    _dispatch(app, "ui_surface_upserted", {"surface": surface})
+    assert app.renderer.surfaces == [surface]
+
+
+def test_typed_interaction_events_reach_terminal_and_reconcile():
+    app = _App()
+    interaction = {
+        "request_id": "req_1", "status": "pending", "kind": "integer",
+        "message": "How many?", "options": [],
+    }
+    _dispatch(app, "interaction_request", interaction)
+    _dispatch(app, "interaction_request", interaction)
+    assert app.renderer.interactions == [interaction]
+    assert "req_1" in app._pending_interactions
+    _dispatch(app, "interaction_answered", {
+        **interaction, "status": "answered", "answer": 2})
+    assert "req_1" not in app._pending_interactions
 
 
 def test_done_marks_turn_msg_ids_seen():

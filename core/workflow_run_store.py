@@ -117,6 +117,8 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                     service_snapshot_json TEXT NOT NULL,
                     limits_json TEXT NOT NULL DEFAULT '{}',
                     authorization_ref_json TEXT NOT NULL,
+                    parent_invocation_json TEXT,
+                    publish_to_conversation INTEGER NOT NULL DEFAULT 0,
                     claimed_ids_json TEXT NOT NULL DEFAULT '[]',
                     usage_json TEXT NOT NULL DEFAULT '{}',
                     staged_result_json TEXT,
@@ -125,6 +127,7 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                     assistant_msg_id TEXT,
                     terminal_event_id TEXT,
                     terminal_event_json TEXT,
+                    terminal_status TEXT NOT NULL DEFAULT 'completed',
                     message_committed INTEGER NOT NULL DEFAULT 0,
                     inbox_acknowledged INTEGER NOT NULL DEFAULT 0,
                     outbox_enqueued INTEGER NOT NULL DEFAULT 0,
@@ -208,6 +211,18 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                 connection.execute(
                     "ALTER TABLE workflow_runs ADD COLUMN "
                     "permission_mode TEXT NOT NULL DEFAULT 'read_only'")
+            if "parent_invocation_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE workflow_runs ADD COLUMN "
+                    "parent_invocation_json TEXT")
+            if "publish_to_conversation" not in columns:
+                connection.execute(
+                    "ALTER TABLE workflow_runs ADD COLUMN "
+                    "publish_to_conversation INTEGER NOT NULL DEFAULT 0")
+            if "terminal_status" not in columns:
+                connection.execute(
+                    "ALTER TABLE workflow_runs ADD COLUMN "
+                    "terminal_status TEXT NOT NULL DEFAULT 'completed'")
 
     def reserve_generation(self, conversation_id: str,
                            agent_name: str) -> int:
@@ -231,7 +246,9 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
 
     def create_run(self, *, context, request, parameters: dict[str, Any],
                    lease_seconds: float,
-                   binding: dict[str, Any] | None = None) -> dict[str, Any]:
+                   binding: dict[str, Any] | None = None,
+                   parent_invocation: dict[str, Any] | None = None,
+                   publish_to_conversation: bool = False) -> dict[str, Any]:
         now = time.time()
         run_id = _required(context.run_id, "run_id")
         conversation_id = _required(
@@ -250,7 +267,9 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
             _json(binding or {}),
             _json(context.service_snapshot),
             _json(context.limits.to_dict()),
-            _json(context.authorization_ref.to_dict()), now, now,
+            _json(context.authorization_ref.to_dict()),
+            (_json(parent_invocation) if parent_invocation is not None else None),
+            int(bool(publish_to_conversation)), now, now,
         )
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -266,6 +285,11 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                     or existing["run_generation"] != context.run_generation
                     or existing["flow_ref_json"] != _json(
                         context.flow_ref.to_dict())
+                    or existing["parent_invocation_json"] != (
+                        _json(parent_invocation)
+                        if parent_invocation is not None else None)
+                    or bool(existing["publish_to_conversation"])
+                    != bool(publish_to_conversation)
                 ):
                     raise ValueError(
                         "run_id already identifies a different workflow run")
@@ -284,9 +308,10 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                        flow_ref_json, invocation_mode, status, deadline_at,
                        parameters_json, binding_json, service_snapshot_json,
                        limits_json, authorization_ref_json,
+                       parent_invocation_json, publish_to_conversation,
                        created_at, updated_at
                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                             ?, ?, ?, ?, ?)""",
+                             ?, ?, ?, ?, ?, ?, ?)""",
                 values)
             connection.execute(
                 """INSERT INTO workflow_active_runs VALUES (?, ?, ?, ?, ?, ?)
@@ -354,6 +379,11 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
         assistant_msg_id = _required(
             assistant_payload.get("msg_id"), "assistant_msg_id")
         event_id = _required(terminal_event.get("event_id"), "event_id")
+        terminal_status = str(
+            terminal_event.get("status") or getattr(
+                result, "status", "completed"))
+        if terminal_status not in WORKFLOW_TERMINAL_STATUSES:
+            raise ValueError("terminal status is invalid")
         answered = tuple(result.answered_turn_ids)
         now = time.time()
         with self._lock, self._connect() as connection:
@@ -370,7 +400,8 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                         or row["assistant_payload_json"] != _json(
                             assistant_payload)
                         or row["terminal_event_json"] != _json(
-                            terminal_event)):
+                            terminal_event)
+                        or row["terminal_status"] != terminal_status):
                     raise RuntimeError(
                         "committing run has different terminal identities")
                 return self._row(row)
@@ -382,11 +413,11 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                        staged_result_json=?, assistant_payload_json=?,
                        answered_turn_ids_json=?, assistant_msg_id=?,
                        terminal_event_id=?, terminal_event_json=?,
-                       outbox_enqueued=1, updated_at=?
+                       terminal_status=?, outbox_enqueued=1, updated_at=?
                    WHERE run_id=? AND status='running'""",
                 (_json(result.to_dict()), _json(assistant_payload),
                  _json(answered), assistant_msg_id, event_id,
-                 _json(terminal_event), now, run_id))
+                 _json(terminal_event), terminal_status, now, run_id))
             if cursor.rowcount != 1:
                 raise RuntimeError("terminal staging CAS lost")
             connection.execute(
@@ -525,14 +556,16 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """SELECT message_committed, inbox_acknowledged,
-                          assistant_msg_id, terminal_event_id
+                          assistant_msg_id, terminal_event_id, terminal_status
                    FROM workflow_runs WHERE run_id=? AND status='committing'""",
                 (run_id,)).fetchone()
             if row is None:
                 existing = connection.execute(
                     "SELECT status FROM workflow_runs WHERE run_id=?", (run_id,)
                 ).fetchone()
-                return bool(existing and existing["status"] == "completed")
+                return bool(
+                    existing
+                    and existing["status"] in WORKFLOW_TERMINAL_STATUSES)
             outbox = connection.execute(
                 """SELECT state FROM workflow_terminal_outbox
                    WHERE run_id=?""", (run_id,)).fetchone()
@@ -542,11 +575,14 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                     or outbox is None or outbox["state"] != "delivered"):
                 return False
             now = time.time()
+            terminal_status = str(row["terminal_status"] or "completed")
+            if terminal_status not in WORKFLOW_TERMINAL_STATUSES:
+                return False
             cursor = connection.execute(
-                """UPDATE workflow_runs SET status='completed',
+                """UPDATE workflow_runs SET status=?,
                        terminal_at=?, updated_at=?
                    WHERE run_id=? AND status='committing'""",
-                (now, now, run_id))
+                (terminal_status, now, now, run_id))
             connection.execute(
                 "DELETE FROM workflow_active_runs WHERE run_id=?", (run_id,))
             return cursor.rowcount == 1
@@ -729,12 +765,13 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
             "service_snapshot_json", "limits_json", "authorization_ref_json",
             "claimed_ids_json", "usage_json", "staged_result_json",
             "assistant_payload_json", "answered_turn_ids_json",
-            "terminal_event_json",
+            "terminal_event_json", "parent_invocation_json",
         ):
             raw = result.pop(key)
             result[key[:-5]] = json.loads(raw) if raw is not None else None
         for key in (
-            "message_committed", "inbox_acknowledged", "outbox_enqueued"):
+            "message_committed", "inbox_acknowledged", "outbox_enqueued",
+            "publish_to_conversation"):
             result[key] = bool(result[key])
         return result
 

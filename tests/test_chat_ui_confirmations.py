@@ -1,4 +1,4 @@
-"""Chat UI surfaces for durable confirmation requests."""
+"""Chat UI surfaces for durable typed user interactions."""
 
 import json
 
@@ -22,17 +22,22 @@ def test_sse_events_render_and_reconcile():
     assert "addEventListener('confirmation_request'" in source
     assert "addEventListener('confirmation_answered'" in source
     assert "renderConfirmationBlock(data)" in source
+    assert "addEventListener('interaction_request'" in source
+    assert "addEventListener('interaction_answered'" in source
+    assert "renderInteractionBlock(data)" in source
 
 
 def test_blocks_are_actionable_and_durable():
     source = _text("tasks/io/chat_ui/confirmations_panel.js")
     # Single-choice buttons and multi-choice checkboxes + validate.
-    assert "respondConfirmation(c.request_id, o.value)" in source
-    assert "c.mode === 'multi'" in source
+    assert "respondInteraction(c.request_id, o.value)" in source
+    assert "kind === 'multi'" in source
     assert "filter((b) => b.checked)" in source
     # Durable: pending requests re-render from the store after a reload...
-    assert "function hydrateConfirmations()" in source
-    assert "action$('list_confirmations', { status: 'pending' })" in source
+    assert "function hydrateInteractions()" in source
+    assert "action$('list_interactions', { status: 'pending' })" in source
+    for kind in ("multiline", "integer", "decimal", "date", "datetime", "file", "form"):
+        assert f"kind === '{kind}'" in source or f"kind === '{kind}'" in source
     # ...and the panel lists EVERY conversation's pending requests.
     assert "conf-panel-row" in source
     conversations = _text("tasks/io/chat_ui/conversations.js")

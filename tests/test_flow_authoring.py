@@ -301,6 +301,20 @@ def test_validator_is_static_and_keeps_two_relationships_apart():
     assert FlowDefinitionValidator.validate("nope")["problems"][0]["code"] == "invalid_definition"
 
 
+def test_validator_rejects_durable_waits_in_explicit_batch_flows():
+    report = FlowDefinitionValidator.validate({
+        "name": "Cannot resume", "execution_mode": "batch",
+        "tasks": {"wait": {"type": "durableWait", "parameters": {
+            "signal_id": "later"}}},
+        "relations": [], "entries": ["wait"], "exits": ["wait"],
+    })
+    assert report["ok"] is False
+    assert any(
+        item["code"] == "durable_wait_in_batch_flow"
+        and item["entity_id"] == "wait"
+        for item in report["problems"])
+
+
 def test_validator_reports_missing_embedded_service_parameters():
     from core import ServiceFactory
 

@@ -2,8 +2,9 @@
 
 import unittest
 import json
-from core import FlowFile
+from core import FlowFile, TaskError
 from tasks.data.transform_json import TransformJSONTask
+from tasks.data.split_json import SplitJSONTask
 from tasks.control.split_content import SplitContentTask
 from tasks.control.merge_content import MergeContentTask
 from tasks.system.update_attribute import UpdateAttributeTask
@@ -87,6 +88,34 @@ class TestSplitContent(unittest.TestCase):
         ff = FlowFile(content=b'')
         results = task.execute(ff)
         self.assertEqual(len(results), 1)
+
+
+class TestSplitJSON(unittest.TestCase):
+
+    def test_split_stamps_standard_correlation_and_count(self):
+        source = FlowFile(content=b'["a", "b"]')
+        results = SplitJSONTask({}).execute(source)
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0].get_attribute('fragment.identifier'),
+                         source.process_id)
+        self.assertEqual(results[1].get_attribute('fragment.index'), '1')
+        self.assertEqual(results[1].get_attribute('fragment.count'), '2')
+        self.assertEqual(results[1].get_attribute('route.relationship'), 'success')
+
+    def test_empty_collection_uses_explicit_relationship(self):
+        result = SplitJSONTask({'empty_relationship': 'nothing'}).execute(
+            FlowFile(content=b'[]'))[0]
+
+        self.assertEqual(result.get_content(), b'[]')
+        self.assertEqual(result.get_attribute('fragment.empty'), 'true')
+        self.assertEqual(result.get_attribute('fragment.count'), '1')
+        self.assertEqual(result.get_attribute('route.relationship'), 'nothing')
+
+    def test_split_refuses_more_than_the_fragment_cap(self):
+        with self.assertRaisesRegex(TaskError, 'limit is 2'):
+            SplitJSONTask({'max_fragments': 2}).execute(
+                FlowFile(content=b'[1, 2, 3]'))
 
 
 class TestMergeContent(unittest.TestCase):
@@ -177,6 +206,25 @@ class TestMergeContent(unittest.TestCase):
             'fragment.index': '0'}))
 
         self.assertEqual(results[0].get_content(), b'B|A')
+
+    def test_expected_count_attribute_completes_each_wave_dynamically(self):
+        task = MergeContentTask({
+            'separator': '|', 'min_entries': 99,
+            'expected_count_attribute': 'fragment.count',
+        })
+        common = {'fragment.identifier': 'wave', 'fragment.count': '2'}
+        self.assertEqual(task.execute(FlowFile(content=b'A', attributes=common)), [])
+        results = task.execute(FlowFile(content=b'B', attributes=common))
+
+        self.assertEqual(results[0].get_content(), b'A|B')
+
+    def test_merge_refuses_a_bin_over_its_byte_limit(self):
+        task = MergeContentTask({
+            'min_entries': 2, 'max_bin_bytes': 5,
+        })
+        self.assertEqual(task.execute(FlowFile(content=b'abc')), [])
+        with self.assertRaisesRegex(TaskError, 'max_bin_bytes 5'):
+            task.execute(FlowFile(content=b'def'))
 
 
 class TestUpdateAttribute(unittest.TestCase):

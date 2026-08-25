@@ -12,6 +12,8 @@ from tasks.ai.actions._files_fs_graph import (
     _executor_flow_metadata,
     _merge_graph_metadata,
     _static_flow_graph,
+    _apply_definition_node_metadata,
+    _graph_layout,
     _add_declared_ports_to_graph,
     _add_runtime_links_to_graph,
     _load_flow_ref_definition,
@@ -204,6 +206,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             is_running = False
             nodes = {}
             edges = []
+            raw = {}
             flow_name = instance_id or template_id
 
             if flow_ref:
@@ -280,6 +283,9 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
+            if raw:
+                _apply_definition_node_metadata(raw, nodes)
+
             for e in edges:
                 target = e["target"]
                 if target in nodes:
@@ -288,7 +294,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({
                 "flow_name": flow_name, "instance_id": instance_id,
                 "template_id": template_id, "is_running": is_running,
-                "nodes": nodes, "edges": edges,
+                "nodes": nodes, "edges": edges, "layout": _graph_layout(raw),
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

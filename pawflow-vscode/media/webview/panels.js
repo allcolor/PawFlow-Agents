@@ -189,7 +189,7 @@ function loadAccountsPanel() {
 }
 
 function loadPlansPanel() {
-  vscode.postMessage({ type: 'command', command: 'get_plans' });
+  vscode.postMessage({ type: 'command', command: 'workflow_proposal_list' });
   _pendingPanel = 'plans';
 }
 
@@ -270,6 +270,24 @@ function renderPanelResult(action, data) {
 
   var overlay = document.getElementById('panelOverlay');
   if (!overlay || overlay.className !== 'panel-overlay visible') return false;
+
+  if (action === 'workflow_proposal_list' && _pendingPanel === 'plans') {
+    if (data.error === 'Workflow proposals are disabled') {
+      vscode.postMessage({ type: 'command', command: 'get_plans' });
+      return true;
+    }
+    var surfaces = data.surfaces || [];
+    overlay.innerHTML = '<div class="panel-header"><h4>Workflow Proposals ('
+      + surfaces.length + ')</h4><button class="panel-close" onclick="closePanel()">\u2715</button></div>'
+      + '<div class="msg system">Proposal cards and actions are shown in the conversation.</div>';
+    surfaces.forEach(function(surface) {
+      if (typeof vscodeUiSurfaceEvent === 'function') {
+        vscodeUiSurfaceEvent({surface: surface});
+      }
+    });
+    _pendingPanel = '';
+    return true;
+  }
 
   if (action === 'list_resources' && _pendingPanel === 'resources') {
     _resData = data;

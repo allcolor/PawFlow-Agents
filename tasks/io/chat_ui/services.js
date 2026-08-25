@@ -93,9 +93,12 @@ async function _openFlowTemplateGraphTab(templateId) {
 }
 // Flow Editor: open (or reuse) a draft of a repository flow in the SAME
 // canvas as the viewer, switched to edit mode by draft_id.
-function _openFlowEditorTab(draftId, instanceId) {
+function _openFlowEditorTab(draftId, instanceId, proposalId) {
   const graphUrl = '/chat/js/flow_graph.html?draft_id=' + encodeURIComponent(draftId)
     + (instanceId ? '&instance_id=' + encodeURIComponent(instanceId) : '')
+    + (proposalId ? '&proposal_id=' + encodeURIComponent(proposalId) : '')
+    + ((proposalId && typeof conversationId !== 'undefined' && conversationId)
+      ? '&conversation_id=' + encodeURIComponent(conversationId) : '')
     + '&v=' + encodeURIComponent(Date.now());
   if (isPawFlowAndroidApp()) { window.open(graphUrl, '_blank'); return; }
   fetch(graphUrl, { credentials: 'same-origin', cache: 'no-store' })
@@ -103,6 +106,9 @@ function _openFlowEditorTab(draftId, instanceId) {
     .then(html => {
       const bootstrap = '<script>window.__PAWFLOW_FLOW_DRAFT_ID=' + JSON.stringify(draftId)
         + (instanceId ? ';window.__PAWFLOW_FLOW_INSTANCE_ID=' + JSON.stringify(instanceId) : '')
+        + (proposalId ? ';window.__PAWFLOW_WORKFLOW_PROPOSAL_ID=' + JSON.stringify(proposalId) : '')
+        + ((proposalId && typeof conversationId !== 'undefined' && conversationId)
+          ? ';window.__PAWFLOW_FLOW_CONVERSATION_ID=' + JSON.stringify(conversationId) : '')
         + ';<\/script>\n';
       addBlobHtmlTab('draft-' + draftId, html.replace('<script type="module">', bootstrap + '<script type="module">'));
     })

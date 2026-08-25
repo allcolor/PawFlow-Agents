@@ -148,6 +148,21 @@ def _validate_ui_extension_object(
         if str(hook) not in _UI_KNOWN_HOOKS:
             return f"ui_extension.hooks: unknown hook {hook!r}"
 
+    components = (
+        obj.get("components") if isinstance(obj.get("components"), list) else [])
+    seen_components = set()
+    for entry in components:
+        if not isinstance(entry, dict):
+            return "ui_extension.components entries must be objects"
+        component_id = str(entry.get("id") or "").strip()
+        if not component_id or not _UI_ASSET_ID_RE.fullmatch(component_id):
+            return f"ui_extension.components: invalid id {component_id!r}"
+        if ":" in component_id:
+            return "ui_extension.components ids must be package-local"
+        if component_id in seen_components:
+            return f"ui_extension.components: duplicate id {component_id!r}"
+        seen_components.add(component_id)
+
     handlers = obj.get("handlers") if isinstance(obj.get("handlers"), list) else []
     seen_actions = set()
     for entry in handlers:

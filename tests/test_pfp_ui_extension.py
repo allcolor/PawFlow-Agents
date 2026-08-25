@@ -113,6 +113,10 @@ def _write_ui_extension_pkg(root: Path, keypair, *, version: str = "1.0.0",
                 "assets": assets,
                 "slots": slots,
                 "hooks": hooks,
+                "components": [{
+                    "id": "workflow-card",
+                    "description": "Workflow review surface",
+                }],
             },
         ],
     }
@@ -173,6 +177,7 @@ def test_ui_extension_inspect_lists_slots_hooks_assets(tmp_path, keypair):
     assert caps["version_compat"] == "ui.v1"
     assert {"slot": "action_menu", "id": "hello.open"} in caps["slots"]
     assert "boot" in caps["hooks"]
+    assert "workflow-card" in caps["components"]
     assert caps["asset_count"] >= 2
 
 
@@ -376,6 +381,10 @@ def test_ui_extension_install_writes_record_with_assets(tmp_path, keypair, monke
     slots = {(s["slot"], s["id"]) for s in rec["slots"]}
     assert ("action_menu", "hello.open") in slots
     assert "boot" in rec["hooks"]
+    assert rec["components"] == [{
+        "id": "workflow-card",
+        "description": "Workflow review surface",
+    }]
     assert Path(rec["content_dir"]).is_dir()
     asset_disk = Path(rec["content_dir"]) / "content/ui/extension.js"
     assert asset_disk.is_file()
@@ -724,6 +733,20 @@ def test_ext_runtime_has_asset_loader():
 def test_ext_runtime_filters_by_version_compat():
     src = Path("tasks/io/chat_ui/ext_runtime.js").read_text(encoding="utf-8")
     assert "entry.version_compat !== UI_API_VERSION" in src
+
+
+def test_ui_extension_rejects_qualified_component_id(tmp_path, keypair):
+    pkgdir = _write_ui_extension_pkg(tmp_path, keypair)
+    manifest_path = pkgdir / "pfp.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["objects"][0]["components"] = [{"id": "other:card"}]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(r for r in plan["objects"] if r["type"] == "ui_extension")
+    assert row["status"] == "blocked"
+    assert "package-local" in row["reason"]
 
 
 # ── Server-rendered template fragments (assets.templates) ───────────────────────────────

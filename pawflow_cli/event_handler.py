@@ -74,6 +74,21 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
                 target = src.get("target_agent", "") if isinstance(src, dict) else ""
                 app.renderer.print_user_message(content, target)
 
+    elif ev_type == "ui_surface_upserted":
+        surface = data.get("surface") if isinstance(data, dict) else None
+        if isinstance(surface, dict):
+            app.renderer.print_ui_surface(surface)
+
+    elif ev_type in ("interaction_request", "confirmation_request"):
+        remember = getattr(app, "_remember_interaction", None)
+        if remember:
+            remember(data)
+
+    elif ev_type in ("interaction_answered", "confirmation_answered"):
+        pending = getattr(app, "_pending_interactions", None)
+        if pending is not None:
+            pending.pop(str(data.get("request_id") or ""), None)
+
     elif ev_type == "token":
         agent = data.get("agent_name", "")
         if thinking_agent:
@@ -373,7 +388,8 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
                         "list_repo_agents", "list_secrets", "list_variables",
                         "list_schedules", "list_memories", "list_prompts",
                         "task_status", "task_log", "stats", "insights",
-                        "check_files", "port_forward_list", "list_services"}
+                        "check_files", "port_forward_list", "list_services",
+                        "ui_surface_list"}
             if _action in _silent:
                 pass  # silently consumed
             elif isinstance(_parsed, dict) and (_parsed.get("error") or _parsed.get("message")):

@@ -91,7 +91,9 @@ TOOL_FAMILIES = {
              "orchestrating agents or storing notes"),
             ("plan tools", (
                 "create_plan", "update_plan", "approve_plan", "assign_plan",
-                "cancel_plan", "delete_plan", "verify_plan_step"),
+                "cancel_plan", "delete_plan", "verify_plan_step",
+                "propose_workflow", "get_workflow_proposal",
+                "review_workflow_proposal"),
              "orchestrate visible steps with approval or verification",
              "a private lightweight work ledger"),
             ("autonomous task tools",

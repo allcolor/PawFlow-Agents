@@ -16,6 +16,7 @@ from core.agent_contracts import AuthorizationRefContract
 from core.agent_feature_flags import WORKFLOW_AGENT_RUNTIME_KIND
 from core.agent_runtime_router import AgentRunKey
 from core.agent_turn_identity import AgentTurnIdentity
+from core.resource_identity import ResourceRef
 from core.workflow_agent_contracts import (
     AgentWorkflowRequest,
     PreparedAgentTurn,
@@ -70,6 +71,8 @@ class _ActiveRun:
     run_id: str
     binding: WorkflowInstanceConfig | None = None
     invocation_mode: str = "conversation"
+    parent_invocation: dict[str, Any] | None = None
+    publish_to_conversation: bool = False
     cancel_event: threading.Event = field(default_factory=threading.Event)
     finalized: bool = False
     started_at: float = field(default_factory=time.time)
@@ -81,6 +84,9 @@ class _QueuedRun:
     request: PreparedAgentTurn
     binding: WorkflowInstanceConfig | None = None
     invocation_mode: str = "conversation"
+    run_id: str = ""
+    parent_invocation: dict[str, Any] | None = None
+    publish_to_conversation: bool = False
 
     @property
     def root_turn_id(self) -> str:
@@ -243,6 +249,8 @@ class WorkflowAgentRuntime:
                     WorkflowInstanceConfig.from_dict(run["binding"])
                     if run["binding"] else None),
                 invocation_mode=str(run["invocation_mode"] or "conversation"),
+                parent_invocation=run["parent_invocation"],
+                publish_to_conversation=run["publish_to_conversation"],
             )
             self._active[key] = active
             self._start_worker(key, active)
@@ -300,11 +308,54 @@ class WorkflowAgentRuntime:
             invocation_mode=invocation_mode,
         ))
 
+    def submit_flow(
+        self,
+        request: PreparedAgentTurn,
+        binding: WorkflowInstanceConfig,
+        *,
+        parent: dict[str, Any],
+        run_id: str,
+        publish_to_conversation: bool = False,
+    ) -> dict[str, Any]:
+        """Submit one idempotent child owned by a durable parent continuation."""
+        if binding.flow_ref is None:
+            raise ValueError("flow submission requires an exact flow_ref")
+        if not str(run_id or "").strip():
+            raise ValueError("flow submission requires a stable run_id")
+        if not isinstance(parent, dict) or not parent.get("invocation_id"):
+            raise ValueError("flow submission requires a parent invocation")
+        return self._submit(_QueuedRun(
+            request=request,
+            binding=binding,
+            invocation_mode="flow",
+            run_id=str(run_id),
+            parent_invocation=dict(parent),
+            publish_to_conversation=bool(publish_to_conversation),
+        ))
+
     def _submit(self, submission: _QueuedRun) -> dict[str, Any]:
         request = submission.request
         key = self._key(request.conversation_id, request.agent_name)
         with self._lock:
             if key in self._active:
+                requested_run_id = submission.run_id
+                if requested_run_id and self._active[key].run_id == requested_run_id:
+                    return {
+                        "status": "accepted", "queued": False,
+                        "run_id": requested_run_id,
+                    }
+                if requested_run_id:
+                    existing = next((
+                        item for item in self._pending.get(key, ())
+                        if item.run_id == requested_run_id), None)
+                    if existing is not None:
+                        return {
+                            "status": "accepted", "queued": True,
+                            "checkpoint": (
+                                existing.binding is not None
+                                and existing.binding.preempt_policy == "checkpoint"),
+                            "run_id": requested_run_id,
+                        }
                 policy = (
                     submission.binding.preempt_policy
                     if submission.binding is not None
@@ -314,9 +365,11 @@ class WorkflowAgentRuntime:
                     previous.cancel_event.set()
                     active = _ActiveRun(
                         request=request,
-                        run_id=f"wr_{uuid.uuid4().hex}",
+                        run_id=submission.run_id or f"wr_{uuid.uuid4().hex}",
                         binding=submission.binding,
                         invocation_mode=submission.invocation_mode,
+                        parent_invocation=submission.parent_invocation,
+                        publish_to_conversation=submission.publish_to_conversation,
                     )
                     self._active[key] = active
                     try:
@@ -340,13 +393,16 @@ class WorkflowAgentRuntime:
                 self._pending.setdefault(key, []).append(submission)
                 return {
                     "status": "accepted", "queued": True,
-                    "checkpoint": policy == "checkpoint", "run_id": "",
+                    "checkpoint": policy == "checkpoint",
+                    "run_id": submission.run_id,
                 }
             active = _ActiveRun(
                 request=request,
-                run_id=f"wr_{uuid.uuid4().hex}",
+                run_id=submission.run_id or f"wr_{uuid.uuid4().hex}",
                 binding=submission.binding,
                 invocation_mode=submission.invocation_mode,
+                parent_invocation=submission.parent_invocation,
+                publish_to_conversation=submission.publish_to_conversation,
             )
             self._active[key] = active
             self._start_worker(key, active)
@@ -390,6 +446,46 @@ class WorkflowAgentRuntime:
             if force and self._active.get(key) is active:
                 self._active.pop(key, None)
                 self._pending.pop(key, None)
+            return True
+
+    def cancel_run(self, run_id: str, reason: str, force: bool = True) -> bool:
+        """Cancel one exact child run without resolving its agent roster key."""
+
+        with self._lock:
+            found = next((
+                (key, active) for key, active in self._active.items()
+                if active.run_id == run_id
+            ), None)
+            if found is None:
+                return False
+            key, active = found
+            if active.invocation_mode != "flow":
+                return self.cancel(key, reason, force)
+            from core.workflow_run_store import WorkflowRunStore
+            store = WorkflowRunStore.instance()
+            row = store.get_run(run_id)
+            if row is None:
+                return False
+            if row["status"] == "accepted":
+                if not store.transition(run_id, "accepted", "running"):
+                    return False
+                row = store.get_run(run_id)
+            if row["status"] != "running":
+                return row["status"] in {
+                    "cancelled", "force_stopped", "completed"}
+            binding = WorkflowInstanceConfig.from_dict(row["binding"])
+            context = self._context(active, binding, row)
+            from core.workflow_turn_coordinator import WorkflowTurnCoordinator
+            terminal = WorkflowTurnCoordinator(store).finalize_status(
+                context,
+                status="force_stopped" if force else "cancelled",
+                reason=reason or ("force_stop" if force else "cancelled"),
+            )
+            active.cancel_event.set()
+            active.finalized = terminal is not None
+            if self._active.get(key) is active:
+                self._active.pop(key, None)
+                self._launch_next_locked(key, user_id=active.request.user_id)
             return True
 
     def active_snapshot(self, conversation_id: str) -> list[dict[str, Any]]:
@@ -464,9 +560,11 @@ class WorkflowAgentRuntime:
                 self._pending.pop(key, None)
         active = _ActiveRun(
             request=submission.request,
-            run_id=f"wr_{uuid.uuid4().hex}",
+            run_id=submission.run_id or f"wr_{uuid.uuid4().hex}",
             binding=submission.binding,
             invocation_mode=submission.invocation_mode,
+            parent_invocation=submission.parent_invocation,
+            publish_to_conversation=submission.publish_to_conversation,
         )
         self._active[key] = active
         self._start_worker(key, active)
@@ -529,7 +627,9 @@ class WorkflowAgentRuntime:
                     context=context, request=workflow_request,
                     parameters=binding.parameters,
                     lease_seconds=binding.limits.max_duration_seconds + 60,
-                    binding=binding.to_dict())
+                    binding=binding.to_dict(),
+                    parent_invocation=active.parent_invocation,
+                    publish_to_conversation=active.publish_to_conversation)
             if stored["status"] == "accepted":
                 if not run_store.transition(
                         active.run_id, "accepted", "running"):
@@ -623,9 +723,9 @@ class WorkflowAgentRuntime:
                 "flow_fqn": binding.flow_fqn,
                 "stage": "started",
             })
+            from core.relay_bindings import get_default
             from engine.continuous_executor import ContinuousFlowExecutor
             from engine.parser import FlowParser
-            from core.relay_bindings import get_default
             relay_id = str(get_default(
                 request.conversation_id, agent=request.agent_name) or "")
             flow = FlowParser.parse(resolved.definition)
@@ -683,9 +783,31 @@ class WorkflowAgentRuntime:
                     committing = bool(
                         stored and stored["status"] == "committing")
                     if not committing:
-                        run_store.fail(active.run_id, str(exc))
+                        if active.invocation_mode == "flow" and stored:
+                            from core.workflow_turn_coordinator import (
+                                WorkflowTurnCoordinator,
+                            )
+                            lowered = str(exc).casefold()
+                            status = (
+                                "budget_exceeded"
+                                if type(exc).__name__ == "WorkflowBudgetExceeded"
+                                else (
+                                    "timed_out"
+                                    if "timeout" in lowered or "timed out" in lowered
+                                    else "failed"
+                                )
+                            )
+                            context = self._context(active, binding, stored)
+                            terminal = WorkflowTurnCoordinator(
+                                run_store).finalize_status(
+                                    context, status=status, reason=str(exc))
+                            active.finalized = terminal is not None
+                            committing = not active.finalized
+                        else:
+                            run_store.fail(active.run_id, str(exc))
                 if not committing:
-                    self._publish_error(active, str(exc))
+                    if active.invocation_mode != "flow":
+                        self._publish_error(active, str(exc))
         finally:
             committing = False
             if run_store is not None:
@@ -717,6 +839,9 @@ class WorkflowAgentRuntime:
     def _context(active: _ActiveRun, binding: WorkflowInstanceConfig,
                  stored: dict[str, Any] | None = None) -> WorkflowRunContext:
         request = active.request
+        parent = (
+            stored["parent_invocation"]
+            if stored is not None else active.parent_invocation)
         deadline = datetime.now(timezone.utc) + timedelta(
             seconds=binding.limits.max_duration_seconds)
         return WorkflowRunContext(
@@ -743,6 +868,19 @@ class WorkflowAgentRuntime:
                 if stored is not None else {}),
             cancel_token=f"cancel:{active.run_id}",
             event_sink=f"conversation:{request.conversation_id}",
+            parent_invocation=(
+                dict(parent) if parent is not None else None),
+            publish_to_conversation=(
+                bool(stored["publish_to_conversation"])
+                if stored is not None else active.publish_to_conversation),
+            invocation_depth=int(
+                (parent or {}).get("invocation_depth") or 0),
+            ancestor_agent_refs=tuple(
+                ResourceRef.from_dict(value)
+                for value in (parent or {}).get("ancestor_agent_refs", ())),
+            ancestor_flow_refs=tuple(
+                ResourceRef.from_dict(value)
+                for value in (parent or {}).get("ancestor_flow_refs", ())),
         )
 
     @staticmethod

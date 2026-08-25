@@ -42,6 +42,32 @@ class TestEnterPlanModeHandler(unittest.TestCase):
             "conv-abc", "plan_mode", True, user_id="alice")
         assert "ENABLED" in res
         assert "create_plan" in res
+        assert "ask_user" in res
+        assert "request_confirmation" in res
+        assert "other tools" in res
+
+    def test_description_allows_only_questions_before_plan(self):
+        assert "ask_user" in self.h.description
+        assert "request_confirmation" in self.h.description
+        assert "approve_plan" in self.h.description
+
+    def test_workflow_cutover_uses_only_canonical_proposal_protocol(self):
+        store = MagicMock()
+        with (
+            patch("core.conversation_store.ConversationStore.instance",
+                  return_value=store),
+            patch(
+                "core.flow_feature_flags.workflow_proposals_enabled",
+                return_value=True,
+            ),
+        ):
+            description = self.h.description
+            result = self.h.execute({})
+        assert "propose_workflow" in description
+        assert "propose_workflow" in result
+        assert "workflow proposal" in result
+        assert "create_plan" not in description
+        assert "approve_plan" not in description
 
 
 class TestExitPlanModeHandler(unittest.TestCase):

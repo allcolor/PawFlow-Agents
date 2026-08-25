@@ -385,6 +385,9 @@ function resumeConv(cid, force) {
       oldCid: _prevCid || null, newCid: cid, force: !!force,
     });
   }
+  if (typeof loadUiSurfaces === 'function') {
+    loadUiSurfaces(cid);
+  }
 
   // Visible loading state in the (now empty) message area. load_history
   // results arrive via the /api/ui task slot + UI-action SSE bus; if that

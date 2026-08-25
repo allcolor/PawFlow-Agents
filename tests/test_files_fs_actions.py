@@ -277,10 +277,14 @@ def test_flow_runtime_graph_loads_repository_template(tmp_path, monkeypatch):
             "id": "demo-flow",
             "name": "demo_flow",
             "tasks": {
-                "start": {"type": "generateFlowFile", "parameters": {}},
+                "start": {"type": "generateFlowFile", "label": "Start here",
+                          "description": "Create the first FlowFile.", "parameters": {}},
                 "done": {"type": "logMessage", "parameters": {}},
             },
             "relations": [{"from": "start", "to": "done", "type": "success"}],
+            "layout": {"nodes": {"start": {"x": 10, "y": 20}},
+                       "frames": {"input": {"id": "input", "x": 0, "y": 0,
+                         "width": 300, "height": 180, "label": "Input"}}},
         })
     ff = FlowFile(content=b"")
 
@@ -292,6 +296,9 @@ def test_flow_runtime_graph_loads_repository_template(tmp_path, monkeypatch):
     assert result == [ff]
     assert payload["flow_name"] == "demo_flow"
     assert set(payload["nodes"]) == {"start", "done"}
+    assert payload["nodes"]["start"]["label"] == "Start here"
+    assert payload["nodes"]["start"]["description"] == "Create the first FlowFile."
+    assert payload["layout"]["nodes"]["start"] == {"x": 10, "y": 20}
     assert payload["edges"] == [{
         "source": "start",
         "target": "done",

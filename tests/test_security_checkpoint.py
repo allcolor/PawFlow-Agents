@@ -220,6 +220,7 @@ class TestCheckpoint:
         assert len(restored[key]) == 1
         assert restored[key][0].get_content() == b"important data"
         assert restored[key][0].get_attribute("x") == "1"
+        assert restored[key][0].process_id == ff.process_id
 
     def test_multiple_checkpoints_trimmed(self, checkpoint_dir):
         mgr = CheckpointManager("test_flow", checkpoint_dir=checkpoint_dir,

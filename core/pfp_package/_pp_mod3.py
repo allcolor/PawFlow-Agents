@@ -267,6 +267,14 @@ def _ui_extension_manifest(obj: Dict[str, Any], package: Dict[str, Any],
             "label_key": str(slot.get("label_key") or ""),
         })
     hooks = [str(h) for h in (obj.get("hooks") or [])]
+    components = [
+        {
+            "id": str(entry.get("id") or ""),
+            "description": str(entry.get("description") or ""),
+        }
+        for entry in (obj.get("components") or [])
+        if isinstance(entry, dict)
+    ]
     i18n = {}
     for row in rows:
         if row["kind"] == "i18n" and row.get("lang"):
@@ -303,6 +311,7 @@ def _ui_extension_manifest(obj: Dict[str, Any], package: Dict[str, Any],
         "assets": rows,
         "slots": slots,
         "hooks": hooks,
+        "components": components,
         "i18n": i18n,
         "handlers": handlers,
     }
@@ -333,7 +342,8 @@ def list_installed_ui_extensions(*, user_id: str, conversation_id: str = "",
     """Return the asset manifest for every installed ui_extension in the scope.
 
     Each entry has: package, version, content_dir, version_compat, assets,
-    slots, hooks, i18n. Conversation scope inherits user-scope packages.
+    slots, hooks, components, i18n. Conversation scope inherits user-scope
+    packages.
     """
     seen = set()
     out = []
@@ -372,6 +382,7 @@ def list_installed_ui_extensions(*, user_id: str, conversation_id: str = "",
                     "assets": list(ui.get("assets") or []),
                     "slots": list(ui.get("slots") or []),
                     "hooks": list(ui.get("hooks") or []),
+                    "components": list(ui.get("components") or []),
                     "i18n": dict(ui.get("i18n") or {}),
                     "handlers": list(ui.get("handlers") or []),
                     "allowed_tools": list(ui.get("allowed_tools") or []),

@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Optional, Any, List
+from typing import Any, Dict, List, Optional
 
 from engine.continuous_executor import ContinuousFlowExecutor
 
@@ -154,6 +154,7 @@ class ExecutorRegistry:
                 except Exception as e:
                     logger.warning("Failed to stop previous executor for '%s': %s", instance_id, e)
             self._executors[instance_id] = executor
+            executor._instance_id = instance_id
 
         # Update deployment status
         dr = _get_deployment_registry()
@@ -165,6 +166,23 @@ class ExecutorRegistry:
 
         Marks the deployment as stopped (does NOT delete it).
         """
+        try:
+            from core.workflow_agent_invocation import (
+                WorkflowParentInvocationStore,
+            )
+            child_run_ids = (
+                WorkflowParentInvocationStore.instance().cancel_instance(
+                    instance_id))
+            if child_run_ids:
+                from core.workflow_agent_runtime import WorkflowAgentRuntime
+                runtime = WorkflowAgentRuntime.instance()
+                for run_id in child_run_ids:
+                    runtime.cancel_run(
+                        run_id, "parent flow instance stopped", force=True)
+        except Exception:
+            logger.exception(
+                "Failed to propagate parent flow cancellation for %s",
+                instance_id)
         with self._executor_lock:
             self._executors.pop(instance_id, None)
 

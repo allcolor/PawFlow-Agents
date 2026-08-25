@@ -109,6 +109,8 @@ def test_ext_runtime_pfp_api_exposes_slot_on_call_command(ext_runtime_src):
     assert "openPanel: function (panelId" in ext_runtime_src
     assert "asset: function (pathOrId" in ext_runtime_src
     assert "context: function ()" in ext_runtime_src
+    assert "component: function (componentId, renderFn)" in ext_runtime_src
+    assert "renderComponent: renderComponent," in ext_runtime_src
 
 
 def test_ext_runtime_context_is_a_frozen_snapshot(ext_runtime_src):

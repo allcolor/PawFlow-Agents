@@ -57,11 +57,17 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case 'approval':
           this.handleApproval(msg.requestId, msg.result, msg.approvalType);
           break;
+        case 'interactionResponse':
+          this.handleInteractionResponse(msg.requestId, msg.answer, msg.cancel);
+          break;
         case 'backgroundTool':
           this.handleBackgroundTool(msg.tcId);
           break;
         case 'killTool':
           this.handleKillTool(msg.tcId);
+          break;
+        case 'uiSurfaceAction':
+          this.handleUiSurfaceAction(msg.action, msg.arguments, msg.extension);
           break;
         case 'attachImage':
           if (msg.data && msg.mime_type) {
@@ -303,9 +309,25 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  sendPlan(description: string): void {
-    const msg = `[Create a structured plan using the create_plan tool. Analyze the request, identify steps, then call create_plan.]\n\n${description}`;
-    this.sendMessage(msg);
+  async sendPlan(description: string): Promise<void> {
+    const api = this.getApi();
+    if (!api) { return; }
+    try {
+      const capability = await api.sendAction('workflow_proposal_list', {
+        conversation_id: this.conversationId || '',
+      });
+      const disabled = (capability as any).error === 'Workflow proposals are disabled';
+      if ((capability as any).error && !disabled) {
+        this.postMessage({ type: 'error', message: (capability as any).error });
+        return;
+      }
+      const protocol = disabled
+        ? 'Create a structured plan using the create_plan tool. Analyze the request, identify steps, then call create_plan.'
+        : 'Create a canonical workflow proposal using the propose_workflow tool. Analyze the request, build the complete FlowDefinition, then call propose_workflow.';
+      this.sendMessage(`[${protocol}]\n\n${description}`);
+    } catch (e: any) {
+      this.postMessage({ type: 'error', message: `Plan capability check failed: ${e.message}` });
+    }
   }
 
   async sendCommand(command: string, arg?: string): Promise<void> {
@@ -535,6 +557,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       if (!data.error) {
         if (data.active_agent) { this.selectedAgent = data.active_agent; }
         this.postMessage({ type: 'history', data, append: false });
+        void this.loadUiSurfaces(cid);
+        void this.loadInteractions(cid);
       }
     } catch (e: any) {
       console.warn('[PawFlow] catch-up history failed:', e?.message || e);
@@ -558,6 +582,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         this.setupSSE();
         const isLoadMore = (offset || 0) > 0;
         this.postMessage({ type: 'history', data, append: isLoadMore });
+        if (!isLoadMore) {
+          void this.loadUiSurfaces(cid);
+          void this.loadInteractions(cid);
+        }
       }
     } catch (e: any) {
       console.error('[PawFlow] resumeConversation failed:', e);
@@ -574,6 +602,37 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       result: { choice: result },
       conversation_id: this.conversationId || '',
     });
+  }
+
+  private async handleInteractionResponse(
+    requestId: string, answer: any, cancel: boolean,
+  ): Promise<void> {
+    const api = this.getApi();
+    if (!api || !requestId) { return; }
+    try {
+      const action = cancel ? 'cancel_interaction' : 'respond_interaction';
+      const payload: Record<string, any> = {
+        request_id: requestId,
+        conversation_id: this.conversationId || '',
+      };
+      if (!cancel) { payload.answer = answer; }
+      const data = await api.sendAction(action, payload);
+      if ((data as any).error) {
+        this.postMessage({type: 'error', message: (data as any).error});
+        return;
+      }
+      this.postMessage({
+        type: 'sseEvent',
+        event: {
+          event: 'interaction_answered',
+          data: (data as any).interaction || {
+            request_id: requestId, status: cancel ? 'cancelled' : 'answered',
+          },
+        },
+      });
+    } catch (e: any) {
+      this.postMessage({type: 'error', message: `Interaction response failed: ${e.message}`});
+    }
   }
 
   private _sseConversationId: string | null = null;
@@ -731,6 +790,77 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async handleUiSurfaceAction(
+    action: string, args?: Record<string, any>, extension?: string,
+  ): Promise<void> {
+    const api = this.getApi();
+    if (!api || !action) { return; }
+    const payload = { ...(args || {}) };
+    if (!payload.conversation_id && this.conversationId) {
+      payload.conversation_id = this.conversationId;
+    }
+    if (extension) { payload._ext = extension; }
+    try {
+      const data = await api.sendAction(action, payload);
+      if ((data as any).surface) {
+        this.postMessage({
+          type: 'sseEvent',
+          event: {
+            event: 'ui_surface_upserted',
+            data: { surface: (data as any).surface },
+          },
+        });
+      }
+      if ((data as any).error) {
+        this.postMessage({
+          type: 'error', message: (data as any).message || (data as any).error,
+        });
+      }
+    } catch (e: any) {
+      this.postMessage({
+        type: 'error', message: `Surface action failed: ${e.message}`,
+      });
+    }
+  }
+
+  private async loadUiSurfaces(conversationId: string): Promise<void> {
+    const api = this.getApi();
+    if (!api || !conversationId) { return; }
+    try {
+      const data = await api.sendAction('ui_surface_list', {
+        conversation_id: conversationId,
+      });
+      if (this.conversationId !== conversationId) { return; }
+      for (const surface of (data as any).surfaces || []) {
+        this.postMessage({
+          type: 'sseEvent',
+          event: { event: 'ui_surface_upserted', data: { surface } },
+        });
+      }
+    } catch (e: any) {
+      console.warn('[PawFlow] UI-surface reload failed:', e?.message || e);
+    }
+  }
+
+  private async loadInteractions(conversationId: string): Promise<void> {
+    const api = this.getApi();
+    if (!api || !conversationId) { return; }
+    try {
+      const data = await api.sendAction('list_interactions', {
+        conversation_id: conversationId, status: 'pending',
+      });
+      if (this.conversationId !== conversationId) { return; }
+      for (const interaction of (data as any).interactions || []) {
+        this.postMessage({
+          type: 'sseEvent',
+          event: {event: 'interaction_request', data: interaction},
+        });
+      }
+    } catch (e: any) {
+      console.warn('[PawFlow] pending-interaction reload failed:', e?.message || e);
+    }
+  }
+
   private async showApprovalNotification(event: SSEEvent): Promise<void> {
     const isExec = event.event === 'exec_approval_request';
     const title = isExec
@@ -771,6 +901,12 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     // chat.js (<=800 lines); must load right after chat.js (shares globals).
     const chatHandlersUri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'chat_handlers.js')
+    ) + v;
+    const uiSurfacesUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'ui_surfaces.js')
+    ) + v;
+    const interactionsUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'interactions.js')
     ) + v;
     const commandsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'commands.js')
@@ -819,6 +955,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 </div>
 <script src="${chatUri}"></script>
 <script src="${chatHandlersUri}"></script>
+<script src="${uiSurfacesUri}"></script>
+<script src="${interactionsUri}"></script>
 <script src="${commandsUri}"></script>
 <script src="${panelsUri}"></script>
 <script src="${formsUri}"></script>

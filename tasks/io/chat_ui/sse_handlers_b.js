@@ -67,7 +67,8 @@ function _sseWireB() {
   });
 
   // ── Plan events ──────────────────────────────────────────────
-  eventSource.addEventListener('plan_created', (e) => {
+  if (!window.PAWFLOW_WORKFLOW_PROPOSALS_ENABLED) {
+    eventSource.addEventListener('plan_created', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const plan = data.plan || data;
@@ -93,18 +94,19 @@ function _sseWireB() {
     // Refresh plans panel if open
     if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
     scrollBottom();
-  });
+    });
 
-  eventSource.addEventListener('plan_updated', (e) => {
-    lastSSEActivity = Date.now();
-    const data = JSON.parse(e.data);
-    if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
-  });
+    eventSource.addEventListener('plan_updated', (e) => {
+      lastSSEActivity = Date.now();
+      const data = JSON.parse(e.data);
+      if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
+    });
 
-  eventSource.addEventListener('plan_deleted', (e) => {
-    lastSSEActivity = Date.now();
-    if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
-  });
+    eventSource.addEventListener('plan_deleted', (e) => {
+      lastSSEActivity = Date.now();
+      if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
+    });
+  }
 
   eventSource.addEventListener('relay_status_changed', (e) => {
     lastSSEActivity = Date.now();
@@ -140,6 +142,20 @@ function _sseWireB() {
     const data = JSON.parse(e.data);
     if (typeof _confMarkDone === 'function') _confMarkDone(data);
     if (typeof hydrateConfirmations === 'function') hydrateConfirmations();
+  });
+
+  eventSource.addEventListener('interaction_request', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (typeof renderInteractionBlock === 'function') renderInteractionBlock(data);
+    if (typeof hydrateInteractions === 'function') hydrateInteractions();
+  });
+
+  eventSource.addEventListener('interaction_answered', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (typeof _confMarkDone === 'function') _confMarkDone(data);
+    if (typeof hydrateInteractions === 'function') hydrateInteractions();
   });
 
   eventSource.addEventListener('discard', (e) => {
@@ -553,6 +569,13 @@ function _sseWireB() {
     const data = JSON.parse(e.data);
     // Feed into RxJS bus — all subscribers (action$) will receive this
     if (typeof _pushCommandResult === 'function') _pushCommandResult(data);
+  });
+
+  eventSource.addEventListener('ui_surface_upserted', (e) => {
+    lastSSEActivity = Date.now();
+    if (typeof uiSurfaceEvent === 'function') {
+      uiSurfaceEvent(JSON.parse(e.data));
+    }
   });
 
   eventSource.addEventListener('cli_image_build', (e) => {

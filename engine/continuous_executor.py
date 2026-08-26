@@ -90,7 +90,7 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
 
     def __init__(self, flow: Flow,
                  max_workers: int = 32,
-                 max_retries: int = 3,
+                 max_retries: int = 0,
                  schedule_interval: float = 0.05,
                  provenance: Optional[ProvenanceRepository] = None,
                  checkpoint_interval: float = 30.0,

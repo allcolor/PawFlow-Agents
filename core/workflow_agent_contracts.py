@@ -211,44 +211,54 @@ class PreparedAgentTurn(VersionedContract):
 
 
 class WorkflowLimits(ContractModel):
-    max_duration_seconds: int | None = None
-    max_llm_calls: int
-    max_flowfiles: int
-    max_fanout: int
-    max_cost_usd: float | None = None
+    max_duration_seconds: int = 0
+    max_llm_calls: int = 0
+    max_flowfiles: int = 0
+    max_fanout: int = 0
+    max_cost_usd: float = 0.0
 
     @field_validator(
         "max_llm_calls", "max_flowfiles", "max_fanout",
         mode="before",
     )
     @classmethod
-    def _limits_are_positive(cls, value: int, info) -> int:
-        return require_positive(value, info.field_name)
+    def _limits_are_non_negative(
+        cls, value: int | None, info,
+    ) -> int:
+        if value is None:
+            return 0
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{info.field_name} must be an integer >= 0")
+        return value
 
     @field_validator("max_duration_seconds", mode="before")
     @classmethod
-    def _duration_is_optional_positive(cls, value: int | None) -> int | None:
-        return None if value is None else require_positive(
-            value, "max_duration_seconds")
+    def _duration_is_non_negative(cls, value: int | None) -> int:
+        if value is None:
+            return 0
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("max_duration_seconds must be an integer >= 0")
+        return value
 
     @field_validator("max_cost_usd", mode="before")
     @classmethod
-    def _cost_is_positive_and_finite(cls, value: float | None) -> float | None:
-        if value is not None and (
-            isinstance(value, bool) or not isinstance(value, (int, float))
-            or not math.isfinite(value) or value <= 0
+    def _cost_is_non_negative_and_finite(
+        cls, value: float | None,
+    ) -> float:
+        if value is None:
+            return 0.0
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
         ):
-            raise ValueError("max_cost_usd must be positive and finite")
-        return value
+            raise ValueError("max_cost_usd must be finite and non-negative")
+        return float(value)
 
 
 def _default_workflow_limits() -> WorkflowLimits:
-    return WorkflowLimits(
-        max_llm_calls=24,
-        max_flowfiles=200,
-        max_fanout=16,
-        max_cost_usd=2.0,
-    )
+    return WorkflowLimits()
 
 
 class WorkflowInstanceConfig(ContractModel):

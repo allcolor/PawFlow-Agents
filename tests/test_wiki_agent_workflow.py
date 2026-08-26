@@ -57,7 +57,8 @@ def _reachable(flow: dict, source: str, relationship: str) -> set[str]:
 def test_shipped_wiki_flow_and_agent_defaults_are_valid():
     register_all_tasks()
     flow = _flow()
-    assert validate_agent_workflow_definition(flow)["ok"] is True
+    validation = validate_agent_workflow_definition(flow)
+    assert validation["ok"] is True, validation["problems"]
     assert flow["fqn"] == "pawflow.agents.wiki:1.0.0"
     assert flow["agent_contract"]["parameters"]["reviewer_llm"]["required"] is False
     for name in ("extractor_llm", "writer_llm", "reviewer_llm"):
@@ -139,7 +140,7 @@ def test_strict_llm_schemas_reject_missing_required_fields_before_project_access
         jsonschema.Draft202012Validator.check_schema(schema)
 
 
-def test_intent_gate_preserves_request_and_can_only_reduce_batch_size():
+def test_intent_gate_preserves_request_and_can_only_reduce_positive_batch_size():
     request = {
         "request": {"message": "Analyse un petit lot de docs Wiki."},
         "conversation": {}, "turn": {},
@@ -159,6 +160,7 @@ def test_intent_gate_preserves_request_and_can_only_reduce_batch_size():
     assert SelectWikiSourceBatchTask._batch_limit(state, 8) == 3
     state["wiki_intent"]["batch_files"] = 20
     assert SelectWikiSourceBatchTask._batch_limit(state, 8) == 8
+    assert SelectWikiSourceBatchTask._batch_limit(state, 0) == 20
 
     state["prepared"] = {"files": [], "source_text": ""}
     flowfile.set_content(json.dumps(state).encode("utf-8"))
@@ -236,6 +238,47 @@ def test_optional_review_skips_without_service_and_validates_selected_sources():
         assert "unselected source" in str(exc)
     else:
         raise AssertionError("review accepted an invented source")
+
+
+def test_reviewer_findings_return_to_writer_and_only_clean_review_can_apply():
+    flow = _flow()
+    review_routes = {
+        (row["type"], row["to"])
+        for row in flow["relations"] if row["from"] == "validate_review"
+    }
+    assert review_routes == {("clean", "apply_patch"), ("revise", "plan_patch")}
+
+    state = {
+        "selection": {"entries": [{"path": "core/a.py"}]},
+        "patch": {"pages": []},
+        "extraction": {"claims": []},
+    }
+    rejected = FlowFile(content=json.dumps(state).encode("utf-8"), attributes={
+        "wiki.writer_prompt": "Original validated evidence.",
+        "wiki.review": json.dumps({
+            "issues": [{
+                "code": "unclear",
+                "severity": "warning",
+                "message": "Clarify the lifecycle.",
+                "sources": ["core/a.py"],
+            }],
+            "suggested_corrections": ["Describe the terminal transition."],
+        }),
+    })
+
+    ValidateWikiReviewTask({}).execute(rejected)
+
+    assert rejected.get_attribute("route.relationship") == "revise"
+    prompt = rejected.get_attribute("wiki.writer_prompt")
+    assert "Original validated evidence." in prompt
+    assert "Clarify the lifecycle." in prompt
+    assert "Describe the terminal transition." in prompt
+
+    clean = FlowFile(content=json.dumps(state).encode("utf-8"), attributes={
+        "wiki.review": json.dumps({"issues": [], "suggested_corrections": []}),
+    })
+    ValidateWikiReviewTask({}).execute(clean)
+    assert clean.get_attribute("route.relationship") == "clean"
 
 
 def test_work_report_is_derived_from_actual_result_and_absorbed_turns():

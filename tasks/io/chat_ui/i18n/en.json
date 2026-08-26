@@ -830,7 +830,7 @@
   "workflowRequiredParameters": "Required workflow parameters: {names}",
   "workflowServiceSelect": "Select a service",
   "workflowServiceDisabled": "Disabled",
-  "workflowPositiveLimits": "Every workflow limit must be a positive whole number.",
+  "workflowPositiveLimits": "Every workflow limit must be zero or a positive whole number. Zero means unlimited.",
   "workflowUpgrade": "Upgrade workflow",
   "workflowRunsMenu": "Workflow runs...",
   "workflowRunsTitle": "Workflow runs — {agent}",

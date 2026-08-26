@@ -1213,7 +1213,9 @@ Optional and non-authoritative.
 - Receive the proposed patch and extracted evidence.
 - Return issue codes and suggested corrections.
 - Cannot approve a mechanically invalid patch.
-- A configured severe issue routes back to one bounded writer revision.
+- Any reviewer issue or suggested correction routes back to the writer. Revision
+  continues until the reviewer returns a clean result or the user explicitly
+  stops the run; there is no implicit revision-pass limit.
 - Maximum one review/revision cycle in version 1.
 
 #### apply_wiki_patch_compare_and_swap

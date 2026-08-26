@@ -32,10 +32,12 @@ from core.agent_contracts import CapabilityEffect, IdempotencyClass
 from core.base_task import BaseTask
 
 
-def _workflow_interaction_idempotency_key(task: BaseTask) -> str:
+def _workflow_interaction_identity(
+        task: BaseTask, flowfile: FlowFile | None = None,
+) -> tuple[str, str, int]:
     context = getattr(task, "_workflow_run_context", None)
     if context is None:
-        return ""
+        return "", "", 0
     task_id = str(getattr(task, "_workflow_task_id", "") or "").strip()
     if not task_id:
         from core.confirmation_store import find_own_flow_ids
@@ -44,7 +46,18 @@ def _workflow_interaction_idempotency_key(task: BaseTask) -> str:
     if not task_id:
         raise TaskError(
             "workflow interaction requires a deployed task identity")
-    return f"{context.run_id}:{task_id}"
+    base_key = f"{context.run_id}:{task_id}"
+    if flowfile is None:
+        return base_key, "", 1
+    sequence_attribute = f"workflow.interaction.sequence.{task_id}"
+    try:
+        completed = max(
+            0, int(flowfile.get_attribute(sequence_attribute, "0") or 0))
+    except (TypeError, ValueError):
+        completed = 0
+    occurrence = completed + 1
+    key = base_key if occurrence == 1 else f"{base_key}:{occurrence}"
+    return key, sequence_attribute, occurrence
 
 
 class RequestConfirmationTask(BaseTask):
@@ -82,8 +95,8 @@ class RequestConfirmationTask(BaseTask):
             "scope_id": context.conversation_id,
         }
 
-    def _idempotency_key(self) -> str:
-        return _workflow_interaction_idempotency_key(self)
+    def _idempotency_key(self, flowfile: FlowFile | None = None) -> str:
+        return _workflow_interaction_identity(self, flowfile)[0]
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         from core.confirmation_store import ConfirmationStore, parse_timeout_seconds
@@ -106,6 +119,8 @@ class RequestConfirmationTask(BaseTask):
             options = [o.strip() for o in options_raw.split(",") if o.strip()]
         else:
             options = options_raw
+        idempotency_key, sequence_attribute, occurrence = (
+            _workflow_interaction_identity(self, flowfile))
         record = ConfirmationStore.instance().create_confirmation(
             conversation_id=conversation_id,
             user_id=user_id,
@@ -117,8 +132,10 @@ class RequestConfirmationTask(BaseTask):
             options=options,
             expires_in_seconds=parse_timeout_seconds(
                 self.config.get("expires_in", "")),
-            idempotency_key=self._idempotency_key(),
+            idempotency_key=idempotency_key,
         )
+        if sequence_attribute:
+            flowfile.set_attribute(sequence_attribute, str(occurrence))
         flowfile.set_attribute("confirmation.request_id", record["request_id"])
         flowfile.set_attribute("confirmation.signal_id",
                                f"confirmation:{record['request_id']}")
@@ -193,8 +210,8 @@ class RequestUserInputTask(BaseTask):
             "scope_id": context.conversation_id,
         }
 
-    def _idempotency_key(self) -> str:
-        return _workflow_interaction_idempotency_key(self)
+    def _idempotency_key(self, flowfile: FlowFile | None = None) -> str:
+        return _workflow_interaction_identity(self, flowfile)[0]
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         import json
@@ -249,6 +266,8 @@ class RequestUserInputTask(BaseTask):
                 response_schema = json.loads(response_schema or "{}")
             except ValueError as exc:
                 raise TaskError("response_schema must be valid JSON") from exc
+        idempotency_key, sequence_attribute, occurrence = (
+            _workflow_interaction_identity(self, flowfile))
         try:
             record = UserInteractionStore.instance().create_interaction(
                 conversation_id=conversation_id,
@@ -262,10 +281,12 @@ class RequestUserInputTask(BaseTask):
                 response_schema=response_schema,
                 expires_in_seconds=parse_timeout_seconds(
                     self.config.get("expires_in", "")),
-                idempotency_key=self._idempotency_key(),
+                idempotency_key=idempotency_key,
             )
         except ValueError as exc:
             raise TaskError(f"Invalid user interaction: {exc}") from exc
+        if sequence_attribute:
+            flowfile.set_attribute(sequence_attribute, str(occurrence))
         flowfile.set_attribute("interaction.request_id", record["request_id"])
         flowfile.set_attribute("interaction.signal_id", record["signal_id"])
         flowfile.set_attribute("interaction.kind", record["kind"])

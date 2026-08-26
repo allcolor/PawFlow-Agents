@@ -394,9 +394,8 @@ def bind_agent_group_instance(
             "parameters": {"group_name": group.name},
             "limits": {
                 "max_duration_seconds": group.budgets.timeout_seconds,
-                "max_llm_calls": (
-                    group.deliberation.max_total_participant_calls + 2),
-                "max_flowfiles": 32,
+                "max_llm_calls": 0,
+                "max_flowfiles": 0,
                 "max_fanout": group.deliberation.max_parallelism,
                 "max_cost_usd": group.budgets.max_cost,
             },

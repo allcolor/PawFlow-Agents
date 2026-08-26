@@ -68,12 +68,16 @@ class WorkflowRunStoreLLMMixin:
             active = int(connection.execute(
                 "SELECT COUNT(*) FROM workflow_llm_reservations "
                 "WHERE run_id=?", (run_id,)).fetchone()[0])
-            if int(usage.get("llm_calls", 0)) + active >= int(
-                    limits["max_llm_calls"]):
+            maximum_calls = limits.get("max_llm_calls")
+            if (
+                int(maximum_calls or 0) > 0
+                and int(usage.get("llm_calls", 0)) + active
+                >= int(maximum_calls)
+            ):
                 raise WorkflowBudgetExceeded(
                     "workflow LLM call budget exhausted")
             maximum_cost = limits.get("max_cost_usd")
-            if maximum_cost is not None and float(
+            if float(maximum_cost or 0.0) > 0 and float(
                     usage.get("cost_usd", 0.0)) >= float(maximum_cost):
                 raise WorkflowBudgetExceeded("workflow cost budget exhausted")
             try:

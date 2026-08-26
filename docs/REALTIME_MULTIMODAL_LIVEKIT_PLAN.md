@@ -161,7 +161,7 @@ Suggested config keys:
 | `turn_detection` | no | Replacement for legacy `vad`: `provider_default`, `semantic_vad`, `server_vad`, or `manual`, depending on plugin support. |
 | `tool_profile` | no | Existing PawFlow tool profile to expose to the live agent. |
 | `context_mode` | no | Reuse realtime voice context modes, default `summary:2000`. |
-| `max_session_seconds` | no | Hard cap, default 600. |
+| `max_session_seconds` | no | Optional hard cap; omitted or `0` means unlimited. |
 | `recording_policy` | no | `none`, `transcript`, `audio`, `audio_video`; default `transcript`. |
 
 This service should be selectable from an agent configuration as the agent's realtime service. It should not replace the normal agent `llm_service`; an agent can have both:
@@ -375,7 +375,7 @@ Credential flow:
 ## Security Requirements
 
 - Browser receives only a short-lived LiveKit room token, never provider secrets.
-- LiveKit room token TTL defaults to `min(max_session_seconds + 60, 15 minutes)` and is never longer than the configured hard cap plus a small connection grace period.
+- LiveKit room token TTL is `min(max_session_seconds + 60, 15 minutes)` for a positive configured cap and 15 minutes for an unlimited session. Token expiry limits new joins; it does not terminate an already joined session.
 - Provider credentials stay server-side in PawFlow/worker environment.
 - Room tokens are scoped to one conversation, one user, and one session.
 - Browser participant tokens grant only the minimum required room permissions: join room, publish local microphone/camera/screen tracks requested by the UI, and subscribe to the agent participant. They must not grant room admin permissions.
@@ -462,7 +462,7 @@ P2 progress (2026-07-17) — implemented (live provider runs pending, per owner 
 - Worker bootstrap: `POST /api/realtime/livekit/worker/bootstrap` (deployment-secret header `PAWFLOW_REALTIME_WORKER_SECRET`, 503 when unset, room→session lookup) returns control token, agent room token, resolved instructions (same `instructions_mode`/`context_mode` resolver as the legacy bridge), tool definitions, and server-side-resolved provider credentials (`llm_service` first, `provider_secret` env passthrough otherwise) — never sent to the browser.
 - Tool bridge wired: worker `tool_call` messages run through the existing `RealtimeToolBridge` (silent approval, long tools detach → `context` message to the live session or system-message persistence), `realtime.tool.started/completed/rejected` published.
 - Transcript persistence: `realtime.user/agent.transcript.final` events persist as normal conversation messages via `persist_voice_transcript` (UUID+ts, SSE fan-out); deltas stay UI-only.
-- Sidecar worker `pawflow_livekit_worker/`: `control_client.py` (LiveKit-free, CI-tested, contract-pinned to the server protocol) + `worker.py` (automatic LiveKit dispatch → bootstrap fetch → provider `AgentSession` for openai/gemini/local_pipeline → proxy function tools → event mirroring → `max_session_seconds` cap + shutdown handling). Worker image now runs `python -m pawflow_livekit_worker`.
+- Sidecar worker `pawflow_livekit_worker/`: `control_client.py` (LiveKit-free, CI-tested, contract-pinned to the server protocol) + `worker.py` (automatic LiveKit dispatch → bootstrap fetch → provider `AgentSession` for openai/gemini/local_pipeline → proxy function tools → event mirroring → optional positive `max_session_seconds` cap + shutdown handling). Worker image now runs `python -m pawflow_livekit_worker`.
 - Tests: `tests/test_livekit_worker_p2.py` (13) — 166 realtime/livekit tests green.
 
 P3 progress (2026-07-17) — implemented (live browser validation pending, per owner decision):

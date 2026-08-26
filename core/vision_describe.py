@@ -302,7 +302,7 @@ def _downscale_b64(mime: str, b64: str) -> tuple:
 def describe_image_b64(vision_svc, mime: str, b64: str, *,
                        user_id: str = "", conversation_id: str = "",
                        agent_name: str = "", prompt: str = "",
-                       model: str = "", max_tokens: int = 1024,
+                       model: str = "", max_tokens: int = 0,
                        thinking_budget: int = 0) -> str:
     """Describe one base64 image via a vision llmConnection, with caching.
 

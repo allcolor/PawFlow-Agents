@@ -35,7 +35,7 @@ Create an **LLM Aggregator Service** from the service resource panel and configu
     "llm_reviewer"
   ],
   "max_parallel_advisors": 2,
-  "advisor_max_iterations": 20,
+  "advisor_max_iterations": 0,
   "failure_policy": "best_effort",
   "enforce_read_only": true
 }
@@ -45,8 +45,8 @@ Create an **LLM Aggregator Service** from the service resource panel and configu
 |---|---:|---|
 | `aggregator_llm_service` | required | Direct `llmConnection` that produces the visible response and runs the final tool loop. |
 | `advisor_llm_services` | required | JSON array containing at least one direct `llmConnection` service ID. |
-| `max_parallel_advisors` | `4` | Maximum number of advisors running concurrently. |
-| `advisor_max_iterations` | `20` | Maximum tool-loop iterations available to each advisor. |
+| `max_parallel_advisors` | `0` | Maximum number of advisors running concurrently; `0` runs all configured advisors. |
+| `advisor_max_iterations` | `0` | Maximum tool-loop iterations available to each advisor; `0` is unlimited. |
 | `failure_policy` | `best_effort` | `best_effort` uses successful reports; `fail_fast` cancels the final call if any advisor fails. |
 | `enforce_read_only` | `true` | Restricts advisors to PawFlow's fail-closed read-only tool allowlist. |
 

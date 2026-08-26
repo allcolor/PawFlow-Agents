@@ -103,7 +103,7 @@ class AgentLLMCallTask(_WorkflowContextTask):
             },
             "json_schema": {"type": "json", "required": False, "default": {}},
             "temperature": {"type": "number", "required": False, "default": 0.7},
-            "max_tokens": {"type": "integer", "required": False, "default": 4096},
+            "max_tokens": {"type": "integer", "required": False, "default": 0},
             "thinking_budget": {"type": "integer", "required": False, "default": 0},
             "output_target": {
                 "type": "select",
@@ -123,8 +123,8 @@ class AgentLLMCallTask(_WorkflowContextTask):
                 "default": "run_idempotent",
                 "options": ["none", "run_idempotent"],
             },
-            "retry_attempts": {"type": "integer", "required": False, "default": 1},
-            "timeout": {"type": "integer", "required": False, "default": 60},
+            "retry_attempts": {"type": "integer", "required": False, "default": 0},
+            "timeout": {"type": "integer", "required": False, "default": 0},
             "visibility": {
                 "type": "select",
                 "required": False,
@@ -134,13 +134,15 @@ class AgentLLMCallTask(_WorkflowContextTask):
         }
 
     def workflow_retry_attempts(self, default: int) -> int:
-        requested = max(1, int(self.config.get("retry_attempts", 1) or 1))
+        requested = int(self.config.get("retry_attempts", 0) or 0)
+        if requested < 0:
+            raise ValueError("agentLLMCall retry_attempts must be non-negative")
         if (
-            requested > 1
+            requested != 1
             and self.config.get("cache_policy", "run_idempotent") != "run_idempotent"
         ):
             raise ValueError("agentLLMCall retries require run_idempotent caching")
-        return min(max(1, int(default)), requested)
+        return requested
 
     def execute(self, flowfile: FlowFile) -> list[FlowFile]:
         context = self._context()
@@ -332,7 +334,7 @@ class AgentLLMCallTask(_WorkflowContextTask):
             "response_format": str(self.config.get("response_format") or "text"),
             "json_schema": self._json_schema(),
             "temperature": _float(self.config.get("temperature"), 0.7),
-            "max_tokens": int(self.config.get("max_tokens", 4096) or 4096),
+            "max_tokens": max(0, int(self.config.get("max_tokens", 0) or 0)),
             "thinking_budget": int(self.config.get("thinking_budget", 0) or 0),
         }
         encoded = json.dumps(
@@ -352,16 +354,21 @@ class AgentLLMCallTask(_WorkflowContextTask):
         if hasattr(client, "reset_abort"):
             client.reset_abort()
 
-    def _bound_timeout(self, context) -> float:
-        try:
-            deadline = datetime.fromisoformat(context.deadline_at)
+    def _bound_timeout(self, context) -> float | None:
+        remaining = None
+        raw_deadline = str(getattr(context, "deadline_at", "") or "").strip()
+        if raw_deadline:
+            try:
+                deadline = datetime.fromisoformat(raw_deadline)
+            except ValueError as exc:
+                raise ValueError("workflow run deadline is invalid") from exc
             remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
-        except (TypeError, ValueError):
-            remaining = 0
-        if remaining <= 0:
-            raise TimeoutError("workflow run deadline elapsed before LLM call")
-        requested = max(1, int(self.config.get("timeout", 60) or 60))
-        return max(1.0, min(float(requested), remaining))
+            if remaining <= 0:
+                raise TimeoutError("workflow run deadline elapsed before LLM call")
+        requested = max(0, int(self.config.get("timeout", 0) or 0))
+        if requested <= 0:
+            return remaining
+        return float(requested) if remaining is None else min(float(requested), remaining)
 
     def _complete_with_cancellation(
             self, client, messages, cancel_event, timeout_seconds):
@@ -369,20 +376,23 @@ class AgentLLMCallTask(_WorkflowContextTask):
         timed_out = threading.Event()
 
         def watch_cancel() -> None:
-            deadline = time.monotonic() + timeout_seconds
+            deadline = (
+                None if timeout_seconds is None else
+                time.monotonic() + timeout_seconds
+            )
             while not finished.wait(0.05):
                 if cancel_event is not None and cancel_event.is_set():
                     if hasattr(client, "abort"):
                         client.abort()
                     return
-                if time.monotonic() >= deadline:
+                if deadline is not None and time.monotonic() >= deadline:
                     timed_out.set()
                     if hasattr(client, "abort"):
                         client.abort()
                     return
 
         watcher = None
-        if cancel_event is not None:
+        if cancel_event is not None or timeout_seconds is not None:
             watcher = threading.Thread(
                 target=watch_cancel,
                 daemon=True,
@@ -407,7 +417,7 @@ class AgentLLMCallTask(_WorkflowContextTask):
                     model=str(self.config.get("model") or "") or None,
                     temperature=_float(self.config.get("temperature"), 0.7),
                     max_tokens=max(
-                        1, int(self.config.get("max_tokens", 4096) or 4096)),
+                        0, int(self.config.get("max_tokens", 0) or 0)),
                     response_format=("json" if response_format == "json" else None),
                     tools=tools,
                     thinking_budget=max(
@@ -566,7 +576,7 @@ class AgentLLMCallTask(_WorkflowContextTask):
 
     def _check_run_budget(self, context, run_usage: dict[str, Any]) -> None:
         maximum = context.limits.max_cost_usd
-        if maximum is not None and float(run_usage.get("cost_usd", 0.0)) > float(
+        if maximum > 0 and float(run_usage.get("cost_usd", 0.0)) > float(
             maximum
         ):
             reason = "workflow cost budget exceeded"

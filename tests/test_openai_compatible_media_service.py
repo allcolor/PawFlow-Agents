@@ -184,9 +184,12 @@ def test_video_service_uses_openrouter_videos_endpoint_and_downloads_direct_vide
 
 def test_video_service_default_timeout_matches_schema():
     svc = OpenAICompatibleVideoGenerationService({"llm_service": "openrouter_llm"})
+    schema = svc.get_parameter_schema()
 
-    assert svc.timeout == 900
-    assert svc.get_parameter_schema()["timeout"]["default"] == 900
+    assert svc.timeout == 0
+    assert svc.request_timeout == 300
+    assert schema["timeout"]["default"] == 0
+    assert schema["request_timeout"]["default"] == 300
 
 
 def test_video_service_polls_generation_id(monkeypatch):
@@ -206,10 +209,12 @@ def test_video_service_polls_generation_id(monkeypatch):
 
     monkeypatch.setattr(svc, "_resolve_llm_service", lambda: llm)
     monkeypatch.setattr(svc, "_request_json", fake_request)
+    downloads = []
     monkeypatch.setattr(
         svc,
         "_download_url",
-        lambda url, default_content_type, timeout: (b"MP4", "video/mp4"),
+        lambda url, default_content_type, timeout: (
+            downloads.append(timeout) or (b"MP4", "video/mp4")),
     )
 
     result = svc.generate(prompt="waves")
@@ -217,6 +222,7 @@ def test_video_service_polls_generation_id(monkeypatch):
     assert result["video_bytes"] == b"MP4"
     assert calls[1][0] == "GET"
     assert calls[1][1] == "/videos/gen_123"
+    assert downloads == [300]
 
 
 def test_video_service_uses_openrouter_polling_url(monkeypatch):

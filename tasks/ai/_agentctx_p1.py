@@ -179,14 +179,11 @@ class _PACPhase1Mixin:
         st._svc_cfg = getattr(st.resolved_svc, 'config', {}) or {}
         st._cfg = lambda key, default: self._pac_cfg(st, key, default)
         st.temperature = float(st._cfg("temperature", 0.7))
-        st.max_tokens = int(st._cfg("max_tokens", 4096))
-        st.max_iterations = int(st._cfg("max_iterations", 1000))
-        st.max_consecutive_tool_calls = int(st._cfg("max_consecutive_tool_calls", 100))
+        st.max_tokens = max(0, int(st._cfg("max_tokens", 0)))
+        st.max_iterations = max(0, int(st._cfg("max_iterations", 0)))
+        st.max_consecutive_tool_calls = max(
+            0, int(st._cfg("max_consecutive_tool_calls", 0)))
         st._resilience_style = st._cfg("resilience_style", "balanced")
-        if st._resilience_style == "cautious":
-            st.max_consecutive_tool_calls = min(st.max_consecutive_tool_calls, 10)
-        elif st._resilience_style == "aggressive":
-            st.max_consecutive_tool_calls = max(st.max_consecutive_tool_calls, 50)
         # thinking_budget: -1 = auto (10k for reasoning models, 0 for others)
         # 0 = disabled, >0 = explicit budget
         st.thinking_budget = int(st._cfg("thinking_budget", -1))
@@ -332,7 +329,7 @@ class _PACPhase1Mixin:
         # NOTE: conv_agents `max_depth` is the SUB-AGENT recursion depth only
         # (enforced in agent_executor via min(max_depth, MAX_GLOBAL_DEPTH)). It
         # must NOT touch `max_iterations` (the tool-use loop cap), which is the
-        # LLM service's prerogative, resolved via _cfg("max_iterations", 1000)
+        # LLM service's prerogative, resolved via _cfg("max_iterations", 0)
         # above. Conflating the two silently throttled tool-using agents whose
         # max_depth was lowered to forbid delegation (e.g. help bots with
         # max_depth=1): the loop got 1 iteration and died after a single tool

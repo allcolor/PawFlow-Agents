@@ -16,8 +16,7 @@ from core.llm_client import (
     LLMClient, LLMMessage,
 )
 from tasks.ai._summarize_text import (
-    _PTL_DROP_SCHEDULE,
-    _PTL_MAX_RETRIES,
+    _PTL_DROP_FRACTION,
     _compact_scope_id,
     _is_ptl_error,
     _truncate_head,
@@ -458,8 +457,6 @@ class AgentSummarizeMixin(_AgentSummarizeBackendMixin):
         _provider = getattr(client, 'provider', '') or (
             getattr(client, '_client', None) and getattr(client._client, 'provider', ''))
 
-        max_retries = 3
-
         def _build_prompt_for(_fid: str, _ckey: str) -> str:
             """Rebuild the summarizer prompt for a given file_id + key.
 
@@ -487,11 +484,11 @@ class AgentSummarizeMixin(_AgentSummarizeBackendMixin):
             if _provider == "claude-code":
                 return self._summarize_via_cc(
                     client, _prompt, _fid, _ckey, target_tokens,
-                    max_retries, _pub, conversation_id, user_id,
+                    _pub, conversation_id, user_id,
                     compact_scope=compact_scope)
             return self._summarize_via_api(
                 client, _prompt, _fid, _ckey, target_tokens,
-                max_retries, _pub, conversation_id, user_id,
+                _pub, conversation_id, user_id,
                 compact_scope=compact_scope)
 
         # PTL retry loop: if the summarizer LLM itself raises a
@@ -499,9 +496,10 @@ class AgentSummarizeMixin(_AgentSummarizeBackendMixin):
         # _CHUNK_CHAR_LIMIT, but tool-loop overhead or provider-side
         # count mismatch can still tip over), truncate the head of the
         # input text, store it as a fresh file, rebuild the prompt with
-        # the new file_id + compact_key, and retry. Up to 3 shots with
-        # increasing cut depth (25% / 50% / 75%). Better to ship a
-        # lossy summary than leave the user blocked.
+        # the new file_id + compact_key, and retry. Keep dropping the oldest
+        # quarter until the provider accepts the prompt or the input cannot be
+        # reduced safely. Better to ship a lossy summary than leave the user
+        # blocked because an arbitrary retry budget expired.
         cur_text = text
         cur_fid = file_id
         cur_key = compact_key
@@ -509,14 +507,15 @@ class AgentSummarizeMixin(_AgentSummarizeBackendMixin):
         issued_fids = [file_id]  # for cleanup in finally
         last_err: Optional[BaseException] = None
         try:
-            for attempt in range(_PTL_MAX_RETRIES + 1):
+            attempt = 0
+            while True:
                 try:
                     return _run_once(cur_text, cur_fid, cur_key, cur_prompt)
                 except Exception as e:
                     last_err = e
-                    if not _is_ptl_error(e) or attempt >= _PTL_MAX_RETRIES:
+                    if not _is_ptl_error(e):
                         raise
-                    drop = _PTL_DROP_SCHEDULE[attempt]
+                    drop = _PTL_DROP_FRACTION
                     truncated = _truncate_head(cur_text, drop)
                     if not truncated or len(truncated) >= len(cur_text):
                         logger.error(
@@ -524,6 +523,7 @@ class AgentSummarizeMixin(_AgentSummarizeBackendMixin):
                             "to drop (attempt %d, drop=%.0f%%)",
                             attempt + 1, drop * 100)
                         raise
+                    attempt += 1
                     cur_text = truncated
                     cur_key = "CK_" + uuid.uuid4().hex[:8]
                     cur_fid = FileStore.instance().store(
@@ -535,9 +535,9 @@ class AgentSummarizeMixin(_AgentSummarizeBackendMixin):
                     set_compact_key(cur_key)
                     cur_prompt = _build_prompt_for(cur_fid, cur_key)
                     logger.warning(
-                        "[compact] PTL retry %d/%d: %s → drop %.0f%% "
+                        "[compact] PTL retry %d: %s → drop %.0f%% "
                         "(%d → %d chars, new file=%s)",
-                        attempt + 1, _PTL_MAX_RETRIES,
+                        attempt,
                         str(e)[:120], drop * 100,
                         len(text), len(cur_text), cur_fid)
             # Unreachable — loop exits via return/raise.

@@ -222,6 +222,7 @@ def _graph_problems(
     tasks = definition.get("tasks") or {}
     graph = {str(task_id): set() for task_id in tasks}
     bounded_edges = set()
+    explicit_loop_edges = set()
     for rel in definition.get("relations") or []:
         if not isinstance(rel, dict):
             continue
@@ -232,6 +233,8 @@ def _graph_problems(
             bound = rel.get("max_visits", rel.get("max_iterations"))
             if isinstance(bound, int) and not isinstance(bound, bool) and bound > 0:
                 bounded_edges.add((source, target))
+            if rel.get("explicit_loop") is True:
+                explicit_loop_edges.add((source, target))
 
     problems = []
     visiting: set[str] = set()
@@ -244,7 +247,9 @@ def _graph_problems(
             return False
         visiting.add(node)
         cycle = any(
-            child in visiting and (node, child) not in bounded_edges
+            child in visiting
+            and (node, child) not in bounded_edges
+            and (node, child) not in explicit_loop_edges
             or child not in visiting and visit(child)
             for child in graph[node]
         )

@@ -517,7 +517,7 @@ def _first_conversation_spec(payload: Dict[str, Any], default_llm_service_id: st
             "definition": FIRST_RUN_AGENT,
             "llm_service": default_llm_service_id,
             "params": {"name": FIRST_RUN_AGENT},
-            "max_depth": 1000,
+            "max_depth": 0,
         }]
     if not isinstance(agent_items, list):
         raise ValueError("first_conversation.agents must be a list")
@@ -543,7 +543,7 @@ def _first_conversation_spec(payload: Dict[str, Any], default_llm_service_id: st
         params = dict(params)
         params.setdefault("name", instance_name)
         try:
-            max_depth = int(item.get("max_depth") or 1000)
+            max_depth = max(0, int(item.get("max_depth") or 0))
         except (TypeError, ValueError) as exc:
             raise ValueError(f"max_depth for first conversation agent '{instance_name}' must be an integer") from exc
         agents.append({

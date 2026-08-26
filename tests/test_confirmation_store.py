@@ -617,6 +617,44 @@ def test_workflow_interaction_uses_exact_version_task_identity(
         "wr_exact:request_mapping_approval")
 
 
+def test_workflow_interaction_loop_gets_new_id_without_breaking_retry(
+        store, monkeypatch):
+    import core.confirmation_store as mod
+    from tasks.control.durable_confirm import RequestUserInputTask
+
+    monkeypatch.setattr(mod.UserInteractionStore, "instance",
+                        classmethod(lambda cls: store))
+    task = RequestUserInputTask({
+        "message": "Fallback",
+        "kind": "text",
+        "payload_attribute": "website.review_decision",
+    })
+    task._workflow_task_id = "request_final_review"
+    task.set_workflow_run_context(SimpleNamespace(run_id="wr_loop"))
+    task.set_runtime_context(user_id="u1", conversation_id="c9")
+    first_payload = json.dumps({"message": "Approve revision one?"})
+    first_input = FlowFile(attributes={
+        "website.review_decision": first_payload,
+    })
+    retry_checkpoint = first_input.clone()
+
+    first = task.execute(first_input)[0]
+    replay = task.execute(retry_checkpoint)[0]
+    assert replay.get_attribute("interaction.request_id") == (
+        first.get_attribute("interaction.request_id"))
+
+    first.set_attribute(
+        "website.review_decision",
+        json.dumps({"message": "Approve revision two?"}),
+    )
+    second = task.execute(first)[0]
+
+    assert second.get_attribute("interaction.request_id") != (
+        replay.get_attribute("interaction.request_id"))
+    assert second.get_attribute(
+        "workflow.interaction.sequence.request_final_review") == "2"
+
+
 def test_request_user_input_task_accepts_bounded_attribute_payload(store, monkeypatch):
     import core.confirmation_store as mod
     monkeypatch.setattr(mod.UserInteractionStore, "instance",

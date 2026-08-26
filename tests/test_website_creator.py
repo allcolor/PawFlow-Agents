@@ -69,7 +69,7 @@ def test_project_workspace_is_stable_and_scoped_to_run():
         project_workspace_for_run("../../escape")
 
 
-def test_tool_phases_are_bounded_and_exploration_requires_screen_and_see():
+def test_tool_phases_have_no_implicit_limits_and_require_visual_tools():
     assert WebsiteCreatorToolTask.allowed_tool_names("explore") == (
         "screen", "see", "fetch", "read", "glob", "search"
     )
@@ -79,6 +79,11 @@ def test_tool_phases_are_bounded_and_exploration_requires_screen_and_see():
     }
     for unsafe in ("bash", "run_tests", "apply_patch"):
         assert unsafe not in WebsiteCreatorToolTask.allowed_tool_names("build")
+    schema = WebsiteCreatorToolTask({
+        "service": "creator", "phase": "build",
+    }).get_parameter_schema()
+    assert schema["max_iterations"]["default"] == 0
+    assert schema["max_tokens"]["default"] == 0
     with pytest.raises(ValueError, match="screen"):
         WebsiteCreatorToolTask.validate_required_observations(
             "explore", {"see": 1}
@@ -176,7 +181,8 @@ def test_website_review_repeats_until_explicit_acceptance():
         row for row in flow["relations"]
         if row["from"] == "correct_site" and row["to"] == "review_site"
     )
-    assert correction_edge["max_visits"] > 1
+    assert correction_edge["explicit_loop"] is True
+    assert "max_visits" not in correction_edge
     assert "one final correction" not in flow["description"].casefold()
 
 
@@ -242,7 +248,7 @@ def _build_phase_task(monkeypatch, responses):
     return task, flowfile, seen_messages
 
 
-def test_text_only_tool_turn_gets_one_bounded_correction(monkeypatch):
+def test_text_only_tool_turn_gets_correction_until_submission(monkeypatch):
     submission = {
         "summary": "Built",
         "workspace": "/workspace/pawflow-sites/wr-1",
@@ -253,6 +259,7 @@ def test_text_only_tool_turn_gets_one_bounded_correction(monkeypatch):
     }
     task, flowfile, seen = _build_phase_task(monkeypatch, [
         LLMResponse(content="I will do that.", model="fake", tool_calls=[]),
+        LLMResponse(content="Still preparing.", model="fake", tool_calls=[]),
         LLMResponse(
             content="", model="fake",
             tool_calls=[LLMToolCall(
@@ -264,8 +271,9 @@ def test_text_only_tool_turn_gets_one_bounded_correction(monkeypatch):
     result = task.execute(flowfile)
 
     assert len(result) == 1
-    assert len(seen) == 2
+    assert len(seen) == 3
     assert "No textual answer is accepted" in seen[1][-1][1]
+    assert "No textual answer is accepted" in seen[2][-1][1]
 
 
 def test_tool_phase_emits_redacted_execution_timeline(monkeypatch):
@@ -305,18 +313,6 @@ def test_tool_phase_emits_redacted_execution_timeline(monkeypatch):
     result = next(data for kind, data in events if kind == "tool_result")
     assert result["tool_call_id"] == "submit-1"
     assert result["outcome"] == "completed"
-
-
-def test_two_text_only_tool_turns_fail_without_looping(monkeypatch):
-    task, flowfile, seen = _build_phase_task(monkeypatch, [
-        LLMResponse(content="First text response", model="fake", tool_calls=[]),
-        LLMResponse(content="Second text response", model="fake", tool_calls=[]),
-    ])
-
-    with pytest.raises(ValueError, match="without submit_website_phase"):
-        task.execute(flowfile)
-
-    assert len(seen) == 2
 
 
 def test_structured_text_result_completes_cli_provider_phase(monkeypatch):
@@ -518,6 +514,7 @@ def test_website_tool_turn_passes_ephemeral_identity_per_call():
     response = task._complete_tool_turn(Client(), [], [], None)
 
     assert response.model == "fake"
+    assert captured["max_tokens"] is None
     assert {key: captured[key] for key in (
         "call_user_id", "call_conversation_id", "call_agent_name",
         "call_event_cid", "call_ephemeral_stream",
@@ -622,6 +619,8 @@ def test_website_decision_forms_include_dynamic_report_and_feedback(
     decision, details_key, output_attribute, expected_values,
 ):
     details = {"summary": f"{decision} report", "checks": ["desktop"]}
+    if decision == "review":
+        details["passed"] = True
     flowfile = FlowFile(content=json.dumps({
         "website": {details_key: details},
     }).encode("utf-8"))
@@ -643,6 +642,57 @@ def test_website_decision_forms_include_dynamic_report_and_feedback(
         "required": False,
         "max_length": 6000,
     }
+    if decision == "review":
+        assert "one" not in payload["message"].casefold()
+        assert [option["label"] for option in fields[0]["options"]] == [
+            "Accept website", "Request corrections",
+        ]
+
+
+def test_negative_website_review_routes_back_without_user_interaction():
+    output_attribute = "website.review_decision"
+    flowfile = FlowFile(
+        content=json.dumps({
+            "website": {
+                "status": "reviewed",
+                "review": {
+                    "summary": "The cookie banner blocks the site.",
+                    "passed": False,
+                    "checks": ["desktop", "mobile"],
+                    "issues": [
+                        "Cookie banner cannot be dismissed.",
+                        "Three pages are missing.",
+                    ],
+                    "preview_url": "file:///workspace/site/index.html",
+                },
+            },
+        }).encode("utf-8"),
+        attributes={output_attribute: "stale-form"},
+    )
+
+    PrepareWebsiteDecisionTask({
+        "decision": "review",
+        "output_attribute": output_attribute,
+    }).execute(flowfile)
+
+    website = json.loads(flowfile.get_content().decode("utf-8"))["website"]
+    assert flowfile.get_attribute("route.relationship") == "revise"
+    assert flowfile.get_attribute(output_attribute) is None
+    assert website["status"] == "revision_required"
+    assert "Cookie banner cannot be dismissed." in website["user_feedback"]
+    assert "Three pages are missing." in website["user_feedback"]
+
+
+def test_website_review_requires_an_explicit_boolean_verdict():
+    flowfile = FlowFile(content=json.dumps({
+        "website": {"review": {"summary": "Ambiguous review"}},
+    }).encode("utf-8"))
+
+    with pytest.raises(ValueError, match="passed"):
+        PrepareWebsiteDecisionTask({
+            "decision": "review",
+            "output_attribute": "website.review_decision",
+        }).execute(flowfile)
 
 
 @pytest.mark.parametrize(

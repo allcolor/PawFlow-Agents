@@ -544,7 +544,7 @@ class TelegramAgentClientTask(BaseTask):
                 "params": {"name": agent_name},
                 "model": str(agent_def.get("model") or ""),
                 "tools": agent_def.get("tools") or [],
-                "max_depth": int(agent_def.get("max_depth", 1000) or 1000),
+                "max_depth": int(agent_def.get("max_depth", 0) or 0),
                 "skills": agent_def.get("skills") or [],
             }],
             "title": opts["title"],

@@ -120,7 +120,8 @@ push-to-talk — the overlay shows a Send button), `instructions_mode`
 (`agent` reuses the conversation agent's system prompt), `context_mode`
 (default `summary:2000` — how much of the ongoing conversation the voice
 agent knows at session start; same modes as sub-agents, `isolated`
-disables), and `max_session_seconds` (default 600 — hard session cap).
+disables), and `max_session_seconds` (default `0`, unlimited; a positive value
+enables a hard session cap).
 Further protocols plug in as adapters (`services/_realtime_adapters.py`).
 
 Once at least one service exists, the webchat input row shows a microphone
@@ -245,6 +246,14 @@ references. Relay URLs can target either the relay host (`relay_local=true`) or
 relay container (`relay_local=false`); downloaded outputs are streamed to
 temporary files and removed after the media handler persists them. See the
 complete [ComfyUI install and configuration guide](comfyui.md).
+
+Overall media generation limits follow the agent runtime contract: omitted or
+zero means unlimited, and only an explicitly configured positive value stops a
+still-running job. This applies to ComfyUI's `timeout`, OpenAI-compatible and
+Grok video `timeout`, Codex image `timeout`, Voicebox
+`generation_timeout`, and VoxCPM CLI `generation_timeout`. Per-request HTTP
+timeouts and local-service startup timeouts remain independent operational
+safeguards; they do not impose an end-to-end generation deadline.
 
 `openaiCompatibleImageGeneration` and `openaiCompatibleVideoGeneration` reuse an
 existing `llmConnection` whose provider is `openai`. Configure that LLM service
@@ -388,6 +397,9 @@ OpenAI-compatible `POST /v1/audio/speech` endpoint with `model`, `input`,
 `content_type`. Use `api_mode=cli` for VoxCPM voice cloning; it runs the
 official `voxcpm design` and `voxcpm clone` commands and returns the generated
 audio to the same PawFlow `speak` / `clone_voice` persistence layer.
+`generation_timeout=0` lets the CLI finish without an implicit deadline; a
+positive value enables an explicit job limit without changing the HTTP
+`timeout`.
 
 Heavy local services can implement a `prepare_install(reporter)` hook. During
 `/service install`, PawFlow runs this hook before registering the service and

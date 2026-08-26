@@ -22,8 +22,8 @@ class SplitJSONTask(BaseTask):
                 "description": "JSONPath to the array to split. '$' = root array.",
             },
             "max_fragments": {
-                "type": "integer", "required": False, "default": 1000,
-                "description": "Maximum emitted FlowFiles per input",
+                "type": "integer", "required": False, "default": 0,
+                "description": "Maximum emitted FlowFiles per input; 0 means unlimited",
             },
             "empty_relationship": {
                 "type": "string", "required": False, "default": "",
@@ -58,11 +58,11 @@ class SplitJSONTask(BaseTask):
         if not isinstance(target, list):
             target = [target]
 
-        max_fragments = self.config.get("max_fragments", 1000)
+        max_fragments = self.config.get("max_fragments", 0)
         if (isinstance(max_fragments, bool) or not isinstance(max_fragments, int)
-                or max_fragments < 1):
-            raise TaskError("max_fragments must be an integer >= 1")
-        if len(target) > max_fragments:
+                or max_fragments < 0):
+            raise TaskError("max_fragments must be an integer >= 0")
+        if max_fragments > 0 and len(target) > max_fragments:
             raise TaskError(
                 f"JSON split contains {len(target)} items; limit is {max_fragments}")
 

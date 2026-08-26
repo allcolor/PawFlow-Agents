@@ -271,7 +271,9 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
             event = self._wait_event(timeout)
             if not event:
                 if not self._saw_proxy_event:
-                    if time.time() - started_at >= _NO_PROXY_EVENT_TIMEOUT_SECONDS:
+                    if (_NO_PROXY_EVENT_TIMEOUT_SECONDS > 0
+                            and time.time() - started_at
+                            >= _NO_PROXY_EVENT_TIMEOUT_SECONDS):
                         raise RuntimeError(
                             "Codex interactive produced no observed proxy events "
                             "after tmux prompt submit")

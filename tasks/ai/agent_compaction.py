@@ -377,7 +377,7 @@ class AgentCompactionMixin(
             "call_event_cid": ctx.get("_event_cid", conversation_id),
             "call_ephemeral_stream": False,
         }
-        for _attempt in range(2):
+        while True:
             try:
                 if use_streaming and token_callback:
                     resp = client.complete_stream(
@@ -400,14 +400,18 @@ class AgentCompactionMixin(
                 return resp.content, resp.tokens_in, resp.tokens_out, resp.model
             except Exception as synth_err:
                 err_str = str(synth_err)
-                if _attempt == 0 and ("exceed_context_size" in err_str or "n_prompt_tokens" in err_str):
+                if "exceed_context_size" in err_str or "n_prompt_tokens" in err_str:
                     logger.warning("[agent] synthesis overflow, forcing aggressive compaction...")
-                    synth_context = self._compact(
+                    reduced_context = self._compact(
                         synth_context, _cc,
                         ctx.get("max_context_size", 64000),
                         target_fraction=0.25,
                         conversation_id=conversation_id,
                     )
+                    if reduced_context == synth_context:
+                        logger.error("Forced synthesis context cannot be reduced further")
+                        break
+                    synth_context = reduced_context
                     continue
                 logger.error("Forced synthesis failed: %s", synth_err)
                 break

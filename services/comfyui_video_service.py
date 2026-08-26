@@ -59,8 +59,9 @@ class ComfyUIVideoService(BaseVideoGenerationService):
                     "video_edit, or video_extend."),
             },
             "timeout": {
-                "type": "integer", "required": False, "default": 3600,
-                "description": "Maximum generation time in seconds.",
+                "type": "integer", "required": False, "default": 0,
+                "description": (
+                    "Maximum generation time in seconds (0 = unlimited)."),
             },
             "request_timeout": {
                 "type": "integer", "required": False, "default": 60,

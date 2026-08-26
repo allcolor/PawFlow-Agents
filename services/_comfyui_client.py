@@ -75,13 +75,13 @@ class ComfyUIClient:
             raise ValueError("ComfyUI media_kind must be image, video, or audio")
         self.media_kind = media_kind
         defaults = ({
-            "timeout": 1800,
+            "timeout": 0,
             "request_timeout": 60,
             "poll_interval": 1.0,
             "max_input_bytes": 100 * 1024 * 1024,
             "max_output_bytes": 4 * 1024 * 1024 * 1024,
         } if media_kind == "image" else {
-            "timeout": 3600,
+            "timeout": 0,
             "request_timeout": 60,
             "poll_interval": 2.0,
             "max_input_bytes": 512 * 1024 * 1024,
@@ -110,8 +110,10 @@ class ComfyUIClient:
         self.poll_interval = float(configured("poll_interval"))
         self.max_input_bytes = int(configured("max_input_bytes"))
         self.max_output_bytes = int(configured("max_output_bytes"))
-        if self.timeout <= 0 or self.request_timeout <= 0:
-            raise ValueError("ComfyUI timeouts must be positive")
+        if self.timeout < 0:
+            raise ValueError("ComfyUI timeout must be zero or positive")
+        if self.request_timeout <= 0:
+            raise ValueError("ComfyUI request_timeout must be positive")
         if self.poll_interval <= 0:
             raise ValueError("ComfyUI poll_interval must be positive")
         if self.max_input_bytes <= 0 or self.max_output_bytes <= 0:
@@ -529,8 +531,9 @@ class ComfyUIClient:
         return value
 
     def _wait_history(self, prompt_id: str) -> dict:
-        deadline = time.monotonic() + self.timeout
-        while time.monotonic() < deadline:
+        deadline = (
+            time.monotonic() + self.timeout if self.timeout > 0 else None)
+        while deadline is None or time.monotonic() < deadline:
             history = self.request_json(
                 "GET", f"/history/{urllib.parse.quote(prompt_id, safe='')}")
             entry = history.get(prompt_id)
@@ -606,7 +609,7 @@ class ComfyUIClient:
         try:
             with os.fdopen(fd, "wb") as out:
                 with urllib.request.urlopen(  # nosec B310 - validated configured ComfyUI endpoint.
-                        req, timeout=self.timeout,
+                        req, timeout=self.request_timeout,
                         context=relay_proxy_ssl_context(base_url)) as resp:
                     content_type = (resp.headers.get("Content-Type", "")
                                     or mimetypes.guess_type(path)[0]

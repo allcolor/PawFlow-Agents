@@ -46,7 +46,7 @@ class TestResolveLivekitConfig:
         assert out["turn_detection"] == "provider_default"
         assert out["context_mode"] == "summary:2000"
         assert out["recording_policy"] == "transcript"
-        assert out["max_session_seconds"] == 600
+        assert out["max_session_seconds"] == 0
 
     @pytest.mark.parametrize("missing,fragment", [
         ("livekit_api_key", "livekit_api_key and livekit_api_secret"),
@@ -156,7 +156,7 @@ class TestResolveLivekitConfig:
     def test_bad_max_session_seconds(self):
         with pytest.raises(ServiceError, match="max_session_seconds"):
             engine.resolve_livekit_config(_cfg(max_session_seconds="soon"))
-        with pytest.raises(ServiceError, match="positive"):
+        with pytest.raises(ServiceError, match="non-negative"):
             engine.resolve_livekit_config(_cfg(max_session_seconds=-5))
 
 

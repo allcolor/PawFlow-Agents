@@ -13,8 +13,8 @@ Config:
     model: Model name (optional)
     system_prompt: System prompt for the agent
     temperature: Sampling temperature (default: 0.7)
-    max_tokens: Max response tokens per LLM call (default: 4096)
-    max_iterations: Max tool-use loop iterations (default: 200, safety limit)
+    max_tokens: Max response tokens per LLM call (default: 0, unlimited)
+    max_iterations: Max tool-use loop iterations (default: 0, unlimited)
     tools: JSON list of tool definitions (optional, overrides builtin)
     timeout: Request timeout in seconds (0/empty = no timeout)
     conversation_attribute: If set, store conversation history in this attribute (JSON)
@@ -314,19 +314,19 @@ class AgentLoopTask(
                 "description": "Sampling temperature (0-2)",
             },
             "max_tokens": {
-                "type": "integer", "required": False, "default": 4096,
+                "type": "integer", "required": False, "default": 0,
                 "description": (
                     "Maximum visible tokens in the final answer. Reasoning and "
-                    "tool calls do not consume this budget."
+                    "tool calls do not consume this budget. 0 = unlimited."
                 ),
             },
             "max_iterations": {
-                "type": "integer", "required": False, "default": 1000,
-                "description": "Maximum tool-use iterations (0 = default 1000). Overrides LLM service value.",
+                "type": "integer", "required": False, "default": 0,
+                "description": "Maximum tool-use iterations (0 = unlimited). Overrides LLM service value.",
             },
             "max_consecutive_tool_calls": {
-                "type": "integer", "required": False, "default": 100,
-                "description": "Max consecutive calls to same tool (0 = default 100). Overrides LLM service value.",
+                "type": "integer", "required": False, "default": 0,
+                "description": "Max consecutive calls to same tool (0 = unlimited). Overrides LLM service value.",
             },
             "resilience_style": {
                 "type": "select", "required": False, "default": "",
@@ -366,8 +366,8 @@ class AgentLoopTask(
                 "description": "Enable SSE streaming mode (publishes events to ConversationEventBus)",
             },
             "max_rounds": {
-                "type": "integer", "required": False, "default": 1,
-                "description": "Max autonomous continuation rounds (agent calls schedule_continuation to trigger next round)",
+                "type": "integer", "required": False, "default": 0,
+                "description": "Max autonomous continuation rounds (0 = unlimited)",
             },
             "poll_interval": {
                 "type": "integer", "required": False, "default": 0,

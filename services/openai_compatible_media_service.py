@@ -103,7 +103,14 @@ class _OpenAICompatibleMediaMixin:
         self.llm_service = (self.config.get("llm_service", "") or "").strip()
         self.protocol = (self.config.get("protocol", "auto") or "auto").strip().lower()
         self.model = (self.config.get("model", "") or "").strip()
-        self.timeout = int(self.config.get("timeout", 300) or 300)
+        configured_timeout = int(self.config.get("timeout", 0) or 0)
+        if self.MEDIA_KIND == "video":
+            self.timeout = configured_timeout
+            self.request_timeout = int(
+                self.config.get("request_timeout", 300) or 300)
+        else:
+            self.timeout = configured_timeout or 300
+            self.request_timeout = self.timeout
         self.poll_interval = int(self.config.get("poll_interval", 5) or 5)
         self.max_tokens = int(self.config.get("max_tokens", 0) or 0)
         self.max_output_tokens = int(self.config.get("max_output_tokens", 0) or 0)
@@ -198,7 +205,7 @@ class _OpenAICompatibleMediaMixin:
             method=method,
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured LLM service endpoint.
+            with urllib.request.urlopen(req, timeout=self.request_timeout) as resp:  # nosec B310 - configured LLM service endpoint.
                 raw = resp.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             detail = exc.read()[:1200].decode("utf-8", errors="replace")
@@ -462,7 +469,8 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
                 "description": "openai_video uses configurable video endpoints; openrouter uses /videos; chat_completions is a legacy fallback.",
             },
             "model": {"type": "string", "required": False, "default": "", "description": "Video model override."},
-            "timeout": {"type": "integer", "required": False, "default": 900, "description": "Total HTTP/poll timeout in seconds."},
+            "timeout": {"type": "integer", "required": False, "default": 0, "description": "Maximum total generation time in seconds (0 = unlimited)."},
+            "request_timeout": {"type": "integer", "required": False, "default": 300, "description": "Timeout for each HTTP request in seconds."},
             "poll_interval": {"type": "integer", "required": False, "default": 5, "description": "Seconds between async status polls."},
             "max_duration": {"type": "integer", "required": False, "default": 15, "description": "Maximum accepted duration seconds."},
             "max_tokens": {"type": "integer", "required": False, "default": 0, "description": "Max text tokens for chat-completions media responses."},
@@ -508,7 +516,6 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
     def __init__(self, config):
         super().__init__(config)
         self._init_common()
-        self.timeout = int(self.config.get("timeout", 900) or 900)
         self.minimal_submit_body = _truthy(self.config.get("minimal_submit_body", False))
         self.max_duration = int(self.config.get("max_duration", 15) or 15)
         self.submit_path = (self.config.get("submit_path", "/videos/generations") or "/videos/generations").strip()
@@ -780,7 +787,8 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
     def _resolve_video_result(self, svc, data: dict, status_template: str, *, webhook_ticket=None) -> dict:
         video_url = self._extract_video_url(data)
         if video_url:
-            payload, content_type = self._download_url(video_url, "video/mp4", self.timeout)
+            payload, content_type = self._download_url(
+                video_url, "video/mp4", self.request_timeout)
             return {"video_bytes": payload, "content_type": content_type}
         if webhook_ticket is not None:
             try:
@@ -797,7 +805,8 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
             video_url = self._extract_video_url(payload)
             if not video_url:
                 raise ServiceError(f"No video URL in webhook payload: {json.dumps(payload)[:500]}")
-            payload_bytes, content_type = self._download_url(video_url, "video/mp4", self.timeout)
+            payload_bytes, content_type = self._download_url(
+                video_url, "video/mp4", self.request_timeout)
             return {"video_bytes": payload_bytes, "content_type": content_type}
         generation_id = self._extract_generation_id(data)
         if generation_id:
@@ -805,15 +814,16 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         raise ServiceError(f"No video URL or generation id in response: {json.dumps(data)[:500]}")
 
     def _poll_video(self, svc, generation_id: str, status_template: str) -> dict:
-        deadline = time.time() + self.timeout
+        deadline = time.time() + self.timeout if self.timeout > 0 else None
         path = status_template.replace("{id}", urllib.parse.quote(generation_id, safe=""))
         last_status = {}
-        while time.time() < deadline:
+        while deadline is None or time.time() < deadline:
             time.sleep(self.poll_interval)
             last_status = self._request_json(svc, "GET", path)
             video_url = self._extract_video_url(last_status)
             if video_url:
-                payload, content_type = self._download_url(video_url, "video/mp4", self.timeout)
+                payload, content_type = self._download_url(
+                    video_url, "video/mp4", self.request_timeout)
                 return {"video_bytes": payload, "content_type": content_type}
             state = self._extract_state(last_status)
             if state in {"failed", "error", "cancelled", "canceled", "expired"}:

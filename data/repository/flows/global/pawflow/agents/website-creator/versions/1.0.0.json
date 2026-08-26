@@ -103,8 +103,8 @@
           "screen",
           "see"
         ],
-        "max_iterations": 16,
-        "max_tokens": 5000,
+        "max_iterations": 0,
+        "max_tokens": 0,
         "temperature": 0.15
       }
     },
@@ -155,8 +155,8 @@
       "parameters": {
         "service": "${creator_llm}",
         "phase": "build",
-        "max_iterations": 20,
-        "max_tokens": 6000,
+        "max_iterations": 0,
+        "max_tokens": 0,
         "temperature": 0.15
       }
     },
@@ -171,15 +171,15 @@
           "screen",
           "see"
         ],
-        "max_iterations": 12,
-        "max_tokens": 4500,
+        "max_iterations": 0,
+        "max_tokens": 0,
         "temperature": 0.1
       }
     },
     "prepare_review_decision": {
       "type": "prepareWebsiteDecision",
-      "label": "Present final review",
-      "description": "Build a bounded form containing preview information, passed checks and actionable issues.",
+      "label": "Route reviewer verdict",
+      "description": "Return failed reviews directly to correction; only passed reviews may request user acceptance.",
       "parameters": {
         "decision": "review",
         "output_attribute": "website.review_decision"
@@ -188,7 +188,7 @@
     "request_final_review": {
       "type": "requestUserInput",
       "label": "Request final acceptance",
-      "description": "Let the user accept the site or request another correction with feedback.",
+      "description": "Let the user accept the reviewer-approved site or request further corrections without a pass limit.",
       "parameters": {
         "message": "Review the generated website.",
         "title": "Accept generated website",
@@ -219,12 +219,12 @@
     "correct_site": {
       "type": "websiteCreatorTool",
       "label": "Apply requested corrections",
-      "description": "Apply the latest feedback, validate the project and return to visual review.",
+      "description": "Apply reviewer or user feedback, validate the project and return to visual review.",
       "parameters": {
         "service": "${creator_llm}",
         "phase": "correct",
-        "max_iterations": 12,
-        "max_tokens": 5500,
+        "max_iterations": 0,
+        "max_tokens": 0,
         "temperature": 0.1
       }
     },
@@ -420,7 +420,7 @@
         "final_review": {
           "id": "final_review",
           "label": "5. Visual review and acceptance",
-          "description": "Review the rendered site, then park for acceptance or one correction request.",
+          "description": "Automatically return failed reviews to correction; after a passed review, park for acceptance or further user-requested corrections.",
           "x": 0,
           "y": 1250,
           "width": 1530,
@@ -555,6 +555,12 @@
       "type": "success"
     },
     {
+      "relation_id": "rel_web_020",
+      "from": "prepare_review_decision",
+      "to": "correct_site",
+      "type": "revise"
+    },
+    {
       "relation_id": "rel_web_013",
       "from": "request_final_review",
       "to": "wait_final_review",
@@ -583,7 +589,7 @@
       "from": "correct_site",
       "to": "review_site",
       "type": "success",
-      "max_visits": 100
+      "explicit_loop": true
     },
     {
       "relation_id": "rel_web_018",

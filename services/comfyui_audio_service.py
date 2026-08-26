@@ -57,8 +57,9 @@ class ComfyUIAudioService(BaseAudioGenerationService):
                     "by generate_audio."),
             },
             "timeout": {
-                "type": "integer", "required": False, "default": 3600,
-                "description": "Maximum generation time in seconds.",
+                "type": "integer", "required": False, "default": 0,
+                "description": (
+                    "Maximum generation time in seconds (0 = unlimited)."),
             },
             "request_timeout": {
                 "type": "integer", "required": False, "default": 60,

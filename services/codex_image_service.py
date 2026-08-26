@@ -51,8 +51,9 @@ class CodexImageService(BaseImageGenerationService):
                     "model defaults, and Codex CLI runtime configuration."),
             },
             "timeout": {
-                "type": "integer", "required": False, "default": 900,
-                "description": "Codex image job timeout in seconds.",
+                "type": "integer", "required": False, "default": 0,
+                "description": (
+                    "Codex image job timeout in seconds (0 = unlimited)."),
             },
             "cleanup": {
                 "type": "boolean", "required": False, "default": True,
@@ -63,7 +64,7 @@ class CodexImageService(BaseImageGenerationService):
     def __init__(self, config):
         super().__init__(config)
         self.llm_service = (self.config.get("llm_service", "") or "").strip()
-        self.timeout = int(self.config.get("timeout", 900) or 900)
+        self.timeout = int(self.config.get("timeout", 0) or 0)
         self.cleanup = bool(self.config.get("cleanup", True))
         self._runtime_user_id = ""
         self._runtime_conversation_id = ""
@@ -346,7 +347,9 @@ class CodexImageService(BaseImageGenerationService):
                             "[CODEX-IMAGE] token recovery failed", exc_info=True)
 
             try:
-                stdout, stderr = proc.communicate(final_prompt, timeout=self.timeout)
+                stdout, stderr = proc.communicate(
+                    final_prompt,
+                    timeout=self.timeout if self.timeout > 0 else None)
             except __import__("subprocess").TimeoutExpired as exc:  # nosec B404
                 try:
                     proc.kill()

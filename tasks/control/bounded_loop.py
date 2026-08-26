@@ -47,11 +47,13 @@ class BoundedLoopGuardTask(BaseTask):
                 max_flowfiles = int(self.config.get("max_flowfiles"))
             except (TypeError, ValueError) as exc:
                 raise TaskError("boundedLoopGuard requires valid bounds metadata") from exc
-            if max_duration <= 0 or max_flowfiles < 1:
-                raise TaskError("boundedLoopGuard bounds must be positive")
+            if max_duration < 0 or max_flowfiles < 0:
+                raise TaskError("boundedLoopGuard bounds must be non-negative")
             relationship = (
                 "exhausted"
-                if count > max_flowfiles or time.time() - started_at > max_duration
+                if ((max_flowfiles > 0 and count > max_flowfiles)
+                    or (max_duration > 0
+                        and time.time() - started_at > max_duration))
                 else "continue"
             )
         flowfile.set_attribute("route.relationship", relationship)
@@ -60,12 +62,12 @@ class BoundedLoopGuardTask(BaseTask):
     def get_parameter_schema(self) -> dict[str, Any]:
         return {
             "max_duration_seconds": {
-                "type": "number", "required": True,
-                "description": "Maximum wall-clock duration for the whole wave",
+                "type": "number", "required": False, "default": 0,
+                "description": "Maximum wall-clock duration for the wave; 0 means unlimited",
             },
             "max_flowfiles": {
-                "type": "integer", "required": True,
-                "description": "Maximum FlowFiles in the correlated wave",
+                "type": "integer", "required": False, "default": 0,
+                "description": "Maximum FlowFiles in the correlated wave; 0 means unlimited",
             },
             "started_at_attribute": {
                 "type": "string", "required": False,

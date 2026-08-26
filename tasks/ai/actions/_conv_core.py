@@ -459,7 +459,7 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
     if action == "resume_conversation":
         conv_id = body.get("conversation_id", "")
         _rs_agent = body.get("agent_name", "")
-        max_summary_tokens = int(body.get("max_tokens", 500))
+        max_summary_tokens = int(body.get("max_tokens", 0) or 0)
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")

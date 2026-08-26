@@ -25,7 +25,7 @@ runtime_defaults:
       local_preference: prefer_local
       quality_preference: balanced
       allow_remote: true
-      max_cost_usd: 25
+      max_cost_usd: 0
 ---
 
 You are the Media Studio Workflow Agent. Accept only media creation, editing,

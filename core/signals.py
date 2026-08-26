@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import ClassVar, Optional, Dict, Any
 import threading
 from datetime import datetime
+from time import monotonic
 
 
 class SignalRegistry:
@@ -80,39 +81,33 @@ class SignalRegistry:
             return sig["count"] >= target_count
 
     def wait_for(self, signal_id: str, target_count: int = 1,
-                 timeout: float = 30.0) -> bool:
+                 timeout: float = 0.0) -> bool:
         """
         Wait for a signal to reach the threshold (blocking).
 
         Args:
             signal_id: Signal identifier
             target_count: Required notification countes
-            timeout: Timeout en secondes
+            timeout: Timeout in seconds; zero or negative waits indefinitely
 
         Returns:
             True si le signal a ete recu, False si timeout
         """
-        # Check immediately
-        if self.check(signal_id, target_count):
-            return True
+        deadline = monotonic() + timeout if timeout > 0 else None
 
-        # Create event for this signal
-        with self._signal_lock:
-            if signal_id not in self._events:
-                self._events[signal_id] = threading.Event()
-            event = self._events[signal_id]
-            event.clear()
+        while True:
+            with self._signal_lock:
+                sig = self._signals.get(signal_id)
+                if sig is not None and sig["count"] >= target_count:
+                    return True
+                event = self._events.setdefault(signal_id, threading.Event())
+                event.clear()
 
-        # Wait with polling (to handle incremental notifications)
-        elapsed = 0.0
-        poll_interval = 0.5
-        while elapsed < timeout:
-            event.wait(timeout=poll_interval)
-            if self.check(signal_id, target_count):
-                return True
-            elapsed += poll_interval
-
-        return False
+            remaining = None if deadline is None else deadline - monotonic()
+            if remaining is not None and remaining <= 0:
+                return False
+            if not event.wait(timeout=remaining):
+                return False
 
     def get_signal(self, signal_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a signal state."""

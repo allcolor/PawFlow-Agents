@@ -5,10 +5,12 @@ from types import SimpleNamespace
 import pytest
 
 from core.llm_client import LLMClient
-from core.llm_providers.antigravity_interactive import _AntigravityTurnCoordinator
+from core.llm_providers.antigravity_interactive import (
+    _AntigravityTurnCoordinator, _NO_PROXY_EVENT_TIMEOUT_SECONDS)
 
 
 def test_antigravity_interactive_provider_registered_and_dispatched():
+    assert _NO_PROXY_EVENT_TIMEOUT_SECONDS == 0
     assert "antigravity-interactive" in LLMClient.PROVIDERS
     assert LLMClient("antigravity-interactive").default_model == ""
     assert LLMClient("antigravity-interactive").supports_live_preempt is True

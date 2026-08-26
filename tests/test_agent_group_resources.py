@@ -6,6 +6,7 @@ import pytest
 
 from core.agent_group_resources import (
     bind_agent_group,
+    bind_agent_group_instance,
     get_bound_agent_group,
     resolve_agent_resource,
     validate_agent_group_data,
@@ -234,6 +235,41 @@ def test_group_binding_snapshots_exact_members_and_rejects_stale_group(
             conversation_store=conversations,
             service_registry=services,
         )
+
+
+def test_group_instance_binding_does_not_invent_workflow_limits(monkeypatch):
+    resources, _configs, _services, _conversations = _fixture(monkeypatch)
+    definition = dict(resources.items[("agent_group", "review-board")])
+    definition.pop("_scope")
+    definition["deliberation"] = {
+        **definition["deliberation"],
+        "max_total_participant_calls": 0,
+        "max_parallelism": 0,
+    }
+    definition["budgets"] = {
+        "max_tokens": 0,
+        "max_cost": None,
+        "timeout_seconds": 0,
+    }
+    captured = {}
+    monkeypatch.setattr(
+        "core.agent_group_resources.bind_agent_group",
+        lambda *_args, **_kwargs: {"definition": definition},
+    )
+    monkeypatch.setattr(
+        "core.conv_agent_config.add_agent_to_conv",
+        lambda *_args, **kwargs: captured.update(kwargs) or kwargs,
+    )
+
+    bind_agent_group_instance("review-board", "Review Board", "alice", "conv-1")
+
+    assert captured["workflow"]["limits"] == {
+        "max_duration_seconds": 0,
+        "max_llm_calls": 0,
+        "max_flowfiles": 0,
+        "max_fanout": 0,
+        "max_cost_usd": None,
+    }
 
 
 def test_group_bind_action_activates_the_bound_workflow_instance(monkeypatch):

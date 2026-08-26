@@ -450,7 +450,7 @@ class _AgentStreamingLoopMixin:
                 resp = title_client.complete(
                     [LLMMessage(role="user", content=prompt,
                                  conversation_id=conversation_id)],
-                    max_tokens=30, temperature=0.3,
+                    max_tokens=0, temperature=0.3,
                     call_user_id=ctx.get("user_id", ""),
                     call_conversation_id=conversation_id,
                     call_agent_name="title",

@@ -86,6 +86,17 @@ def test_claim_preserves_order_payload_and_is_idempotent(inbox):
     assert items[0].payload["attachments"] == [attachment]
 
 
+def test_zero_max_messages_claims_every_pending_message(inbox):
+    for number in range(25):
+        inbox.enqueue("c1", "agent", _message(f"m{number:02d}"), now=number)
+
+    claim, items = inbox.claim(
+        "c1", "agent", "run-unbounded", "receive", max_messages=0, now=30)
+
+    assert claim is not None
+    assert [item.msg_id for item in items] == [f"m{number:02d}" for number in range(25)]
+
+
 def test_queue_visibility_cutoff_excludes_later_arrivals(inbox):
     inbox.enqueue("c1", "agent", _message("m1"), now=1)
     cutoff = inbox.latest_sequence("c1", "agent")
@@ -246,7 +257,7 @@ def test_receive_agent_messages_claims_and_routes(inbox):
             max_duration_seconds=60, max_llm_calls=1,
             max_flowfiles=10, max_fanout=2),
         service_snapshot={}, cancel_token="cancel", event_sink="test")
-    task = ReceiveAgentMessagesTask({"max_messages": 20})
+    task = ReceiveAgentMessagesTask({"max_messages": 0})
     task.set_workflow_run_context(context, inbox_store=inbox)
 
     output = task.execute(FlowFile(content=b"original"))[0]

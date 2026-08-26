@@ -1,4 +1,4 @@
-"""Bounded version-1 agent-group resource and participant contracts."""
+"""Version-1 agent-group resource and participant contracts."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from core.agent_contracts import (
     CapabilityEffect,
     ContractModel,
     VersionedContract,
+    require_non_negative,
     require_positive,
     require_sha256,
     require_text,
@@ -63,58 +64,34 @@ class GroupSelection(ContractModel):
 
 
 class GroupDeliberation(ContractModel):
-    max_rounds: int = 2
-    max_messages_per_member_per_round: int = 1
-    max_total_participant_calls: int = 12
-    max_parallelism: int = 4
+    max_rounds: int = 0
+    max_messages_per_member_per_round: int = 0
+    max_total_participant_calls: int = 0
+    max_parallelism: int = 0
     allow_pass: StrictBool = True
     rotate_first_speaker: StrictBool = True
 
-    @field_validator("max_rounds", mode="before")
+    @field_validator(
+        "max_rounds",
+        "max_messages_per_member_per_round",
+        "max_total_participant_calls",
+        "max_parallelism",
+        mode="before",
+    )
     @classmethod
-    def _rounds_are_bounded(cls, value: int) -> int:
-        value = require_positive(value, "max_rounds")
-        if value > 5:
-            raise ValueError("max_rounds cannot exceed 5")
-        return value
-
-    @field_validator("max_messages_per_member_per_round", mode="before")
-    @classmethod
-    def _messages_are_bounded(cls, value: int) -> int:
-        value = require_positive(value, "max_messages_per_member_per_round")
-        if value > 2:
-            raise ValueError("max_messages_per_member_per_round cannot exceed 2")
-        return value
-
-    @field_validator("max_total_participant_calls", mode="before")
-    @classmethod
-    def _calls_are_bounded(cls, value: int) -> int:
-        value = require_positive(value, "max_total_participant_calls")
-        if value > 32:
-            raise ValueError("max_total_participant_calls cannot exceed 32")
-        return value
-
-    @field_validator("max_parallelism", mode="before")
-    @classmethod
-    def _parallelism_is_bounded(cls, value: int) -> int:
-        value = require_positive(value, "max_parallelism")
-        if value > 8:
-            raise ValueError("max_parallelism cannot exceed 8")
-        return value
+    def _limits_are_non_negative(cls, value: int, info) -> int:
+        return require_non_negative(value, info.field_name)
 
 
 class GroupContextPolicy(ContractModel):
     private_context: Literal["none"] = "none"
-    shared_history_limit: int = 24
+    shared_history_limit: int = 0
     attachments: Literal["explicit_only"] = "explicit_only"
 
     @field_validator("shared_history_limit", mode="before")
     @classmethod
-    def _history_is_bounded(cls, value: int) -> int:
-        value = require_positive(value, "shared_history_limit")
-        if value > 100:
-            raise ValueError("shared_history_limit cannot exceed 100")
-        return value
+    def _history_limit_is_non_negative(cls, value: int) -> int:
+        return require_non_negative(value, "shared_history_limit")
 
 
 class GroupToolPolicy(ContractModel):
@@ -163,23 +140,23 @@ class GroupSynthesis(ContractModel):
 
 
 class GroupBudgets(ContractModel):
-    max_tokens: int
+    max_tokens: int = 0
     max_cost: float | None = None
-    timeout_seconds: int
+    timeout_seconds: int = 0
 
     @field_validator("max_tokens", "timeout_seconds", mode="before")
     @classmethod
-    def _limits_are_positive(cls, value: int, info) -> int:
-        return require_positive(value, info.field_name)
+    def _limits_are_non_negative(cls, value: int, info) -> int:
+        return require_non_negative(value, info.field_name)
 
     @field_validator("max_cost", mode="before")
     @classmethod
     def _cost_is_positive_and_finite(cls, value: float | None) -> float | None:
         if value is not None and (
             isinstance(value, bool) or not isinstance(value, (int, float))
-            or not math.isfinite(value) or value <= 0
+            or not math.isfinite(value) or value < 0
         ):
-            raise ValueError("max_cost must be positive and finite")
+            raise ValueError("max_cost must be non-negative and finite")
         return value
 
 
@@ -197,7 +174,7 @@ class AgentGroupDefinition(VersionedContract):
     context_policy: GroupContextPolicy = GroupContextPolicy()
     tool_policy: GroupToolPolicy = GroupToolPolicy()
     synthesis: GroupSynthesis
-    budgets: GroupBudgets
+    budgets: GroupBudgets = GroupBudgets()
     output: GroupOutput = GroupOutput()
 
     @field_validator("name", "description")

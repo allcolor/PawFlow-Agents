@@ -169,7 +169,7 @@ In PawFlow: **Resources -> Services -> create -> ComfyUI Video Generation**.
 | `base_url` | `relay://MyWorkspace/localhost:8188` | `relay://MyWorkspace/<tailscale-ip>:8188` |
 | `relay_local` | `true` (relay host helper) | `false` first, `true` if it fails |
 | `allow_private_base_url` | leave `false` (`relay://` handles private) | same |
-| `timeout` / `poll_interval` | defaults (3600 s / 2 s) | same |
+| `timeout` / `poll_interval` | defaults (unlimited / 2 s) | same |
 
 > `relay_local=true` = the relay calls ComfyUI from the VPS **host** (required
 > for the SSH tunnel: the relay container's `localhost` is not the VPS's

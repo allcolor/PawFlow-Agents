@@ -61,9 +61,11 @@ class RealtimeVoiceConnectionService(BaseService):
                                     or "whisper-1").strip()
         try:
             self.max_session_seconds = int(
-                self.config.get("max_session_seconds", 600) or 600)
-        except (TypeError, ValueError):
-            self.max_session_seconds = 600
+                self.config.get("max_session_seconds", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("max_session_seconds must be an integer") from exc
+        if self.max_session_seconds < 0:
+            raise ValueError("max_session_seconds must be non-negative")
         self.tool_profile = (self.config.get("tool_profile", "") or "").strip()
         self.context_mode = (self.config.get("context_mode", "summary:2000")
                              or "isolated").strip().lower()
@@ -272,8 +274,8 @@ class RealtimeVoiceConnectionService(BaseService):
                                     "description": "Provider-side input audio format."},
             "output_audio_format": {"type": "string", "required": False, "default": "pcm16",
                                      "description": "Provider-side output audio format."},
-            "max_session_seconds": {"type": "integer", "required": False, "default": 600,
-                                     "description": "Hard cap on a single voice session; the bridge closes the session when reached."},
+            "max_session_seconds": {"type": "integer", "required": False, "default": 0,
+                                     "description": "Optional hard cap on a voice session; 0 means unlimited."},
             "tool_profile": {"type": "string", "required": False, "default": "",
                               "description": "Comma-separated PawFlow tools exposed to the voice model (e.g. 'recall,remember,web_search,read'). Approval is silent: exempt/pre-approved tools run, anything needing a dialog is refused; long tools detach to the background and announce their result. Empty = no tools."},
             "context_mode": {"type": "string", "required": False, "default": "summary:2000",

@@ -125,6 +125,8 @@ def test_service_is_registered_and_validates_references():
     assert schema["aggregator_llm_service"]["service_type"] == "llmConnection"
     assert schema["advisor_llm_services"]["type"] == "json"
     assert schema["enforce_read_only"]["default"] is True
+    assert schema["advisor_max_iterations"]["default"] == 0
+    assert schema["max_parallel_advisors"]["default"] == 0
 
     with pytest.raises(ServiceError, match="cannot also be an advisor"):
         LLMAggregatorService({
@@ -138,6 +140,8 @@ def test_service_is_registered_and_validates_references():
     })
     strict.connect()
     assert strict.enforce_read_only is True
+    assert strict.advisor_max_iterations == 0
+    assert strict.max_parallel_advisors == 0
 
 
 def test_composite_cost_uses_final_rates_plus_advisor_delta():

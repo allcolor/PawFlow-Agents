@@ -431,6 +431,8 @@ class MediaSelectionPreferences:
             if (not math.isfinite(float(self.max_cost_usd))
                     or self.max_cost_usd < 0):
                 raise ValueError("max_cost_usd must be finite and non-negative")
+            if self.max_cost_usd == 0:
+                object.__setattr__(self, "max_cost_usd", None)
 
 
 @dataclass(frozen=True)

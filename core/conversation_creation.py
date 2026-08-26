@@ -34,7 +34,7 @@ def create_conversation(user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
             "llm_service": item.get("llm_service", ""),
             "model": item.get("model", ""),
             "tools": item.get("tools"),
-            "max_depth": int(item.get("max_depth", 1000)),
+            "max_depth": max(0, int(item.get("max_depth", 0) or 0)),
             "skills": item.get("skills"),
         })
 

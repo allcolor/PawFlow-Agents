@@ -54,7 +54,7 @@ AGENT_CONFIG_DEFAULTS = {
     # custom selection).
     "tool_exposure": "",
     "assigned_skills": [],
-    "max_depth": 1000,
+    "max_depth": 0,
     # Optional realtimeVoiceConnection service id. When set the agent is
     # "voice-native": the webchat auto-selects it for voice mode and
     # Telegram voice notes go through a realtime speech-to-speech turn.
@@ -184,13 +184,13 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
                       params: Optional[Dict[str, Any]] = None,
                       model: str = "",
                       tools: Optional[List[str]] = None,
-                      max_depth: int = 1000,
+                      max_depth: int = 0,
                       skills: Optional[List[str]] = None,
                       flash_delegate_llm_service: str = "",
                       runtime_kind: str = "llm",
                       agui_url: str = "", agui_service: str = "",
-                      agui_timeout: int = 300,
-                      agui_max_tool_rounds: int = 8,
+                      agui_timeout: int = 0,
+                      agui_max_tool_rounds: int = 0,
                       gating_service: Any = "",
                       workflow: Optional[Dict[str, Any]] = None,
                       user_id: str = "") -> Dict[str, Any]:
@@ -229,10 +229,9 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
         "workflow": resolved_workflow,
         "agui_url": str(agui_url or "").strip(),
         "agui_service": str(agui_service or "").strip(),
-        "agui_timeout": max(1, int(agui_timeout or 300)),
+        "agui_timeout": max(0, int(agui_timeout or 0)),
         "agui_max_tool_rounds": max(
-            0, min(32, int(8 if agui_max_tool_rounds in (None, "")
-                           else agui_max_tool_rounds))),
+            0, int(agui_max_tool_rounds or 0)),
         "llm_service": llm_service,
         "flash_delegate_llm_service": flash_delegate_llm_service,
         "model": model,

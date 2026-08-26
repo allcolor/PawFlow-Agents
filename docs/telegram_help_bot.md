@@ -35,7 +35,7 @@ store it as a secret, never inline.
 | `model` | `""` | Optional model override. |
 | `max_depth` | `1` | Sub-agent depth (1 = none). |
 | `conv_ttl_seconds` | `3600` | Sliding per-user conversation TTL. |
-| `response_timeout_seconds` | `120` | Hard max for message→response; the turn is force-cancelled past it. |
+| `response_timeout_seconds` | `0` | Optional message→response limit; `0` is unlimited and a positive value force-cancels the turn when reached. |
 | `allowed_chat_ids` | `""` | Comma-separated Telegram chat ids accepted as source. Empty = any chat. |
 | `sweep_schedule` | `*/5 * * * *` | CRON schedule for proactive TTL purge. |
 
@@ -60,10 +60,11 @@ cronTrigger ──▶ executeScript (sweep)
    relays**, and the TTL; the tool allowlist is applied with
    `pawflow.set_tool_filters`. Existing conversations get their TTL re-armed
    (sliding).
-3. **Run** — `pawflow.run_agent(..., timeout=response_timeout_seconds)` submits
-   to the shared runtime (which queues the message behind any running turn, so
-   message→response order holds) and waits. On timeout the turn is
-   force-cancelled and the user is told to retry.
+3. **Run** — `pawflow.run_agent(...)` submits to the shared runtime (which queues the
+   message behind any running turn, so message→response order holds) and waits
+   without an implicit deadline. A positive `response_timeout_seconds` is passed
+   explicitly; when reached, the turn is force-cancelled and the user is told to
+   retry.
 4. The reply is sent back to `telegram.chat_id` (the group, as a reply to the
    message). `telegram.user_id` is never forwarded to the runtime, so the
    unlinked-user guard in `AgentLoopTask` does not reject the public bot.

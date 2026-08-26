@@ -104,6 +104,12 @@ class VoxCPMTTSService(BaseAudioGenerationService, BaseVoiceCloneService):
                 "type": "integer", "required": False, "default": 300,
                 "description": "HTTP timeout in seconds.",
             },
+            "generation_timeout": {
+                "type": "integer", "required": False, "default": 0,
+                "description": (
+                    "Maximum CLI generation time in seconds "
+                    "(0 = unlimited)."),
+            },
         }
 
     def __init__(self, config):
@@ -119,6 +125,8 @@ class VoxCPMTTSService(BaseAudioGenerationService, BaseVoiceCloneService):
         self.allow_private_base_url = _truthy(self.config.get("allow_private_base_url", False))
         self.voice = str(self.config.get("voice") or "")
         self.timeout = int(self.config.get("timeout") or 300)
+        self.generation_timeout = int(
+            self.config.get("generation_timeout", 0) or 0)
         self._runtime_user_id = ""
         self._runtime_conversation_id = ""
         self._runtime_agent_name = ""
@@ -271,13 +279,17 @@ class VoxCPMTTSService(BaseAudioGenerationService, BaseVoiceCloneService):
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=self.timeout,
+                    timeout=(
+                        self.generation_timeout
+                        if self.generation_timeout > 0 else None),
                     check=False,
                 )
             except FileNotFoundError as exc:
                 raise ServiceError(f"VoxCPM CLI command not found: {argv[0]}") from exc
             except subprocess.TimeoutExpired as exc:
-                raise ServiceError(f"VoxCPM CLI timed out after {self.timeout}s") from exc
+                raise ServiceError(
+                    f"VoxCPM CLI timed out after "
+                    f"{self.generation_timeout}s") from exc
             if proc.returncode != 0:
                 detail = proc.stderr[:1000].decode("utf-8", errors="replace").strip()
                 raise ServiceError(f"VoxCPM CLI failed ({proc.returncode}): {detail}")

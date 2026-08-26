@@ -46,13 +46,18 @@ class UpdateAttributeTask(BaseTask):
             attr_name = match.group(1)
             return flowfile.get_attribute(attr_name) or match.group(0)
 
-        # Loop to resolve cascading references
+        # Resolve cascading references until stable; stop on a detected cycle
+        # instead of imposing an arbitrary pass count.
         result = value
-        max_iterations = 10
-        for _ in range(max_iterations):
+        seen = {result}
+        while True:
             new_result = re.sub(r'\$\{([^}]+)\}', replace_ref, result)
             if new_result == result:
                 break
+            if new_result in seen:
+                result = new_result
+                break
+            seen.add(new_result)
             result = new_result
 
         return result

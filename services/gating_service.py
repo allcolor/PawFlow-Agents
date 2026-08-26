@@ -24,8 +24,6 @@ from core.gating_script_runner import resolve_scripts, run_scripts
 
 logger = logging.getLogger(__name__)
 
-MAX_TOKENS_CAP = 1024
-TIMEOUT_CAP_SECONDS = 120
 SCRIPT_TIMEOUT_CAP_SECONDS = 60
 
 _PROTOCOL = (
@@ -103,10 +101,14 @@ class GatingService(BaseService):
                 "options": list(FAILURE_DECISIONS),
                 "description": "Decision when evaluators fail or abstain (ask or deny)",
             },
-            "max_tokens": {"type": "integer", "required": False, "default": 256,
-                           "description": "Maximum gate response tokens (capped at 1024)"},
-            "timeout_seconds": {"type": "integer", "required": False, "default": 15,
-                                "description": "LLM evaluation timeout (capped at 120)"},
+            "max_tokens": {
+                "type": "integer", "required": False, "default": 0,
+                "description": (
+                    "Maximum gate response tokens (0 = unlimited)")},
+            "timeout_seconds": {
+                "type": "integer", "required": False, "default": 0,
+                "description": (
+                    "LLM evaluation timeout in seconds (0 = unlimited)")},
             "script_timeout_seconds": {"type": "integer", "required": False, "default": 10,
                                        "description": "Per-script sandbox timeout (capped at 60)"},
         }
@@ -137,6 +139,12 @@ class GatingService(BaseService):
         except (TypeError, ValueError):
             value = default
         return max(1, min(cap, value))
+
+    def _nonnegative_int(self, key: str) -> int:
+        try:
+            return max(0, int(self.config.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            return 0
 
     def resolve_llm_service(self, user_id: str = "", conversation_id: str = ""):
         llm_service = str(self.config.get("llm_service") or "").strip()
@@ -239,12 +247,13 @@ class GatingService(BaseService):
                 "a policy gate needs an API-backed connection",
                 source="failure", source_id=llm_id, metadata={"error": "cli_provider"})
         scope_id = f"_policy_gate_{uuid.uuid4().hex[:12]}"
-        timeout = self._bounded_int("timeout_seconds", 15, TIMEOUT_CAP_SECONDS)
+        timeout_seconds = self._nonnegative_int("timeout_seconds")
+        timeout = timeout_seconds if timeout_seconds > 0 else None
 
         def _call():
             return svc.complete(
                 self._llm_messages(envelope, scope_id), temperature=0,
-                max_tokens=self._bounded_int("max_tokens", 256, MAX_TOKENS_CAP),
+                max_tokens=self._nonnegative_int("max_tokens"),
                 tools=None, call_user_id=user_id, call_conversation_id=scope_id,
                 call_agent_name="policy-gate", call_event_cid="",
                 call_ephemeral_stream=True)

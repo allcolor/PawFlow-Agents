@@ -303,9 +303,9 @@ async def entrypoint(ctx) -> None:
     )
     await control.send_event("realtime.media.connected", {})
 
-    # Hard session cap — PawFlow enforces the same policy server-side, the
-    # worker is the enforcement point for the media path.
-    max_seconds = int(bootstrap.get("max_session_seconds", 600) or 600)
+    # An explicit positive session cap is enforced in both server and worker.
+    # Zero or omitted remains live until the user or runtime stops it.
+    max_seconds = int(bootstrap.get("max_session_seconds", 0) or 0)
 
     async def _cap():
         await asyncio.sleep(max_seconds)
@@ -313,12 +313,13 @@ async def entrypoint(ctx) -> None:
         await control.close("max_session_seconds")
         ctx.shutdown(reason="max_session_seconds")
 
-    cap_task = asyncio.create_task(_cap())
+    cap_task = asyncio.create_task(_cap()) if max_seconds > 0 else None
     ctx.add_shutdown_callback(lambda: _cleanup(cap_task, control))
 
 
 async def _cleanup(cap_task, control) -> None:
-    cap_task.cancel()
+    if cap_task is not None:
+        cap_task.cancel()
     if not control.closed.is_set():
         await control.close("job ended")
 

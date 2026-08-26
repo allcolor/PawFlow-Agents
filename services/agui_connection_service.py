@@ -24,12 +24,9 @@ class AguiConnectionService(BaseService):
             "agui_url": str(self.config.get("endpoint") or "").strip(),
             "agui_auth_secret": str(self.config.get("auth_secret") or "").strip(),
             "agui_allow_private": bool(self.config.get("allow_private", False)),
-            "agui_timeout": max(1, int(self.config.get("timeout") or 300)),
+            "agui_timeout": max(0, int(self.config.get("timeout") or 0)),
             "agui_max_tool_rounds": max(
-                0, min(32, int(
-                    self.config.get("max_tool_rounds")
-                    if self.config.get("max_tool_rounds") not in (None, "")
-                    else 8))),
+                0, int(self.config.get("max_tool_rounds") or 0)),
         }
 
     def health_check(self):
@@ -44,10 +41,10 @@ class AguiConnectionService(BaseService):
                             "description": "SecretStore key containing the Bearer token"},
             "allow_private": {"type": "boolean", "required": False, "default": False,
                               "description": "Allow private/loopback or relay targets"},
-            "timeout": {"type": "integer", "required": False, "default": 300,
-                        "description": "SSE read timeout in seconds"},
-            "max_tool_rounds": {"type": "integer", "required": False, "default": 8,
-                                "description": "Maximum remote tool-result follow-up runs (0-32)"},
+            "timeout": {"type": "integer", "required": False, "default": 0,
+                        "description": "SSE timeout in seconds (0 = unlimited)"},
+            "max_tool_rounds": {"type": "integer", "required": False, "default": 0,
+                                "description": "Maximum remote tool-result follow-up runs (0 = unlimited)"},
         }
 
 

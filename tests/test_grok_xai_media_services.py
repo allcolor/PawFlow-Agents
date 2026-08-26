@@ -96,6 +96,8 @@ def test_grok_video_modes_use_direct_xai_endpoints(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     svc = GrokVideoService({"api_key": "xai-key", "poll_interval": 0})
 
+    assert svc.timeout == 0
+    assert svc.get_parameter_schema()["timeout"]["default"] == 0
     assert svc.image_to_video(prompt="move", image_url="https://img/in.png")["video_bytes"] == b"MP4"
     assert svc.reference_to_video(prompt="use refs", reference_image_urls=["https://img/a.png"])["video_bytes"] == b"MP4"
     assert svc.video_edit(prompt="add snow", video_url="https://vid/in.mp4")["video_bytes"] == b"MP4"

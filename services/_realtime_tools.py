@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 _RESULT_MAX_CHARS = 4000   # realtime models have small contexts
 _SOFT_TIMEOUT_S = 15.0     # keep the spoken exchange snappy
-_HARD_TIMEOUT_S = 600.0    # give up announcing a detached tool after this
 
 
 class RealtimeToolBridge:
@@ -200,10 +199,7 @@ class RealtimeToolBridge:
                     "the result will be announced when it is ready.")
 
         def _late():
-            if not done.wait(timeout=_HARD_TIMEOUT_S):
-                logger.warning("[realtime] background tool '%s' never "
-                               "finished (conv=%s)", name, self._cid[:8])
-                return
+            done.wait()
             if announce is not None:
                 try:
                     # The result is untrusted data and this note travels on a

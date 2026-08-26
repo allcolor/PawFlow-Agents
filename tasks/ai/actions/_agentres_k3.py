@@ -273,7 +273,7 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
                     "task": t.get("task", "")[:80],
                     "status": t.get("status", ""),
                     "iterations": t.get("reschedule_count", 0),
-                    "max_iterations": t.get("max_iterations", 50),
+                    "max_iterations": t.get("max_iterations", 0),
                     "task_def_name": t.get("task_def_name", ""),
                     "interval": t.get("interval", {}),
                     "timeout": t.get("timeout", 0),

@@ -126,8 +126,9 @@ existing proposal, run, or Workflow Agent binding.
 
 An `agent_group` manifest object points to
 `content/agent_groups/<name>.json`. Inspection validates the versioned group
-schema, distinct concrete member requirements, capped rounds/calls/parallelism,
-private-context policy, tool policy, synthesis target, and positive budgets.
+schema, distinct concrete member requirements, optional explicit
+round/call/parallelism limits, private-context policy, tool policy, synthesis
+target, and optional explicit budgets. Zero or an omitted limit is unlimited.
 The installed resource remains inert until an operator enables both workflow
 agents and agent groups and a user explicitly binds every member requirement to
 a compatible LLM conversation instance. Bind and run-start snapshots pin exact

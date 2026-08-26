@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -377,7 +378,7 @@ def group_dict(**overrides):
     return value
 
 
-def test_group_contract_enforces_bounded_distinct_members_and_safe_tools():
+def test_group_contract_enforces_distinct_members_and_safe_tools():
     group = AgentGroupDefinition.from_dict(group_dict())
     assert AgentGroupDefinition.from_dict(group.to_dict()) == group
     with pytest.raises(ValueError):
@@ -389,6 +390,45 @@ def test_group_contract_enforces_bounded_distinct_members_and_safe_tools():
     with pytest.raises(ValueError):
         AgentGroupDefinition.from_dict(group_dict(
             tool_policy={"mode": "declared", "allowed_effects": ["filesystem.write"]}))
+
+
+def test_group_contract_defaults_to_unlimited_and_has_no_arbitrary_ceilings():
+    raw = group_dict()
+    raw.pop("deliberation")
+    raw.pop("context_policy")
+    raw.pop("budgets")
+    unlimited = AgentGroupDefinition.from_dict(raw)
+    assert unlimited.deliberation.max_rounds == 0
+    assert unlimited.deliberation.max_total_participant_calls == 0
+    assert unlimited.deliberation.max_parallelism == 0
+    assert unlimited.context_policy.shared_history_limit == 0
+    assert unlimited.budgets.max_tokens == 0
+    assert unlimited.budgets.timeout_seconds == 0
+
+    explicit = group_dict(
+        deliberation={
+            "max_rounds": 500,
+            "max_messages_per_member_per_round": 20,
+            "max_total_participant_calls": 5000,
+            "max_parallelism": 50,
+        },
+        context_policy={
+            "private_context": "none",
+            "shared_history_limit": 1000,
+            "attachments": "explicit_only",
+        },
+        budgets={"max_tokens": 0, "max_cost": 0, "timeout_seconds": 0},
+    )
+    configured = AgentGroupDefinition.from_dict(explicit)
+    assert configured.deliberation.max_rounds == 500
+    assert configured.deliberation.max_total_participant_calls == 5000
+    assert configured.context_policy.shared_history_limit == 1000
+
+
+def test_non_streaming_agent_rounds_do_not_gain_an_implicit_single_round_cap():
+    source = Path("tasks/ai/_alc_setup.py").read_text(encoding="utf-8")
+    assert "if st.emitter.is_streaming else 1" not in source
+    assert 'st.ctx.get("max_rounds", 0) or 0' in source
 
 
 def test_participant_pass_cannot_smuggle_content():

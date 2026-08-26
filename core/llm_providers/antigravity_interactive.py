@@ -41,7 +41,7 @@ _POST_DONE_IDLE_DRAIN_SECONDS = _env_seconds(
 _NO_DONE_IDLE_DRAIN_SECONDS = _env_seconds(
     ("PAWFLOW_AGI_NO_DONE_IDLE_DRAIN_SECONDS",), 8.0)
 _NO_PROXY_EVENT_TIMEOUT_SECONDS = _env_seconds(
-    ("PAWFLOW_AGI_NO_PROXY_EVENT_TIMEOUT_SECONDS",), 300.0)
+    ("PAWFLOW_AGI_NO_PROXY_EVENT_TIMEOUT_SECONDS",), 0.0)
 
 
 class _AntigravityLogTail:
@@ -164,7 +164,8 @@ class _AntigravityTurnCoordinator:
                     break
                 if not self._saw_proxy_event:
                     waited = time.time() - started_at
-                    if waited >= _NO_PROXY_EVENT_TIMEOUT_SECONDS:
+                    if (_NO_PROXY_EVENT_TIMEOUT_SECONDS > 0
+                            and waited >= _NO_PROXY_EVENT_TIMEOUT_SECONDS):
                         raise RuntimeError(
                             "Antigravity interactive produced no observed proxy "
                             "events after tmux prompt submit")

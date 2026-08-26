@@ -289,7 +289,7 @@ class DescribeImageHandler(_CapabilityHandlerBase):
                     agent_name=self._agent_name,
                     prompt=prompt,
                     model=str(arguments.get("model") or ""),
-                    max_tokens=int(arguments.get("max_tokens", 1200) or 1200),
+                    max_tokens=int(arguments.get("max_tokens", 0) or 0),
                 )
                 return f"Image description: {description or '(no description)'}"
             # Remote http(s) URL: let the vision provider fetch it itself
@@ -303,7 +303,7 @@ class DescribeImageHandler(_CapabilityHandlerBase):
                 )],
                 model=str(arguments.get("model") or "") or None,
                 temperature=0,
-                max_tokens=int(arguments.get("max_tokens", 1200) or 1200),
+                max_tokens=int(arguments.get("max_tokens", 0) or 0),
                 call_user_id=self._user_id,
                 call_conversation_id=self._conversation_id,
                 call_agent_name=self._agent_name,

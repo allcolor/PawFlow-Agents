@@ -43,7 +43,7 @@ _WORKFLOW_LEASE_SECONDS = 300
 
 def _lease_seconds(binding: WorkflowInstanceConfig) -> int:
     duration = binding.limits.max_duration_seconds
-    return _WORKFLOW_LEASE_SECONDS if duration is None else duration + 60
+    return _WORKFLOW_LEASE_SECONDS if duration <= 0 else duration + 60
 
 BOOTSTRAP_WORKFLOW_TASK_TYPES = frozenset({
     "inputPort",
@@ -968,13 +968,18 @@ class WorkflowAgentRuntime:
                     request.conversation_id, agent=request.agent_name) or "")
                 allowed_relay_ids = [relay_id] if relay_id else []
             flow = FlowParser.parse(resolved.definition)
+            max_fanout = binding.limits.max_fanout
             execution = ContinuousFlowExecutor.run_batch(
                 flow,
                 input_flowfiles=[input_flowfile],
                 parameters=run_parameters,
-                max_workers=min(4, binding.limits.max_fanout),
-                max_retries=3,
-                timeout=binding.limits.max_duration_seconds,
+                max_workers=(
+                    4 if max_fanout <= 0 else min(4, max_fanout)
+                ),
+                max_retries=0,
+                timeout=(
+                    binding.limits.max_duration_seconds or None
+                ),
                 runtime_context={
                     "user_id": request.user_id,
                     "conversation_id": request.conversation_id,
@@ -1186,7 +1191,7 @@ class WorkflowAgentRuntime:
         duration = binding.limits.max_duration_seconds
         deadline = (
             datetime.now(timezone.utc) + timedelta(seconds=duration)
-            if duration is not None else None)
+            if duration > 0 else None)
         return WorkflowRunContext(
             run_id=active.run_id,
             turn_identity=request.turn_identity,

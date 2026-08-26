@@ -13,11 +13,12 @@ from threading import Lock
 from typing import Any, Dict, List, Optional
 
 
-# Global depth tracker per thread to prevent infinite recursion
+# Global depth tracker per thread for explicitly configured delegation limits.
 _depth_local = {}  # thread_id -> current_depth
 _depth_lock = Lock()
 
-MAX_GLOBAL_DEPTH = 5  # absolute ceiling regardless of agent config
+# Kept as a public compatibility sentinel. Zero means no platform ceiling.
+MAX_GLOBAL_DEPTH = 0
 
 # Global cancel registry for sub-agent tasks (delegate cancel)
 _cancelled_tasks: set = set()
@@ -190,9 +191,9 @@ class AgentTask:
     system_prompt: str = ""
     model: str = ""
     tools: Optional[List[str]] = None  # tool name whitelist (None = all)
-    max_iterations: int = 50
-    max_depth: int = 1
-    timeout: int = 300
+    max_iterations: int = 0
+    max_depth: int = 0
+    timeout: int = 0
     llm_service: str = ""  # service ID for LLM routing
     user_id: str = ""  # user ID for service resolution
     source_agent: str = ""  # name of the parent agent (for identity tracking)

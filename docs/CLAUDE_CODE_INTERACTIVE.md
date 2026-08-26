@@ -357,7 +357,8 @@ Timing controls are read once when the provider modules are imported:
   the tmux had visibly finished.
 - `PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS` sets how long a submitted tmux
   prompt may produce no observed proxy event before PawFlow treats the turn as
-  failed. Default: `300` seconds.
+  failed. Default: `0` (disabled); only a positive configured value enables
+  this cutoff.
 - `PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS` is the millisecond alias for the same
   value. The seconds variable wins if both are set.
 - `PAWFLOW_CCI_LIVENESS_PROBE_IDLE_SECONDS` (default `20`; `_MS` alias) arms

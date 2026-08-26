@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+from types import SimpleNamespace
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -247,11 +248,20 @@ def test_successful_retry_uses_cache_and_records_usage_once(environment):
 
     assert first.get_content() == second.get_content() == b'{"answer":"ok"}'
     assert service.client.calls == 1
+    assert service.client.last_kwargs["max_tokens"] == 0
     assert store.get_run(context.run_id)["usage"]["llm_calls"] == 1
     summary = ledger.summary(run_id=context.run_id, task_id="writer_step")
     assert summary["calls"] == 1
     assert summary["tokens_in"] == 100
     assert summary["tokens_out"] == 20
+
+
+def test_llm_call_defaults_have_no_token_or_wall_clock_limit():
+    task = AgentLLMCallTask({"service": "writer"})
+    schema = task.get_parameter_schema()
+    assert schema["max_tokens"]["default"] == 0
+    assert schema["timeout"]["default"] == 0
+    assert task._bound_timeout(SimpleNamespace(deadline_at="")) is None
 
 
 def test_agent_message_event_preserves_structured_json(environment):
@@ -450,6 +460,14 @@ def test_retries_require_idempotent_cache(environment):
 
     with pytest.raises(ValueError, match="run_idempotent"):
         task.workflow_retry_attempts(3)
+
+
+def test_zero_retry_attempts_are_unlimited(environment):
+    store, _ledger, _definition, _service, snapshot = environment
+    context = _running(store, snapshot)
+    task = _task(context, store, retry_attempts=0)
+
+    assert task.workflow_retry_attempts(3) == 0
 
 
 def test_budget_terminal_stops_authored_failure_branch(environment):

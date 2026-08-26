@@ -24,17 +24,41 @@ or restart. Existing LLM and external agents retain their own runtime paths.
 Add the agent through Resources or the conversation agent dialog. Select an
 exact compatible flow version, bind every required parameter/service, select a
 supported preemption policy, and set only the budgets the workflow actually
-needs. Workflow runs have no implicit timeout: omit `max_duration_seconds` and
-`terminal_timeout` to run until success, an explicit stop, or a real error. An
-explicit positive duration remains available when a user intentionally needs a
-deadline. Save invokes the same
+needs. Workflow runs have no implicit timeout, deadline, cost budget, call
+budget, FlowFile budget, fanout budget, or pass count. For
+`max_duration_seconds`, `max_llm_calls`, `max_flowfiles`, `max_fanout`,
+and `max_cost_usd`, an omitted value or `0` means unlimited. Only an explicit
+positive value configured by the user activates that limit. An unlimited
+`max_duration_seconds` is passed to the executor as `None`, never as an
+immediate timeout. The run otherwise continues until success, an explicit Stop,
+or a real error. Save invokes the same
 strict server validator used by Flow Editor publication.
+
+`repeat_until` follows the same rule for `max_iterations`,
+`max_duration_seconds`, and `iteration_timeout_seconds`: omitted or zero is
+unlimited, while a positive authored value activates that one bound. Its child
+task attempts are unlimited by default and remain interruptible through the
+workflow cancellation event.
+
+Declarative `for_each` is naturally finite from its input collection. Its
+`max_iterations`/`max_flowfiles`, `max_duration_seconds`, and
+`max_accumulated_bytes` fields therefore also default to zero (unlimited); only
+positive authored values activate rejection or exhaustion. The underlying
+Split JSON, loop guard, and Merge Content processors preserve the same rule.
 
 An optional workflow service shown as `Disabled` has no binding. The empty
 reference is omitted from the saved binding, so the workflow must explicitly
 skip the corresponding optional stage. For example, the Wiki Agent skips its
 review stage when `reviewer_llm` is disabled. Required service references never
 offer an automatic empty choice.
+
+When the Wiki reviewer is enabled, any validated issue or suggested correction
+routes directly back to the writer. Only a clean review can reach the apply
+stage; revision passes are unlimited unless the user configured a positive
+workflow limit.
+Retryable Workflow Agent task failures likewise retry until success or explicit
+Stop by default. A positive `retry_attempts` value is the only per-task retry
+ceiling; `0` means unlimited.
 
 The Wiki Agent's extractor, writer, and optional reviewer can select either a
 direct LLM service or a Summarizer. At run acceptance, a direct LLM is frozen as
@@ -236,8 +260,12 @@ Validate these branches before broad use:
    duplicating the request.
 4. Generation stays inside the stable run workspace; relative traversal and
    non-workspace `file://` previews fail closed.
-5. Final review uses the visible desktop and vision. Accept terminates; Revise
-   permits exactly one correction pass and cannot cycle back to the review gate.
+5. Final review uses the visible desktop and vision. A reviewer verdict with
+   `passed=false` returns directly to correction without asking the user to
+   approve known-bad work. A passed review opens the user decision; Accept
+   terminates and Revise may repeat correction and review as many times as the
+   user requests. No implicit pass count, timeout, or deadline applies; only an
+   explicitly configured limit or explicit Stop may interrupt the loop.
 6. The terminal result contains one workspace artifact and reports tool-call and
    correction-pass metrics.
 
@@ -258,6 +286,13 @@ deployment, and mixed requests stop before project access with a short response
 directing the user to a general-purpose agent. The accepted user request can
 focus the extraction/writer stages and reduce the configured batch size, but it
 cannot change relay/root/service bindings, permissions, or `write_mode`.
+Wiki source scans, extraction batches, message checkpoints, LLM output, and
+review revisions are unlimited by default. A positive `max_files` or
+`batch_files` value is enforced only when the user configured it; `0` means
+unlimited.
+Media Studio provider-cost selection follows the same rule: its default is `0`
+(no ceiling), while a positive user-configured `max_cost_usd` remains a hard
+selection policy.
 
 Automatic routing is independent of whether a Wiki Agent happens to be a member
 of the conversation. With `PAWFLOW_WIKI_WORKFLOW_CUTOVER=1`, the scheduler binds

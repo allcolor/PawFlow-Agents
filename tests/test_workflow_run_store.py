@@ -37,7 +37,7 @@ def _ref():
 
 
 def _context(run_id="wr_test", generation=1, permission_mode="default",
-             invocation_mode="conversation", channel="web"):
+             invocation_mode="conversation", channel="web", max_llm_calls=1):
     auth = AuthorizationRefContract(
         context_id=str(uuid.uuid4()), revision=1, root_turn_id="m1")
     identity = AgentTurnIdentity(
@@ -56,7 +56,7 @@ def _context(run_id="wr_test", generation=1, permission_mode="default",
         deadline_at=(datetime.now(timezone.utc)
                      + timedelta(minutes=5)).isoformat(),
         limits=WorkflowLimits(
-            max_duration_seconds=300, max_llm_calls=1,
+            max_duration_seconds=300, max_llm_calls=max_llm_calls,
             max_flowfiles=20, max_fanout=2),
         service_snapshot={}, cancel_token="cancel", event_sink="test")
 
@@ -76,9 +76,11 @@ def store(tmp_path):
 
 
 def _create_running(store, run_id="wr_test", generation=1,
-                    invocation_mode="conversation", channel="web"):
+                    invocation_mode="conversation", channel="web",
+                    max_llm_calls=1):
     context = _context(
-        run_id, generation, invocation_mode=invocation_mode, channel=channel)
+        run_id, generation, invocation_mode=invocation_mode, channel=channel,
+        max_llm_calls=max_llm_calls)
     store.create_run(
         context=context, request=_request(), parameters={},
         lease_seconds=300)
@@ -876,6 +878,26 @@ def test_llm_step_cache_aggregates_once_and_reserves_call_budget(store):
     assert committed["run_usage"]["llm_calls"] == 1
     with pytest.raises(WorkflowBudgetExceeded, match="call budget"):
         store.begin_llm_step(context.run_id, "reviewer", "hash-2")
+
+
+def test_zero_llm_call_budget_is_unlimited(store):
+    context = _create_running(store, max_llm_calls=0)
+    usage = {
+        "llm_calls": 1,
+        "tokens_in": 1,
+        "tokens_out": 1,
+        "cache_read": 0,
+        "cache_write": 0,
+        "duration_ms": 1,
+        "cost_usd": 0.0,
+        "virtual_cost_usd": 0.0,
+    }
+
+    assert store.begin_llm_step(context.run_id, "writer", "hash-1") is None
+    store.commit_llm_step(
+        context.run_id, "writer", "hash-1", {"content": "one"}, usage)
+
+    assert store.begin_llm_step(context.run_id, "reviewer", "hash-2") is None
 
 
 def test_delete_conversation_cascades_run_state(store):

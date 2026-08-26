@@ -285,7 +285,7 @@ class ExecutorRegistry:
 
 
     def _restore_instance(self, instance_id: str, flow_path: str,
-                          max_workers: int = 4, max_retries: int = 3,
+                          max_workers: int = 4, max_retries: int = 0,
                           flow_fqn: str = "",
                           flow_scope: str = "",
                           parameters: Optional[Dict[str, Any]] = None,

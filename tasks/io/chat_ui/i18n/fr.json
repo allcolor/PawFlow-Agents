@@ -830,7 +830,7 @@
   "workflowRequiredParameters": "Paramètres de workflow obligatoires : {names}",
   "workflowServiceSelect": "Sélectionner un service",
   "workflowServiceDisabled": "Désactivé",
-  "workflowPositiveLimits": "Chaque limite du workflow doit être un entier positif.",
+  "workflowPositiveLimits": "Chaque limite du workflow doit être zéro ou un entier positif. Zéro signifie illimité.",
   "workflowUpgrade": "Mettre à niveau le workflow",
   "workflowRunsMenu": "Exécutions du workflow...",
   "workflowRunsTitle": "Exécutions du workflow — {agent}",

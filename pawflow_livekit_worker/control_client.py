@@ -28,7 +28,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 _HANDSHAKE_TIMEOUT_S = 10.0
-_TOOL_TIMEOUT_S = 630.0   # bridge hard timeout is 600s; small margin
+_TOOL_TIMEOUT_S = 0.0
 
 
 def _make_message(msg_type: str, **payload) -> dict:
@@ -117,7 +117,9 @@ class WorkerControlClient:
             await self._send(_make_message(
                 "tool_call", call_id=call_id, name=name,
                 arguments=arguments or {}))
-            return await asyncio.wait_for(future, timeout=timeout)
+            if timeout > 0:
+                return await asyncio.wait_for(future, timeout=timeout)
+            return await future
         finally:
             self._pending_tools.pop(call_id, None)
 

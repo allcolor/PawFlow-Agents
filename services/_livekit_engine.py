@@ -147,11 +147,11 @@ def resolve_livekit_config(raw: dict) -> dict:
             + ", ".join(_RECORDING_POLICIES))
 
     try:
-        max_session_seconds = int(cfg.get("max_session_seconds", 600) or 600)
+        max_session_seconds = int(cfg.get("max_session_seconds", 0) or 0)
     except (TypeError, ValueError):
         raise ServiceError("max_session_seconds must be an integer")
-    if max_session_seconds <= 0:
-        raise ServiceError("max_session_seconds must be positive")
+    if max_session_seconds < 0:
+        raise ServiceError("max_session_seconds must be non-negative")
 
     return {
         "engine": "livekit",
@@ -187,6 +187,8 @@ def resolve_livekit_config(raw: dict) -> dict:
 
 
 def room_token_ttl_seconds(max_session_seconds: int) -> int:
+    if int(max_session_seconds) <= 0:
+        return ROOM_TOKEN_MAX_TTL_S
     return min(int(max_session_seconds) + 60, ROOM_TOKEN_MAX_TTL_S)
 
 

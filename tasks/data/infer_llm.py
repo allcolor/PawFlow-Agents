@@ -27,7 +27,7 @@ class InferLLMTask(BaseTask):
         model: Model name (optional, uses provider default)
         system_prompt: System prompt (supports ${attr.name} interpolation)
         temperature: Sampling temperature (default: 0.7)
-        max_tokens: Max response tokens (default: 1024)
+        max_tokens: Max response tokens (default: 0, unlimited)
         response_format: "text" or "json" (default: text)
         input_attribute: If set, use this attribute instead of content as input
         output_attribute: If set, store response in this attribute instead of content
@@ -101,8 +101,8 @@ class InferLLMTask(BaseTask):
                 "description": "Keep original content (store response as attribute)",
             },
             "timeout": {
-                "type": "integer", "required": False, "default": 60,
-                "description": "Request timeout in seconds",
+                "type": "integer", "required": False, "default": 0,
+                "description": "Request timeout in seconds; 0 means unlimited",
             },
         }
 
@@ -114,7 +114,7 @@ class InferLLMTask(BaseTask):
         api_key = self.config.get("api_key", "")
         base_url = self.config.get("base_url", "")
         model = self.config.get("model", "")
-        timeout = int(self.config.get("timeout", 60))
+        timeout = int(self.config.get("timeout", 0) or 0)
 
         svc_config = {
             "provider": provider,
@@ -164,7 +164,7 @@ class InferLLMTask(BaseTask):
             response_format = self.config.get("response_format", "text")
             fmt = "json" if response_format == "json" else None
 
-            max_tokens = int(self.config.get("max_tokens", 65536))
+            max_tokens = int(self.config.get("max_tokens", 0) or 0)
             kwargs = dict(
                 messages=messages,
                 model=model or None,

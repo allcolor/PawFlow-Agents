@@ -15,6 +15,10 @@ workflow at call time. PawFlow uploads configured media inputs, submits the work
 to `POST /prompt`, polls `/history/{prompt_id}`, selects one declared output, and
 streams `/view` to a temporary file. The normal media handler copies that file to
 FileStore or the requested relay filesystem and removes the temporary file.
+Generation polling is unlimited by default (`timeout=0`); set a positive
+`timeout` only when an explicit end-to-end job limit is required.
+`request_timeout` remains the independent positive timeout for each ComfyUI
+control or artifact-download request.
 
 This integration targets the self-hosted ComfyUI Server API. It is not the Comfy
 Cloud API v2.
@@ -483,7 +487,7 @@ trusted workflow default unchanged.
 | `api_key_header` | `Authorization` | For example `Authorization` or `X-API-Key`. |
 | `api_key_prefix` | `Bearer` | Leave empty when the header expects the raw key. |
 | `workflows` | Required | Presets keyed by operation name. |
-| `timeout` | Image: 1800 s; video/audio: 3600 s | Overall prompt-history wait. |
+| `timeout` | `0` | Overall prompt-history wait; zero is unlimited and a positive value enables an explicit job limit. |
 | `request_timeout` | 60 s | Individual control/upload request timeout. |
 | `poll_interval` | Image: 1 s; video/audio: 2 s | History polling interval. |
 | `max_input_bytes` | Image: 100 MiB; video/audio: 512 MiB | Per uploaded input. |

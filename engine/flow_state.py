@@ -25,7 +25,7 @@ class FlowStateEntry:
 
     def __init__(self, flow_id: str, flow_path: str = "",
                  parameters: Optional[Dict[str, Any]] = None,
-                 max_workers: int = 8, max_retries: int = 3,
+                 max_workers: int = 8, max_retries: int = 0,
                  enable_checkpoints: bool = True,
                  checkpoint_interval: float = 30.0,
                  started_at: Optional[str] = None,
@@ -97,7 +97,7 @@ class FlowStateManager:
 
     def register_flow(self, flow_id: str, flow_path: str = "",
                       parameters: Optional[Dict[str, Any]] = None,
-                      max_workers: int = 8, max_retries: int = 3,
+                      max_workers: int = 8, max_retries: int = 0,
                       enable_checkpoints: bool = True,
                       checkpoint_interval: float = 30.0):
         """Register a flow as running."""

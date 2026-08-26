@@ -111,9 +111,10 @@ class _ALCSetupMixin:
                     st.conversation_id, st.ctx.get("active_agent_name", ""))
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
-        st.max_rounds = int(st.ctx.get("max_rounds", 1)) if st.emitter.is_streaming else 1
+        st.max_rounds = max(0, int(st.ctx.get("max_rounds", 0) or 0))
         st._consecutive_tool: Dict[str, int] = {}
-        st._max_consec = st.ctx.get("max_consecutive_tool_calls", 100)
+        st._max_consec = max(
+            0, int(st.ctx.get("max_consecutive_tool_calls", 0) or 0))
         self._alc_apply_model_overrides(st)
         # Client metadata
         st._client_provider = getattr(st.client, "provider", "") or ""

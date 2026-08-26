@@ -73,7 +73,8 @@ class _SubAgentExecutorLoopMixin:
                 logger.debug("Failed to create display trace: %s", _te)
 
         # Tools have NO timeout — only cancellation breaks the sub-agent.
-        max_iter = task.max_iterations or self._default_max_iterations
+        max_iter = max(
+            0, int(task.max_iterations or self._default_max_iterations or 0))
 
         # Resolve LLM client strictly from the agent's conv_agents link.
         # NO default client — an unresolvable llm_service is a hard error.
@@ -432,7 +433,9 @@ class _SubAgentExecutorLoopMixin:
                         target=_sub_persist_worker, daemon=True).start()
 
         try:
-            for iteration in range(1, max_iter + 1):
+            iteration = 0
+            while max_iter <= 0 or iteration < max_iter:
+                iteration += 1
                 if _active_inst and _active_ctx_key:
                     try:
                         _active_ctx["_iteration"] = iteration

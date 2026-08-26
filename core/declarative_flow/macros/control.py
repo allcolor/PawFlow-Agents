@@ -555,17 +555,24 @@ def _positive_int(config: dict[str, Any], field: str, maximum: int) -> int:
 def _lower_for_each(
     group: dict[str, Any], block_id: str, config: dict[str, Any],
 ) -> None:
-    max_iterations = _positive_int(config, "max_iterations", 1000)
-    max_flowfiles = _positive_int(config, "max_flowfiles", 1000)
+    max_iterations = config.get("max_iterations", 0)
+    max_flowfiles = config.get("max_flowfiles", 0)
+    for field, value in (("max_iterations", max_iterations),
+                         ("max_flowfiles", max_flowfiles)):
+        if (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+            raise ValueError(f"For Each {field} must be an integer >= 0")
     if max_iterations != max_flowfiles:
         raise ValueError("For Each max_iterations must equal max_flowfiles")
-    max_duration = config.get("max_duration_seconds")
+    max_duration = config.get("max_duration_seconds", 0)
     if (isinstance(max_duration, bool) or not isinstance(max_duration, (int, float))
-            or max_duration <= 0):
-        raise ValueError("max_duration_seconds must be a number > 0")
+            or max_duration < 0):
+        raise ValueError("max_duration_seconds must be a number >= 0")
     if config.get("accumulation") != "merge":
         raise ValueError("For Each accumulation must explicitly be 'merge'")
-    max_bytes = _positive_int(config, "max_accumulated_bytes", 1024 * 1024 * 1024)
+    max_bytes = config.get("max_accumulated_bytes", 0)
+    if (isinstance(max_bytes, bool) or not isinstance(max_bytes, int)
+            or max_bytes < 0):
+        raise ValueError("max_accumulated_bytes must be an integer >= 0")
     tasks, relations, body_entry, body_exit = _single_entry_body(
         config.get("body"), "for each body")
     if any(relation["type"] == "failure" for relation in relations):
@@ -615,7 +622,7 @@ def _lower_for_each(
         "mergeContent", separator=str(config.get("separator", "\n")),
         min_entries=1, correlation_attribute="fragment.identifier",
         expected_count_attribute="fragment.count",
-        max_bin_age=max(1, int(max_duration)),
+        max_bin_age=int(max_duration),
         max_bin_flowfiles=max_flowfiles, max_bin_bytes=max_bytes,
     )
     group["relations"].extend([
@@ -642,11 +649,19 @@ def _lower_for_each(
 def _lower_repeat_until(
     group: dict[str, Any], block_id: str, config: dict[str, Any],
 ) -> None:
-    _positive_int(config, "max_iterations", 1000)
-    max_duration = config.get("max_duration_seconds")
+    max_iterations = config.get("max_iterations", 0)
+    if (isinstance(max_iterations, bool) or not isinstance(max_iterations, int)
+            or max_iterations < 0):
+        raise ValueError("max_iterations must be an integer >= 0")
+    max_duration = config.get("max_duration_seconds", 0)
     if (isinstance(max_duration, bool) or not isinstance(max_duration, (int, float))
-            or max_duration <= 0):
-        raise ValueError("max_duration_seconds must be a number > 0")
+            or max_duration < 0):
+        raise ValueError("max_duration_seconds must be a number >= 0")
+    iteration_timeout = config.get("iteration_timeout_seconds", 0)
+    if (isinstance(iteration_timeout, bool)
+            or not isinstance(iteration_timeout, (int, float))
+            or iteration_timeout < 0):
+        raise ValueError("iteration_timeout_seconds must be a number >= 0")
     condition = _validate_condition(config.get("condition"), "condition")
     body_tasks, _relations, _entry, _exit = _single_entry_body(
         config.get("body"), "repeat until body")
@@ -657,10 +672,10 @@ def _lower_repeat_until(
     parameters = {
         "body": copy.deepcopy(config.get("body")),
         "condition": condition,
-        "max_iterations": config["max_iterations"],
+        "max_iterations": max_iterations,
         "max_duration_seconds": max_duration,
         "iteration_delay": config.get("iteration_delay", 0),
-        "iteration_timeout_seconds": config.get("iteration_timeout_seconds", 30),
+        "iteration_timeout_seconds": iteration_timeout,
     }
     group["tasks"][controller] = _task("repeatUntil", **parameters)
     group["relations"].append(_relation(entry, controller))

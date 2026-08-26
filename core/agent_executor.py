@@ -6,8 +6,7 @@ Used by the main AgentLoopTask to:
 Each sub-agent runs its own tool-use loop with:
 - Its own system prompt (from ResourceStore agent definition)
 - A configurable subset of tools
-- Depth tracking to prevent infinite recursion
-- Timeout enforcement
+- Optional, explicitly configured depth limits
 - Result aggregation for parallel execution
 """
 
@@ -60,8 +59,8 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
         registry: ToolRegistry,
         *,
         max_workers: int = 4,
-        default_max_iterations: int = 50,
-        default_timeout: int = 300,
+        default_max_iterations: int = 0,
+        default_timeout: int = 0,
         client_resolver: Optional[Callable] = None,
         on_event: Optional[Callable] = None,
     ):
@@ -90,13 +89,13 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
     def execute_agent(self, task: AgentTask) -> AgentResult:
         """Execute a single sub-agent synchronously.
 
-        Runs a tool-use loop until the agent produces a final response
-        or hits max_iterations/timeout.
+        Runs a tool-use loop until the agent produces a final response, the
+        user cancels it, or an explicitly configured positive limit is hit.
         """
         current_depth = _get_depth()
-        effective_max = min(task.max_depth, MAX_GLOBAL_DEPTH)
+        effective_max = max(0, int(task.max_depth or 0))
 
-        if current_depth >= effective_max:
+        if effective_max > 0 and current_depth >= effective_max:
             return AgentResult(
                 task_id=task.id,
                 agent_name=task.agent_name,
@@ -568,9 +567,9 @@ def resolve_agent_task(
         system_prompt=_sys_prompt,
         model=acfg.get("model", ""),
         tools=acfg.get("tools") or None,
-        max_iterations=50,
-        max_depth=acfg.get("max_depth", 5),
-        timeout=acfg.get("timeout", 180),
+        max_iterations=int(acfg.get("max_iterations", 0) or 0),
+        max_depth=int(acfg.get("max_depth", 0) or 0),
+        timeout=int(acfg.get("timeout", 0) or 0),
         llm_service=llm_svc,
         user_id=user_id,
     )

@@ -156,7 +156,7 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
                  params=inst_params,
                  model=body.get("model", ""),
                  tools=body.get("tools", []),
-                 max_depth=int(body.get("max_depth", 1000) or 1000),
+                 max_depth=max(0, int(body.get("max_depth", 0) or 0)),
                  skills=(body["skills"] if "skills" in body
                          else agent.get("assigned_skills", [])),
                  flash_delegate_llm_service=body.get(
@@ -169,12 +169,9 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
                  user_id=user_id,
                  agui_url=str(body.get("agui_url") or "").strip(),
                  agui_service=str(body.get("agui_service") or "").strip(),
-                 agui_timeout=max(1, int(body.get("agui_timeout") or 300)),
+                 agui_timeout=max(0, int(body.get("agui_timeout") or 0)),
                  agui_max_tool_rounds=max(
-                     0, min(32, int(
-                         body.get("agui_max_tool_rounds")
-                         if body.get("agui_max_tool_rounds") not in (None, "")
-                         else 8))),
+                     0, int(body.get("agui_max_tool_rounds") or 0)),
                  gating_service=body.get("gating_service") or "")
         except ValueError as exc:
             flowfile.set_content(json.dumps({"error": str(exc)}).encode())

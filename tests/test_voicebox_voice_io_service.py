@@ -247,6 +247,14 @@ def test_voicebox_speak_posts_json_and_returns_audio(monkeypatch):
     assert captured["body"]["profile"] == "Morgan"
 
 
+def test_voicebox_generation_timeout_defaults_to_unlimited():
+    svc = VoiceboxService({})
+
+    assert svc.timeout == 180
+    assert svc.generation_timeout == 0
+    assert svc.get_parameter_schema()["generation_timeout"]["default"] == 0
+
+
 def test_voicebox_speak_uses_async_speak_for_known_profile(monkeypatch):
     calls = []
 

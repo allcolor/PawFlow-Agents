@@ -13,6 +13,30 @@ from core.llm_client import LLMClient, LLMResponse, LLMToolCall
 from core.tool_registry import ToolRegistry, ToolHandler
 
 
+def test_context_summary_zero_keeps_complete_parent_context(monkeypatch):
+    from core.conversation_store import ConversationStore
+    from core.handlers.spawn_agents import resolve_context_messages
+
+    messages = [
+        {"role": "user", "content": f"message-{index}-" + "x" * 250}
+        for index in range(60)
+    ]
+
+    class _Store:
+        def load(self, conversation_id, user_id=""):
+            return messages
+
+    monkeypatch.setattr(
+        ConversationStore, "instance", classmethod(lambda cls: _Store()))
+    result = resolve_context_messages("summary:0", "conv", "user")
+
+    assert "message-0-" in result[0]["content"]
+    assert "message-59-" in result[0]["content"]
+    assert "x" * 250 in result[0]["content"]
+    with pytest.raises(ValueError, match="non-negative"):
+        resolve_context_messages("summary:invalid", "conv", "user")
+
+
 # ── Helpers ───────────────────────────────────────────────────────────
 
 class EchoToolHandler(ToolHandler):
@@ -98,9 +122,9 @@ def tool_call_response(tool_name, arguments, content=""):
 class TestAgentTask:
     def test_defaults(self):
         task = AgentTask(id="t1", agent_name="test", message="hello")
-        assert task.max_iterations == 50
-        assert task.max_depth == 1
-        assert task.timeout == 300
+        assert task.max_iterations == 0
+        assert task.max_depth == 0
+        assert task.timeout == 0
         assert task.tools is None
         assert task.internal is False
         assert task.ephemeral is False
@@ -266,6 +290,25 @@ class TestSingleAgentExecution:
         assert "echo" in result.tools_called
         executor.shutdown()
 
+    def test_zero_max_iterations_runs_until_completion(self):
+        client = make_client_mock([
+            tool_call_response("echo", {"text": f"iter{i}"})
+            for i in range(4)
+        ] + [simple_response("Finished without an implicit cap")])
+        executor = SubAgentExecutor(client, make_registry(EchoToolHandler()))
+        task = AgentTask(
+            id="unlimited", agent_name="worker", message="Finish the work",
+            system_prompt="Use tools until done",
+        )
+
+        result = executor.execute_agent(task)
+
+        assert result.status == "completed"
+        assert result.response == "Finished without an implicit cap"
+        assert result.iterations == 5
+        client.complete.assert_not_called()
+        executor.shutdown()
+
     def test_tool_error_handled(self):
         """Tool errors are passed back to the LLM as error messages."""
         client = make_client_mock([
@@ -408,17 +451,18 @@ class TestDepthControl:
         assert _get_depth() == 0
         executor.shutdown()
 
-    def test_global_max_depth(self):
-        """MAX_GLOBAL_DEPTH caps the agent's own max_depth."""
+    def test_no_global_depth_cap_and_explicit_task_cap(self):
+        """Only a positive task max_depth caps delegation."""
         client = make_client_mock([])
         registry = make_registry()
         executor = SubAgentExecutor(client, registry)
 
-        _set_depth(MAX_GLOBAL_DEPTH)
+        assert MAX_GLOBAL_DEPTH == 0
+        _set_depth(7)
         try:
             task = AgentTask(
                 id="t1", agent_name="deep", message="Hi",
-                system_prompt="...", max_depth=999,  # agent wants more
+                system_prompt="...", max_depth=7,
             )
             result = executor.execute_agent(task)
             assert result.status == "error"
@@ -580,4 +624,4 @@ def test_conv_agent_max_depth_does_not_clobber_max_iterations():
     # The old conflation explicitly assigned the loop cap from max_depth.
     assert "max_iterations = _md" not in src
     # max_iterations stays resolved from service/config, never from max_depth.
-    assert 'max_iterations = int(_cfg("max_iterations", 1000))' in src
+    assert 'max_iterations = max(0, int(_cfg("max_iterations", 0)))' in src

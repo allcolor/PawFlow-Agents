@@ -20,6 +20,10 @@ def test_add_agent_dialog_builds_a_validated_workflow_binding():
     assert "runtime === 'workflow'" in source
     assert "runtime === 'llm' && !llm" in source
     assert "runtime === 'external_agui'" in source
+    assert 'type="number" min="0"' in source
+    assert "limits.max_duration_seconds || 0" in source
+    assert "limits.max_llm_calls || 0" in source
+    assert "limits[k] < 0" in source
 
 
 def test_workflow_agent_labels_exist_in_every_locale():
@@ -76,6 +80,10 @@ def test_agent_configuration_supports_explicit_exact_version_upgrade():
     assert "getBinding" in helpers and "flow_fqn: workflow.flow_fqn" in helpers
     assert "aRuntime === 'workflow'" in renderer
     assert "workflow_agent_forms.js" in serve
+    assert "limits.max_duration_seconds || 0" in helpers
+    assert "limits.max_llm_calls || 0" in helpers
+    assert 'type="number" min="0"' in helpers
+    assert "value < 0" in helpers
 
 
 def test_flow_editor_offers_agent_workflow_starter_and_strict_validation():

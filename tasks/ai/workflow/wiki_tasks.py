@@ -26,15 +26,14 @@ WIKI_EXTRACTION_SCHEMA = {
     "properties": {
         name: {
             "type": "array",
-            "maxItems": 100,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "required": ["text", "sources"],
                 "properties": {
-                    "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+                    "text": {"type": "string", "minLength": 1},
                     "sources": {
-                        "type": "array", "minItems": 1, "maxItems": 20,
+                        "type": "array", "minItems": 1,
                         "uniqueItems": True,
                         "items": {"type": "string", "minLength": 1},
                     },
@@ -45,8 +44,8 @@ WIKI_EXTRACTION_SCHEMA = {
             "claims", "relationships", "decisions", "invariants", "workflows")
     } | {
         "candidate_pages": {
-            "type": "array", "maxItems": 24, "uniqueItems": True,
-            "items": {"type": "string", "minLength": 1, "maxLength": 120},
+            "type": "array", "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1},
         },
     },
 }
@@ -58,9 +57,9 @@ WIKI_INTENT_SCHEMA = {
     "properties": {
         "intent": {"enum": ["wiki_maintenance", "unsupported"]},
         "batch_files": {
-            "type": ["integer", "null"], "minimum": 1, "maximum": 20,
+            "type": ["integer", "null"], "minimum": 1,
         },
-        "response": {"type": "string", "maxLength": 800},
+        "response": {"type": "string"},
     },
     "allOf": [{
         "if": {"properties": {"intent": {"const": "unsupported"}}},
@@ -74,17 +73,17 @@ WIKI_PATCH_SCHEMA = {
     "required": ["pages"],
     "properties": {
         "pages": {
-            "type": "array", "maxItems": 12,
+            "type": "array",
             "items": {
                 "type": "object", "additionalProperties": False,
                 "required": ["slug", "title", "summary", "content", "sources"],
                 "properties": {
-                    "slug": {"type": "string", "minLength": 1, "maxLength": 120},
-                    "title": {"type": "string", "minLength": 1, "maxLength": 200},
-                    "summary": {"type": "string", "maxLength": 500},
+                    "slug": {"type": "string", "minLength": 1},
+                    "title": {"type": "string", "minLength": 1},
+                    "summary": {"type": "string"},
                     "content": {"type": "string", "minLength": 1},
                     "sources": {
-                        "type": "array", "minItems": 1, "maxItems": 40,
+                        "type": "array", "minItems": 1,
                         "uniqueItems": True,
                         "items": {"type": "string", "minLength": 1},
                     },
@@ -100,25 +99,24 @@ WIKI_REVIEW_SCHEMA = {
     "required": ["issues", "suggested_corrections"],
     "properties": {
         "issues": {
-            "type": "array", "maxItems": 50,
+            "type": "array",
             "items": {
                 "type": "object", "additionalProperties": False,
                 "required": ["code", "severity", "message", "sources"],
                 "properties": {
-                    "code": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "code": {"type": "string", "minLength": 1},
                     "severity": {"enum": ["info", "warning", "severe"]},
-                    "message": {"type": "string", "minLength": 1,
-                                "maxLength": 1000},
+                    "message": {"type": "string", "minLength": 1},
                     "sources": {
-                        "type": "array", "maxItems": 20, "uniqueItems": True,
+                        "type": "array", "uniqueItems": True,
                         "items": {"type": "string", "minLength": 1},
                     },
                 },
             },
         },
         "suggested_corrections": {
-            "type": "array", "maxItems": 20,
-            "items": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
         },
     },
 }
@@ -163,7 +161,7 @@ def _request_message(state: dict[str, Any]) -> str:
 
 
 class PrepareWikiIntentTask(_WorkflowContextTask):
-    """Build the bounded classifier input before any project access."""
+    """Build the classifier input before any project access."""
 
     TYPE = "prepareWikiIntent"
     NAME = "Prepare Wiki Intent"
@@ -282,7 +280,7 @@ class ScanProjectWikiSourcesTask(_WikiTask):
         return {
             "project_root": {"type": "string", "required": True},
             "max_files": {"type": "integer", "required": False,
-                          "default": 10000},
+                          "default": 0},
         }
 
     def execute(self, flowfile: FlowFile) -> list[FlowFile]:
@@ -301,11 +299,11 @@ class ScanProjectWikiSourcesTask(_WikiTask):
         initial_paths = sorted({
             str(node.get("source_file") or "")
             for node in graph.nodes if str(node.get("source_file") or "")
-        })[:80]
+        })
         lint_before = wiki.lint()
         scan = wiki.scan_from_relay(
             service, root, local=False,
-            max_files=max(1, int(self.config.get("max_files", 10000) or 10000)),
+            max_files=max(0, int(self.config.get("max_files", 0) or 0)),
             initial_paths=initial_paths)
         state.update({
             "target": {"relay_id": relay_id, "project_root": root},
@@ -324,14 +322,14 @@ class ScanProjectWikiSourcesTask(_WikiTask):
 class SelectWikiSourceBatchTask(_WikiTask):
     TYPE = "selectWikiSourceBatch"
     NAME = "Select Wiki Source Batch"
-    DESCRIPTION = "Snapshot one oldest bounded dirty-source batch."
+    DESCRIPTION = "Snapshot the oldest dirty sources with an optional user cap."
     EFFECTS = (CapabilityEffect.RESOURCE_READ,)
     IDEMPOTENCY = IdempotencyClass.PURE
     RELATIONSHIPS: ClassVar = ["success", "no_change", "failure"]
 
     def get_parameter_schema(self) -> dict[str, Any]:
         return {
-            "batch_files": {"type": "integer", "required": False, "default": 8},
+            "batch_files": {"type": "integer", "required": False, "default": 0},
         }
 
     @staticmethod
@@ -339,19 +337,25 @@ class SelectWikiSourceBatchTask(_WikiTask):
         message = _request_message(state)
         candidates = re.findall(
             r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+", message)
-        return tuple(dict.fromkeys(candidates[:20]))
+        return tuple(dict.fromkeys(candidates))
 
     @staticmethod
     def _batch_limit(state: dict[str, Any], configured: int) -> int:
-        maximum = max(1, min(int(configured or 8), 20))
+        maximum = int(configured or 0)
+        if maximum < 0:
+            raise ValueError("batch_files must be non-negative")
         requested = (state.get("wiki_intent") or {}).get("batch_files")
-        return min(maximum, requested) if isinstance(requested, int) else maximum
+        if not isinstance(requested, int):
+            return maximum
+        if requested < 1:
+            raise ValueError("requested batch_files must be positive")
+        return min(maximum, requested) if maximum > 0 else requested
 
     def execute(self, flowfile: FlowFile) -> list[FlowFile]:
         state = _state(flowfile)
         _relay_id, _service, wiki = self._project()
         selection = wiki.select_update_batch(
-            self._batch_limit(state, self.config.get("batch_files", 8)),
+            self._batch_limit(state, self.config.get("batch_files", 0)),
             self._focus_paths(state))
         state["selection"] = selection
         if not selection["entries"]:
@@ -398,7 +402,7 @@ class FetchWikiSourcesTask(_WikiTask):
 class NormalizeProjectSourcesTask(_WikiTask):
     TYPE = "normalizeProjectSources"
     NAME = "Normalize Project Sources"
-    DESCRIPTION = "Add stable language and bounded text metadata without writes."
+    DESCRIPTION = "Add stable language metadata without writes."
     EFFECTS = (CapabilityEffect.RESOURCE_READ,)
     IDEMPOTENCY = IdempotencyClass.PURE
 
@@ -428,7 +432,7 @@ class NormalizeProjectSourcesTask(_WikiTask):
 class SplitWikiSourceBatchesTask(_WikiTask):
     TYPE = "splitWikiSourceBatches"
     NAME = "Split Wiki Source Batches"
-    DESCRIPTION = "Build stable bounded extraction groups and an untrusted-data prompt."
+    DESCRIPTION = "Build stable extraction groups and an untrusted-data prompt."
     EFFECTS = (CapabilityEffect.RESOURCE_READ,)
     IDEMPOTENCY = IdempotencyClass.PURE
 
@@ -521,7 +525,7 @@ class MergeWikiExtractionsTask(_WikiTask):
 class ValidateWikiPatchTask(_WikiTask):
     TYPE = "validateWikiPatch"
     NAME = "Validate Wiki Patch"
-    DESCRIPTION = "Fail closed on invalid page schemas, citations, links, or limits."
+    DESCRIPTION = "Fail closed on invalid page schemas, citations, or links."
     EFFECTS = (CapabilityEffect.RESOURCE_READ,)
     IDEMPOTENCY = IdempotencyClass.PURE
 
@@ -585,6 +589,7 @@ class ValidateWikiReviewTask(_WikiTask):
     DESCRIPTION = "Validate optional reviewer issues without granting write authority."
     EFFECTS = (CapabilityEffect.RESOURCE_READ,)
     IDEMPOTENCY = IdempotencyClass.PURE
+    RELATIONSHIPS: ClassVar = ["clean", "revise", "failure"]
 
     def execute(self, flowfile: FlowFile) -> list[FlowFile]:
         state = _state(flowfile)
@@ -598,8 +603,24 @@ class ValidateWikiReviewTask(_WikiTask):
             if not set(issue["sources"]) <= selected:
                 raise ValueError("Wiki review cites an unselected source")
         state["review"] = review
+        relationship = (
+            "revise" if review["issues"] or review["suggested_corrections"]
+            else "clean"
+        )
+        if relationship == "revise":
+            writer_prompt = str(
+                flowfile.get_attribute("wiki.writer_prompt", "") or ""
+            )
+            flowfile.set_attribute(
+                "wiki.writer_prompt",
+                writer_prompt
+                + "\n<validated_review_feedback>\n"
+                + json.dumps(review, ensure_ascii=False, sort_keys=True)
+                + "\n</validated_review_feedback>\n"
+                + "Revise the patch to resolve every issue and suggested correction."
+            )
         _put(flowfile, state)
-        flowfile.set_attribute("route.relationship", "success")
+        flowfile.set_attribute("route.relationship", relationship)
         return [flowfile]
 
 

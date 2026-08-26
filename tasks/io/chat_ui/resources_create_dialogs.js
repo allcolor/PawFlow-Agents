@@ -228,7 +228,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
         + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiConnection')) + '</label><select id="_addAguiService" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;"><option value="">' + escapeHtml(t('aguiDirectEndpoint')) + '</option>'
         + aguiServices.map(function(s) { return '<option value="' + escapeHtml(s.service_id) + '">' + escapeHtml(s.service_id) + '</option>'; }).join('') + '</select>'
         + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiEndpointUrl')) + '</label><input id="_addAguiUrl" placeholder="https://agent.example/agui" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
-        + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiMaxToolRounds')) + '</label><input id="_addAguiRounds" type="number" min="0" max="32" value="8" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
+        + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiMaxToolRounds')) + '</label><input id="_addAguiRounds" type="number" min="0" value="0" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
         + '</div>';
       var defaultFlow = workflowDefaults.flow_fqn || '';
       html += '<div id="_addWorkflowWrap" style="' + (initialRuntime === 'workflow' ? '' : 'display:none;') + 'padding:8px;margin-bottom:8px;border:1px solid var(--pf-border);border-radius:4px;">'
@@ -284,10 +284,10 @@ async function showAddAgentToConvDialog(presetDefinition) {
           + policies.map(function(p) { return '<option value="' + escapeHtml(p) + '"' + (p === selectedPolicy ? ' selected' : '') + '>' + escapeHtml(p) + '</option>'; }).join('') + '</select>'
           + '<div style="font-size:11px;color:var(--pf-accent);margin-bottom:6px;font-weight:600;">' + escapeHtml(t('workflowLimits')) + '</div>'
           + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">'
-          + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('workflowMaxDuration')) + '<input id="_addWorkflowDuration" type="number" min="1" value="' + escapeHtml(limits.max_duration_seconds || 900) + '" style="' + _svcInputStyle + '"></label>'
-          + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('workflowMaxLlmCalls')) + '<input id="_addWorkflowLlmCalls" type="number" min="1" value="' + escapeHtml(limits.max_llm_calls || 24) + '" style="' + _svcInputStyle + '"></label>'
-          + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('workflowMaxFlowFiles')) + '<input id="_addWorkflowFlowFiles" type="number" min="1" value="' + escapeHtml(limits.max_flowfiles || 200) + '" style="' + _svcInputStyle + '"></label>'
-          + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('workflowMaxFanout')) + '<input id="_addWorkflowFanout" type="number" min="1" value="' + escapeHtml(limits.max_fanout || 16) + '" style="' + _svcInputStyle + '"></label></div>';
+          + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('workflowMaxDuration')) + '<input id="_addWorkflowDuration" type="number" min="0" value="' + escapeHtml(limits.max_duration_seconds || 0) + '" style="' + _svcInputStyle + '"></label>'
+          + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('workflowMaxLlmCalls')) + '<input id="_addWorkflowLlmCalls" type="number" min="0" value="' + escapeHtml(limits.max_llm_calls || 0) + '" style="' + _svcInputStyle + '"></label>'
+          + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('workflowMaxFlowFiles')) + '<input id="_addWorkflowFlowFiles" type="number" min="0" value="' + escapeHtml(limits.max_flowfiles || 0) + '" style="' + _svcInputStyle + '"></label>'
+          + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('workflowMaxFanout')) + '<input id="_addWorkflowFanout" type="number" min="0" value="' + escapeHtml(limits.max_fanout || 0) + '" style="' + _svcInputStyle + '"></label></div>';
         PawFlowSchemaForm.populateServiceRefs(container);
       }
       workflowEl.onchange = _renderWorkflowFields;
@@ -358,7 +358,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
           max_flowfiles: parseInt(document.getElementById('_addWorkflowFlowFiles').value, 10),
           max_fanout: parseInt(document.getElementById('_addWorkflowFanout').value, 10),
         };
-        if (Object.keys(limits).some(function(k) { return !Number.isInteger(limits[k]) || limits[k] < 1; })) { alert(t('workflowPositiveLimits')); return; }
+        if (Object.keys(limits).some(function(k) { return !Number.isInteger(limits[k]) || limits[k] < 0; })) { alert(t('workflowPositiveLimits')); return; }
         workflow = {
           flow_fqn: selectedWorkflow.flow_fqn,
           input_port: selectedWorkflow.input_port,
@@ -373,7 +373,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
       formArea.querySelectorAll('[data-param]').forEach(function(inp) {
         params[inp.dataset.param] = inp.value;
       });
-      var aguiRounds = (function(v) { v = parseInt(v); return isNaN(v) ? 8 : v; })((document.getElementById('_addAguiRounds') || {}).value);
+      var aguiRounds = (function(v) { v = parseInt(v); return isNaN(v) ? 0 : v; })((document.getElementById('_addAguiRounds') || {}).value);
       overlay.remove();
       await cmdResourceAction('add_agent_to_conv', {
         instance_name: instName.trim(),

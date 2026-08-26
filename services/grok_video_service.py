@@ -37,8 +37,10 @@ class GrokVideoService(BaseVideoGenerationService):
                 "description": "Model: grok-imagine-video",
             },
             "timeout": {
-                "type": "integer", "required": False, "default": 600,
-                "description": "Max wait time for video generation (seconds)",
+                "type": "integer", "required": False, "default": 0,
+                "description": (
+                    "Max wait time for video generation in seconds "
+                    "(0 = unlimited)"),
             },
             "poll_interval": {
                 "type": "integer", "required": False, "default": 5,
@@ -50,7 +52,7 @@ class GrokVideoService(BaseVideoGenerationService):
         super().__init__(config)
         self.api_key = self.config.get("api_key", "")
         self.model = self.config.get("model", _DEFAULT_MODEL)
-        self.timeout = int(self.config.get("timeout", 600))
+        self.timeout = int(self.config.get("timeout", 0) or 0)
         self.poll_interval = int(self.config.get("poll_interval", 5))
         self._runtime_user_id = ""
         self._runtime_conversation_id = ""
@@ -131,8 +133,8 @@ class GrokVideoService(BaseVideoGenerationService):
         request_id = result.get("request_id", "")
         if not request_id:
             raise ServiceError(f"No request_id in xAI response: {json.dumps(result)[:300]}")
-        deadline = time.time() + self.timeout
-        while time.time() < deadline:
+        deadline = time.time() + self.timeout if self.timeout > 0 else None
+        while deadline is None or time.time() < deadline:
             time.sleep(self.poll_interval)
             status = self._api_request("GET", f"/videos/{request_id}")
             state = (status.get("status") or "").lower()

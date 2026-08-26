@@ -25,14 +25,7 @@ import core.paths as _paths
 logger = logging.getLogger(__name__)
 
 _MANIFEST_VERSION = 1
-_MAX_SOURCE_CHARS = 16_000
-_MAX_BATCH_CHARS = 80_000
-_MAX_EXISTING_PAGE_CHARS = 20_000
-_DEFAULT_BATCH_FILES = 8
-_AUTO_UPDATE_RESPONSE_TOKENS = 6_000
-_MAX_PATCH_PAGES = 12
-_MAX_PATCH_CHARS = 128_000
-_MAX_APPLIED_PATCHES = 200
+_DEFAULT_BATCH_FILES = 0
 
 _SCAN_SCRIPT = r'''
 import hashlib
@@ -41,8 +34,7 @@ import os
 from pathlib import Path
 
 ROOT = Path(os.environ.get("PAWFLOW_WIKI_ROOT", ".")).resolve()
-MAX_FILES = int(os.environ.get("PAWFLOW_WIKI_MAX_FILES", "10000"))
-MAX_BYTES = int(os.environ.get("PAWFLOW_WIKI_MAX_BYTES", "4194304"))
+MAX_FILES = int(os.environ.get("PAWFLOW_WIKI_MAX_FILES", "0"))
 SKIP_DIRS = {
     ".git", ".hg", ".svn", ".idea", ".vscode", ".pawflow-runtime",
     "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache",
@@ -78,9 +70,6 @@ for dirpath, dirnames, filenames in os.walk(ROOT):
             continue
         try:
             stat = path.stat()
-            if stat.st_size > MAX_BYTES:
-                skipped_large += 1
-                continue
             digest = hashlib.sha256()
             with path.open("rb") as handle:
                 for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -94,7 +83,7 @@ for dirpath, dirnames, filenames in os.walk(ROOT):
         except (OSError, ValueError):
             skipped_unreadable += 1
             continue
-        if len(files) >= MAX_FILES:
+        if MAX_FILES > 0 and len(files) >= MAX_FILES:
             truncated = True
             break
     if truncated:
@@ -148,10 +137,6 @@ Return one JSON object only:
   ],
   "processed_sources": ["every changed source you fully considered"]
 }}
-
-The final JSON response, excluding any internal reasoning, must fit within
-{response_token_budget} tokens. Keep page bodies concise enough to respect that
-response budget.
 
 Update an existing page by returning the same slug. Remove obsolete claims from
 the returned replacement body. Cross-link related pages with
@@ -386,10 +371,10 @@ class ProjectWiki:
                     token in name for token in (
                         "architecture", "design", "overview", "system", "index")):
                 seeds.add(path)
-        return set(sorted(seeds)[:80])
+        return set(seeds)
 
     def scan_from_relay(self, service, root: str = ".", local: bool = False,
-                        max_files: int = 10_000,
+                        max_files: int = 0,
                         initial_paths: Iterable[str] = ()) -> Dict[str, Any]:
         """Hash project sources on the relay and update the dirty manifest."""
         if not service:
@@ -717,25 +702,20 @@ class ProjectWiki:
 
     def _affected_pages_text(self, paths: set[str]) -> str:
         chunks = []
-        used = 0
         for slug, meta in (self._manifest.get("pages", {}) or {}).items():
             if not paths.intersection((meta.get("sources", {}) or {}).keys()):
                 continue
             try:
-                content = self.get_page(slug)[:6000]
+                content = self.get_page(slug)
             except (KeyError, OSError):
                 continue
             block = f"\n--- PAGE {slug} ---\n{content}"
-            if used + len(block) > _MAX_EXISTING_PAGE_CHARS:
-                break
             chunks.append(block)
-            used += len(block)
         return "".join(chunks) or "(none)"
 
     def _source_batch_text(self, service, entries: List[tuple[str, Dict]],
                            local: bool) -> str:
         chunks = []
-        used = 0
         root = str(self._manifest.get("root") or ".")
         for path, dirty in entries:
             if dirty.get("state") == "removed":
@@ -744,14 +724,11 @@ class ProjectWiki:
                 relay_path = path if root in ("", ".") else posixpath.join(root, path)
                 try:
                     raw = service.read_file(relay_path, local=local)
-                    text = raw.decode("utf-8", errors="replace")[:_MAX_SOURCE_CHARS]
+                    text = raw.decode("utf-8", errors="replace")
                 except Exception as exc:
                     text = f"[SOURCE UNREADABLE: {type(exc).__name__}]"
             block = f"\n--- SOURCE {path} ({dirty.get('state', '?')}) ---\n{text}"
-            if used and used + len(block) > _MAX_BATCH_CHARS:
-                break
             chunks.append(block)
-            used += len(block)
         return "".join(chunks)
 
     @staticmethod
@@ -776,8 +753,10 @@ class ProjectWiki:
     def select_update_batch(
             self, batch_files: int = _DEFAULT_BATCH_FILES,
             focus_paths: Iterable[str] = ()) -> Dict[str, Any]:
-        """Snapshot one bounded dirty-source batch without reading content."""
-        limit = max(1, min(int(batch_files or _DEFAULT_BATCH_FILES), 20))
+        """Snapshot dirty sources, optionally capped by a positive batch size."""
+        limit = int(batch_files or 0)
+        if limit < 0:
+            raise ValueError("batch_files must be non-negative")
         focus = tuple(
             str(value or "").strip().casefold()
             for value in focus_paths if str(value or "").strip())
@@ -794,7 +773,10 @@ class ProjectWiki:
                 )
 
             entries = []
-            for raw_path, raw_meta in sorted(dirty.items(), key=order)[:limit]:
+            ordered = sorted(dirty.items(), key=order)
+            if limit > 0:
+                ordered = ordered[:limit]
+            for raw_path, raw_meta in ordered:
                 path = self._clean_source_path(raw_path)
                 meta = dict(raw_meta)
                 entries.append({
@@ -811,7 +793,7 @@ class ProjectWiki:
             }
             try:
                 index = (self.path / "index.md").read_text(
-                    encoding="utf-8")[:12_000]
+                    encoding="utf-8")
             except OSError:
                 index = "(empty)"
             paths = {entry["path"] for entry in entries}
@@ -868,7 +850,6 @@ class ProjectWiki:
         entries = self._selection_entries(selection)
         root = str(selection.get("root") or ".")
         files = []
-        used = 0
         superseded = []
         for entry in entries:
             path = entry["path"]
@@ -899,14 +880,10 @@ class ProjectWiki:
                 "[SOURCE BINARY]" if binary
                 else raw.decode("utf-8", errors="replace").replace(
                     "\r\n", "\n").replace("\r", "\n"))
-            remaining = max(0, _MAX_BATCH_CHARS - used)
-            bounded = text[:min(_MAX_SOURCE_CHARS, remaining)]
-            truncated = len(bounded) < len(text)
-            used += len(bounded)
             files.append({
-                **entry, "text": bounded, "size": len(raw),
-                "line_count": bounded.count("\n") + (1 if bounded else 0),
-                "truncated": truncated, "readable": True, "binary": binary,
+                **entry, "text": text, "size": len(raw),
+                "line_count": text.count("\n") + (1 if text else 0),
+                "truncated": False, "readable": True, "binary": binary,
             })
         if superseded:
             return {"status": "superseded", "sources": sorted(superseded),
@@ -935,8 +912,6 @@ class ProjectWiki:
         processed = payload.get("processed_sources")
         if not isinstance(pages, list) or not isinstance(processed, list):
             raise ValueError("project wiki patch fields must be lists")
-        if len(pages) > _MAX_PATCH_PAGES:
-            raise ValueError("project wiki patch contains too many pages")
         selected = {entry["path"]: entry for entry in entries}
         processed_paths = []
         for raw_path in processed:
@@ -948,7 +923,6 @@ class ProjectWiki:
 
         normalized_pages = []
         slugs = set()
-        total_chars = 0
         for raw_page in pages:
             if not isinstance(raw_page, dict):
                 raise ValueError("project wiki page patch must be an object")
@@ -964,8 +938,6 @@ class ProjectWiki:
             content = str(raw_page.get("content") or "").strip()
             if not title or not content:
                 raise ValueError("project wiki page title and content are required")
-            if len(title) > 200 or len(summary) > 500:
-                raise ValueError("project wiki page metadata is too large")
             if slug in slugs:
                 raise ValueError("project wiki patch contains duplicate slugs")
             slugs.add(slug)
@@ -980,9 +952,6 @@ class ProjectWiki:
                     raise ValueError("page citation is outside the selected snapshot")
                 if path not in sources:
                     sources.append(path)
-            total_chars += len(content)
-            if total_chars > _MAX_PATCH_CHARS:
-                raise ValueError("project wiki patch body limit exceeded")
             normalized_pages.append({
                 "slug": slug, "title": title, "summary": summary,
                 "content": content, "sources": sources,
@@ -1236,8 +1205,6 @@ class ProjectWiki:
                 "patch_digest": patch_digest,
                 "result": dict(result), "applied_at": _now(),
             }
-            while len(receipts) > _MAX_APPLIED_PATCHES:
-                receipts.pop(next(iter(receipts)))
             self._save()
             self._rebuild_index()
             self._append_log(
@@ -1246,7 +1213,7 @@ class ProjectWiki:
 
     def auto_update(self, service, llm_client, local: bool = False,
                     batch_files: int = _DEFAULT_BATCH_FILES) -> Dict[str, Any]:
-        """Use one bounded ephemeral LLM call to process pending source changes."""
+        """Use one ephemeral LLM call to process pending source changes."""
         if local:
             # Same invariant as scan_from_relay: sources are read back on
             # the surface they were hashed on — the relay container.
@@ -1264,8 +1231,7 @@ class ProjectWiki:
 
         prompt = _AUTO_UPDATE_PROMPT.format(
             index=selection["index"], pages=selection["affected_pages"],
-            sources=prepared["source_text"],
-            response_token_budget=_AUTO_UPDATE_RESPONSE_TOKENS)
+            sources=prepared["source_text"])
         from core.llm_client import LLMMessage
         try:
             inner = getattr(llm_client, "_client", llm_client)

@@ -128,7 +128,7 @@ class TestGetAgentConfig:
             assert cfg["llm_service"] == "svc"
             # Defaults applied for missing fields
             assert cfg["tools"] == []
-            assert cfg["max_depth"] == 1000
+            assert cfg["max_depth"] == 0
 
 
 class TestGetDefinitionName:

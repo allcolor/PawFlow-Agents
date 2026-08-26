@@ -159,6 +159,12 @@ class VoiceboxService(_VoiceboxBackendMixin, BaseVoiceCloneService, BaseSTTServi
                 "type": "integer", "required": False, "default": 180,
                 "description": "HTTP timeout in seconds.",
             },
+            "generation_timeout": {
+                "type": "integer", "required": False, "default": 0,
+                "description": (
+                    "Maximum asynchronous generation time in seconds "
+                    "(0 = unlimited)."),
+            },
         }
 
     def get_service_actions(self) -> list:
@@ -203,6 +209,8 @@ class VoiceboxService(_VoiceboxBackendMixin, BaseVoiceCloneService, BaseSTTServi
         self.stt_model = self._normalize_stt_model(str(self.config.get("stt_model") or "turbo"))
         self.default_profile = str(self.config.get("default_profile") or "")
         self.timeout = int(self.config.get("timeout") or 180)
+        self.generation_timeout = int(
+            self.config.get("generation_timeout", 0) or 0)
         self.auto_start = str(self.config.get("auto_start", True)).lower() not in {"0", "false", "no"}
         self.auto_install = str(self.config.get("auto_install", True)).lower() not in {"0", "false", "no"}
         install_dir = Path(str(self.config.get("install_dir") or "data/runtime/voicebox")).expanduser()
@@ -383,9 +391,11 @@ class VoiceboxService(_VoiceboxBackendMixin, BaseVoiceCloneService, BaseSTTServi
         return str(created.get("id") or "") if isinstance(created, dict) else ""
 
     def _wait_for_generation_audio(self, generation_id: str) -> dict:
-        deadline = time.time() + self.timeout
+        deadline = (
+            time.time() + self.generation_timeout
+            if self.generation_timeout > 0 else None)
         last_status = ""
-        while time.time() < deadline:
+        while deadline is None or time.time() < deadline:
             gen = self._request(
                 "GET", f"/history/{urllib.parse.quote(generation_id)}",
                 accept_json=True, allow_404=True)
@@ -410,7 +420,8 @@ class VoiceboxService(_VoiceboxBackendMixin, BaseVoiceCloneService, BaseSTTServi
             time.sleep(1)
         detail = self._active_download_detail("")
         raise ServiceError(
-            f"Voicebox generation {generation_id} did not finish within {self.timeout}s"
+            f"Voicebox generation {generation_id} did not finish within "
+            f"{self.generation_timeout}s"
             + (f"; last status: {last_status}" if last_status else "")
             + detail)
 

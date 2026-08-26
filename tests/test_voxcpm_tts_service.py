@@ -70,6 +70,8 @@ def test_voxcpm_schema_defaults_to_vllm_openai_mode():
 
     assert schema["api_mode"]["default"] == "openai"
     assert schema["base_url"]["default"] == f"relay://{CONV_RELAY_EXPR}/localhost:8000"
+    assert schema["generation_timeout"]["default"] == 0
+    assert svc.generation_timeout == 0
     assert svc.SUPPORTS_NATIVE_TTS_VOICES is True
 
 
@@ -111,6 +113,7 @@ def test_voxcpm_cli_clone_speak_uses_official_clone_command(monkeypatch):
     assert "--prompt-audio" in argv
     assert argv[argv.index("--prompt-text") + 1] == "Salut"
     assert captured["kwargs"]["check"] is False
+    assert captured["kwargs"]["timeout"] is None
 
 
 def test_voxcpm_openai_mode_rejects_clone_speak(monkeypatch):

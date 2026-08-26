@@ -61,8 +61,9 @@ class ComfyUIImageService(BaseImageGenerationService):
                     "workflow, bindings, and output."),
             },
             "timeout": {
-                "type": "integer", "required": False, "default": 1800,
-                "description": "Maximum generation time in seconds.",
+                "type": "integer", "required": False, "default": 0,
+                "description": (
+                    "Maximum generation time in seconds (0 = unlimited)."),
             },
             "request_timeout": {
                 "type": "integer", "required": False, "default": 60,

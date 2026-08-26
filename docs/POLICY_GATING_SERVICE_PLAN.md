@@ -358,8 +358,8 @@ Proposed parameter schema:
 | `llm_service` | `service_ref(llmConnection)` | when prompt is set | `""` | LLM used for policy evaluation |
 | `prompt` | multiline string | no | `""` | Stable policy and interpretation rules |
 | `scripts` | `resource_ref_list(gating_script)` | no | `[]` | Ordered deterministic evaluators |
-| `max_tokens` | integer | no | `256` | Maximum gate response |
-| `timeout_seconds` | integer | no | `15` | Per-LLM policy timeout |
+| `max_tokens` | integer | no | `0` | Maximum gate response; zero is unlimited |
+| `timeout_seconds` | integer | no | `0` | Per-LLM policy timeout; zero is unlimited |
 | `failure_decision` | select | no | `"ask"` | `ask` or `deny`; never `allow` |
 | `llm_scope` | select | no | `"mutating"` | `[A3]` Calls that reach the LLM evaluator: `mutating` (command-bearing, write, delete, network, publish), `all`, or `none` (scripts only) |
 

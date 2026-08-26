@@ -37,6 +37,39 @@ def make_flow(tasks_dict, relations):
 
 class TestContinuousFlowExecutor:
 
+    def test_default_retries_run_until_retryable_task_succeeds(self):
+        class RetryableFailure(RuntimeError):
+            retryable = True
+
+        class EventuallySuccessfulTask(BaseTask):
+            TYPE = "testUnlimitedRetriesEventuallySucceed"
+            calls = 0
+
+            def execute(self, flowfile):
+                type(self).calls += 1
+                if type(self).calls < 5:
+                    raise RetryableFailure("temporary outage")
+                flowfile.set_content(b"recovered")
+                return [flowfile]
+
+        TaskFactory.register(EventuallySuccessfulTask)
+        flow = make_flow({
+            "eventual": {
+                "type": EventuallySuccessfulTask.TYPE, "parameters": {}},
+        }, [])
+
+        result = ContinuousFlowExecutor.run_batch(
+            flow,
+            input_flowfiles=[FlowFile(content=b"original")],
+            entry_task_id="eventual",
+            suppress_one_shot_roots=True,
+            timeout=10,
+        )
+
+        assert result.success, result.errors
+        assert EventuallySuccessfulTask.calls == 5
+        assert result.output_flowfiles[0].get_content() == b"recovered"
+
     def test_batch_failure_retains_pre_attempt_checkpoint_and_retryability(self):
         class RetryableFailure(RuntimeError):
             retryable = True

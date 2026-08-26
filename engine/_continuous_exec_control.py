@@ -612,7 +612,7 @@ class _ContinuousExecControlMixin:
         input_flowfiles: Optional[List[FlowFile]] = None,
         parameters: Optional[Dict[str, Any]] = None,
         max_workers: int = 4,
-        max_retries: int = 3,
+        max_retries: int = 0,
         timeout: Optional[float] = None,
         provenance: Optional[ProvenanceRepository] = None,
         runtime_context: Optional[Dict[str, Any]] = None,
@@ -630,7 +630,7 @@ class _ContinuousExecControlMixin:
             input_flowfiles: Optional input data
             parameters: Optional parameter overrides
             max_workers: Thread pool size
-            max_retries: Retries per task
+            max_retries: Attempts per task; zero means unlimited
             timeout: Optional max seconds to wait for completion. If omitted,
                 wait until the flow completes.
             provenance: Optional provenance repository

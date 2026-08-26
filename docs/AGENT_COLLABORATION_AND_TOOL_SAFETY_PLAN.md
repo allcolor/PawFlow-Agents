@@ -872,15 +872,15 @@ Add ResourceStore type <code>agent_group</code> and PFP resource support.
         mode: all | mentioned | classifier
         classifier_service_role: string optional
       deliberation:
-        max_rounds: integer, default 2, maximum 5
-        max_messages_per_member_per_round: integer, default 1, maximum 2
-        max_total_participant_calls: integer, default 12, maximum 32
-        max_parallelism: integer, default 4, maximum 8
+        max_rounds: non-negative integer, default 0 (unlimited)
+        max_messages_per_member_per_round: non-negative integer, default 0 (unlimited)
+        max_total_participant_calls: non-negative integer, default 0 (unlimited)
+        max_parallelism: non-negative integer, default 0 (all selected members)
         allow_pass: boolean
         rotate_first_speaker: boolean
       context_policy:
         private_context: none
-        shared_history_limit: integer, default 24, maximum 100
+        shared_history_limit: non-negative integer, default 0 (unlimited)
         attachments: explicit_only
       tool_policy:
         mode: none | read_only | declared
@@ -890,9 +890,9 @@ Add ResourceStore type <code>agent_group</code> and PFP resource support.
         member_id: string optional
         llm_service_role: string optional
       budgets:
-        max_tokens: integer
+        max_tokens: non-negative integer, default 0 (unlimited)
         max_cost: decimal optional
-        timeout_seconds: integer
+        timeout_seconds: non-negative integer, default 0 (unlimited)
       output:
         include_attributions: boolean
         include_dissent: boolean

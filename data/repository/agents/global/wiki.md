@@ -19,8 +19,8 @@ runtime_defaults:
       project_root: .
       extractor_llm: summarizer_service
       writer_llm: summarizer_service
-      batch_files: 8
-      max_files: 10000
+      batch_files: 0
+      max_files: 0
       write_mode: live
 ---
 

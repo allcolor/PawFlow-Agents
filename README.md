@@ -285,7 +285,7 @@ An `llmAggregator` consults several direct `llmConnection` services in parallel 
   "aggregator_llm_service": "llm_final",
   "advisor_llm_services": ["llm_architect", "llm_reviewer"],
   "max_parallel_advisors": 2,
-  "advisor_max_iterations": 20,
+  "advisor_max_iterations": 0,
   "failure_policy": "best_effort",
   "enforce_read_only": true
 }
@@ -534,7 +534,7 @@ Agents, services, and flows are configured via JSON. Parameters cascade: flow â†
   "llm_service": "claude_code_llm_service",
   "summarizer_service": "claude_code_llm_service",
   "permission_mode": "auto",
-  "max_iterations": 200
+  "max_iterations": 0
 }
 ```
 

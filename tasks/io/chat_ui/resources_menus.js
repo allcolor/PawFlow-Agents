@@ -594,7 +594,7 @@ function _showAgentConvConfigDialog(agentName) {
       + '<div id="acc-agui-wrap" style="margin-bottom:8px;padding:8px;border:1px solid var(--pf-border);border-radius:4px;' + (runtimeKind === 'external_agui' ? '' : 'display:none;') + '">'
       + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiConnection')) + '</label><select id="acc-agui-service" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">' + aguiServiceOpts + '</select>'
       + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiEndpointUrl')) + '</label><input id="acc-agui-url" value="' + escapeHtml(cfg.agui_url || '') + '" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
-      + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiMaxToolRounds')) + '</label><input id="acc-agui-rounds" type="number" min="0" max="32" value="' + (cfg.agui_max_tool_rounds == null ? 8 : cfg.agui_max_tool_rounds) + '" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
+      + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiMaxToolRounds')) + '</label><input id="acc-agui-rounds" type="number" min="0" value="' + (cfg.agui_max_tool_rounds == null ? 0 : cfg.agui_max_tool_rounds) + '" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
       + '</div>'
       + '<div id="acc-workflow-wrap" style="margin-bottom:8px;padding:8px;border:1px solid var(--pf-border);border-radius:4px;' + (runtimeKind === 'workflow' ? '' : 'display:none;') + '"></div>'
       + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('flashDelegateLlmService')) + '</label>'
@@ -615,7 +615,7 @@ function _showAgentConvConfigDialog(agentName) {
       + '</select></div>'
       + '<div style="margin-bottom:8px;">'
       + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('maxIterationsAgentLoop')) + '</label>'
-      + '<input id="acc-depth" type="number" value="' + (cfg.max_depth || 1000) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/>'
+      + '<input id="acc-depth" type="number" min="0" value="' + (cfg.max_depth == null ? 0 : cfg.max_depth) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/>'
       + '</div>';
     // Realtime voice link — only offered when at least one service exists
     if (rtServices.length) {
@@ -676,7 +676,7 @@ function _showAgentConvConfigDialog(agentName) {
                      workflow: workflow,
                      agui_service: document.getElementById('acc-agui-service').value,
                      agui_url: document.getElementById('acc-agui-url').value.trim(),
-                     agui_max_tool_rounds: (function(v) { v = parseInt(v); return isNaN(v) ? 8 : v; })(document.getElementById('acc-agui-rounds').value),
+                     agui_max_tool_rounds: (function(v) { v = parseInt(v); return isNaN(v) ? 0 : v; })(document.getElementById('acc-agui-rounds').value),
                      model: model, tools: tools,
                      tool_exposure: document.getElementById('acc-tool-exposure').value,
                      max_depth: depth, params: params };

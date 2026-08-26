@@ -25,6 +25,10 @@ what is implemented.
   `gating_script` resources. Options: `llm_scope` (`mutating` default, `all`,
   `none`), `failure_decision` (`ask` default or `deny`, never `allow`),
   `max_tokens`, `timeout_seconds`, `script_timeout_seconds`.
+  `max_tokens` and `timeout_seconds` default to `0` (unlimited); only an
+  explicitly configured positive value limits the LLM policy evaluation.
+  `script_timeout_seconds` remains a bounded sandbox control for untrusted
+  deterministic evaluator code.
 - **Gating script** (resource type `gating_script`): Python source defining
   `evaluate(event)` returning `{"decision": "allow|deny|ask|abstain",
   "reason": ..., "rule_id": ...}`; runs in the relay sandbox, receives only the

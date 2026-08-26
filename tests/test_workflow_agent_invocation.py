@@ -61,7 +61,7 @@ def _binding() -> WorkflowInstanceConfig:
 
 
 def test_workflow_agent_has_no_implicit_timeout():
-    assert _binding().limits.max_duration_seconds is None
+    assert _binding().limits.max_duration_seconds == 0
     timeout_schema = InvokeWorkflowAgentTask({
         "agent_ref": _agent_ref().to_dict(),
         "message": "Review this",

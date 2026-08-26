@@ -136,7 +136,7 @@ class AgentSideChannelsMixin:
                 messages=btw_messages,
                 tools=None,
                 temperature=0.5,
-                max_tokens=1024,
+                max_tokens=0,
                 callback=None,
                 **_btw_call_kwargs,
             )

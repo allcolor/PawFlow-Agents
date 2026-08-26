@@ -219,7 +219,7 @@ class ConversationSearchHandler(ToolHandler):
                 messages=[LLMMessage(role="user", content=prompt,
                                      conversation_id=self._conversation_id)],
                 temperature=0.2,
-                max_tokens=800,
+                max_tokens=0,
                 call_user_id=self._user_id,
                 call_conversation_id=self._conversation_id,
                 call_agent_name=self._agent_name or "conversation_search",

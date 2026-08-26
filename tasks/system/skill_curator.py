@@ -195,7 +195,7 @@ class SkillCuratorTask(BaseTask):
                 messages=[LLMMessage(role="user", content=prompt,
                                      conversation_id=call_cid)],
                 temperature=0.2,
-                max_tokens=2000,
+                max_tokens=0,
                 response_format="json",
                 call_user_id=user_id,
                 call_conversation_id=call_cid,

@@ -631,6 +631,33 @@ def test_for_each_routes_empty_and_rejects_unbounded_config():
         lower_control_block("bad", "for_each", {**config, "max_flowfiles": 3})
 
 
+def test_for_each_omitted_limits_are_unlimited():
+    group = lower_control_block("each", "for_each", {
+        "collection_path": "$", "accumulation": "merge", "separator": ",",
+        "body": {
+            "tasks": {"work": {"type": "log", "parameters": {
+                "message": "item"}}},
+            "relations": [], "entries": ["work"], "exits": ["work"],
+        },
+    })
+    assert group["tasks"]["each.split"]["parameters"]["max_fragments"] == 0
+    assert group["tasks"]["each.guard"]["parameters"]["max_flowfiles"] == 0
+    assert group["tasks"]["each.merge"]["parameters"]["max_bin_bytes"] == 0
+
+    execution = ContinuousFlowExecutor.run_batch(
+        FlowParser.parse({
+            "id": "each-unlimited", "name": "Each Unlimited",
+            "version": "1.0.0", "tasks": {}, "groups": {"each": group},
+            "relations": [], "entries": ["each.in.input"],
+            "exits": ["each.out.success"],
+        }),
+        input_flowfiles=[FlowFile(content=b'[1,2,3]')],
+        max_workers=3, timeout=5,
+    )
+    assert execution.success, execution.errors
+    assert execution.output_flowfiles[0].get_content() == b'1,2,3'
+
+
 def test_repeat_until_controller_has_no_graph_cycle_and_exhausts():
     group = lower_control_block("until", "repeat_until", {
         "max_iterations": 1, "max_duration_seconds": 30,
@@ -676,6 +703,35 @@ def test_repeat_until_stops_when_child_satisfies_condition():
         }),
         input_flowfiles=[FlowFile(content=b"payload")],
         max_workers=1, max_retries=1, timeout=5,
+    )
+    assert execution.success, execution.errors
+    assert execution.output_flowfiles[0].get_attribute("done") == "yes"
+
+
+def test_repeat_until_omitted_bounds_are_unlimited():
+    group = lower_control_block("until", "repeat_until", {
+        "condition": {"attribute": "done", "operator": "equals", "value": "yes"},
+        "idempotency_policy": "reviewed",
+        "body": {
+            "tasks": {"work": {"type": "updateAttribute", "parameters": {
+                "set": {"done": "yes"}}}},
+            "relations": [], "entries": ["work"], "exits": ["work"],
+        },
+    })
+    controller = group["tasks"]["until.controller"]["parameters"]
+    assert controller["max_iterations"] == 0
+    assert controller["max_duration_seconds"] == 0
+    assert controller["iteration_timeout_seconds"] == 0
+
+    execution = ContinuousFlowExecutor.run_batch(
+        FlowParser.parse({
+            "id": "until-unlimited", "name": "Until Unlimited",
+            "version": "1.0.0", "tasks": {}, "groups": {"until": group},
+            "relations": [], "entries": ["until.in.input"],
+            "exits": ["until.out.success"],
+        }),
+        input_flowfiles=[FlowFile(content=b"payload")],
+        max_workers=1, timeout=5,
     )
     assert execution.success, execution.errors
     assert execution.output_flowfiles[0].get_attribute("done") == "yes"

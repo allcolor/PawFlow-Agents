@@ -21,7 +21,7 @@ class WaitTask(BaseTask):
         super().__init__(config)
         self.signal_id = self.config.get("signal_id", "")
         self.target_count = self.config.get("target_count", 1)
-        self.timeout = self.config.get("timeout", 30)
+        self.timeout = self.config.get("timeout", 0)
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         if not self.signal_id:
@@ -50,8 +50,9 @@ class WaitTask(BaseTask):
                 "description": "Nombre de notifications necessaires",
             },
             "timeout": {
-                "type": "integer", "required": False, "default": 30,
-                "description": "Timeout en secondes",
+                "type": "integer", "required": False, "default": 0,
+                "description": (
+                    "Timeout in seconds; zero or omitted waits indefinitely"),
             },
         }
 

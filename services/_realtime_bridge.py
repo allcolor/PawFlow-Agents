@@ -304,8 +304,7 @@ class RealtimeSessionBridge:
 
     def run(self):
         """Blocking session loop; owns the browser socket until teardown."""
-        max_seconds = int(getattr(self._service, "max_session_seconds", 600)
-                          or 600)
+        max_seconds = int(getattr(self._service, "max_session_seconds", 0) or 0)
         self._tools, tool_defs = self._build_tool_bridge()
         self._tool_defs = tool_defs  # kept for transparent reconnects
         try:
@@ -328,14 +327,16 @@ class RealtimeSessionBridge:
         # The deadline is enforced in the provider pump (loops every ≤1 s
         # regardless of traffic): this handler thread blocks in _ws_recv,
         # so a silent client (muted mic) would starve a check placed here.
-        self._deadline = self._started_at + max_seconds
+        self._deadline = (self._started_at + max_seconds
+                          if max_seconds > 0 else None)
         pump = threading.Thread(target=self._provider_pump,
                                 name=f"realtime-pump-{self._cid[:8]}",
                                 daemon=True)
         pump.start()
         try:
             while not self._stop_ev.is_set():
-                if time.monotonic() > self._deadline:
+                if (self._deadline is not None
+                        and time.monotonic() > self._deadline):
                     self.stop("max_session_seconds")
                     break
                 opcode, payload = _ws_recv(self._sock)
@@ -381,7 +382,8 @@ class RealtimeSessionBridge:
 
     def _provider_pump(self):
         while not self._stop_ev.is_set():
-            if time.monotonic() > self._deadline:
+            if (self._deadline is not None
+                    and time.monotonic() > self._deadline):
                 # stop() shuts down the browser socket's read side, which
                 # also unblocks the handler thread stuck in _ws_recv.
                 self.stop("max_session_seconds")

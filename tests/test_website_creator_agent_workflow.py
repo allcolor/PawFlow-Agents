@@ -114,6 +114,9 @@ def test_website_creator_has_two_durable_gates_and_bounded_review_loop():
     assert "correct_site" in _reachable(
         flow, "apply_review_decision", "revise"
     )
+    assert "correct_site" in _reachable(
+        flow, "prepare_review_decision", "revise"
+    )
     assert "agent_terminal" in _reachable(
         flow, "apply_review_decision", "accepted"
     )
@@ -122,7 +125,8 @@ def test_website_creator_has_two_durable_gates_and_bounded_review_loop():
         row for row in flow["relations"]
         if row["from"] == "correct_site" and row["to"] == "review_site"
     )
-    assert correction_edge["max_visits"] > 1
+    assert correction_edge["explicit_loop"] is True
+    assert "max_visits" not in correction_edge
 
 
 def test_website_creator_tools_and_workspace_are_explicit():
@@ -135,10 +139,11 @@ def test_website_creator_tools_and_workspace_are_explicit():
     assert explore["parameters"]["required_tools"] == ["screen", "see"]
     assert build["parameters"]["phase"] == "build"
     assert correct["parameters"]["phase"] == "correct"
-    assert correct["parameters"]["max_iterations"] <= 12
     for task in flow["tasks"].values():
         if task["type"] == "websiteCreatorTool":
             assert "timeout" not in task["parameters"]
+            assert task["parameters"]["max_iterations"] == 0
+            assert task["parameters"]["max_tokens"] == 0
     assert flow["agent_contract"]["parameters"]["workspace_root"]["default"] == (
         "/workspace/pawflow-sites"
     )
@@ -193,5 +198,5 @@ def test_website_creator_documentation_states_catalogs_and_safe_v1_scope():
     assert "ThemeWagon" in documentation
     assert "static HTML/CSS/JavaScript" in documentation
     assert "do not expose a shell" in documentation
-    assert "repeat the durable decision loop" in documentation
+    assert "No implicit pass count, timeout, or deadline" in documentation
     assert "No relay service name is hard-coded" in documentation

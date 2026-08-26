@@ -47,7 +47,7 @@ class DeployedInstance:
     last_stopped: Optional[float] = None
     error_message: Optional[str] = None
     max_workers: int = 4
-    max_retries: int = 3
+    max_retries: int = 0
     service_overrides: Dict[str, str] = field(default_factory=dict)
     service_configs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     layout: Dict[str, Any] = field(default_factory=dict)
@@ -118,7 +118,7 @@ class DeploymentRegistry:
         owner: Optional[str] = None,
         parameters: Optional[Dict[str, Any]] = None,
         max_workers: int = 4,
-        max_retries: int = 3,
+        max_retries: int = 0,
         source: str = "gui",
         conversation_id: Optional[str] = None,
         agent_name: str = "",
@@ -379,7 +379,7 @@ class DeploymentRegistry:
                         created_at=time.time(),
                         last_started=time.time(),
                         max_workers=getattr(ex, '_max_workers', 4),
-                        max_retries=getattr(ex, '_max_retries', 3),
+                        max_retries=getattr(ex, '_max_retries', 0),
                     )
                     self._instances[eid] = inst
                     self._save_instance(inst)

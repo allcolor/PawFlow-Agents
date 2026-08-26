@@ -581,10 +581,12 @@ class WebsiteCreatorToolTask(
                 "options": ["explore", "build", "review", "correct"],
             },
             "max_iterations": {
-                "type": "integer", "required": False, "default": 12,
+                "type": "integer", "required": False, "default": 0,
+                "description": "Maximum model turns; 0 means unlimited.",
             },
             "max_tokens": {
-                "type": "integer", "required": False, "default": 5000,
+                "type": "integer", "required": False, "default": 0,
+                "description": "Maximum output tokens per turn; 0 means unlimited.",
             },
             "temperature": {
                 "type": "number", "required": False, "default": 0.2,
@@ -895,6 +897,9 @@ class WebsiteCreatorToolTask(
         try:
             from core.workflow_tool_scope import workflow_tool_scope
             self._website_scoped_calls = {}
+            max_tokens = int(self.config.get("max_tokens", 0) or 0)
+            if max_tokens < 0:
+                raise ValueError("max_tokens must be >= 0")
             with workflow_tool_scope(
                 str(getattr(client, "_conversation_id", "") or ""),
                 self.allowed_tool_names(self.config.get("phase", "")),
@@ -904,7 +909,7 @@ class WebsiteCreatorToolTask(
                     messages=messages,
                     model=str(self.config.get("model") or "") or None,
                     temperature=float(self.config.get("temperature", 0.2) or 0.2),
-                    max_tokens=max(1, int(self.config.get("max_tokens", 5000) or 5000)),
+                    max_tokens=max_tokens or None,
                     tools=tools,
                     call_user_id=str(getattr(client, "_user_id", "") or ""),
                     call_conversation_id=str(
@@ -1010,18 +1015,18 @@ class WebsiteCreatorToolTask(
         ]
         tools = self._tool_definitions(registry)
         calls: dict[str, int] = {}
-        max_iterations = max(
-            1, min(24, int(self.config.get("max_iterations", 12) or 12)),
-        )
+        max_iterations = int(self.config.get("max_iterations", 0) or 0)
+        if max_iterations < 0:
+            raise ValueError("max_iterations must be >= 0")
         run_store = getattr(self, "_workflow_run_store", None)
         if run_store is None:
             raise RuntimeError("workflow run store was not injected")
-        no_tool_responses = 0
-
-        for iteration in range(max_iterations):
+        iteration = 0
+        while max_iterations == 0 or iteration < max_iterations:
             if cancel_event is not None and cancel_event.is_set():
                 raise RuntimeError("Website Creator phase was cancelled")
             attempt = iteration + 1
+            iteration = attempt
             self._emit_progress(
                 context,
                 phase,
@@ -1047,7 +1052,7 @@ class WebsiteCreatorToolTask(
                 },
                 ensure_ascii=False, sort_keys=True, separators=(",", ":"),
             ).encode("utf-8")).hexdigest()
-            step_key = f"{self.get_task_id()}:turn:{iteration}"
+            step_key = f"{self.get_task_id()}:turn:{attempt - 1}"
             cached = run_store.begin_llm_step(
                 context.run_id, step_key, input_hash,
             )
@@ -1150,11 +1155,6 @@ class WebsiteCreatorToolTask(
                     assistant.tool_calls = tool_calls
                     assistant.content = ""
             if not tool_calls:
-                no_tool_responses += 1
-                if no_tool_responses > 1:
-                    raise ValueError(
-                        "Website Creator phase ended without submit_website_phase"
-                    )
                 self._emit_progress(
                     context,
                     phase,
@@ -1260,6 +1260,10 @@ class WebsiteCreatorToolTask(
                 website[phase if phase != "correct" else "correction"] = (
                     submit.submission
                 )
+                if phase == "correct":
+                    website["correction_passes"] = (
+                        int(website.get("correction_passes", 0)) + 1
+                    )
                 website["status"] = (
                     "explored" if phase == "explore"
                     else "built" if phase == "build"
@@ -1280,7 +1284,8 @@ class WebsiteCreatorToolTask(
                 )
                 return _store_state(flowfile, state)
         raise RuntimeError(
-            f"Website Creator {phase} exceeded {max_iterations} tool iterations"
+            f"Website Creator {phase} reached the explicitly configured "
+            f"max_iterations={max_iterations}"
         )
 
 
@@ -1290,6 +1295,7 @@ class PrepareWebsiteDecisionTask(_WorkflowContextTask):
     DESCRIPTION = "Build a bounded durable mapping or final-review form."
     EFFECTS = (CapabilityEffect.RESOURCE_READ,)
     IDEMPOTENCY = IdempotencyClass.PURE
+    RELATIONSHIPS: ClassVar = ["success", "revise", "failure"]
 
     def get_parameter_schema(self) -> dict[str, Any]:
         return {
@@ -1320,15 +1326,42 @@ class PrepareWebsiteDecisionTask(_WorkflowContextTask):
             ]
         elif decision == "review":
             details = website.get("review") or {}
+            passed = details.get("passed")
+            if not isinstance(passed, bool):
+                raise ValueError("website review passed must be a boolean")
+            if not passed:
+                feedback = [
+                    "The automated reviewer rejected the current website.",
+                    str(details.get("summary") or "").strip(),
+                ]
+                issues = [
+                    str(item).strip()
+                    for item in (details.get("issues") or ())
+                    if str(item).strip()
+                ]
+                if issues:
+                    feedback.append(
+                        "Reviewer issues:\n- " + "\n- ".join(issues)
+                    )
+                website["user_feedback"] = "\n\n".join(
+                    item for item in feedback if item
+                )
+                website["status"] = "revision_required"
+                flowfile.delete_attribute(
+                    str(self.config.get("output_attribute") or "")
+                )
+                flowfile.set_attribute("route.relationship", "revise")
+                return _store_state(flowfile, state)
             title = "Accept generated website"
             prompt = (
                 "Review the generated website and validation report. You may "
-                "accept it or authorize one final correction pass.\n\n"
+                "accept it or request further corrections. You may repeat "
+                "correction and review as many times as needed.\n\n"
                 + json.dumps(details, ensure_ascii=False, indent=2)
             )
             options = [
                 {"value": "accepted", "label": "Accept website"},
-                {"value": "revise", "label": "One correction pass"},
+                {"value": "revise", "label": "Request corrections"},
             ]
         else:
             raise ValueError("website decision must be mapping or review")
@@ -1355,6 +1388,7 @@ class PrepareWebsiteDecisionTask(_WorkflowContextTask):
             str(self.config.get("output_attribute") or ""),
             json.dumps(payload, ensure_ascii=False),
         )
+        flowfile.set_attribute("route.relationship", "success")
         return [flowfile]
 
 
@@ -1446,7 +1480,12 @@ class FormatWebsiteCreatorResultTask(_WorkflowContextTask):
                         int(value)
                         for value in (website.get("tool_calls") or {}).values()
                     ),
-                    "correction_passes": int(bool(website.get("correction"))),
+                    "correction_passes": int(
+                        website.get(
+                            "correction_passes",
+                            int(bool(website.get("correction"))),
+                        )
+                    ),
                 },
                 answered_turn_ids=(context.root_turn_id,),
             )

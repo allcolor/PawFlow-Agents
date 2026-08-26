@@ -49,10 +49,10 @@ function mountWorkflowAgentForm(root, workflows, binding, options) {
       + policies.map(p => '<option value="' + escapeHtml(p) + '"' + (p === policy ? ' selected' : '') + '>' + escapeHtml(p) + '</option>').join('') + '</select>'
       + '<div style="font-size:11px;color:var(--pf-accent);margin-bottom:6px;font-weight:600;">' + escapeHtml(t('workflowLimits')) + '</div>'
       + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">'
-      + _workflowLimitField(prefix + '-duration', 'workflowMaxDuration', limits.max_duration_seconds || 900)
-      + _workflowLimitField(prefix + '-llm-calls', 'workflowMaxLlmCalls', limits.max_llm_calls || 24)
-      + _workflowLimitField(prefix + '-flowfiles', 'workflowMaxFlowFiles', limits.max_flowfiles || 200)
-      + _workflowLimitField(prefix + '-fanout', 'workflowMaxFanout', limits.max_fanout || 16)
+      + _workflowLimitField(prefix + '-duration', 'workflowMaxDuration', limits.max_duration_seconds || 0)
+      + _workflowLimitField(prefix + '-llm-calls', 'workflowMaxLlmCalls', limits.max_llm_calls || 0)
+      + _workflowLimitField(prefix + '-flowfiles', 'workflowMaxFlowFiles', limits.max_flowfiles || 0)
+      + _workflowLimitField(prefix + '-fanout', 'workflowMaxFanout', limits.max_fanout || 0)
       + '</div>';
     PawFlowSchemaForm.populateServiceRefs(fields);
   }
@@ -78,7 +78,7 @@ function mountWorkflowAgentForm(root, workflows, binding, options) {
         max_flowfiles: parseInt(root.querySelector('#' + CSS.escape(prefix + '-flowfiles')).value, 10),
         max_fanout: parseInt(root.querySelector('#' + CSS.escape(prefix + '-fanout')).value, 10),
       };
-      if (Object.values(limits).some(value => !Number.isInteger(value) || value < 1)) throw new Error(t('workflowPositiveLimits'));
+      if (Object.values(limits).some(value => !Number.isInteger(value) || value < 0)) throw new Error(t('workflowPositiveLimits'));
       return {
         flow_fqn: workflow.flow_fqn,
         input_port: workflow.input_port,
@@ -94,5 +94,5 @@ function mountWorkflowAgentForm(root, workflows, binding, options) {
 
 function _workflowLimitField(id, labelKey, value) {
   return '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t(labelKey))
-    + '<input id="' + id + '" type="number" min="1" value="' + escapeHtml(value) + '" style="' + _svcInputStyle + '"></label>';
+    + '<input id="' + id + '" type="number" min="0" value="' + escapeHtml(value) + '" style="' + _svcInputStyle + '"></label>';
 }

@@ -561,10 +561,10 @@ def test_turn_coordinator_waits_for_delayed_proxy_event_after_stop_hook(monkeypa
     assert resp.content == "late"
 
 
-def test_turn_coordinator_times_out_when_stop_has_no_proxy_events(monkeypatch):
+def test_turn_coordinator_honors_explicit_no_proxy_event_timeout(monkeypatch):
     import core.llm_providers._cci_turn as cci
 
-    monkeypatch.setattr(cci, "_NO_PROXY_EVENT_TIMEOUT_SECONDS", 0)
+    monkeypatch.setattr(cci, "_NO_PROXY_EVENT_TIMEOUT_SECONDS", 1e-9)
 
     events = [
         {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
@@ -577,6 +577,7 @@ def test_turn_coordinator_times_out_when_stop_has_no_proxy_events(monkeypatch):
 def test_cci_timeouts_are_env_configurable(monkeypatch):
     import core.llm_providers.claude_code_interactive as cci
 
+    assert cci._NO_PROXY_EVENT_TIMEOUT_SECONDS == 0
     monkeypatch.setenv("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS", "600")
     assert cci._env_seconds(("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS",), default=300) == 600
 
@@ -798,6 +799,7 @@ def test_turn_coordinator_tracks_prefixed_messages_request(monkeypatch):
     coordinator = _CCITurnCoordinator(_Events([
         {"type": "request_start", "request_id": "zai-r1",
          "path": "/api/anthropic/v1/messages?beta=true"},
+        {"type": "request_stop", "request_id": "zai-r1"},
         {"type": "hook", "hook_event_name": "Stop", "input": {}},
     ]), "sess")
 

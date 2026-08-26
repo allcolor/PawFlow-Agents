@@ -127,6 +127,7 @@ def test_codex_image_schema_requires_codex_llm_service_combo():
     assert schema["llm_service"]["type"] == "service_ref"
     assert schema["llm_service"]["service_type"] == "llmConnection"
     assert schema["llm_service"]["provider"] == "codex-app-server"
+    assert schema["timeout"]["default"] == 0
     assert "codex_binary" not in schema
     assert "relay_service" not in schema
     assert "local" not in schema
@@ -178,6 +179,23 @@ def test_codex_image_generate_runs_through_codex_pool_and_llm_service(tmp_path, 
     assert call["codex_args"][-1] == "-"
     assert "$imagegen" in pool.stdin_text
     assert "1280x512" in pool.stdin_text
+
+
+def test_codex_image_default_job_timeout_is_unlimited(tmp_path, monkeypatch):
+    svc, _client, pool = _service(tmp_path, monkeypatch)
+    captured = {}
+
+    class CapturingProc(FakeProc):
+        def communicate(self, stdin_text, timeout=None):
+            captured["timeout"] = timeout
+            return super().communicate(stdin_text, timeout=timeout)
+
+    pool.proc_factory = CapturingProc
+
+    svc.generate(prompt="Create a dashboard banner")
+
+    assert svc.timeout == 0
+    assert captured["timeout"] is None
 
 
 def test_codex_image_recovers_tokens_on_timeout(tmp_path, monkeypatch):

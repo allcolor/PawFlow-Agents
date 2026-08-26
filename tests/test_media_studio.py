@@ -99,6 +99,17 @@ def test_catalog_filters_hard_constraints_and_returns_reason_codes():
     }
 
 
+def test_zero_cost_limit_allows_unknown_provider_cost():
+    candidate = capability("unknown-cost")
+    object.__setattr__(candidate, "estimated_cost_usd", None)
+
+    result = MediaCapabilityCatalog([candidate]).select(
+        request(), MediaSelectionPreferences(max_cost_usd=0))
+
+    assert result.outcome == "selected"
+    assert result.selected.capability_id == "unknown-cost"
+
+
 def test_exact_model_is_a_hard_requirement():
     catalog = MediaCapabilityCatalog([
         capability("wan", model="wan-2.2"),

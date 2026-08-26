@@ -37,6 +37,7 @@ from core.workflow_run_inspector import _event_projection
 from core.workflow_run_store import WorkflowBudgetExceeded, WorkflowRunStore
 from tasks.ai.workflow.group_tasks import (
     AgentParticipantCallTask,
+    SynthesizeGroupResultTask,
     _GroupLLMCaller,
 )
 
@@ -99,7 +100,9 @@ def _response(content: dict, *, tokens: int = 10) -> LLMResponse:
 
 
 def _group_definition(
-    *, max_rounds=2, max_tokens=200, synthesis=None, tool_policy=None,
+    *, max_rounds=2, max_tokens=200, max_total_calls=4,
+    max_parallelism=2, shared_history_limit=24, timeout_seconds=120,
+    synthesis=None, tool_policy=None,
 ):
     members = []
     for index, member_id in enumerate(("architecture", "operations")):
@@ -128,19 +131,19 @@ def _group_definition(
         "deliberation": {
             "max_rounds": max_rounds,
             "max_messages_per_member_per_round": 1,
-            "max_total_participant_calls": 4,
-            "max_parallelism": 2,
+            "max_total_participant_calls": max_total_calls,
+            "max_parallelism": max_parallelism,
             "allow_pass": True,
             "rotate_first_speaker": True,
         },
         "context_policy": {
             "private_context": "none",
-            "shared_history_limit": 24,
+            "shared_history_limit": shared_history_limit,
             "attachments": "explicit_only",
         },
         "tool_policy": tool_policy or {"mode": "none", "allowed_effects": []},
         "synthesis": synthesis or {"mode": "deterministic_concat"},
-        "budgets": {"max_tokens": max_tokens, "timeout_seconds": 120},
+        "budgets": {"max_tokens": max_tokens, "timeout_seconds": timeout_seconds},
         "output": {"include_attributions": True, "include_dissent": True},
     }
 
@@ -427,7 +430,14 @@ def test_all_pass_stops_after_one_round_and_synthesizes_no_finding(
             "citations": [],
         })
     context = _context("wr_group_pass", _snapshot(
-        definitions, _group_definition(max_rounds=5)
+        definitions, _group_definition(
+            max_rounds=0,
+            max_tokens=0,
+            max_total_calls=0,
+            max_parallelism=0,
+            shared_history_limit=0,
+            timeout_seconds=0,
+        )
     ))
     request = _running(store, context)
 
@@ -439,10 +449,46 @@ def test_all_pass_stops_after_one_round_and_synthesizes_no_finding(
     assert terminals[0].metrics["group_rounds"] == 1
     assert terminals[0].metrics["group_passes"] == 2
     assert [len(client.calls) for client in clients.values()] == [1, 1]
+    assert all(client.calls[0]["max_tokens"] == 0 for client in clients.values())
     completed = next(
         data for kind, data in events if kind == "group_rounds_completed"
     )
     assert completed["stop_reason"] == "all_passed"
+
+
+def test_unlimited_group_synthesis_forwards_zero_token_limit(monkeypatch):
+    captured = {}
+
+    def fake_call(_caller, _key, _service, _messages, max_tokens, **kwargs):
+        captured["max_tokens"] = max_tokens
+        captured["token_budget"] = kwargs["token_budget"]
+        return {"response": "Synthesized result."}, {
+            "tokens_in": 3, "tokens_out": 4, "cost_usd": 0.0,
+        }
+
+    monkeypatch.setattr(_GroupLLMCaller, "call_json", fake_call)
+    task = SynthesizeGroupResultTask({})
+    task.set_workflow_run_context(
+        _context("wr_group_synthesis", {}), run_store=object())
+    group = AgentGroupDefinition.from_dict(_group_definition(
+        max_tokens=0,
+        synthesis={"mode": "designated_member", "member_id": "architecture"},
+    ))
+    state = {
+        "group": {"member_snapshots": [{
+            "member_id": "architecture",
+            "service": {"service_id": "architect-llm"},
+            "model": "",
+        }]},
+        "shared_room": {"request": "Review this."},
+    }
+    budget = {"tokens": 0, "cost": 0.0, "llm_calls": 0}
+    posts = [{"member_id": "architecture", "disposition": "post",
+              "content": "Finding."}]
+
+    assert task._synthesize(state, group, posts, budget) == "Synthesized result."
+    assert captured == {"max_tokens": 0, "token_budget": None}
+    assert budget["tokens"] == 7
 
 
 def test_group_budget_rejects_provider_usage_before_commit(group_environment):
@@ -809,18 +855,19 @@ def test_group_cancellation_invokes_active_tool_kill_hook(
     ]
 
 
-def test_group_tool_loop_counts_every_llm_call_and_tool_call(group_environment):
+def test_group_tool_loop_is_unlimited_and_counts_every_call(group_environment):
     store, _ledger, clients, _services, definitions = group_environment
     client = clients["architect-llm"]
 
     def response(call, _kwargs):
-        if call == 1:
+        if call <= 10:
             return LLMResponse(
                 model="fake-group-model",
                 tokens_in=5,
                 finish_reason="tool_calls",
                 tool_calls=[LLMToolCall(
-                    id="tc-web", name="web_search", arguments={"query": "public"},
+                    id=f"tc-web-{call}", name="web_search",
+                    arguments={"query": "public"},
                 )],
             )
         return _response({
@@ -830,7 +877,8 @@ def test_group_tool_loop_counts_every_llm_call_and_tool_call(group_environment):
         }, tokens=7)
 
     client.response_factory = response
-    context = _context("wr_group_tool_budget", _snapshot(definitions))
+    context = _context(
+        "wr_group_tool_budget", _snapshot(definitions), max_llm_calls=0)
     _running(store, context)
     task = AgentParticipantCallTask({})
     task.get_task_id = lambda: "participant_calls"
@@ -863,16 +911,19 @@ def test_group_tool_loop_counts_every_llm_call_and_tool_call(group_environment):
         "tool-budget-proof",
         "architect-llm",
         [LLMMessage(role="user", content="review", conversation_id="ephemeral")],
-        100,
-        token_budget=100,
+        0,
+        token_budget=None,
         tool_runtime=runtime,
     )
 
     assert parsed["content"] == "tool-backed finding"
-    assert usage["llm_calls"] == 2
-    assert usage["tokens_in"] == 12
-    assert usage["tool_calls"] == 1
-    assert [call.id for call in runtime.calls] == ["tc-web"]
+    assert usage["llm_calls"] == 11
+    assert usage["tokens_in"] == 57
+    assert usage["tool_calls"] == 10
+    assert [call.id for call in runtime.calls] == [
+        f"tc-web-{index}" for index in range(1, 11)
+    ]
+    assert all(call["max_tokens"] == 0 for call in client.calls)
 
 
 def test_group_tool_inspector_projection_is_bounded_and_redacted():

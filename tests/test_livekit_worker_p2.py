@@ -393,7 +393,8 @@ async def test_control_client_round_trip():
             on_shutdown=on_shutdown)
         await client.connect()
         await client.send_event("realtime.session.ready", {})
-        outcome = await client.call_tool("echo", {"q": "ping"}, timeout=5)
+        assert control_client._TOOL_TIMEOUT_S == 0
+        outcome = await client.call_tool("echo", {"q": "ping"})
         assert outcome == {"ok": True, "result": {"text": "pong"}}
         await asyncio.sleep(0.05)   # let the context message dispatch
         assert contexts == ["late tool result"]

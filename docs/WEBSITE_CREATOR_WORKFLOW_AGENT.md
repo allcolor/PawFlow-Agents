@@ -44,9 +44,18 @@ described, colored frames for these stages:
 3. present the complete source-to-template mapping and wait durably;
 4. stop without writing when the mapping is rejected, or generate the approved
    static HTML/CSS/JavaScript site when it is approved;
-5. inspect the rendered result visually and present a final durable decision;
-6. finish only when explicitly accepted; otherwise apply the latest feedback,
-   review the result again, and repeat the durable decision loop.
+5. inspect the rendered result visually; a negative reviewer verdict returns
+   directly to correction with its issues and never asks the user to confirm
+   known-bad work;
+6. only after the reviewer passes the result, present the durable user decision;
+7. finish only when explicitly accepted; otherwise apply the latest feedback,
+   review the result again, and repeat as many times as the user requests.
+
+The review/correction loop has no implicit pass count, timeout, or deadline.
+It ends only on explicit acceptance or explicit Stop unless the user configured
+a limit. The individual model phases follow the same rule:
+`max_iterations=0` and `max_tokens=0` mean unlimited; only a user-configured
+positive value activates either bound.
 
 Rejecting the mapping produces the typed workflow result `no_change` while the
 durable run lifecycle commits as `completed`. Parent flows and terminal events
@@ -146,10 +155,13 @@ copyright, trademark, privacy, or provider terms.
 3. Confirm that the mapping form appears before any project files are written.
 4. Approve the mapping, then inspect the generated run directory and visual
    review report.
-5. Choose `accepted` to finish, or `revise` with feedback. Every revision resumes
-   the same run and workspace, applies that feedback, performs another visual
-   review, and asks again until `accepted` is chosen.
-6. Keep the Workflow Run view open and confirm that it refreshes in real time,
+5. Confirm that a review with `passed=false` returns directly to correction
+   without creating a user interaction.
+6. After a review with `passed=true`, choose `accepted` to finish, or `revise`
+   with feedback. Every revision resumes the same run and workspace, applies
+   that feedback, performs another visual review, and asks again until
+   `accepted` is chosen. No implicit pass count, timeout, or deadline applies.
+7. Keep the Workflow Run view open and confirm that it refreshes in real time,
    highlights the selected/current block, and shows model attempts, tool
    starts/completions, errors, usage, artifacts, and the single terminal
    response.

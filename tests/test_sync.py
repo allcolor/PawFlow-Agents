@@ -65,9 +65,23 @@ class TestSignalRegistry:
         t = threading.Thread(target=delayed_notify)
         t.start()
 
-        result = reg.wait_for("async_sig", target_count=1, timeout=5)
+        result = reg.wait_for("async_sig", target_count=1)
         assert result is True
         assert reg.get_value("async_sig") == "done"
+        t.join()
+
+    def test_wait_for_unbounded_incremental_notifications(self):
+        reg = SignalRegistry.get_instance()
+
+        def delayed_notify():
+            reg.notify("incremental")
+            time.sleep(0.1)
+            reg.notify("incremental")
+
+        t = threading.Thread(target=delayed_notify)
+        t.start()
+
+        assert reg.wait_for("incremental", target_count=2)
         t.join()
 
     def test_clear(self):
@@ -149,12 +163,14 @@ class TestWaitTask:
         t = threading.Thread(target=delayed)
         t.start()
 
-        task = WaitTask({"signal_id": "delayed_sig", "timeout": 5})
+        task = WaitTask({"signal_id": "delayed_sig"})
         ff = FlowFile(content=b"data")
         results = task.execute(ff)
 
         assert results[0].get_attribute("wait.status") == "signaled"
         assert results[0].get_attribute("wait.signal.value") == "hello"
+        assert task.timeout == 0
+        assert task.get_parameter_schema()["timeout"]["default"] == 0
         t.join()
 
     def test_wait_with_target_count(self):

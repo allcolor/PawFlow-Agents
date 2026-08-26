@@ -1,4 +1,4 @@
-"""Workflow-safe primitives for bounded, private-context-free group deliberation."""
+"""Workflow-safe primitives for private-context-free group deliberation."""
 
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ from core.workflow_run_store import WorkflowBudgetExceeded
 from tasks.ai.workflow.llm_call import AgentLLMCallTask
 from tasks.ai.workflow.turn_tasks import _WorkflowContextTask
 
-_MAX_POST_CHARS = 8000
 _GROUP_FLOW_FQN = "pawflow.agents.group-deliberation:1.0.0"
 
 
@@ -247,8 +246,9 @@ class SelectGroupRespondersTask(_GroupTask):
                     conversation_id=self._ephemeral("classifier"),
                 ),
             ],
-            max_tokens=min(512, group.budgets.max_tokens),
+            max_tokens=group.budgets.max_tokens,
             token_budget=(
+                None if group.budgets.max_tokens <= 0 else
                 group.budgets.max_tokens
                 - int((state.get("budget") or {}).get("tokens", 0))),
             cost_budget=(
@@ -283,7 +283,7 @@ class SelectGroupRespondersTask(_GroupTask):
 class InitializeSharedRoomTask(_GroupTask):
     TYPE = "initializeSharedRoom"
     NAME = "Initialize Shared Room"
-    DESCRIPTION = "Create the bounded room from explicit request data only."
+    DESCRIPTION = "Create the shared room from explicit request data only."
 
     def execute(self, flowfile: FlowFile) -> list[FlowFile]:
         state = _load(flowfile)
@@ -453,9 +453,12 @@ class _GroupLLMCaller:
     ):
         active_messages = list(messages)
         aggregate: dict[str, Any] = {"tool_calls": 0}
-        for _step in range(9):
-            remaining = max_tokens - _usage_tokens(aggregate)
-            if remaining <= 0:
+        while True:
+            remaining = (
+                0 if max_tokens <= 0 else
+                max_tokens - _usage_tokens(aggregate)
+            )
+            if max_tokens > 0 and remaining <= 0:
                 raise WorkflowBudgetExceeded("group token allocation exhausted by tool loop")
             response = self._complete(
                 client,
@@ -496,8 +499,6 @@ class _GroupLLMCaller:
                 ))
             if self.task._cancelled():
                 raise RuntimeError("group run was cancelled")
-        raise ValueError("group participant exceeded the tool-step limit")
-
     def _complete(self, client, messages, *, max_tokens: int, model: str, tools=None):
         finished = threading.Event()
         cancel_event = getattr(self.task, "_workflow_cancel_event", None)
@@ -520,7 +521,7 @@ class _GroupLLMCaller:
                 messages=messages,
                 model=model or None,
                 temperature=0.2,
-                max_tokens=max(1, int(max_tokens)),
+                max_tokens=max(0, int(max_tokens)),
                 response_format="json",
                 tools=tools,
                 thinking_budget=0,
@@ -560,12 +561,12 @@ class _GroupLLMCaller:
 class AgentParticipantCallTask(_GroupTask):
     TYPE = "agentParticipantCall"
     NAME = "Agent Participant Call"
-    DESCRIPTION = "Run bounded structured participant calls without private context or tools."
+    DESCRIPTION = "Run structured participant calls without private context or mutating tools."
     IDEMPOTENCY = IdempotencyClass.RUN_CACHED
     RELATIONSHIPS: ClassVar = ["success", "failure"]
 
     def workflow_retry_attempts(self, default: int) -> int:
-        return min(max(1, int(default)), 2)
+        return 0
 
     def execute(self, flowfile: FlowFile) -> list[FlowFile]:
         state = _load(flowfile)
@@ -580,18 +581,24 @@ class AgentParticipantCallTask(_GroupTask):
         posts: list[dict[str, Any]] = []
         budget = dict(state["budget"])
         previous_hashes: set[str] | None = None
-        stop_reason = "max_rounds"
+        stop_reason = "completed"
         caller = _GroupLLMCaller(self)
         group_id = _group_run_id(self._context().run_id)
+        round_number = 0
 
-        for round_number in range(1, group.deliberation.max_rounds + 1):
+        while (
+            group.deliberation.max_rounds <= 0
+            or round_number < group.deliberation.max_rounds
+        ):
+            round_number += 1
             if self._cancelled():
                 raise RuntimeError("group run was cancelled")
+            call_limit = group.deliberation.max_total_participant_calls
             remaining_calls = (
-                group.deliberation.max_total_participant_calls
-                - int(budget["participant_calls"])
+                None if call_limit <= 0 else
+                call_limit - int(budget["participant_calls"])
             )
-            if remaining_calls <= 0:
+            if remaining_calls is not None and remaining_calls <= 0:
                 stop_reason = "participant_call_budget"
                 break
             ordered = self._ordered(
@@ -599,14 +606,19 @@ class AgentParticipantCallTask(_GroupTask):
                 group_id,
                 round_number,
                 rotate=group.deliberation.rotate_first_speaker,
-            )[:remaining_calls]
-            remaining_tokens = group.budgets.max_tokens - int(budget["tokens"])
-            if remaining_tokens <= 0:
+            )
+            if remaining_calls is not None:
+                ordered = ordered[:remaining_calls]
+            remaining_tokens = (
+                None if group.budgets.max_tokens <= 0 else
+                group.budgets.max_tokens - int(budget["tokens"])
+            )
+            if remaining_tokens is not None and remaining_tokens <= 0:
                 stop_reason = "token_budget"
                 break
             allocations = self._allocations(remaining_tokens, len(ordered))
             remaining_cost = (
-                None if group.budgets.max_cost is None else
+                None if not group.budgets.max_cost else
                 group.budgets.max_cost - float(budget["cost"])
             )
             cost_allocations = self._cost_allocations(
@@ -648,8 +660,11 @@ class AgentParticipantCallTask(_GroupTask):
                 new_cost = float(budget["cost"]) + float(
                     usage.get("cost_usd", 0.0) or 0.0
                 )
-                if new_tokens > group.budgets.max_tokens or (
-                    group.budgets.max_cost is not None
+                if (
+                    group.budgets.max_tokens > 0
+                    and new_tokens > group.budgets.max_tokens
+                ) or (
+                    bool(group.budgets.max_cost)
                     and new_cost > group.budgets.max_cost
                 ):
                     self._budget_stop("group budget exhausted")
@@ -666,8 +681,6 @@ class AgentParticipantCallTask(_GroupTask):
                 parsed = dict(outcome["parsed"])
                 disposition = str(parsed.get("disposition") or "")
                 content = str(parsed.get("content") or "")
-                if len(content) > _MAX_POST_CHARS:
-                    content = content[:_MAX_POST_CHARS]
                 post = ParticipantPost(
                     schema_version=1,
                     group_run_id=group_id,
@@ -699,9 +712,10 @@ class AgentParticipantCallTask(_GroupTask):
                     "token_usage": post.token_usage,
                 })
             budget["rounds"] = round_number
-            state["shared_room"]["posts"] = posts[
-                -group.context_policy.shared_history_limit:
-            ]
+            history_limit = group.context_policy.shared_history_limit
+            state["shared_room"]["posts"] = (
+                posts if history_limit <= 0 else posts[-history_limit:]
+            )
             if round_posts and all(
                 row["disposition"] == "pass" for row in round_posts
             ):
@@ -715,9 +729,12 @@ class AgentParticipantCallTask(_GroupTask):
                 stop_reason = "no_new_contributions"
                 break
             previous_hashes = hashes
-        state["shared_room"]["posts"] = posts[
-            -group.context_policy.shared_history_limit:
-        ]
+        else:
+            stop_reason = "max_rounds"
+        history_limit = group.context_policy.shared_history_limit
+        state["shared_room"]["posts"] = (
+            posts if history_limit <= 0 else posts[-history_limit:]
+        )
         state["budget"] = budget
         state["stop_reason"] = stop_reason
         self._emit("group_rounds_completed", {
@@ -749,9 +766,11 @@ class AgentParticipantCallTask(_GroupTask):
         return selected[offset:] + selected[:offset]
 
     @staticmethod
-    def _allocations(remaining_tokens: int, count: int) -> list[int]:
+    def _allocations(remaining_tokens: int | None, count: int) -> list[int]:
         if count <= 0:
             return []
+        if remaining_tokens is None:
+            return [0] * count
         per_call = max(1, remaining_tokens // count)
         return [per_call] * count
 
@@ -778,11 +797,8 @@ class AgentParticipantCallTask(_GroupTask):
         cost_allocations,
     ):
         results = {}
-        workers = min(
-            len(ordered),
-            group.deliberation.max_parallelism,
-            max(1, len(ordered)),
-        )
+        parallelism = group.deliberation.max_parallelism
+        workers = min(len(ordered), parallelism) if parallelism > 0 else len(ordered)
         with ThreadPoolExecutor(
             max_workers=workers,
             thread_name_prefix=f"group-{self._context().run_id[-6:]}-r{round_number}",
@@ -834,7 +850,7 @@ class AgentParticipantCallTask(_GroupTask):
         )
         system = (
             f"{prompt}\n\n"
-            "You are participating in a bounded PawFlow group deliberation. "
+            "You are participating in a PawFlow group deliberation. "
             f"Your group role is: {member.role or member.display_name or member_id}. "
             "You receive only the explicit shared room below. "
             f"{tool_instruction}"
@@ -882,7 +898,7 @@ class AgentParticipantCallTask(_GroupTask):
             ],
             max_tokens=max_tokens,
             model=str(snapshot.get("model") or ""),
-            token_budget=max_tokens,
+            token_budget=None if max_tokens <= 0 else max_tokens,
             cost_budget=cost_budget,
             tool_runtime=tool_runtime,
         )
@@ -900,7 +916,7 @@ class AgentParticipantCallTask(_GroupTask):
 class SynthesizeGroupResultTask(_GroupTask):
     TYPE = "synthesizeGroupResult"
     NAME = "Synthesize Group Result"
-    DESCRIPTION = "Produce one terminal candidate from the bounded shared room."
+    DESCRIPTION = "Produce one terminal candidate from the shared room."
     IDEMPOTENCY = IdempotencyClass.RUN_CACHED
 
     def execute(self, flowfile: FlowFile) -> list[FlowFile]:
@@ -973,8 +989,12 @@ class SynthesizeGroupResultTask(_GroupTask):
             model = ""
         if not service_id:
             raise ValueError("group synthesis service is unavailable")
-        remaining = group.budgets.max_tokens - int(budget["tokens"])
-        if remaining <= 0:
+        token_limit = group.budgets.max_tokens
+        remaining = (
+            None if token_limit <= 0
+            else token_limit - int(budget["tokens"])
+        )
+        if remaining is not None and remaining <= 0:
             raise WorkflowBudgetExceeded("no token budget remains for synthesis")
         ephemeral = (
             f"{self._context().conversation_id}::group::"
@@ -987,7 +1007,7 @@ class SynthesizeGroupResultTask(_GroupTask):
                 LLMMessage(
                     role="system",
                     content=(
-                        "Synthesize the bounded group room into one final answer. "
+                        "Synthesize the group room into one final answer. "
                         "Return JSON with a non-empty response string. Preserve "
                         "material dissent when present."),
                     conversation_id=ephemeral,
@@ -1003,7 +1023,7 @@ class SynthesizeGroupResultTask(_GroupTask):
                     conversation_id=ephemeral,
                 ),
             ],
-            min(remaining, 4096),
+            0 if remaining is None else remaining,
             model=model,
             token_budget=remaining,
             cost_budget=(
@@ -1014,7 +1034,8 @@ class SynthesizeGroupResultTask(_GroupTask):
         total_cost = float(budget["cost"]) + float(
             usage.get("cost_usd", 0.0) or 0.0
         )
-        if total_tokens > group.budgets.max_tokens or (
+        if (group.budgets.max_tokens > 0
+            and total_tokens > group.budgets.max_tokens) or (
             group.budgets.max_cost is not None
             and total_cost > group.budgets.max_cost
         ):

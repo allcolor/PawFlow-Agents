@@ -45,6 +45,9 @@ If a user manually presses `Escape` in the attached tmux session, Antigravity
 returns to an interrupted prompt without emitting a final network event. PawFlow
 polls the tmux pane for that interrupted prompt and closes the provider turn so
 Active Agents is cleared without requiring the UI Stop button.
+`PAWFLOW_AGI_NO_PROXY_EVENT_TIMEOUT_SECONDS` can impose a positive cutoff when
+an operator explicitly wants one. Its default is `0`: silence alone never
+terminates an active Antigravity turn.
 
 Unlike Claude Code interactive, Antigravity does not provide a verified
 `UserPromptSubmit` hook surface in the settings files PawFlow writes for `agy`.

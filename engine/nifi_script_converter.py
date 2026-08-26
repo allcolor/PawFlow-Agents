@@ -154,7 +154,7 @@ class NiFiScriptConverter:
     def has_llm(self) -> bool:
         return self._llm_client is not None
 
-    def convert(self, groovy_script: str, max_tokens: int = 4096) -> ScriptConversionResult:
+    def convert(self, groovy_script: str, max_tokens: int = 0) -> ScriptConversionResult:
         """Convert a Groovy script to Python.
 
         Uses LLM if available, falls back to static regex conversion.
@@ -176,7 +176,7 @@ class NiFiScriptConverter:
         original_groovy: str,
         previous_python: str,
         feedback: str,
-        max_tokens: int = 4096,
+        max_tokens: int = 0,
     ) -> ScriptConversionResult:
         """Re-submit a conversion with user feedback for LLM correction.
 

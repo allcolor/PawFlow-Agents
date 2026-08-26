@@ -94,14 +94,31 @@ def test_client_validates_binding_and_output_nodes():
         ComfyUIClient(bad_output, media_kind="image")
 
 
-def test_client_rejects_invalid_kind_and_non_positive_limits():
+def test_client_allows_unlimited_generation_but_requires_request_timeout():
     with pytest.raises(ValueError, match="media_kind"):
         ComfyUIClient(_config("generate"), media_kind="speech")
 
     config = _config("generate")
     config["timeout"] = 0
-    with pytest.raises(ValueError, match="timeouts must be positive"):
+    assert ComfyUIClient(config, media_kind="image").timeout == 0
+
+    config["timeout"] = -1
+    with pytest.raises(ValueError, match="zero or positive"):
         ComfyUIClient(config, media_kind="image")
+
+    config["timeout"] = 0
+    config["request_timeout"] = 0
+    with pytest.raises(ValueError, match="request_timeout must be positive"):
+        ComfyUIClient(config, media_kind="image")
+
+
+def test_comfyui_service_schemas_default_generation_to_unlimited():
+    for service in (
+            ComfyUIImageService(_config("generate", media_kind="image")),
+            ComfyUIVideoService(_config("generate", media_kind="video")),
+            ComfyUIAudioService(
+                _config("generate_audio", media_kind="audio"))):
+        assert service.get_parameter_schema()["timeout"]["default"] == 0
 
 
 def test_client_requires_immutable_versioned_preset_metadata():

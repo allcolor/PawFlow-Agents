@@ -289,7 +289,7 @@ class AgentInboxStore:
         return int(cursor.rowcount)
 
     def claim(self, conversation_id: str, agent_key: str, run_id: str,
-              task_id: str, max_messages: int = 20,
+              task_id: str, max_messages: int = 0,
               lease_seconds: float = 60.0,
               sources: Iterable[str] | None = None,
               *, now: float | None = None,
@@ -300,8 +300,9 @@ class AgentInboxStore:
         agent_key = _agent(agent_key)
         run_id = _required(run_id, "run_id")
         task_id = _required(task_id, "task_id")
-        if int(max_messages) < 1:
-            raise ValueError("max_messages must be positive")
+        message_limit = int(max_messages)
+        if message_limit < 0:
+            raise ValueError("max_messages must be non-negative")
         timestamp = time.time() if now is None else float(now)
         expires = timestamp + max(1.0, float(lease_seconds))
         source_values = tuple(dict.fromkeys(
@@ -339,10 +340,13 @@ class AgentInboxStore:
             if max_sequence is not None:
                 clauses.append("sequence <= ?")
                 params.append(max(0, int(max_sequence)))
-            params.append(int(max_messages))
+            limit_clause = ""
+            if message_limit > 0:
+                limit_clause = " LIMIT ?"
+                params.append(message_limit)
             rows = connection.execute(
                 "SELECT msg_id FROM agent_inbox_items WHERE "  # nosec B608 - fixed clauses only
-                + " AND ".join(clauses) + " ORDER BY sequence LIMIT ?",
+                + " AND ".join(clauses) + " ORDER BY sequence" + limit_clause,
                 params).fetchall()
             ids = tuple(row["msg_id"] for row in rows)
             if not ids:

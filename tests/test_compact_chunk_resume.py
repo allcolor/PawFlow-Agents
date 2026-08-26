@@ -12,6 +12,7 @@ import hashlib
 
 import pytest
 
+from core.llm_client import LLMResponse, LLMToolCall
 from tasks.ai.agent_summarize import AgentSummarizeMixin
 
 
@@ -211,6 +212,7 @@ def test_summarize_via_cc_kill_on_delivery_not_treated_as_failure(monkeypatch):
         def clone_for_call(self):
             return self
         def complete_stream(self, messages, max_tokens, **kwargs):
+            assert max_tokens == 0
             assert kwargs["call_conversation_id"].startswith(
                 "_compact_cid_kill_test_CK_")
             assert kwargs["call_conversation_id"] != "_compact"
@@ -232,7 +234,7 @@ def test_summarize_via_cc_kill_on_delivery_not_treated_as_failure(monkeypatch):
     result = host._summarize_via_cc(
         _FakeCC(), prompt="summarize this", file_id="fid",
         compact_key="CK_test", target_tokens=500,
-        max_retries=3, _pub=_fake_pub,
+        _pub=_fake_pub,
         conversation_id="cid_kill_test", user_id="uid")
     assert "VALID SUMMARY" in result
     # Only ONE attempt because the summary was already delivered — the
@@ -240,6 +242,40 @@ def test_summarize_via_cc_kill_on_delivery_not_treated_as_failure(monkeypatch):
     assert calls["count"] == 1, (
         "retry fired on a successful compact — kill after compact_result "
         "should be recognised as success, not as an attempt failure")
+
+
+def test_api_summarizer_can_read_beyond_old_tool_loop_limit(monkeypatch):
+    """Pagination continues until the model finishes, even past 15 turns."""
+    from core.handlers.read import ReadHandler
+
+    class _FakeAPI:
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, messages, max_tokens, **kwargs):
+            assert max_tokens == 0
+            self.calls += 1
+            if self.calls <= 16:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[LLMToolCall(
+                        id=f"read-{self.calls}", name="read",
+                        arguments={"path": "fid", "offset": self.calls})],
+                    finish_reason="tool_calls",
+                )
+            return LLMResponse(content="VALID API SUMMARY " * 5)
+
+    monkeypatch.setattr(ReadHandler, "execute", lambda self, args: "page")
+    client = _FakeAPI()
+    result = AgentSummarizeMixin()._summarize_via_api(
+        client, prompt="summarize this", file_id="fid",
+        compact_key="CK_unbounded", target_tokens=500,
+        _pub=lambda _message: None, conversation_id="cid_unbounded",
+        user_id="uid",
+    )
+
+    assert "VALID API SUMMARY" in result
+    assert client.calls == 17
 
 
 def test_intermediate_pass_keeps_cache_for_outer():

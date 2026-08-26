@@ -139,7 +139,7 @@ class ReceiveAgentMessagesTask(_WorkflowContextTask):
     def get_parameter_schema(self) -> dict[str, Any]:
         return {
             "max_messages": {
-                "type": "integer", "required": False, "default": 20},
+                "type": "integer", "required": False, "default": 0},
             "wait_ms": {
                 "type": "integer", "required": False, "default": 0},
             "sources": {
@@ -172,9 +172,11 @@ class ReceiveAgentMessagesTask(_WorkflowContextTask):
                 context.conversation_id, context.agent_name,
                 context.run_id, task_id,
                 max_messages=max(
-                    1, int(self.config.get("max_messages", 20) or 20)),
+                    0, int(self.config.get("max_messages", 0) or 0)),
                 lease_seconds=max(
-                    60, int(context.limits.max_duration_seconds) + 60),
+                    60,
+                    int(context.limits.max_duration_seconds or 0) + 60,
+                ),
                 sources=self.config.get("sources") or (),
                 max_sequence=(
                     getattr(self, "_workflow_visible_through_sequence", None)

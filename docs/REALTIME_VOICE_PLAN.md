@@ -71,7 +71,7 @@ Config schema (P1):
 | `instructions` | `""` | used when `instructions_mode=custom` |
 | `input_audio_format` / `output_audio_format` | `pcm16` | provider-side formats |
 | `vad` | `server` | `server` (provider VAD) or `manual` (client push-to-talk commits) |
-| `max_session_seconds` | `600` | hard cap, bridge closes the session |
+| `max_session_seconds` | `0` | optional hard cap; `0` means unlimited |
 | `tool_profile` | `""` (none) | P2: comma list / profile of PawFlow tools exposed as functions |
 | `context_mode` | `summary:2000` | P3: conversation context injected into the session instructions — the shared sub-agent vocabulary (`isolated`/`last:N`/`summary:N`/`full`, resolved by `core.handlers.spawn_agents.resolve_context_messages`) |
 
@@ -205,7 +205,7 @@ STT button:
   explicitly allowed there; realtime providers are public endpoints).
 - No raw audio persisted by default (transcripts only). Audio recording to
   FileStore is a possible later opt-in.
-- Per-session caps: `max_session_seconds` + provider usage tracked per turn.
+- Optional per-session cap: a positive `max_session_seconds`; zero or omitted is unlimited. Provider usage remains tracked per turn.
 
 ### 7. Testing (no live API in CI)
 

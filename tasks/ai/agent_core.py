@@ -233,8 +233,12 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
         st.emitter = emitter
         self._alc_setup(st)
         try:
-            for st.current_round in range(1, st.max_rounds + 1):
-                for st._ in iter(lambda: st.iteration < st.ctx["max_iterations"], False):
+            st.current_round = 0
+            while st.max_rounds <= 0 or st.current_round < st.max_rounds:
+                st.current_round += 1
+                for st._ in iter(
+                        lambda: st.ctx["max_iterations"] <= 0
+                        or st.iteration < st.ctx["max_iterations"], False):
                     _sig = self._alc_iteration(st)
                     if _sig is _ALC_BREAK:
                         break

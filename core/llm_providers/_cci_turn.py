@@ -61,7 +61,7 @@ _POST_STOP_PENDING_RESPONSE_CAP_SECONDS = _env_seconds(
 _NO_PROXY_EVENT_TIMEOUT_SECONDS = _env_seconds(
     ("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS", "PAWFLOW_CCI_NOEVENT_TIMEOUT_SECONDS"),
     ("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS", "PAWFLOW_CCI_NOEVENT_TIMEOUT_MS"),
-    default=300.0,
+    default=0.0,
 )
 # Mid-turn dead-session detection. A tmux server that crashes mid-turn takes
 # the CLI down with it: no Stop hook, no proxy event and no error ever arrive,
@@ -352,7 +352,8 @@ class _CCITurnCoordinator:
                 self._probe_liveness(started_at)
                 if not self._saw_proxy_event:
                     waited = time.time() - started_at
-                    if waited >= _NO_PROXY_EVENT_TIMEOUT_SECONDS:
+                    if (_NO_PROXY_EVENT_TIMEOUT_SECONDS > 0
+                            and waited >= _NO_PROXY_EVENT_TIMEOUT_SECONDS):
                         raise RuntimeError(
                             "Claude Code interactive produced no observed proxy "
                             "events after tmux prompt submit")

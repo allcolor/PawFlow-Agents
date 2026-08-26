@@ -365,8 +365,9 @@ and maximum tool rounds. A direct agent-level `agui_url` is always public and
 unauthenticated: conversation members with write access can edit the instance
 configuration, so the Bearer secret and `allow_private` policy are honoured
 only through a service whose owner fixed the endpoint they apply to. Agent-level
-configuration accepts `agui_timeout` and `agui_max_tool_rounds`; with zero
-tool rounds no tool schema is advertised. Redirects are disabled and the URL
+configuration accepts `agui_timeout` and `agui_max_tool_rounds`; zero or an
+omitted value means unlimited, and only a positive configured value arms a
+timeout or tool-round limit. Redirects are disabled and the URL
 passes through PawFlow's relay-aware SSRF validation. Inline/URL attachments are translated into current AG-UI
 `image`/`audio`/`video`/`document` parts with `mimeType` sources.
 
@@ -448,13 +449,13 @@ _run_agent_loop()              -- The core loop
 
 ### Key loop behaviors:
 
-1. **Iteration limit**: `max_iterations` (default: 1000) prevents runaway loops.
-2. **Consecutive tool limit**: `max_consecutive_tool_calls` caps repeated calls to the same tool (configurable per resilience style: cautious=10, balanced=100, aggressive=50+).
-3. **Response budget**: `max_tokens` limits only the visible terminal answer. Reasoning and tool-call turns do not consume it; the limit is enforced afresh after each tool turn.
-4. **Cost budget**: Cost limits cover total provider usage, including reasoning and tool-call turns. Persistent global, project, task, and agent scopes are configured in **Usage & Costs**; `max_budget_usd` is the per-run ceiling.
+1. **Iteration limit**: `max_iterations` is unlimited when omitted or zero. Only a positive value explicitly configured by the user limits the loop.
+2. **Consecutive tool limit**: `max_consecutive_tool_calls` is likewise unlimited by default and becomes a ceiling only when explicitly configured.
+3. **Response budget**: `max_tokens` is unlimited when omitted or zero. A positive configured value limits only the visible terminal answer and is enforced afresh after each tool turn.
+4. **Cost budget**: Provider usage has no implicit per-run cost ceiling. A positive user-configured `max_budget_usd` covers total provider usage, including reasoning and tool-call turns.
 5. **Generation tracking**: Each conversation+agent pair has a generation counter. If a new message arrives (bumping the generation), the current loop detects staleness and can yield.
 6. **Queue-based messaging**: New user messages do not cancel the running agent. They are queued and processed after the current turn completes. For Claude Code providers, messages can be injected directly into the active session (preemption). At turn end, the final drain serializes the exact unhandled user-message delta and sets `_retrigger_after_done`; the streaming wrapper then re-runs the loop and **re-checks the flag after every retrigger** (bounded at 5 per idle transition). A live CLI receives only that delta. If a cold context is corrected to a live-session delta during the retrigger, the rebuild uses the same serialized messages and suppresses reinjection of the stale wake FlowFile payload. A retrigger turn's own final drain can pull in fresh messages — e.g. a delegate result landing mid-retrigger — and a one-shot check used to drop them silently: they were already out of the PendingQueue (so the post-idle wake saw nothing) but no turn ever answered them.
-7. **Multi-round**: `max_rounds` allows the agent to run multiple consecutive turns before yielding (useful for autonomous tasks).
+7. **Multi-round**: `max_rounds` is unlimited when omitted or zero; a positive user-configured value limits consecutive autonomous turns.
 8. **One iteration owns one heartbeat**: the heartbeat is a thread started per iteration, covering the LLM call and the tools. `_alc_iteration` starts it and stops it in a `finally`, because the body leaves by five different returns — a compact restart, a cold restart, an overflow retry, a break, the normal end — and by any exception the turn raises. Stopping it at each return is how threads were left behind, one per attempt, all publishing for the same conversation. The body still stops it early on purpose before the end-of-iteration bookkeeping; the handle is cleared on stop, so the `finally` then finds nothing to do and it is never stopped twice.
 9. **Tool scope isolation**: API-provider dispatch forks the tool registry immediately before execution and configures the fork with the current user, conversation, agent, client, and model. Handler objects therefore never share mutable conversation scope across concurrent turns; referenced services, locks, caches, and registry hooks remain shared intentionally.
 
@@ -1408,7 +1409,8 @@ Active tasks (sub-conversations) are automatically rescheduled after each turn:
 - On success: rescheduled with normal delay.
 - On error: rescheduled with exponential backoff (delay doubles each failure, capped at 5 minutes).
 - The error counter resets on success.
-- Tasks respect `max_iterations` and stop when the limit is reached.
+- Tasks run without an implicit iteration limit. A positive user-configured
+  `max_iterations` stops the task when reached; zero or omitted is unlimited.
 
 ### Random Thoughts
 

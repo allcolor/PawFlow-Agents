@@ -68,6 +68,20 @@ def test_one_run_enforces_started_and_finished_lifecycle():
     assert "without RUN_FINISHED" in second["error"]
 
 
+def test_one_run_has_no_implicit_timeout():
+    response = _Response([
+        'data: {"type":"RUN_STARTED"}', '',
+        'data: {"type":"RUN_FINISHED"}', '',
+    ])
+    job = {"conversation_id": "c", "agent_name": "Remote",
+           "message_id": "q", "config": {}}
+    with patch("core.agui_client_runtime.requests.post",
+               return_value=response) as post:
+        _one_run(job, "https://example/agui", {}, {}, {})
+
+    assert post.call_args.kwargs["timeout"] is None
+
+
 def test_scoped_connection_service_resolves_runtime_settings():
     from core import ServiceFactory
 
@@ -366,6 +380,49 @@ def test_run_executes_allowed_tool_and_posts_result_followup():
     finish.assert_called_once_with(job, "done", message_id="a2", thinking="")
 
 
+def test_zero_tool_round_limit_runs_until_remote_agent_finishes():
+    job = {"conversation_id": "conv", "agent_name": "Remote",
+           "message_id": "q1", "content": "finish it", "attachments": [],
+           "user_id": "u", "config": {"agui_url": "https://example/agui",
+               "tools": ["search"], "agui_max_tool_rounds": 0}}
+    outcomes = [
+        {"content": "", "thinking": "", "message_id": f"a{i}",
+         "error": "", "outcome": {},
+         "calls": [{"id": f"tc{i}", "name": "search",
+                    "arguments": {"q": str(i)}}]}
+        for i in range(3)
+    ] + [{"content": "done", "thinking": "", "message_id": "final",
+          "error": "", "outcome": {}, "calls": []}]
+    payloads = []
+
+    def fake_run(_job, _endpoint, _headers, payload, _doc):
+        payloads.append(payload)
+        return outcomes.pop(0)
+
+    with patch("core.agui_client_runtime.resolve_relay_aware_url",
+               return_value="https://example/agui"), \
+         patch("core.agui_client_runtime._load_doc", return_value={
+             "thread_id": "t1", "state": {}, "pending_interrupts": []}), \
+         patch("core.agui_client_runtime._save_doc"), \
+         patch("core.agui_client_runtime._messages", return_value=[]), \
+         patch("core.agui_client_runtime._registry", return_value=object()), \
+         patch("core.agui_client_runtime._tool_definitions",
+               return_value=[{"name": "search"}]), \
+         patch("core.agui_client_runtime._one_run", side_effect=fake_run), \
+         patch("core.agui_client_runtime._persist_block"), \
+         patch("core.agui_client_runtime._execute_tool", return_value="result"), \
+         patch("core.agui_client_runtime._persist_tool_result"), \
+         patch("core.agui_client_runtime._publish"), \
+         patch("core.agui_client_runtime._finish") as finish:
+        _run(job)
+
+    assert len(payloads) == 4
+    assert all(payload["tools"] == [{"name": "search"}]
+               for payload in payloads)
+    finish.assert_called_once_with(
+        job, "done", message_id="final", thinking="")
+
+
 def test_webchat_and_openspace_expose_external_agui_runtime():
     root = "tasks/io/chat_ui/"
     with open(root + "resources_create_dialogs.js", encoding="utf-8") as handle:
@@ -386,6 +443,9 @@ def test_webchat_and_openspace_expose_external_agui_runtime():
     assert "rec.runtimeKind === 'external_agui'" in openspace
     assert "activity.content" in runtime
     assert "activity.content" in webchat
+    assert 'max="32"' not in create
+    assert 'max="32"' not in configure
+    assert 'value="8"' not in create
     for event in ("agui_activity", "agui_step", "agui_state_snapshot",
                   "agui_state_delta", "agui_usage", "agui_custom"):
         assert "on('" + event + "'" in runtime
@@ -461,7 +521,7 @@ def test_cancel_persists_text_that_already_streamed():
             runtime._ACTIVE.pop(key, None)
 
 
-def test_run_registers_active_before_setup_and_hides_tools_without_rounds():
+def test_run_registers_active_before_setup_and_zero_rounds_keeps_tools():
     import core.agui_client_runtime as runtime
     job = {"conversation_id": "conv", "agent_name": "Remote",
            "message_id": "q1", "content": "hi", "attachments": [],
@@ -490,7 +550,7 @@ def test_run_registers_active_before_setup_and_hides_tools_without_rounds():
          patch("core.agui_client_runtime._finish") as finish:
         _run(job)
     assert seen["active"]["job"] is job
-    assert payloads[0]["tools"] == []
+    assert payloads[0]["tools"] == [{"name": "search"}]
     finish.assert_called_once_with(job, "ok", message_id="a1", thinking="")
 
 

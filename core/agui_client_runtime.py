@@ -482,10 +482,12 @@ def _apply_protocol_state(job: dict, doc: dict, event: dict) -> None:
 def _one_run(job: dict, endpoint: str, headers: dict, payload: dict,
              doc: dict) -> dict:
     cid, agent = job["conversation_id"], job["agent_name"]
+    timeout_seconds = max(
+        0, int(job["config"].get("agui_timeout") or 0))
     response = requests.post(
         endpoint, headers=headers,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        stream=True, timeout=(10, max(1, int(job["config"].get("agui_timeout") or 300))),
+        stream=True, timeout=timeout_seconds or None,
         allow_redirects=False)
     if not 200 <= response.status_code < 300:
         response.close()
@@ -672,16 +674,13 @@ def _run(job: dict) -> None:
             "id": job["message_id"],
             "content": _current_content(job["content"], job.get("attachments") or [])})
         registry = _registry(job)
-        rounds_value = cfg.get("agui_max_tool_rounds")
-        max_rounds = max(0, min(32, int(
-            8 if rounds_value in (None, "") else rounds_value)))
-        # With zero follow-up rounds no call could ever be answered, so do not
-        # advertise tools the remote agent would then be refused to use.
-        tool_defs = (_tool_definitions(registry, cfg.get("tools") or [])
-                     if max_rounds > 0 else [])
+        max_rounds = max(
+            0, int(cfg.get("agui_max_tool_rounds") or 0))
+        tool_defs = _tool_definitions(registry, cfg.get("tools") or [])
         _publish(cid, "thinking", {"agent_name": agent,
             "turn_id": job["message_id"], "source": _source(agent)})
-        for round_index in range(max_rounds + 1):
+        round_index = 0
+        while max_rounds <= 0 or round_index <= max_rounds:
             payload = {"threadId": doc["thread_id"],
                 "runId": "run_" + uuid.uuid4().hex, "state": doc.get("state"),
                 "messages": messages, "tools": tool_defs, "context": [],
@@ -735,7 +734,7 @@ def _run(job: dict) -> None:
                     finish_kwargs["run_metadata"] = result["run_metadata"]
                 _finish(job, result["content"], **finish_kwargs)
                 return
-            if round_index >= max_rounds:
+            if max_rounds > 0 and round_index >= max_rounds:
                 _finish(job, "", error=f"AG-UI tool round limit reached ({max_rounds})")
                 return
             _persist_block(job, result["content"], result["message_id"], calls,
@@ -754,6 +753,7 @@ def _run(job: dict) -> None:
                 _persist_tool_result(job, call, value)
                 messages.append({"id": "tool_" + uuid.uuid4().hex,
                     "role": "tool", "toolCallId": call["id"], "content": value})
+            round_index += 1
     except Exception as exc:  # noqa: BLE001 - worker boundary must settle the turn
         with _LOCK:
             cancelled = bool((_ACTIVE.get(active_key) or {}).get("cancel"))

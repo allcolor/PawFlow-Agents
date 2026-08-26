@@ -243,10 +243,12 @@ class AggregatingLLMClient:
                 and (handler.name in ToolApprovalGate.ADVISOR_READ_ONLY_ALLOWED
                      or handler.name in conditional)
             ]
+        parallelism = self._service.max_parallel_advisors
         executor = SubAgentExecutor(
             self._get_aggregator_client(), runtime_registry,
-            max_workers=min(self._service.max_parallel_advisors,
-                            len(service_ids)),
+            max_workers=(
+                len(service_ids) if parallelism <= 0 else
+                min(parallelism, len(service_ids))),
             default_max_iterations=self._service.advisor_max_iterations,
             client_resolver=self._advisor_resolver,
             on_event=None,
@@ -450,11 +452,11 @@ class LLMAggregatorService(BaseService):
 
     @property
     def max_parallel_advisors(self) -> int:
-        return max(1, int(self.config.get("max_parallel_advisors", 4) or 4))
+        return max(0, int(self.config.get("max_parallel_advisors", 0) or 0))
 
     @property
     def advisor_max_iterations(self) -> int:
-        return max(1, int(self.config.get("advisor_max_iterations", 20) or 20))
+        return max(0, int(self.config.get("advisor_max_iterations", 0) or 0))
 
     @property
     def failure_policy(self) -> str:
@@ -515,12 +517,12 @@ class LLMAggregatorService(BaseService):
                 "description": "JSON array of llmConnection service IDs consulted in parallel",
             },
             "max_parallel_advisors": {
-                "type": "integer", "default": 4,
-                "description": "Maximum advisor LLM calls executed concurrently",
+                "type": "integer", "default": 0,
+                "description": "Maximum concurrent advisors; 0 runs all advisors concurrently",
             },
             "advisor_max_iterations": {
-                "type": "integer", "default": 20,
-                "description": "Maximum tool-loop iterations per advisor",
+                "type": "integer", "default": 0,
+                "description": "Maximum tool-loop iterations per advisor; 0 is unlimited",
             },
             "failure_policy": {
                 "type": "select", "default": "best_effort",

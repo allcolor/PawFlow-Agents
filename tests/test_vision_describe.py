@@ -594,12 +594,12 @@ def test_describe_image_b64_uses_service_vision_max_tokens(monkeypatch):
     out = describe_image_b64(svc, "image/png", B64, user_id="alice")
     assert captured["max_tokens"] == 1024
 
-    # Default (no config): falls back to the 1024 parameter default. Use a
+    # Default (no config): zero means no output ceiling. Use a
     # fresh image so the earlier 4096/1024 entries are not served from cache.
     plain = FakeVisionService()
     fresh_b64 = base64.b64encode(b"default-budget-image").decode("ascii")
     describe_image_b64(plain, "image/png", fresh_b64, user_id="alice")
-    assert plain.calls[-1][1]["max_tokens"] == 1024
+    assert plain.calls[-1][1]["max_tokens"] == 0
 
 
 def test_service_complete_applies_fallback_only_when_vision_disabled(monkeypatch):

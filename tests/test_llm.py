@@ -770,16 +770,22 @@ class TestInferLLMTask:
 
         ff = FlowFile(content=b"What is Python?")
 
-        with patch(
-            "services.llm_connection.LLMConnectionService.complete",
-            return_value=LLMResponse(
+        captured = {}
+
+        def _complete(**kwargs):
+            captured.update(kwargs)
+            return LLMResponse(
                 content="Python is a programming language.",
                 model="gpt-4o-mini",
                 tokens_in=15,
                 tokens_out=8,
                 finish_reason="stop",
                 duration_ms=250.0,
-            ),
+            )
+
+        with patch(
+            "services.llm_connection.LLMConnectionService.complete",
+            side_effect=_complete,
         ):
             results = task.execute(ff)
 
@@ -789,6 +795,8 @@ class TestInferLLMTask:
         assert results[0].get_attribute("llm.tokens_in") == "15"
         assert results[0].get_attribute("llm.tokens_out") == "8"
         assert results[0].get_attribute("llm.duration_ms") == "250.0"
+        assert captured["max_tokens"] == 0
+        assert task.get_parameter_schema()["timeout"]["default"] == 0
 
     def test_keep_original_mode(self):
         task_class = TaskFactory.get("inferLLM")

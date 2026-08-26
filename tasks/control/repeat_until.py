@@ -1,4 +1,4 @@
-"""Checkpoint-safe bounded Repeat Until controller."""
+"""Checkpoint-safe Repeat Until controller with optional explicit bounds."""
 
 from __future__ import annotations
 
@@ -74,8 +74,9 @@ class RepeatUntilTask(BaseTask):
         child.services = dict(self._services)
         runtime_context = {**self._runtime_context, **self._workflow_runtime}
         result = ContinuousFlowExecutor.run_batch(
-            child, input_flowfiles=[flowfile], max_retries=1,
-            timeout=float(self.config.get("iteration_timeout_seconds", 30)),
+            child, input_flowfiles=[flowfile], max_retries=0,
+            timeout=(float(self.config.get("iteration_timeout_seconds") or 0)
+                     or None),
             runtime_context=runtime_context or None,
             suppress_one_shot_roots=True,
         )
@@ -123,14 +124,14 @@ class RepeatUntilTask(BaseTask):
         if cancel_event is not None and cancel_event.is_set():
             return self._route(flowfile, "cancelled")
         try:
-            max_iterations = int(self.config.get("max_iterations"))
-            max_duration = float(self.config.get("max_duration_seconds"))
+            max_iterations = int(self.config.get("max_iterations") or 0)
+            max_duration = float(self.config.get("max_duration_seconds") or 0)
             delay_seconds = parse_timeout_seconds(
                 self.config.get("iteration_delay", 0))
         except (TypeError, ValueError) as exc:
             raise TaskError("Repeat Until bounds are invalid") from exc
-        if max_iterations < 1 or max_duration <= 0:
-            raise TaskError("Repeat Until bounds must be positive")
+        if max_iterations < 0 or max_duration < 0:
+            raise TaskError("Repeat Until bounds must be non-negative")
         started_at = float(
             flowfile.get_attribute("repeat.until.started_at") or time.time())
         iteration = int(flowfile.get_attribute("repeat.until.iteration") or "0") + 1
@@ -139,12 +140,13 @@ class RepeatUntilTask(BaseTask):
         flowfile.delete_attribute("durable.timer.status")
         flowfile.delete_attribute("durable.timer.elapsed_at")
         flowfile.delete_attribute("route.relationship")
-        if time.time() - started_at > max_duration:
+        if max_duration > 0 and time.time() - started_at > max_duration:
             return self._route(flowfile, "exhausted")
         output = self._run_iteration(flowfile)
         if self._condition_matches(output):
             return self._route(output, "success")
-        if iteration >= max_iterations or time.time() - started_at > max_duration:
+        if ((max_iterations > 0 and iteration >= max_iterations)
+                or (max_duration > 0 and time.time() - started_at > max_duration)):
             return self._route(output, "exhausted")
         self._schedule_next(output, delay_seconds)
         return []
@@ -153,11 +155,11 @@ class RepeatUntilTask(BaseTask):
         return {
             "body": {"type": "object", "required": True},
             "condition": {"type": "object", "required": True},
-            "max_iterations": {"type": "integer", "required": True},
-            "max_duration_seconds": {"type": "number", "required": True},
+            "max_iterations": {"type": "integer", "required": False, "default": 0},
+            "max_duration_seconds": {"type": "number", "required": False, "default": 0},
             "iteration_delay": {"type": "string", "required": False, "default": "0"},
             "iteration_timeout_seconds": {
-                "type": "number", "required": False, "default": 30},
+                "type": "number", "required": False, "default": 0},
         }
 
 

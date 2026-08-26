@@ -359,7 +359,11 @@ class _ContinuousExecRunMixin:
                 data.update(values)
                 workflow_callback("workflow_progress", data)
 
-            for attempt in range(1, attempts + 1):
+            attempt = 0
+            while attempts <= 0 or attempt < attempts:
+                if self._stop_event.is_set():
+                    return
+                attempt += 1
                 try:
                     if workflow_context is not None:
                         from core.workflow_task_safety import authorize_workflow_task
@@ -400,10 +404,13 @@ class _ContinuousExecRunMixin:
                     emit_task_progress(
                         "task_failed", attempt, outcome="failed")
                     logger.warning(
-                        f"Task '{task_id}' attempt {attempt}/{attempts}: {e}"
+                        f"Task '{task_id}' attempt {attempt}/"
+                        f"{'unlimited' if attempts <= 0 else attempts}: {e}"
                     )
-                    if attempt < attempts and getattr(e, "retryable", True):
-                        time.sleep(min(attempt * 0.3, 3))
+                    can_retry = attempts <= 0 or attempt < attempts
+                    if can_retry and getattr(e, "retryable", True):
+                        if self._stop_event.wait(min(attempt * 0.3, 3)):
+                            return
                     elif not getattr(e, "retryable", True):
                         break
 

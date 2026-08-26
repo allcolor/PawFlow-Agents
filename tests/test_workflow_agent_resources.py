@@ -61,7 +61,7 @@ def _flow(**updates):
     return value
 
 
-def test_workflow_binding_requires_exact_version_and_limits():
+def test_workflow_binding_requires_exact_version_and_has_no_implicit_limits():
     with pytest.raises(ValueError, match="exact version"):
         WorkflowInstanceConfig.from_dict({
             "flow_fqn": "pawflow.wiki", "input_port": "request",
@@ -74,7 +74,13 @@ def test_workflow_binding_requires_exact_version_and_limits():
         "terminal_port": "response", "preempt_policy": "checkpoint",
         "allowed_effects": EFFECTS,
     })
-    assert parsed.limits.max_llm_calls == 24
+    assert parsed.limits.to_dict() == {
+        "max_duration_seconds": 0,
+        "max_llm_calls": 0,
+        "max_flowfiles": 0,
+        "max_fanout": 0,
+        "max_cost_usd": 0.0,
+    }
 
 
 def test_exact_resolver_prefers_conversation_and_pins_digest():
@@ -108,6 +114,24 @@ def test_agent_workflow_validator_allows_an_explicitly_bounded_cycle():
          "type": "retry", "max_visits": 1},
     ])
     report = validate_agent_workflow_definition(definition)
+    assert "agent_workflow_cycle" not in {
+        row["code"] for row in report["problems"]}
+
+
+def test_agent_workflow_validator_allows_an_explicit_user_terminated_cycle():
+    definition = _flow()
+    definition["relations"].extend([
+        {
+            "relation_id": "work-request-retry",
+            "from": "work",
+            "to": "request",
+            "type": "retry",
+            "explicit_loop": True,
+        },
+    ])
+
+    report = validate_agent_workflow_definition(definition)
+
     assert "agent_workflow_cycle" not in {
         row["code"] for row in report["problems"]}
 

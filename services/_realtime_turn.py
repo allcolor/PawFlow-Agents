@@ -26,7 +26,7 @@ _TRANSCRIPT_GRACE_S = 3.0
 
 
 def run_voice_turn(service, *, conversation_id: str, agent_name: str,
-                   user_id: str, pcm16: bytes, timeout_s: float = 120.0,
+                   user_id: str, pcm16: bytes, timeout_s: float = 0,
                    user_channel: str = "voice") -> dict:
     """Run one speech-to-speech turn. Returns
     {"audio": bytes, "user_text": str, "agent_text": str}.
@@ -68,7 +68,7 @@ def run_voice_turn(service, *, conversation_id: str, agent_name: str,
     # response (triggered by send_tool_result) is. Count the dones to skip.
     pending_tool_dones = 0
     error_message = ""
-    deadline = time.monotonic() + timeout_s
+    deadline = time.monotonic() + timeout_s if timeout_s > 0 else None
 
     def _persist(role, text, channel="voice"):
         _bridge_mod.persist_voice_transcript(
@@ -81,7 +81,7 @@ def run_voice_turn(service, *, conversation_id: str, agent_name: str,
         adapter.commit_input()
 
         grace_until = None
-        while time.monotonic() < deadline:
+        while deadline is None or time.monotonic() < deadline:
             if response_done:
                 # Response finished; the user transcription is asynchronous
                 # (separate whisper pass) — give it a short grace window.

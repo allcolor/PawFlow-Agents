@@ -52,11 +52,11 @@ class MergeContentTask(BaseTask):
         self.correlation_attribute = self.config.get(
             'correlation_attribute', 'fragment.identifier'
         )
-        self.max_bin_age = int(self.config.get('max_bin_age', 300))
+        self.max_bin_age = int(self.config.get('max_bin_age', 0) or 0)
         self.expected_count_attribute = str(
             self.config.get('expected_count_attribute', '') or '')
-        self.max_bin_flowfiles = int(self.config.get('max_bin_flowfiles', 1000))
-        self.max_bin_bytes = int(self.config.get('max_bin_bytes', 64 * 1024 * 1024))
+        self.max_bin_flowfiles = int(self.config.get('max_bin_flowfiles', 0) or 0)
+        self.max_bin_bytes = int(self.config.get('max_bin_bytes', 0) or 0)
         self.header = self.config.get('header', '').encode('utf-8')
         self.footer = self.config.get('footer', '').encode('utf-8')
         # Bins: correlation_key -> list of FlowFiles
@@ -94,7 +94,7 @@ class MergeContentTask(BaseTask):
                     ) from exc
                 if expected < 1:
                     raise TaskError("Expected merge count must be >= 1")
-            if expected > self.max_bin_flowfiles:
+            if self.max_bin_flowfiles > 0 and expected > self.max_bin_flowfiles:
                 raise TaskError(
                     f"Expected merge count {expected} exceeds max_bin_flowfiles "
                     f"{self.max_bin_flowfiles}")
@@ -105,11 +105,11 @@ class MergeContentTask(BaseTask):
                     f"{previous_expected} != {expected}")
             next_count = len(self._bins[key]) + 1
             next_bytes = self._bin_bytes[key] + flowfile.size()
-            if next_count > self.max_bin_flowfiles:
+            if self.max_bin_flowfiles > 0 and next_count > self.max_bin_flowfiles:
                 raise TaskError(
                     f"Merge bin '{key}' exceeds max_bin_flowfiles "
                     f"{self.max_bin_flowfiles}")
-            if next_bytes > self.max_bin_bytes:
+            if self.max_bin_bytes > 0 and next_bytes > self.max_bin_bytes:
                 raise TaskError(
                     f"Merge bin '{key}' exceeds max_bin_bytes {self.max_bin_bytes}")
             self._bins[key].append(flowfile)
@@ -254,11 +254,13 @@ class MergeContentTask(BaseTask):
             created[key] = float(value)
             expected_value = raw_expected.get(key, self.min_entries)
             if (isinstance(expected_value, bool) or not isinstance(expected_value, int)
-                    or expected_value < 1 or expected_value > self.max_bin_flowfiles):
+                    or expected_value < 1
+                    or (self.max_bin_flowfiles > 0
+                        and expected_value > self.max_bin_flowfiles)):
                 raise ValueError("mergeContent checkpoint expected count is invalid")
             expected[key] = expected_value
             sizes[key] = sum(flowfile.size() for flowfile in bins[key])
-            if sizes[key] > self.max_bin_bytes:
+            if self.max_bin_bytes > 0 and sizes[key] > self.max_bin_bytes:
                 raise ValueError("mergeContent checkpoint bin exceeds max_bin_bytes")
         with self._lock:
             self._bins = bins
@@ -285,7 +287,7 @@ class MergeContentTask(BaseTask):
                 ),
             },
             'max_bin_age': {
-                'type': 'integer', 'required': False, 'default': 300,
+                'type': 'integer', 'required': False, 'default': 0,
                 'description': 'Max seconds before incomplete bin is discarded (0=no timeout)',
             },
             'expected_count_attribute': {
@@ -293,12 +295,12 @@ class MergeContentTask(BaseTask):
                 'description': 'FlowFile attribute containing the expected bin size',
             },
             'max_bin_flowfiles': {
-                'type': 'integer', 'required': False, 'default': 1000,
-                'description': 'Hard maximum FlowFiles accumulated per bin',
+                'type': 'integer', 'required': False, 'default': 0,
+                'description': 'Maximum FlowFiles accumulated per bin; 0 means unlimited',
             },
             'max_bin_bytes': {
-                'type': 'integer', 'required': False, 'default': 67108864,
-                'description': 'Hard maximum content bytes accumulated per bin',
+                'type': 'integer', 'required': False, 'default': 0,
+                'description': 'Maximum content bytes accumulated per bin; 0 means unlimited',
             },
             'header': {
                 'type': 'string', 'required': False,

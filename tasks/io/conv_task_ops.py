@@ -62,8 +62,8 @@ class AssignTaskToAgentTask(BaseTask):
                 "description": "Re-check frequency (e.g. '6/1m' = 6 times per minute)",
             },
             "max_iterations": {
-                "type": "integer", "required": False, "default": 50,
-                "description": "Max iterations per check",
+                "type": "integer", "required": False, "default": 0,
+                "description": "Max iterations per check; 0 means unlimited",
             },
         }
 
@@ -73,7 +73,7 @@ class AssignTaskToAgentTask(BaseTask):
         agent = self.config.get("agent_name", "")
         prompt = self.config.get("task_prompt", "")
         interval = self.config.get("interval", "6/1m")
-        max_iter = int(self.config.get("max_iterations", 50))
+        max_iter = int(self.config.get("max_iterations", 0) or 0)
 
         if not conv_id or "${" in conv_id:
             flowfile.set_content(json.dumps({

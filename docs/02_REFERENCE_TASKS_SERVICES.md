@@ -87,6 +87,11 @@ one is available. Use `task_def` only for agent/task-definition resources; use
 #### 11.1.4. Notify Task (`notify`)
 **Description**: Send a notification (email, webhook, etc.)
 
+The synchronization processors `waitNotify` and `notifySignal` coordinate on
+a signal identifier and notification count. `waitNotify.timeout` defaults to
+`0`: omitted or zero waits until the signal arrives, while a positive value
+enables an explicit timeout.
+
 **Parameters**:
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
@@ -573,12 +578,13 @@ private context; token and cost allocations are enforced before durable step
 commit, cancellation aborts active provider clients, and only
 `completeAgentTurn` stages the single assistant result.
 
-The Wiki Agent adds deterministic workflow-only processors for bounded source
+The Wiki Agent adds deterministic workflow-only processors for source
 scan/fetch/normalization, extraction merge, patch/review validation, source-byte
 CAS apply or shadow preview, wiki lint, and receipt-backed reporting.
-`prepareWikiIntent` builds a bounded classifier prompt before project access;
+`prepareWikiIntent` builds a classifier prompt before project access;
 `routeWikiIntent` validates `wiki_maintenance` versus `unsupported`, permits only
-a reduction of the configured batch limit, and terminates non-Wiki requests.
+a reduction of a positive user-configured batch limit, and terminates non-Wiki
+requests. Scan, batch, inbox, and LLM limits default to `0` (unlimited).
 The original accepted request focuses extractor/writer prompts but cannot expand
 the snapshot or change `write_mode`. `validateWikiPatch` derives
 `processed_sources` from the selected snapshot rather than accepting model paths.
@@ -822,8 +828,8 @@ their terms — the account and the risk are the operator's.
 |------|------|----------|---------|-------------|
 | `aggregator_llm_service` | service reference | Yes | - | Final `llmConnection` used for the visible answer and tool-loop |
 | `advisor_llm_services` | JSON array | Yes | `[]` | `llmConnection` IDs consulted concurrently |
-| `max_parallel_advisors` | integer | No | 4 | Maximum concurrent advisor calls |
-| `advisor_max_iterations` | integer | No | 20 | Maximum tool-loop iterations per advisor |
+| `max_parallel_advisors` | integer | No | 0 | Maximum concurrent advisor calls; `0` runs all advisors concurrently |
+| `advisor_max_iterations` | integer | No | 0 | Maximum tool-loop iterations per advisor; `0` is unlimited |
 | `failure_policy` | select | No | `best_effort` | Continue with partial reports or fail on any advisor error |
 | `enforce_read_only` | boolean | No | true | Enforce PawFlow's fail-closed read-only tool allowlist for every advisor |
 

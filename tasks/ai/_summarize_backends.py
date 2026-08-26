@@ -27,7 +27,7 @@ class _AgentSummarizeBackendMixin:
 
     def _summarize_via_cc(self, client, prompt: str, file_id: str,
                           compact_key: str, target_tokens: int,
-                          max_retries: int, _pub, conversation_id: str,
+                          _pub, conversation_id: str,
                           user_id: str = "", compact_scope: str = "") -> str:
         """Run summarization via Claude Code streaming (CC handles tool loop)."""
         from core.handlers.compact_result import set_compact_key, wait_for_compact_result
@@ -58,12 +58,14 @@ class _AgentSummarizeBackendMixin:
         }
 
         try:
-            for attempt in range(1, max_retries + 1):
+            attempt = 0
+            while True:
+                attempt += 1
                 _pub("Compacting...")
-                logger.info("[compact-cc] attempt %d/%d", attempt, max_retries)
+                logger.info("[compact-cc] attempt %d", attempt)
                 if attempt > 1:
                     prompt = (
-                        f"RETRY {attempt}/{max_retries}. ONLY 2 tools allowed:\n"
+                        f"RETRY {attempt}. ONLY 2 tools allowed:\n"
                         f"1. read(path=\"{file_id}\", source=\"filestore\")\n"
                         f"2. compact_result(summary=\"...\", compact_key=\"{compact_key}\")\n"
                         f"Read the file, summarize in {target_tokens} tokens, call compact_result."
@@ -75,7 +77,7 @@ class _AgentSummarizeBackendMixin:
                     _stream_response = _compact_client.complete_stream(
                         messages=[LLMMessage(role="user", content=prompt,
                                                conversation_id=compact_scope)],
-                        max_tokens=min(target_tokens * 3, 8000),
+                        max_tokens=0,
                         **_compact_call_kwargs,
                     )
                 except Exception as e:
@@ -129,7 +131,7 @@ class _AgentSummarizeBackendMixin:
                             attempt, _stream_exc)
                     _is_auth = ("auth" in _exc_str.lower()
                                  or "401" in _exc_str)
-                    if _is_auth or attempt == max_retries:
+                    if _is_auth or not _is_our_kill_exit:
                         raise _stream_exc
                     continue
 
@@ -147,7 +149,6 @@ class _AgentSummarizeBackendMixin:
                         "(%d chars)", attempt, len(_text))
                     return _strip_analysis_wrapper(_text)
 
-            raise RuntimeError("Claude Code failed to call compact_result after retries")
         finally:
             # _compact_client is the cloned isolated instance — nothing
             # to restore on the shared singleton (we never wrote to it).
@@ -166,14 +167,13 @@ class _AgentSummarizeBackendMixin:
 
     def _summarize_via_api(self, client, prompt: str, file_id: str,
                            compact_key: str, target_tokens: int,
-                           max_retries: int, _pub,
+                           _pub,
                            conversation_id: str, user_id: str,
                            compact_scope: str = "") -> str:
         """Run summarization via API tool loop (OpenAI, Anthropic, Gemini).
 
-        Mini agent loop: send prompt with read + compact_result tools,
-        execute tool calls, feed results back, repeat until compact_result
-        is called or max iterations.
+        Mini agent loop: send prompt with read + compact_result tools, execute
+        tool calls, and feed results back until compact_result is called.
         """
         from core.handlers.compact_result import set_compact_key, wait_for_compact_result
         from core.handlers.read import ReadHandler
@@ -194,7 +194,6 @@ class _AgentSummarizeBackendMixin:
         if hasattr(read_handler, "set_conversation_id"):
             read_handler.set_conversation_id(compact_scope)
         tools = [_READ_TOOL, _COMPACT_RESULT_TOOL]
-        max_loop = 15  # max tool-loop iterations (read pages + compact)
         call_scope = {
             "call_user_id": user_id,
             "call_conversation_id": compact_scope,
@@ -203,13 +202,15 @@ class _AgentSummarizeBackendMixin:
             "call_ephemeral_stream": True,
         }
 
-        for attempt in range(1, max_retries + 1):
+        attempt = 0
+        while True:
+            attempt += 1
             _pub("Compacting...")
-            logger.info("[compact-api] attempt %d/%d", attempt, max_retries)
+            logger.info("[compact-api] attempt %d", attempt)
 
             if attempt > 1:
                 prompt = (
-                    f"RETRY {attempt}/{max_retries}. ONLY 2 tools:\n"
+                    f"RETRY {attempt}. ONLY 2 tools:\n"
                     f"1. read(path=\"{file_id}\", source=\"filestore\")\n"
                     f"2. compact_result(summary=\"...\", compact_key=\"{compact_key}\")\n"
                     f"Read the file, summarize in {target_tokens} tokens, call compact_result."
@@ -219,11 +220,12 @@ class _AgentSummarizeBackendMixin:
             messages = [LLMMessage(role="user", content=prompt,
                                      conversation_id=compact_scope)]
 
-            for iteration in range(max_loop):
+            iteration = 0
+            while True:
                 try:
                     response = client.complete(
                         messages=messages,
-                        max_tokens=min(target_tokens * 3, 8000),
+                        max_tokens=0,
                         tools=tools,
                         temperature=0.3,
                         **call_scope,
@@ -231,7 +233,8 @@ class _AgentSummarizeBackendMixin:
                 except Exception as e:
                     logger.error("[compact-api] LLM call failed (attempt %d, iter %d): %s",
                                  attempt, iteration, e)
-                    break
+                    raise
+                iteration += 1
 
                 # No tool calls = LLM responded with text (shouldn't happen, but handle it)
                 if not response.tool_calls:
@@ -315,5 +318,3 @@ class _AgentSummarizeBackendMixin:
             except (TimeoutError, RuntimeError):
                 pass
             logger.warning("[compact-api] attempt %d: compact_result not called", attempt)
-
-        raise RuntimeError(f"API summarizer failed to call compact_result after {max_retries} attempts")

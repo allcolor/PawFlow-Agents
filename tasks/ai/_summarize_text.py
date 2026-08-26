@@ -1,4 +1,4 @@
-"""Text-shaping helpers, prompt-too-long retry constants, and summarizer
+"""Text-shaping helpers, prompt-too-long recovery, and summarizer
 tool definitions for AgentSummarizeMixin.
 
 Split out of agent_summarize.py so both the mixin and the provider-backend
@@ -24,10 +24,7 @@ _PTL_MARKERS = (
     "n_prompt_tokens",
     "maximum context length",
 )
-_PTL_MAX_RETRIES = 3
-# How much of the head to drop per retry. 25% first, 50%, 75% — bounded
-# so we never fully empty the input (would produce garbage summary).
-_PTL_DROP_SCHEDULE = (0.25, 0.50, 0.75)
+_PTL_DROP_FRACTION = 0.25
 
 
 def _is_ptl_error(exc: BaseException) -> bool:

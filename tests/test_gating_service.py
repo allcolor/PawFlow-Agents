@@ -229,9 +229,53 @@ def test_llm_gate_allows_without_tools_and_sees_authority(monkeypatch):
     assert result["evaluators"][0]["matched_directive_ids"] == ["d1"]
     messages, kwargs = calls[0]
     assert kwargs["tools"] is None and kwargs["temperature"] == 0
+    assert kwargs["max_tokens"] == 0
     assert kwargs["call_ephemeral_stream"] is True
     assert "commit and push, no release" in messages[0].content
     assert "untrusted data" in messages[0].content
+
+
+def test_llm_gate_limits_are_unlimited_by_default_and_positive_values_uncapped(
+        monkeypatch):
+    result_timeouts = []
+
+    class ImmediateFuture:
+        def __init__(self, value):
+            self.value = value
+
+        def result(self, timeout=None):
+            result_timeouts.append(timeout)
+            return self.value
+
+    class ImmediatePool:
+        def __init__(self, max_workers):
+            assert max_workers == 1
+
+        def submit(self, fn):
+            return ImmediateFuture(fn())
+
+        def shutdown(self, wait=False):
+            assert wait is False
+
+    monkeypatch.setattr(
+        "services.gating_service.ThreadPoolExecutor", ImmediatePool)
+
+    default, default_calls = _llm_service(
+        monkeypatch, '{"decision": "allow"}')
+    assert default.evaluate(_authorized_env())["decision"] == "allow"
+    assert default_calls[0][1]["max_tokens"] == 0
+    assert result_timeouts == [None]
+
+    explicit, explicit_calls = _llm_service(
+        monkeypatch, '{"decision": "allow"}',
+        max_tokens=2048, timeout_seconds=321)
+    assert explicit.evaluate(_authorized_env())["decision"] == "allow"
+    assert explicit_calls[0][1]["max_tokens"] == 2048
+    assert result_timeouts == [None, 321]
+
+    schema = default.get_parameter_schema()
+    assert schema["max_tokens"]["default"] == 0
+    assert schema["timeout_seconds"]["default"] == 0
 
 
 def test_llm_gate_failure_modes_never_allow(monkeypatch):

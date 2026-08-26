@@ -117,8 +117,20 @@ class TestSplitJSON(unittest.TestCase):
             SplitJSONTask({'max_fragments': 2}).execute(
                 FlowFile(content=b'[1, 2, 3]'))
 
+    def test_split_default_has_no_fragment_cap(self):
+        payload = b'[' + b','.join([b'0'] * 1001) + b']'
+        self.assertEqual(
+            len(SplitJSONTask({}).execute(FlowFile(content=payload))), 1001)
+
 
 class TestMergeContent(unittest.TestCase):
+
+    def test_merge_default_accepts_expected_count_above_old_cap(self):
+        task = MergeContentTask({
+            'expected_count_attribute': 'fragment.count'})
+        result = task.execute(FlowFile(
+            content=b'first', attributes={'fragment.count': '1001'}))
+        self.assertEqual(result, [])
 
     def test_merge_two_flowfiles(self):
         task = MergeContentTask({'separator': '|', 'min_entries': 2})

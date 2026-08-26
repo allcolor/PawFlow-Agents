@@ -98,7 +98,35 @@ def test_scan_executes_in_memory_without_relay_helper_file(wiki):
     assert command.startswith("python3 -c ")
     assert ".pawflow_wiki_scan_" not in command
     assert env["PAWFLOW_WIKI_ROOT"] == "."
+    assert env["PAWFLOW_WIKI_MAX_FILES"] == "0"
     assert local is False
+
+
+def test_zero_batch_selects_all_sources_and_fetches_full_content(wiki):
+    initial = {"README.md": _source("overview")}
+    large_text = "x" * 100_000
+    changed = {
+        "README.md": _source("overview"),
+        **{f"src/file_{number:02d}.py": _source(large_text + str(number), 2)
+           for number in range(25)},
+    }
+    relay = _Relay(
+        [initial, changed],
+        files={path: large_text + str(number)
+               for number, path in enumerate(
+                   f"src/file_{index:02d}.py" for index in range(25))},
+    )
+    wiki.scan_from_relay(relay)
+    wiki.acknowledge(["README.md"])
+    wiki.scan_from_relay(relay)
+
+    selection = wiki.select_update_batch(0)
+    prepared = wiki.fetch_update_sources(relay, selection)
+
+    assert len(selection["entries"]) == 25
+    assert len(prepared["files"]) == 25
+    assert all(item["truncated"] is False for item in prepared["files"])
+    assert all(len(item["text"]) > 100_000 for item in prepared["files"])
 
 
 def test_changed_source_makes_page_stale_until_replaced(wiki):
@@ -229,8 +257,8 @@ def test_auto_update_writes_pages_and_acknowledges_sources(wiki):
     prompt = client.calls[0]["messages"][0].content
     assert "SOURCE README.md" in prompt
     assert "Return one JSON object only" in prompt
-    assert "excluding any internal reasoning" in prompt
-    assert "6000 tokens" in prompt
+    assert "response budget" not in prompt
+    assert "6000 tokens" not in prompt
     assert client.calls[0]["max_tokens"] == 0
 
 

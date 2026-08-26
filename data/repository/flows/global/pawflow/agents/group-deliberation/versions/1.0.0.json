@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "fqn": "pawflow.agents.group-deliberation:1.0.0",
   "kind": "agent_workflow",
-  "description": "Bounded first-party multi-agent deliberation with one terminal response.",
+  "description": "First-party multi-agent deliberation with one terminal response.",
   "group_contract": {
     "version": 1,
     "parameter": "group_name"

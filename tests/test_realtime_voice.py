@@ -995,6 +995,30 @@ class TestRealtimeSessionBridge:
         finally:
             client.close()
 
+    def test_zero_session_cap_stays_live_until_explicit_stop(self):
+        persisted = []
+        server_sock, client = socket.socketpair()
+        adapter = _FakeAdapter([])
+        service = _FakeService(adapter)
+        service.max_session_seconds = 0
+        bridge = RealtimeSessionBridge(server_sock, "conv1", "claude",
+                                       "quentin", service)
+        bridge._started_at = time.monotonic() - 1000
+        bridge._persist = lambda role, text: persisted.append((role, text))
+        thread = threading.Thread(target=bridge.run, daemon=True)
+        thread.start()
+        try:
+            self._read_until(client, "ready")
+            time.sleep(0.2)
+            assert thread.is_alive()
+            _client_send_frame(client, 0x1, b'{"type": "stop"}')
+            closed, _ = self._read_until(client, "closed")
+            assert closed["reason"] == "client_stop"
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+        finally:
+            client.close()
+
     def test_force_stop_wired_into_cancel_action(self):
         """The conversation force-stop path must kill the voice session."""
         from pathlib import Path

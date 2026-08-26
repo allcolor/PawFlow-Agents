@@ -58,9 +58,9 @@
       "max_cost_usd": {
         "type": "number",
         "required": false,
-        "default": 25,
+        "default": 0,
         "label": "Maximum provider cost",
-        "description": "Maximum estimated provider cost for one selection."
+        "description": "Optional user maximum estimated provider cost for one selection. Use 0 for no cost ceiling."
       },
       "model": {
         "type": "string",
@@ -221,12 +221,12 @@
           }
         },
         "temperature": 0.1,
-        "max_tokens": 700,
+        "max_tokens": 0,
         "output_target": "attribute",
         "output_attribute": "media.intent",
         "progress_label": "Classify media request",
         "cache_policy": "run_idempotent",
-        "retry_attempts": 1,
+        "retry_attempts": 0,
         "visibility": "hidden"
       }
     },
@@ -415,12 +415,12 @@
           }
         },
         "temperature": 0.1,
-        "max_tokens": 3500,
+        "max_tokens": 0,
         "output_target": "attribute",
         "output_attribute": "media.brief",
         "progress_label": "Create creative brief",
         "cache_policy": "run_idempotent",
-        "retry_attempts": 1,
+        "retry_attempts": 0,
         "visibility": "hidden"
       }
     },
@@ -575,12 +575,12 @@
           }
         },
         "temperature": 0.1,
-        "max_tokens": 5000,
+        "max_tokens": 0,
         "output_target": "attribute",
         "output_attribute": "media.scenario",
         "progress_label": "Create production scenario",
         "cache_policy": "run_idempotent",
-        "retry_attempts": 1,
+        "retry_attempts": 0,
         "visibility": "hidden"
       }
     },
@@ -790,12 +790,12 @@
           }
         },
         "temperature": 0.1,
-        "max_tokens": 1800,
+        "max_tokens": 0,
         "output_target": "attribute",
         "output_attribute": "media.ffmpeg_recipe",
         "progress_label": "Create composition recipe",
         "cache_policy": "run_idempotent",
-        "retry_attempts": 1,
+        "retry_attempts": 0,
         "visibility": "hidden"
       }
     },

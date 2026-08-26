@@ -18,7 +18,7 @@ function _showEditLimitsDialog(taskId) {
       + _f('el-turn', t('maxTurnTime'), task.timeout ? task.timeout+'s' : '', '5m')
       + _f('el-total', t('maxTotalTime'), task.max_total_time ? task.max_total_time+'s' : '', '1h')
       + _f('el-resched', t('maxReschedules'), task.max_reschedules || '', '50')
-      + _f('el-maxiter', t('maxIterations'), task.max_iterations || '', '50')
+      + _f('el-maxiter', t('maxIterations'), task.max_iterations || '', '0 = unlimited')
       + `<div style="font-size:10px;color:var(--pf-muted);margin-bottom:8px;">${escapeHtml(t('currentTaskLimits', { cost: (task.total_cost||0).toFixed(4), reschedules: task.reschedule_count||0 }))}</div>`
       + `<div style="display:flex;gap:8px;justify-content:flex-end;"><button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button><button id="el-save" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextSave'))}</button></div>`;
     overlay.appendChild(panel);

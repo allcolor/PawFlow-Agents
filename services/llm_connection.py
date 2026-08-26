@@ -625,7 +625,7 @@ class LLMConnectionService(BaseService):
             },
             "max_consecutive_tool_calls": {
                 "type": "integer", "default": 0,
-                "description": "Max consecutive calls to the same tool (0 = default 100)",
+                "description": "Max consecutive calls to the same tool (0 = unlimited)",
             },
             "resilience_style": {
                 "type": "select", "default": "",
@@ -646,7 +646,7 @@ class LLMConnectionService(BaseService):
             },
             "max_rounds": {
                 "type": "integer", "default": 0,
-                "description": "Max conversation rounds (0 = default 1)",
+                "description": "Max conversation rounds (0 = unlimited)",
             },
             "token_multiplier": {
                 "type": "float", "default": 0,

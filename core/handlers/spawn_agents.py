@@ -35,7 +35,9 @@ def resolve_context_messages(mode: str, conversation_id: str,
         try:
             n = int(mode.split(":")[1])
         except (ValueError, IndexError):
-            n = 10
+            raise ValueError("context_mode last:N requires a non-negative N")
+        if n < 0:
+            raise ValueError("context_mode last:N requires a non-negative N")
         raw = store.load(conversation_id, user_id=user_id) or []
         non_system = [m for m in raw if m.get("role") != "system"]
         return non_system[-n:]
@@ -44,18 +46,20 @@ def resolve_context_messages(mode: str, conversation_id: str,
         try:
             max_tokens = int(mode.split(":")[1])
         except (ValueError, IndexError):
-            max_tokens = 2000
+            raise ValueError("context_mode summary:N requires a non-negative N")
+        if max_tokens < 0:
+            raise ValueError("context_mode summary:N requires a non-negative N")
         raw = store.load(conversation_id, user_id=user_id) or []
         # Build a simple text summary from recent messages
         text_parts = []
-        for m in raw[-50:]:  # last 50 messages for summary input
+        for m in raw:
             role = m.get("role", "")
             content = m.get("content", "")
             if role in ("user", "assistant") and content:
-                text_parts.append(f"{role}: {content[:200]}")
+                text_parts.append(f"{role}: {content}")
         summary = "\n".join(text_parts)
         # Truncate to approximate token limit
-        if len(summary) > max_tokens * 4:
+        if max_tokens > 0 and len(summary) > max_tokens * 4:
             summary = summary[-(max_tokens * 4):]
         return [{"role": "user",
                  "content": f"[Context summary from parent conversation]"

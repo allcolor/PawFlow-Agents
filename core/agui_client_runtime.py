@@ -484,10 +484,11 @@ def _one_run(job: dict, endpoint: str, headers: dict, payload: dict,
     cid, agent = job["conversation_id"], job["agent_name"]
     timeout_seconds = max(
         0, int(job["config"].get("agui_timeout") or 0))
+    request_timeout = (10, timeout_seconds or None)
     response = requests.post(
         endpoint, headers=headers,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        stream=True, timeout=timeout_seconds or None,
+        stream=True, timeout=request_timeout,
         allow_redirects=False)
     if not 200 <= response.status_code < 300:
         response.close()

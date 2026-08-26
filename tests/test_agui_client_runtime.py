@@ -61,11 +61,13 @@ def test_one_run_enforces_started_and_finished_lifecycle():
         'data: {"type":"TEXT_MESSAGE_CONTENT","delta":"bad"}', ''])
     missing_finish = _Response(['data: {"type":"RUN_STARTED"}', ''])
     with patch("core.agui_client_runtime.requests.post",
-               side_effect=[missing_start, missing_finish]):
+               side_effect=[missing_start, missing_finish]) as post:
         first = _one_run(job, "https://example/agui", {}, {}, {})
         second = _one_run(job, "https://example/agui", {}, {}, {})
     assert "first event is not RUN_STARTED" in first["error"]
     assert "without RUN_FINISHED" in second["error"]
+    assert all(call.kwargs["timeout"] == (10, 10)
+               for call in post.call_args_list)
 
 
 def test_one_run_has_no_implicit_timeout():
@@ -79,7 +81,7 @@ def test_one_run_has_no_implicit_timeout():
                return_value=response) as post:
         _one_run(job, "https://example/agui", {}, {}, {})
 
-    assert post.call_args.kwargs["timeout"] is None
+    assert post.call_args.kwargs["timeout"] == (10, None)
 
 
 def test_scoped_connection_service_resolves_runtime_settings():

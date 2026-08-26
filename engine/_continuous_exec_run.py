@@ -334,11 +334,31 @@ class _ContinuousExecRunMixin:
                 task._drain_pending = _drain_fn
                 task._requeue_flowfiles = _requeue_fn
 
+            failure_checkpoint = (
+                dequeued_ff.clone() if dequeued_ff is not None else None)
             attempts = self._max_retries
             retry_policy = getattr(task, "workflow_retry_attempts", None)
             if callable(retry_policy) and self._runtime_context.get(
                     "workflow_run_context") is not None:
                 attempts = retry_policy(attempts)
+            workflow_callback = self._runtime_context.get(
+                "workflow_event_callback")
+
+            def emit_task_progress(stage: str, attempt: int, **values) -> None:
+                if workflow_context is None or not callable(workflow_callback):
+                    return
+                data = {
+                    "run_id": workflow_context.run_id,
+                    "turn_id": workflow_context.root_turn_id,
+                    "agent_name": workflow_context.agent_name,
+                    "task_id": task_id,
+                    "task_type": task_type,
+                    "stage": stage,
+                    "attempt": attempt,
+                }
+                data.update(values)
+                workflow_callback("workflow_progress", data)
+
             for attempt in range(1, attempts + 1):
                 try:
                     if workflow_context is not None:
@@ -346,6 +366,7 @@ class _ContinuousExecRunMixin:
                         authorize_workflow_task(
                             task, task_id, dequeued_ff,
                             self._runtime_context, attempt)
+                    emit_task_progress("task_started", attempt)
                     start = time.time()
                     result = task.execute(dequeued_ff)
                     duration_ms = (time.time() - start) * 1000
@@ -361,6 +382,9 @@ class _ContinuousExecRunMixin:
                     self._commit(task_id, task_type, source_conn,
                                  dequeued_ff, result, duration_ms,
                                  selective=use_selective_dequeue)
+                    emit_task_progress(
+                        "task_completed", attempt,
+                        duration_ms=round(duration_ms, 3), outcome="completed")
                     self._task_retry_counts[task_id] = 0
 
                     # Check for explicit stop request (from stopFlow task)
@@ -373,6 +397,8 @@ class _ContinuousExecRunMixin:
 
                 except Exception as e:
                     last_error = e
+                    emit_task_progress(
+                        "task_failed", attempt, outcome="failed")
                     logger.warning(
                         f"Task '{task_id}' attempt {attempt}/{attempts}: {e}"
                     )
@@ -382,7 +408,9 @@ class _ContinuousExecRunMixin:
                         break
 
             # All retries exhausted — ROLLBACK (FlowFile stays in queue)
-            self._rollback(task_id, task_type, dequeued_ff, last_error)
+            self._rollback(
+                task_id, task_type, dequeued_ff, last_error,
+                checkpoint=failure_checkpoint)
 
         except Exception as e:
             logger.error(f"Unexpected error in task '{task_id}': {e}")
@@ -495,7 +523,8 @@ class _ContinuousExecRunMixin:
         )
 
     def _rollback(self, task_id: str, task_type: str,
-                  input_ff: FlowFile, error: Exception):
+                  input_ff: FlowFile, error: Exception, *,
+                  checkpoint: FlowFile | None = None):
         """Rollback a failed task execution.
 
         If a "failure" connection exists from this task, the FlowFile is
@@ -547,6 +576,14 @@ class _ContinuousExecRunMixin:
         self._discarded_flowfile_errors.append({
             "task_id": task_id,
             "error": error_msg,
+        })
+        self._failure_checkpoints.append({
+            "task_id": task_id,
+            "error": error_msg,
+            "code": str(getattr(error, "code", "") or "task_failed"),
+            "exception_type": type(error).__name__,
+            "retryable": bool(getattr(error, "retryable", False)),
+            "flowfile": checkpoint,
         })
 
         BulletinBoard.get_instance().post(

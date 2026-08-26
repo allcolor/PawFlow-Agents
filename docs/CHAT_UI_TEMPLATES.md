@@ -129,10 +129,13 @@ The surrounding chat surfaces remain theme-neutral:
   permission, conversation-theme, conversation-appearance, and OpenSpace
   controls. Its buttons share the action dock's dimensions, resting surface,
   accent border, spring hover zoom, and shadow while respecting reduced-motion
-  preferences. Permission is a real button opening an accessible menu rather
-  than a visible native combo; permission and theme controls show only their
-  compact icons while closed but retain current-value tooltips and accessible
-  labels;
+  preferences. Header dock buttons, header status buttons, conversation controls,
+  and action-dock items all use `--pf-sidebar` as their resting background; the
+  generic themed `button` surface must not create a different-colored subset.
+  Global and conversation Appearance controls use the same palette glyph
+  (`U+1F3A8`). Permission is a real button opening an accessible menu rather than
+  a visible native combo; permission and theme controls show only their compact
+  icons while closed but retain current-value tooltips and accessible labels;
 - activating OpenSpace always resets its camera to the general home view after
   the scene is ready; close-up and manually moved camera state is never restored
   when returning from Webchat;

@@ -10,6 +10,89 @@ from core.task_lifecycle import cleanup_agent_task_context
 logger = logging.getLogger(__name__)
 
 
+_PROVIDER_CANCEL_METHODS = (
+    "abort",
+    "cancel_claude_code",
+    "cancel_claude_code_interactive",
+    "cancel_codex",
+    "cancel_codex_interactive",
+    "cancel_gemini",
+)
+
+
+def _cancel_provider_client(client, *, force: bool) -> bool:
+    """Cancel one active provider client through its supported interface."""
+    if client is None:
+        return False
+    for method_name in _PROVIDER_CANCEL_METHODS:
+        cancel = getattr(client, method_name, None)
+        if not callable(cancel):
+            continue
+        try:
+            if method_name == "abort":
+                cancel()
+            else:
+                cancel(force=force)
+            return True
+        except Exception:
+            logger.exception("provider cancellation failed via %s", method_name)
+            return False
+    return False
+
+
+def _pop_task_runtime_state(executor, task_id: str) -> list:
+    """Atomically remove every active marker owned by one delegated task."""
+    if not executor or not task_id:
+        return []
+
+    def _matches(key: str) -> bool:
+        marker = "::task::"
+        if marker not in key:
+            return False
+        suffix = key.split(marker, 1)[1]
+        return suffix == task_id or suffix.startswith(task_id + ":")
+
+    clients = []
+    with executor._active_contexts_lock:
+        active_clients = getattr(executor, "_active_claude_client", {})
+        for key in list(active_clients):
+            if _matches(str(key)):
+                client = active_clients.pop(key, None)
+                if client is not None and client not in clients:
+                    clients.append(client)
+        for mapping_name in ("_active_contexts", "_active_turns"):
+            mapping = getattr(executor, mapping_name, None)
+            if not isinstance(mapping, dict):
+                continue
+            for key in list(mapping):
+                if _matches(str(key)):
+                    mapping.pop(key, None)
+    return clients
+
+
+def _cancel_workflow_runtime(conv_id: str, agent_name: str, *,
+                             reason: str, force: bool) -> bool:
+    """Route an Active Agents stop to process-resident Workflow turns."""
+    from core.workflow_agent_runtime import WorkflowAgentRuntime
+
+    runtime = WorkflowAgentRuntime._instance
+    if runtime is None:
+        return False
+    names = [str(agent_name).casefold()] if agent_name else sorted({
+        str(row.get("agent_name") or "").casefold()
+        for row in runtime.active_snapshot(conv_id)
+        if str(row.get("agent_name") or "").strip()
+    })
+    if not names:
+        return False
+    from core.agent_runtime_router import AgentRunKey
+    stopped = False
+    for name in names:
+        stopped = runtime.cancel(
+            AgentRunKey(conv_id, name), reason, force) or stopped
+    return stopped
+
+
 def _kill_live_cli_sessions(conv_id: str, agent_name: str, reason: str) -> int:
     """Force-kill live CLI provider containers for a conversation/agent.
 
@@ -86,13 +169,12 @@ def _clear_force_stop_relaunch_state(conv_id: str, agent_name: str,
         except Exception:
             logger.exception("force-stop inbox cutoff failed")
     try:
-        from core.agent_runtime_router import AgentRunKey
         from core.workflow_agent_runtime import WorkflowAgentRuntime
         workflow_runtime = WorkflowAgentRuntime._instance
         if workflow_runtime is not None:
             for agent in sorted(agents):
-                workflow_runtime.cancel(
-                    AgentRunKey(conv_id, agent), "force_stop", True)
+                _cancel_workflow_runtime(
+                    conv_id, agent, reason="force_stop", force=True)
             workflow_runtime._resume_durable_pending()
     except Exception:
         logger.exception("force-stop workflow cancellation failed")
@@ -251,16 +333,11 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 logger.info("[agent:%s] force-stopped %d live CLI container(s)",
                             conv_id[:8], _live_killed)
 
-            # 3. Kill task's Claude Code subprocess
-            with _exec._active_contexts_lock:
-                _cc_keys = [k for k in _exec._active_claude_client
-                            if f"::task::{task_id}" in k]
-                _cc_clients = [(k, _exec._active_claude_client.get(k)) for k in _cc_keys]
-            for _cc_key, client in _cc_clients:
-                if client and hasattr(client, 'cancel_claude_code'):
-                    client.cancel_claude_code(force=True)
-                if client and hasattr(client, 'abort'):
-                    client.abort()
+            # 3. Atomically remove every UI/runtime marker, then kill the
+            # provider through its own cancellation interface.
+            _task_clients = _pop_task_runtime_state(_exec, task_id)
+            for client in _task_clients:
+                _cancel_provider_client(client, force=True)
 
             # 3b. Mark the SubAgentExecutor task as cancelled so its
             #     iteration loop breaks at the next check.
@@ -270,11 +347,8 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
-            # 4. Clear task's active context + active_thoughts
-            with _exec._active_contexts_lock:
-                for k in list(_exec._active_contexts):
-                    if f"::task::{task_id}" in k:
-                        del _exec._active_contexts[k]
+            # 4. Clear task thought markers. Active contexts, turns and
+            # provider clients were removed together above.
             with _exec._active_lock:
                 _exec._active_thoughts.discard(_task_cid)
                 _exec._active_thoughts.discard(f"{conv_id}::task_verify::{task_id}")
@@ -348,10 +422,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 [k for k in _exec._active_claude_client if (k == conv_id or k.startswith(conv_id + ":")) and "::task::" not in k and "::task_verify::" not in k]
             _cc_clients = [(k, _exec._active_claude_client.get(k)) for k in _cc_keys]
         for _cc_key, client in _cc_clients:
-            if client and hasattr(client, 'cancel_claude_code'):
-                client.cancel_claude_code(force=True)
-            if client and hasattr(client, 'abort'):
-                client.abort()
+            _cancel_provider_client(client, force=True)
         # Kill the thread and force UI cleanup
         _killed = 0
         for t in threading.enumerate():
@@ -401,6 +472,9 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             return [flowfile]
         # Task-targeted interrupt: use task's conversation ID
         _target_cid = f"{conv_id}::task::{task_id}" if task_id else conv_id
+        if not task_id:
+            _cancel_workflow_runtime(
+                conv_id, agent_name, reason="interrupt", force=False)
         _exec.interrupt_agent(_target_cid, agent_name)
         flowfile.set_content(json.dumps({
             "interrupted": True, "conversation_id": conv_id,

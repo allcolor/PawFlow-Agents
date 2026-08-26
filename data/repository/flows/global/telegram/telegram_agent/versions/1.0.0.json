@@ -35,7 +35,9 @@
       "type": "telegramReceiver",
       "parameters": {
         "service_id": "telegram_bot"
-      }
+      },
+      "label": "Receive",
+      "description": "Receives or initiates the receive step using telegramReceiver."
     },
     "agent_client": {
       "type": "telegramAgentClient",
@@ -43,7 +45,9 @@
       "parameters": {
         "agent_runtime_port": "${agent_runtime_port}",
         "service_id": "telegram_bot"
-      }
+      },
+      "label": "Agent Client",
+      "description": "Processes the agent client step using telegramAgentClient."
     },
     "send_reply": {
       "type": "telegramSend",
@@ -51,13 +55,17 @@
         "service_id": "telegram_bot",
         "chat_id": "${telegram.chat_id}",
         "parse_mode": "Markdown"
-      }
+      },
+      "label": "Send Reply",
+      "description": "Delivers the send reply step using telegramSend."
     },
     "conversation_bridge": {
       "type": "telegramConversationBridge",
       "parameters": {
         "service_id": "telegram_bot"
-      }
+      },
+      "label": "Conversation Bridge",
+      "description": "Processes the conversation bridge step using telegramConversationBridge."
     }
   },
   "fqn": "telegram.telegram_agent:1.0.0",
@@ -68,14 +76,185 @@
       "target": "agent_client",
       "relationships": [
         "success"
-      ]
+      ],
+      "relation_id": "rel_57f89fc66cdb80d1"
     },
     {
       "source": "agent_client",
       "target": "send_reply",
       "relationships": [
         "success"
-      ]
+      ],
+      "relation_id": "rel_42d0e448ae592c45"
     }
-  ]
+  ],
+  "layout_schema_version": 1,
+  "default_layout_id": "functional",
+  "layouts": {
+    "functional": {
+      "id": "functional",
+      "name": "telegram_agent functional stages",
+      "kind": "declarative",
+      "root_group_id": "",
+      "viewport": {
+        "x": 40,
+        "y": 40,
+        "zoom": 0.75
+      },
+      "direction": "LR",
+      "nodes": {
+        "receive": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "agent_client": {
+          "x": 360,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "conversation_bridge": {
+          "x": 360,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "send_reply": {
+          "x": 720,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        }
+      },
+      "relations": {
+        "rel_57f89fc66cdb80d1": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_42d0e448ae592c45": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        }
+      },
+      "annotations": {},
+      "frames": {
+        "stage_inputs": {
+          "id": "stage_inputs",
+          "label": "Inputs & triggers",
+          "description": "Receives requests and starts scheduled work.",
+          "x": -32,
+          "y": -72,
+          "width": 304,
+          "height": 214,
+          "member_ids": [
+            "receive"
+          ],
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_processing": {
+          "id": "stage_processing",
+          "label": "Core processing",
+          "description": "Performs the flow's main transformation or agent work.",
+          "x": 328,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "agent_client",
+            "conversation_bridge"
+          ],
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_outputs": {
+          "id": "stage_outputs",
+          "label": "Delivery & outputs",
+          "description": "Publishes results and completes external responses.",
+          "x": 688,
+          "y": -72,
+          "width": 304,
+          "height": 214,
+          "member_ids": [
+            "send_reply"
+          ],
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        }
+      },
+      "visibility": {}
+    }
+  }
 }

@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -238,6 +239,35 @@ def test_typed_interactions_reject_invalid_values_without_resuming(store, monkey
     assert resumed == []
 
 
+def test_typed_interaction_idempotency_key_replays_and_rejects_conflicts(
+        store, monkeypatch):
+    published = []
+    monkeypatch.setattr(
+        ConfirmationStore, "_publish",
+        staticmethod(lambda cid, event, record: published.append(
+            (cid, event, record["request_id"]))),
+    )
+    arguments = {
+        "conversation_id": "c1",
+        "user_id": "u1",
+        "requester_kind": "flow",
+        "requester": "requestUserInput",
+        "message": "Duration?",
+        "kind": "decimal",
+        "response_schema": {"minimum": 0.1},
+        "idempotency_key": "run-1:question",
+    }
+
+    first = store.create_interaction(**arguments)
+    second = store.create_interaction(**arguments)
+
+    assert second["request_id"] == first["request_id"]
+    assert len(store.list_interactions(user_id="u1")) == 1
+    assert len(published) == 1
+    with pytest.raises(ValueError, match="different interaction"):
+        store.create_interaction(**{**arguments, "message": "Aspect ratio?"})
+
+
 def test_structured_form_validates_required_fields_and_types(store, monkeypatch):
     monkeypatch.setattr(ConfirmationStore, "_resume_requester",
                         lambda self, rec: None)
@@ -255,6 +285,29 @@ def test_structured_form_validates_required_fields_and_types(store, monkeypatch)
     answered = store.respond_interaction(
         record["request_id"], {"environment": "staging", "replicas": "2"})
     assert answered["answer"] == {"environment": "staging", "replicas": 2}
+
+
+def test_structured_form_accepts_multiple_file_references(store, monkeypatch):
+    monkeypatch.setattr(ConfirmationStore, "_resume_requester",
+                        lambda self, rec: None)
+    record = store.create_interaction(
+        conversation_id="c1", user_id="u1", requester_kind="flow",
+        requester="requestUserInput", message="References", kind="form",
+        response_schema={"fields": [{
+            "name": "references", "type": "file", "required": True,
+            "multiple": True,
+        }]},
+    )
+
+    answered = store.respond_interaction(record["request_id"], {
+        "references": [
+            {"file_id": "file-1", "name": "a.png", "mime_type": "image/png"},
+            {"file_id": "file-2", "name": "b.png", "mime_type": "image/png"},
+        ],
+    })
+
+    assert [item["file_id"] for item in answered["answer"]["references"]] == [
+        "file-1", "file-2"]
 
 
 def test_answer_resolves_the_confirmation_signal(store, monkeypatch):
@@ -369,6 +422,25 @@ def test_notify_before_wait_passes_through_immediately(store):
     # Consumed: a second wait parks normally.
     assert store.park_wait(signal_id="early", instance_id="i",
                            task_id="t", flowfile=FlowFile()) is not None
+
+
+def test_park_wait_is_idempotent_for_the_same_flowfile_and_task(store):
+    flowfile = FlowFile(content=b"payload", process_id="stable-process")
+    first = store.park_wait(
+        signal_id="interaction:req_1",
+        instance_id="instance-1",
+        task_id="wait-question",
+        flowfile=flowfile,
+    )
+    second = store.park_wait(
+        signal_id="interaction:req_1",
+        instance_id="instance-1",
+        task_id="wait-question",
+        flowfile=flowfile,
+    )
+
+    assert second == first
+    assert len(store.list_waits(status="waiting")) == 1
 
 
 def test_interaction_resolution_stamps_normalized_route_attributes(store):
@@ -525,6 +597,91 @@ def test_request_user_input_task_uses_only_injected_scope(store, monkeypatch):
     assert record["user_id"] == "u1"
     assert record["kind"] == "integer"
     assert out.get_attribute("interaction.signal_id") == f"interaction:{request_id}"
+
+
+@pytest.mark.parametrize(("task_name", "config"), [
+    ("RequestConfirmationTask", {"message": "Approve?"}),
+    ("RequestUserInputTask", {"message": "Choose", "kind": "text"}),
+])
+def test_workflow_interaction_uses_exact_version_task_identity(
+        task_name, config, monkeypatch):
+    import core.confirmation_store as mod
+    from tasks.control import durable_confirm
+
+    monkeypatch.setattr(mod, "find_own_flow_ids", lambda _task: None)
+    task = getattr(durable_confirm, task_name)(config)
+    task._workflow_task_id = "request_mapping_approval"
+    task.set_workflow_run_context(SimpleNamespace(run_id="wr_exact"))
+
+    assert task._idempotency_key() == (
+        "wr_exact:request_mapping_approval")
+
+
+def test_request_user_input_task_accepts_bounded_attribute_payload(store, monkeypatch):
+    import core.confirmation_store as mod
+    monkeypatch.setattr(mod.UserInteractionStore, "instance",
+                        classmethod(lambda cls: store))
+    from tasks.control.durable_confirm import RequestUserInputTask
+
+    task = RequestUserInputTask({
+        "message": "Fallback",
+        "kind": "text",
+        "payload_attribute": "media.question",
+    })
+    task.set_runtime_context(user_id="u1", conversation_id="c9")
+    payload = {
+        "title": "Media production details",
+        "message": "Choose the material production settings.",
+        "kind": "form",
+        "response_schema": {"fields": [{
+            "name": "duration_seconds", "label": "Duration",
+            "kind": "decimal", "required": True, "minimum": 0.1,
+        }]},
+    }
+    flowfile = FlowFile(attributes={
+        "media.question": json.dumps(payload),
+        "conversation_id": "attacker-conversation",
+    })
+
+    output = task.execute(flowfile)[0]
+
+    record = store.get_interaction(output.get_attribute("interaction.request_id"))
+    assert record["conversation_id"] == "c9"
+    assert record["user_id"] == "u1"
+    assert record["title"] == payload["title"]
+    assert record["message"] == payload["message"]
+    assert record["kind"] == "form"
+    assert record["response_schema"]["fields"][0]["name"] == "duration_seconds"
+
+
+def test_request_user_input_task_rejects_invalid_attribute_payload(store, monkeypatch):
+    import core.confirmation_store as mod
+    monkeypatch.setattr(mod.UserInteractionStore, "instance",
+                        classmethod(lambda cls: store))
+    from core import TaskError
+    from tasks.control.durable_confirm import RequestUserInputTask
+
+    task = RequestUserInputTask({
+        "message": "Fallback", "kind": "text",
+        "payload_attribute": "media.question",
+    })
+    task.set_runtime_context(user_id="u1", conversation_id="c9")
+    with pytest.raises(TaskError, match="payload attribute"):
+        task.execute(FlowFile(attributes={"media.question": "[]"}))
+
+
+def test_durable_interaction_tasks_declare_workflow_safety():
+    from core.agent_contracts import CapabilityEffect, IdempotencyClass
+    from tasks.control.durable_confirm import (
+        DurableWaitTask,
+        RequestConfirmationTask,
+        RequestUserInputTask,
+    )
+
+    for task in (RequestConfirmationTask, RequestUserInputTask, DurableWaitTask):
+        assert task.AGENT_WORKFLOW_SAFE is True
+        assert task.IDEMPOTENCY == IdempotencyClass.KEYED_EFFECT
+        assert CapabilityEffect.RESOURCE_WRITE in task.EFFECTS
 
 
 def test_notify_user_task_routes_sent_or_queued_without_parking(monkeypatch):

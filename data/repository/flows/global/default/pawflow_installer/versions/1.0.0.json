@@ -90,7 +90,9 @@
             "public": true
           }
         ]
-      }
+      },
+      "label": "Http IN",
+      "description": "Receives or initiates the http in step using httpReceiver."
     },
     "route_install": {
       "type": "routeOnAttribute",
@@ -138,32 +140,42 @@
           }
         },
         "default_relationship": "ui"
-      }
+      },
+      "label": "Route Install",
+      "description": "Validates and routes the route install step using routeOnAttribute."
     },
     "install_ui": {
       "type": "generateFlowFile",
       "parameters": {
         "content_type": "text/html; charset=utf-8",
         "content_file": "install.html"
-      }
+      },
+      "label": "Install UI",
+      "description": "Processes the install ui step using generateFlowFile."
     },
     "install_api": {
       "type": "installBootstrap",
-      "parameters": {}
+      "parameters": {},
+      "label": "Install API",
+      "description": "Processes the install api step using installBootstrap."
     },
     "send_html": {
       "type": "handleHTTPResponse",
       "parameters": {
         "service_id": "http_listener",
         "content_type": "text/html; charset=utf-8"
-      }
+      },
+      "label": "Send Html",
+      "description": "Delivers the send html step using handleHTTPResponse."
     },
     "send_json": {
       "type": "handleHTTPResponse",
       "parameters": {
         "service_id": "http_listener",
         "content_type": "application/json"
-      }
+      },
+      "label": "Send Json",
+      "description": "Delivers the send json step using handleHTTPResponse."
     },
     "redirect_to_install": {
       "type": "handleHTTPResponse",
@@ -175,114 +187,137 @@
           "Location": "/install",
           "Cache-Control": "no-store"
         }
-      }
+      },
+      "label": "Redirect TO Install",
+      "description": "Delivers the redirect to install step using handleHTTPResponse."
     }
   },
   "relations": [
     {
       "from": "http_in",
       "to": "redirect_to_install",
-      "type": "GET:/"
+      "type": "GET:/",
+      "relation_id": "rel_ed8b3fedb2b1b36a"
     },
     {
       "from": "http_in",
       "to": "route_install",
-      "type": "GET:/install"
+      "type": "GET:/install",
+      "relation_id": "rel_f4cddd1a48ef572b"
     },
     {
       "from": "http_in",
       "to": "route_install",
-      "type": "GET:/install/api"
+      "type": "GET:/install/api",
+      "relation_id": "rel_0c0dc591d23ca68d"
     },
     {
       "from": "http_in",
       "to": "route_install",
-      "type": "POST:/install/api/finalize"
+      "type": "POST:/install/api/finalize",
+      "relation_id": "rel_aea5c3a6a9d71cd0"
     },
     {
       "from": "route_install",
       "to": "install_ui",
-      "type": "ui"
+      "type": "ui",
+      "relation_id": "rel_d20b23cfb175d882"
     },
     {
       "from": "install_ui",
       "to": "send_html",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_e95b95d19d483030"
     },
     {
       "from": "install_api",
       "to": "send_json",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_3fe02d4a04500950"
     },
     {
       "from": "route_install",
       "to": "install_api",
-      "type": "api_status"
+      "type": "api_status",
+      "relation_id": "rel_fba29efc7b105e29"
     },
     {
       "from": "route_install",
       "to": "install_api",
-      "type": "api_finalize"
+      "type": "api_finalize",
+      "relation_id": "rel_2b3dea8cd3728b82"
     },
     {
       "from": "http_in",
       "to": "route_install",
-      "type": "POST:/install/api/llm-credential/prepare"
+      "type": "POST:/install/api/llm-credential/prepare",
+      "relation_id": "rel_1cb560ba0412820c"
     },
     {
       "from": "http_in",
       "to": "route_install",
-      "type": "POST:/install/api/llm-credential/paste"
+      "type": "POST:/install/api/llm-credential/paste",
+      "relation_id": "rel_eb7d4c0f398dc295"
     },
     {
       "from": "route_install",
       "to": "install_api",
-      "type": "llm_credential_prepare"
+      "type": "llm_credential_prepare",
+      "relation_id": "rel_68368136dd0198a0"
     },
     {
       "from": "route_install",
       "to": "install_api",
-      "type": "llm_credential_paste"
+      "type": "llm_credential_paste",
+      "relation_id": "rel_e428f6e75f8756dd"
     },
     {
       "from": "http_in",
       "to": "route_install",
-      "type": "POST:/install/api/llm-credential/server-login"
+      "type": "POST:/install/api/llm-credential/server-login",
+      "relation_id": "rel_09a02ef3ecca85ac"
     },
     {
       "from": "route_install",
       "to": "install_api",
-      "type": "llm_credential_server_login"
+      "type": "llm_credential_server_login",
+      "relation_id": "rel_ca54e642a0e939d3"
     },
     {
       "from": "http_in",
       "to": "route_install",
-      "type": "POST:/install/api/llm-credential/server-login/status"
+      "type": "POST:/install/api/llm-credential/server-login/status",
+      "relation_id": "rel_ee8a759eb11d4328"
     },
     {
       "from": "route_install",
       "to": "install_api",
-      "type": "llm_credential_server_login_status"
+      "type": "llm_credential_server_login_status",
+      "relation_id": "rel_bdf3a2cff56fbecb"
     },
     {
       "from": "http_in",
       "to": "route_install",
-      "type": "POST:/install/api/llm-credential/server-login/cleanup"
+      "type": "POST:/install/api/llm-credential/server-login/cleanup",
+      "relation_id": "rel_1d8e70d0960ff196"
     },
     {
       "from": "route_install",
       "to": "install_api",
-      "type": "llm_credential_server_login_cleanup"
+      "type": "llm_credential_server_login_cleanup",
+      "relation_id": "rel_d38216b5af7d2156"
     },
     {
       "from": "http_in",
       "to": "route_install",
-      "type": "POST:/install/api/service-parameter-helper"
+      "type": "POST:/install/api/service-parameter-helper",
+      "relation_id": "rel_732363d5d636b62a"
     },
     {
       "from": "route_install",
       "to": "install_api",
-      "type": "service_parameter_helper"
+      "type": "service_parameter_helper",
+      "relation_id": "rel_bc4c6eaa5c150848"
     }
   ],
   "entries": [
@@ -294,5 +329,469 @@
     "redirect_to_install"
   ],
   "fqn": "default.pawflow_installer:1.0.0",
-  "package": "default"
+  "package": "default",
+  "layout_schema_version": 1,
+  "default_layout_id": "functional",
+  "layouts": {
+    "functional": {
+      "id": "functional",
+      "name": "pawflow_installer functional stages",
+      "kind": "declarative",
+      "root_group_id": "",
+      "viewport": {
+        "x": 40,
+        "y": 40,
+        "zoom": 0.75
+      },
+      "direction": "LR",
+      "nodes": {
+        "http_in": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "route_install": {
+          "x": 360,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "accent": "#f59e0b",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "install_ui": {
+          "x": 720,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "install_api": {
+          "x": 720,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "send_html": {
+          "x": 1080,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "send_json": {
+          "x": 1080,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "redirect_to_install": {
+          "x": 1080,
+          "y": 300,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        }
+      },
+      "relations": {
+        "rel_ed8b3fedb2b1b36a": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_f4cddd1a48ef572b": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_0c0dc591d23ca68d": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_aea5c3a6a9d71cd0": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_d20b23cfb175d882": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_e95b95d19d483030": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_3fe02d4a04500950": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_fba29efc7b105e29": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_2b3dea8cd3728b82": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_1cb560ba0412820c": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_eb7d4c0f398dc295": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_68368136dd0198a0": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_e428f6e75f8756dd": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_09a02ef3ecca85ac": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_ca54e642a0e939d3": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_ee8a759eb11d4328": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_bdf3a2cff56fbecb": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_1d8e70d0960ff196": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_d38216b5af7d2156": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_732363d5d636b62a": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_bc4c6eaa5c150848": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        }
+      },
+      "annotations": {},
+      "frames": {
+        "stage_inputs": {
+          "id": "stage_inputs",
+          "label": "Inputs & triggers",
+          "description": "Receives requests and starts scheduled work.",
+          "x": -32,
+          "y": -72,
+          "width": 304,
+          "height": 214,
+          "member_ids": [
+            "http_in"
+          ],
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_routing": {
+          "id": "stage_routing",
+          "label": "Validation & routing",
+          "description": "Validates inputs, authenticates callers, and selects paths.",
+          "x": 328,
+          "y": -72,
+          "width": 304,
+          "height": 214,
+          "member_ids": [
+            "route_install"
+          ],
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_processing": {
+          "id": "stage_processing",
+          "label": "Core processing",
+          "description": "Performs the flow's main transformation or agent work.",
+          "x": 688,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "install_ui",
+            "install_api"
+          ],
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_outputs": {
+          "id": "stage_outputs",
+          "label": "Delivery & outputs",
+          "description": "Publishes results and completes external responses.",
+          "x": 1048,
+          "y": -72,
+          "width": 304,
+          "height": 514,
+          "member_ids": [
+            "send_html",
+            "send_json",
+            "redirect_to_install"
+          ],
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        }
+      },
+      "visibility": {}
+    }
+  }
 }

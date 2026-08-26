@@ -567,9 +567,7 @@ committed step is charged once to the usage ledger under `channel=workflow`
 with durable run/task dimensions.
 
 The six group processors are reserved for
-`pawflow.agents.group-deliberation:1.0.0` and require
-`PAWFLOW_AGENT_GROUPS_ENABLED=true` in addition to the workflow-agent rollout
-gate. They accept no task parameters. Their authority comes from the injected
+`pawflow.agents.group-deliberation:1.0.0`. They accept no task parameters. Their authority comes from the injected
 run context and exact group snapshot. WP6 participant calls have no tools or
 private context; token and cost allocations are enforced before durable step
 commit, cancellation aborts active provider clients, and only
@@ -588,6 +586,28 @@ Their
 contract and production flow are documented in
 [Agent System](AGENT_SYSTEM.md) and
 [Workflow Agent Operations](WORKFLOW_AGENT_OPERATIONS.md).
+
+The Media Studio Agent adds the following workflow-safe processors:
+
+| Type | Purpose |
+|---|---|
+| `prepareMediaIntent` / `routeMediaIntent` | Classify and reject unrelated requests before file or service access. |
+| `prepareMediaRelay` / `applyMediaRelay` | Freeze an explicit/default/unique linked relay or durably choose one frozen authorized candidate before media access. |
+| `loadMediaProject` / `resolveMediaReferences` | Load scoped append-only project lineage and validate explicit FileStore reference roles. |
+| `snapshotMediaCapabilities` / `selectMediaCapability` | Freeze visible media services and choose deterministically with stable rejection reasons. |
+| `prepareMediaBrief` / `validateMediaBrief` | Build and validate the immutable creative brief. |
+| `prepareMediaQuestions` / `applyMediaQuestionAnswers` | Create one bounded dynamic form and merge only validated durable answers. |
+| `prepareMediaScenario` / `validateMediaScenario` / `applyMediaScenarioDecision` | Digest the exact production proposal and enforce Produce, Revise, or Cancel. |
+| `prepareMediaProvisioning` | Stop for review when no installed capability is usable; it never mutates the host. |
+| `prepareMediaVoiceConsent` / `applyMediaVoiceConsent` | Require explicit durable authorization before voice cloning. |
+| `splitMediaGeneration` / `submitMediaGeneration` / `joinMediaGeneration` | Bound and correlate independent scenario jobs, execute at most four exact-service submissions concurrently, and checkpointably join their artifacts before QA. |
+| `validateMediaCompositionRecipe` / `composeMedia` | Validate a closed FFmpeg recipe and execute it through the exact FFmpeg service. |
+| `validateMediaArtifact` / `appendMediaRevision` / `formatMediaStudioResult` | Validate FileStore outputs, append immutable lineage, and emit the typed terminal. |
+
+The exact production resource is `pawflow.agents.media-studio:1.0.0`, shipped by
+`pawflow.media-studio:1.0.0`. ComfyUI audio uses
+`comfyUIAudioGeneration`; immutable preset metadata and approved provisioning are
+documented in [ComfyUI](comfyui.md).
 
 ---
 

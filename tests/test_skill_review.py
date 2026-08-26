@@ -324,6 +324,9 @@ def test_manage_resource_assign_skill_notifies_agent(monkeypatch):
             assert key == "conv_agents"
             self.configs = value
 
+        def resolve_owner(self, conv_id):
+            return "alice"
+
         def append_message(self, conv_id, msg, agent_name="", user_id=""):
             appended.append((conv_id, msg, agent_name, user_id))
 
@@ -396,6 +399,9 @@ def test_manage_resource_unassign_skill_notifies_agent(monkeypatch):
         def set_extra(self, conv_id, key, value):
             assert key == "conv_agents"
             self.configs = value
+
+        def resolve_owner(self, conv_id):
+            return "alice"
 
         def append_message(self, conv_id, msg, agent_name="", user_id=""):
             appended.append((conv_id, msg, agent_name, user_id))

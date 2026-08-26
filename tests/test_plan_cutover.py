@@ -23,7 +23,6 @@ def _legacy_action(action: str):
 
 
 def test_legacy_http_actions_fail_closed_without_opening_plan_store(monkeypatch):
-    monkeypatch.setenv("PAWFLOW_WORKFLOW_PROPOSALS_ENABLED", "1")
     monkeypatch.setattr(
         "core.plan_store.PlanStore.instance",
         lambda: (_ for _ in ()).throw(AssertionError("PlanStore was opened")),
@@ -42,39 +41,30 @@ def test_legacy_http_actions_fail_closed_without_opening_plan_store(monkeypatch)
 
 
 def test_unrelated_actions_still_fall_through_during_cutover(monkeypatch):
-    monkeypatch.setenv("PAWFLOW_WORKFLOW_PROPOSALS_ENABLED", "1")
     flowfile = FlowFile()
     assert _handle_plans(
         None, "unrelated", {}, None, "alice", flowfile) is None
 
 
-def test_web_cutover_is_exclusive_and_flag_off_keeps_legacy(monkeypatch):
-    monkeypatch.setenv("PAWFLOW_WORKFLOW_PROPOSALS_ENABLED", "0")
-    legacy = rendered_chat_html(inline_css=False)
-    assert 'id="plansPanel"' in legacy
-    assert 'id="plansMenuItem"' in legacy
-    assert "/chat/js/plans_panel.js?" in legacy
-    assert "window.PAWFLOW_WORKFLOW_PROPOSALS_ENABLED=false" in legacy
-
-    monkeypatch.setenv("PAWFLOW_WORKFLOW_PROPOSALS_ENABLED", "1")
+def test_web_uses_only_canonical_workflow_proposals():
     canonical = rendered_chat_html(inline_css=False)
     assert 'id="plansPanel"' not in canonical
     assert 'id="plansMenuItem"' not in canonical
     assert "/chat/js/plans_panel.js?" not in canonical
-    assert "window.PAWFLOW_WORKFLOW_PROPOSALS_ENABLED=true" in canonical
+    assert "WORKFLOW_PROPOSALS_ENABLED" not in canonical
 
 
-def test_web_runtime_does_not_wire_legacy_plan_routes_after_cutover():
+def test_web_runtime_does_not_wire_legacy_plan_routes():
     command = (CHAT_UI / "cmd_conversation.js").read_text(encoding="utf-8")
     sse = (CHAT_UI / "sse_handlers_b.js").read_text(encoding="utf-8")
     openspace = (CHAT_UI / "openspace_scene.js").read_text(encoding="utf-8")
 
-    assert "PAWFLOW_WORKFLOW_PROPOSALS_ENABLED" in command
+    assert "WORKFLOW_PROPOSALS_ENABLED" not in command
     assert "loadUiSurfaces(conversationId)" in command
     assert "propose_workflow" in command
-    assert "PAWFLOW_WORKFLOW_PROPOSALS_ENABLED" in sse
-    assert "if (!window.PAWFLOW_WORKFLOW_PROPOSALS_ENABLED)" in sse
-    assert "PAWFLOW_WORKFLOW_PROPOSALS_ENABLED" in openspace
+    assert "WORKFLOW_PROPOSALS_ENABLED" not in sse
+    assert "plan_created" not in sse
+    assert "WORKFLOW_PROPOSALS_ENABLED" not in openspace
 
 
 class _CliRenderer:

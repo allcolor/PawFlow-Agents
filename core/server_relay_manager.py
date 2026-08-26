@@ -232,6 +232,8 @@ class ServerRelayManager:
             relay_image,
             "python3", _SCRIPT_IN_CONTAINER,
         ])
+        if kind_cfg["publish_desktop"]:
+            docker_run_args.append("--allow-automation")
         cmd = docker_cmd() + ["run"] + docker_run_args
         logger.info("Spawning server relay container: %s  cmd=%s", container_name, cmd)
         result = subprocess.run(  # nosec B603
@@ -407,6 +409,8 @@ class ServerRelayManager:
             relay_image,
             "python3", _SCRIPT_IN_CONTAINER,
         ])
+        if kind_cfg["publish_desktop"]:
+            docker_run_args.append("--allow-automation")
         if allow_service_tunnels:
             docker_run_args.append("--allow-service-tunnels")
         cmd = docker_cmd() + ["run"] + docker_run_args

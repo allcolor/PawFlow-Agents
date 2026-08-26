@@ -75,15 +75,15 @@ PawFlow gives agents a real operating surface without handing your workspace to 
   agent.
 - **Delegated vision**: pair a strong text-only reasoning model with a separate vision-enabled LLM so uploads, screenshots, and desktop views become detailed descriptions with UI coordinates before the reasoning turn. Images sent to a text-only model are never silently dropped: any model — including free-tier ones — gets vision, and clicks stay accurate because coordinates come from the vision model, verified locally by the pre-click screen guard.
 - **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, the Android app, API clients, or channel integrations.
-- **Workflow Agents (opt-in)**: bind an agent identity to an exact versioned Flow, freeze its service and resource bindings per run, checkpoint progress, inspect durable run history, and recover only generations that remain safe to retry. Enable the server-owned capability with `PAWFLOW_WORKFLOW_AGENTS_ENABLED=1`.
-- **Declarative workflow proposals (opt-in)**: turn a planning request into a
+- **Workflow Agents**: bind an agent identity to an exact versioned Flow, freeze its service and resource bindings per run, checkpoint progress, inspect durable run history, and recover only generations that remain safe to retry.
+- **Declarative workflow proposals**: turn a planning request into a
   canonical Flow draft, review and accept its exact revision, then approve one
   durable one-shot `FlowRun`. Typed questions, confirmations, waits, retries,
   bounded loops, subflows, and Workflow Agent calls stay ordinary Flow tasks;
   Web, PawCode, and VS Code render the same server-owned interaction surfaces.
-  The five cutover flags remain disabled until an operator follows the
+  Existing PlanStore data is converted through the explicit
   [PlanStore migration runbook](docs/PLANSTORE_MIGRATION_RUNBOOK.md).
-- **Bounded agent collaboration (opt-in)**: run a reviewed group-deliberation workflow with concrete member identities, turn-scoped tool authority, ordered lifecycle events, and explicit budgets instead of sharing ambient permissions between agents. Enable groups and v2 bindings deliberately with `PAWFLOW_AGENT_GROUPS_ENABLED=1` and `PAWFLOW_RESOURCE_BINDINGS_V2_ENABLED=1`.
+- **Bounded agent collaboration**: run a reviewed group-deliberation workflow with concrete member identities, turn-scoped tool authority, ordered lifecycle events, and explicit budgets instead of sharing ambient permissions between agents.
 - **Deterministic flows**: turn repeated work into NiFi-style DAGs with scheduling, backpressure, checkpoints, approvals, and explicit LLM steps.
 - **Package ecosystem**: distribute agents, skills, tools, services, flow tasks, flows, and UI extensions as signed `.pfp` packages or import skills from supported marketplaces.
 

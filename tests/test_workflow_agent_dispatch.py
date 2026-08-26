@@ -1,4 +1,4 @@
-"""WP1 opt-in workflow routing and compatibility gates."""
+"""WP1 workflow routing and compatibility contracts."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import pytest
 from core import FlowFile
 from core.agent_feature_flags import (
     BASE_AGENT_RUNTIME_KINDS,
-    WORKFLOW_AGENTS_ENV,
     allowed_agent_runtime_kinds,
     validate_agent_runtime_kind,
 )
@@ -27,7 +26,6 @@ from tasks.ai.actions._conv_import import _validate_imported_agent_runtimes
 
 @pytest.fixture(autouse=True)
 def _reset_router(monkeypatch):
-    monkeypatch.delenv(WORKFLOW_AGENTS_ENV, raising=False)
     AgentRuntimeRouter._instance = None
     yield
     AgentRuntimeRouter._instance = None
@@ -71,32 +69,17 @@ def _prepared_turn(agent_name: str = "wiki") -> PreparedAgentTurn:
     })
 
 
-def test_workflow_runtime_kind_is_strictly_server_owned(monkeypatch):
-    assert allowed_agent_runtime_kinds() == BASE_AGENT_RUNTIME_KINDS
-    with pytest.raises(ValueError, match="disabled by the server"):
-        validate_agent_runtime_kind("workflow")
-
-    monkeypatch.setenv(WORKFLOW_AGENTS_ENV, "true")
+def test_workflow_runtime_kind_is_always_available(monkeypatch):
     assert validate_agent_runtime_kind("workflow") == "workflow"
     assert allowed_agent_runtime_kinds() == BASE_AGENT_RUNTIME_KINDS | {"workflow"}
 
-    monkeypatch.setenv(WORKFLOW_AGENTS_ENV, "truthy")
-    with pytest.raises(ValueError, match=WORKFLOW_AGENTS_ENV):
-        allowed_agent_runtime_kinds()
 
-
-def test_add_agent_rejects_workflow_disabled_and_needs_no_llm_when_enabled(
+def test_add_workflow_agent_needs_no_llm_or_activation_flag(
         monkeypatch):
-    with pytest.raises(ValueError, match="disabled by the server"):
-        add_agent_to_conv(
-            "conv-1", "Wiki", llm_service="", definition="wiki",
-            runtime_kind="workflow")
-
     stored = {}
     store = MagicMock()
     store.get_extra.side_effect = lambda _cid, key: stored.get(key)
     store.set_extra.side_effect = lambda _cid, key, value: stored.__setitem__(key, value)
-    monkeypatch.setenv(WORKFLOW_AGENTS_ENV, "1")
     with patch("core.conversation_store.ConversationStore.instance",
                return_value=store), patch(
                    "core.workflow_agent_resources.bind_agent_workflow",
@@ -108,30 +91,37 @@ def test_add_agent_rejects_workflow_disabled_and_needs_no_llm_when_enabled(
     assert config["llm_service"] == ""
 
 
-def test_resource_action_rejects_request_side_workflow_enablement():
+def test_resource_action_requires_a_workflow_binding_not_an_activation_flag():
     flowfile = FlowFile(content=b"{}")
-    result = _handle_agentres_k5(
-        None,
-        "add_agent_to_conv",
-        {"conversation_id": "conv-1", "instance_name": "Wiki",
-         "definition": "wiki", "runtime_kind": "workflow"},
-        MagicMock(),
-        "alice",
-        flowfile,
-    )
+    store = MagicMock()
+    store.get_extra.return_value = None
+    resources = MagicMock()
+    resources.get_any.return_value = {"name": "wiki"}
+    with patch("core.conversation_store.ConversationStore.instance",
+               return_value=store), patch(
+                   "core.resource_store.ResourceStore.instance",
+                   return_value=resources):
+        result = _handle_agentres_k5(
+            None,
+            "add_agent_to_conv",
+            {"conversation_id": "conv-1", "instance_name": "Wiki",
+             "definition": "wiki", "runtime_kind": "workflow"},
+            store,
+            "alice",
+            flowfile,
+        )
     assert result == [flowfile]
     assert flowfile.get_attribute("http.response.status") == "400"
-    assert "disabled by the server" in json.loads(flowfile.get_content())["error"]
+    assert "workflow" in json.loads(flowfile.get_content())["error"].lower()
+    assert "disabled by the server" not in json.loads(
+        flowfile.get_content()
+    )["error"]
 
 
-def test_archive_import_cannot_bypass_workflow_capability(monkeypatch):
+def test_archive_import_accepts_workflow_without_activation_flag():
     extras = {"conv_agents": {
         "Wiki": {"definition": "wiki", "runtime_kind": "workflow"},
     }}
-    with pytest.raises(ValueError, match="disabled by the server"):
-        _validate_imported_agent_runtimes(extras)
-
-    monkeypatch.setenv(WORKFLOW_AGENTS_ENV, "yes")
     _validate_imported_agent_runtimes(extras)
     _validate_imported_agent_runtimes({
         "conv_agents": {"Assistant": {"definition": "assistant"}},
@@ -139,7 +129,6 @@ def test_archive_import_cannot_bypass_workflow_capability(monkeypatch):
 
 
 def test_router_dispatches_only_canonical_workflow_adapter(monkeypatch):
-    monkeypatch.setenv(WORKFLOW_AGENTS_ENV, "on")
     monkeypatch.setattr(
         "core.conv_agent_config.resolve_agent_config_entry",
         lambda _cid, _name: (
@@ -175,16 +164,20 @@ def test_router_dispatches_only_canonical_workflow_adapter(monkeypatch):
         router.register(type("Legacy", (), {"runtime_kind": "llm"})())
 
 
-def test_router_fails_closed_before_adapter_when_capability_is_disabled(
+def test_router_ignores_obsolete_activation_variable(
         monkeypatch):
     monkeypatch.setattr(
         "core.conv_agent_config.resolve_agent_config_entry",
         lambda _cid, _name: (
             "conv-1", "Wiki", {"runtime_kind": "workflow"}),
     )
-    with pytest.raises(AgentRuntimeRoutingError) as exc:
-        AgentRuntimeRouter().resolve("conv-1", "Wiki")
-    assert exc.value.code == "workflow_agents_disabled"
+    adapter = MagicMock(runtime_kind="workflow")
+    with patch(
+        "core.workflow_agent_runtime.WorkflowAgentRuntime.instance",
+        return_value=adapter,
+    ):
+        resolved = AgentRuntimeRouter().resolve("conv-1", "Wiki")
+    assert resolved.adapter is adapter
 
 
 def test_autonomous_workflow_wake_cannot_fall_through_to_llm(monkeypatch):
@@ -209,69 +202,20 @@ def test_autonomous_workflow_wake_cannot_fall_through_to_llm(monkeypatch):
     external_route.assert_not_called()
 
 
-def test_streaming_persists_then_refuses_disabled_workflow_without_llm_worker():
-    from tasks.ai.agent_loop import AgentLoopTask
-
-    events = []
-    fake_store = MagicMock()
-    fake_store.get_extra_snapshot.return_value = 1
-    task = AgentLoopTask({
-        "api_key": "test", "streaming": True, "conversation_store": False})
-    conversation_id = "conv-workflow-disabled"
-    agent_key = f"{conversation_id}:Wiki"
-    with task._active_contexts_lock:
-        task._active_turns.pop(agent_key, None)
-        task._active_contexts.pop(agent_key, None)
-        task._active_claude_client.pop(agent_key, None)
-
-    class HookRunner:
-        def __init__(self, **_kwargs):
-            pass
-
-        def run(self, *_args, **_kwargs):
-            return {"decision": "allow"}
-
-    class NoThread:
-        def __init__(self, *_args, **_kwargs):
-            raise AssertionError("disabled workflow must not start an LLM worker")
-
-    writer = MagicMock()
-    writer.enqueue_message.side_effect = lambda *_a, **_k: events.append("persist")
-    external_route = MagicMock()
-    ff = FlowFile(content=json.dumps({
-        "message": "refresh", "conversation_id": conversation_id,
-        "target_agent": "Wiki", "msg_id": "m-workflow",
-    }).encode(), attributes={"http.auth.principal": "alice"})
-
-    with patch("core.conversation_access.authorize_message_submission"), \
-            patch("core.authorization_context.record_user_ingress", return_value=None), \
-            patch("core.conversation_store.ConversationStore.instance",
-                  return_value=fake_store), \
-            patch("core.agent_hooks.AgentHookRunner", HookRunner), \
-            patch("core.conversation_writer.ConversationWriter.for_conversation",
-                  return_value=writer), \
-            patch("core.conv_agent_config.resolve_agent_config_entry",
-                  return_value=(conversation_id, "Wiki",
-                                {"runtime_kind": "workflow"})), \
-            patch("services.external_agent_runtime_router.route_external_agent_prompt",
-                  external_route), \
-            patch("tasks.ai.agent_streaming.threading.Thread", NoThread):
-        result = task._execute_streaming(ff)
-
-    body = json.loads(result[0].get_content())
-    assert events == ["persist"]
-    assert body["code"] == "workflow_agents_disabled"
-    assert result[0].get_attribute("http.response.status") == "503"
-    external_route.assert_not_called()
-
-
-@pytest.mark.parametrize("channel", ["web", "telegram", "a2a"])
-def test_enabled_workflow_ingress_dispatches_one_correlated_prepared_turn(
-        monkeypatch, channel):
+@pytest.mark.parametrize("channel, message_source, expected_source_kind", [
+    ("web", None, "user"),
+    ("telegram", None, "user"),
+    ("a2a", None, "user"),
+    ("web", {
+        "type": "agent_delegate", "from": "Planner", "to": "Wiki",
+        "task_id": "delegate-1",
+    }, "delegate"),
+])
+def test_workflow_ingress_dispatches_one_correlated_prepared_turn(
+        monkeypatch, channel, message_source, expected_source_kind):
     from core.authorization_context import AuthorizationRef
     from tasks.ai.agent_loop import AgentLoopTask
 
-    monkeypatch.setenv(WORKFLOW_AGENTS_ENV, "1")
     submitted = []
 
     class Adapter:
@@ -301,6 +245,9 @@ def test_enabled_workflow_ingress_dispatches_one_correlated_prepared_turn(
         "http.auth.principal": "alice",
         "agent.client_channel": channel,
     })
+    if message_source is not None:
+        ff.set_attribute("message_source", json.dumps(message_source))
+        ff.set_attribute("skip_pre_persist", "1")
     auth = AuthorizationRef(
         context_id="0f1e2d3c-4b5a-4698-8071-625344332211",
         revision=1,
@@ -332,6 +279,11 @@ def test_enabled_workflow_ingress_dispatches_one_correlated_prepared_turn(
     assert len(submitted) == 1
     assert submitted[0].root_turn_id == f"{channel}:turn"
     assert submitted[0].channel == channel
+    assert submitted[0].turn_identity.source_kind == expected_source_kind
+    if message_source is not None:
+        assert submitted[0].source["type"] == "agent_delegate"
+        assert submitted[0].source["from"] == "Planner"
+        assert submitted[0].source["task_id"] == "delegate-1"
     assert submitted[0].authorization_ref.context_id == auth.context_id
     writer.enqueue_message_if_absent.assert_called_once()
     inbox.prepare_receipt.assert_called_once()

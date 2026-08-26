@@ -6,6 +6,7 @@ import copy
 from typing import Any
 
 from core.flow_authoring import FlowAuthoringService
+from core.flow_layout_contracts import relation_id_seed
 from core.resource_identity import ResourceRef
 from core.workflow_proposal_store import definition_digest
 
@@ -134,11 +135,13 @@ def build_legacy_flow_definition(
         "parameters": {"summary": _text(imported.get("title"), "title")},
     }
     for source, target in zip(ordered_ids, [*ordered_ids[1:], "complete"]):
-        relations.append({
+        relation = {
             "from": source,
             "to": target,
             "type": relationship_by_task[source],
-        })
+        }
+        relation["relation_id"] = relation_id_seed(relation)
+        relations.append(relation)
 
     checkpoint = (conversion.get("run") or {}).get("checkpoint")
     resume_task_id = ordered_ids[0] if ordered_ids else "complete"

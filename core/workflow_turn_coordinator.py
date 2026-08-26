@@ -39,15 +39,27 @@ class WorkflowTurnCoordinator:
         if len(response.encode("utf-8")) > 256_000:
             raise ValueError("workflow terminal response is too large")
         assistant_msg_id, event_id = new_terminal_identities(context.run_id)
+        ingress_source = existing.get("ingress_source") or {}
+        if (ingress_source.get("type") == "agent_delegate"
+                and ingress_source.get("from")):
+            message_source = {
+                "type": "agent_delegate",
+                "from": context.agent_name,
+                "to": ingress_source["from"],
+                "kind": "reply",
+                "task_id": str(ingress_source.get("task_id") or ""),
+            }
+        else:
+            message_source = {
+                "type": "agent", "name": context.agent_name,
+                "runtime_kind": "workflow", "run_id": context.run_id,
+                "flow_fqn": context.flow_ref.name,
+            }
         from core.llm_client import stamp_message
         message = stamp_message({
             "role": "assistant",
             "content": response,
-            "source": {
-                "type": "agent", "name": context.agent_name,
-                "runtime_kind": "workflow", "run_id": context.run_id,
-                "flow_fqn": context.flow_ref.name,
-            },
+            "source": message_source,
             "turn_id": context.root_turn_id,
             "channel": context.channel,
             "msg_id": assistant_msg_id,
@@ -227,6 +239,7 @@ class WorkflowTurnCoordinator:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
                     run["conversation_id"], "done", dict(outbox["event"]))
+                self._deliver_delegate_terminal(run)
                 delivered = True
             except Exception:
                 logger.exception(
@@ -240,6 +253,33 @@ class WorkflowTurnCoordinator:
         if not self.run_store.complete(run_id):
             raise RuntimeError("workflow terminal saga is incomplete")
         return self.run_store.get_run(run_id)["terminal_event"]
+
+    @staticmethod
+    def _deliver_delegate_terminal(run: dict[str, Any]) -> None:
+        source = run.get("ingress_source") or {}
+        caller = str(source.get("from") or "")
+        if source.get("type") != "agent_delegate" or not caller:
+            return
+        reply_source = dict((run.get("assistant_payload") or {}).get("source") or {})
+        from core.handlers.resource_agent import SpawnAgentsHandler
+        from tasks.ai.agent_loop import AgentLoopTask
+        runtime = AgentLoopTask._live_instance
+        if runtime is None:
+            return
+        conversation_id = run["conversation_id"]
+        key = f"{conversation_id}:{caller}"
+        with runtime._active_contexts_lock:
+            running = key in runtime._active_contexts
+        response = str((run.get("terminal_event") or {}).get("response") or "")
+        message_id = str(run.get("assistant_msg_id") or "")
+        if running:
+            SpawnAgentsHandler._preempt_caller(
+                runtime, conversation_id, caller, response,
+                message_id, reply_source)
+        else:
+            SpawnAgentsHandler._wake_caller(
+                runtime, conversation_id, caller, run["user_id"], response,
+                message_id, source=reply_source)
 
     def recover_committing(self) -> dict[str, int]:
         completed = 0

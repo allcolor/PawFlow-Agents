@@ -475,11 +475,7 @@ def runtime_skill_assignments(
     *,
     conversation_store=None,
 ) -> list[Any]:
-    """Select v2 only when both the server flag and marker are active."""
-    from core.agent_feature_flags import resource_bindings_v2_enabled
-
-    if not resource_bindings_v2_enabled():
-        return list(legacy)
+    """Select v2 only when the conversation migration marker is active."""
     if conversation_store is None:
         from core.conversation_store import ConversationStore
         conversation_store = ConversationStore.instance()
@@ -506,10 +502,6 @@ def replace_active_skill_assignments(
     assigned_by: str = "operator",
 ) -> bool:
     """Replace one active v2 assignment list and fence off rollback."""
-    from core.agent_feature_flags import resource_bindings_v2_enabled
-
-    if not resource_bindings_v2_enabled():
-        return False
     if conversation_store is None:
         from core.conversation_store import ConversationStore
         conversation_store = ConversationStore.instance()

@@ -33,7 +33,8 @@ function applyThemeCss(css) {
   if (!themeEl) {
     themeEl = document.createElement('style');
     themeEl.id = 'custom-theme';
-    document.head.appendChild(themeEl);
+    const contract = document.getElementById('component-contract-css');
+    document.head.insertBefore(themeEl, contract || null);
   }
   themeEl.textContent = css || '';
 }

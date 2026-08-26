@@ -1,12 +1,13 @@
 # ComfyUI
 
-PawFlow can use a self-hosted ComfyUI Server as an image or video provider.
-Two built-in services are available:
+PawFlow can use a self-hosted ComfyUI Server as an image, video, or audio
+provider. Three built-in services are available:
 
 | Service type | PawFlow tools |
 |---|---|
 | `comfyUIImageGeneration` | `generate_image`, and `edit_image` when an `edit_image` workflow is configured |
 | `comfyUIVideoGeneration` | `generate_video` plus the configured text/image/frame/reference/video operations |
+| `comfyUIAudioGeneration` | `generate_audio`, with optional source-audio and music-bed bindings |
 
 The integration uses administrator-configured workflows only. An agent selects an
 operation and supplies values for declared bindings; it cannot submit or replace a
@@ -142,15 +143,22 @@ and each node has `class_type` and `inputs`. See the official
 [Workflow API Format](https://docs.comfy.org/development/api-development/workflow-api-format)
 reference.
 
-A PawFlow preset has three required parts:
+A PawFlow preset has four required parts:
 
 - `workflow`: the complete exported API-format object.
 - `bindings`: allowed PawFlow argument names mapped to exact node inputs.
-- `output`: the node, history list key, and zero-based artifact index to download.
+- `output`: the node, history list key, zero-based artifact index, and allowed
+  output content types.
+- `metadata`: the stable preset ID, immutable revision, timezone-aware creation
+  time, media kind, provenance and license, capabilities, limits, and exact
+  required node/model/LoRA/custom-node inventory.
 
-PawFlow validates every node, binding target, output node, index, coercion, and
-multiplier when the service is created. UI-format workflows and missing targets
-fail immediately.
+PawFlow validates every node, binding target, output node, content type, index,
+coercion, multiplier, and metadata field when the service is created. UI-format
+workflows, unversioned presets, and missing targets fail immediately. Publish a
+change as a new preset revision and service-definition revision; never overwrite
+an active revision in place. Keep the preceding service definition available for
+rollback while already-started runs finish against their frozen revision.
 
 ## 4. Configure an image service
 
@@ -240,7 +248,26 @@ text-to-image graph. The checkpoint name must exist in this ComfyUI installation
     "output": {
       "node": "9",
       "key": "images",
-      "index": 0
+      "index": 0,
+      "content_types": ["image/png"]
+    },
+    "metadata": {
+      "preset_id": "stable-diffusion-1-5-generate",
+      "revision": "1.0.0",
+      "created_at": "2026-08-25T00:00:00+00:00",
+      "media_kind": "image",
+      "provenance": {
+        "source": "locally reviewed API export",
+        "license": "CreativeML Open RAIL-M"
+      },
+      "capabilities": ["text_to_image"],
+      "limits": {"max_width": 2048, "max_height": 2048},
+      "required_inventory": {
+        "nodes": ["KSampler", "CheckpointLoaderSimple", "SaveImage"],
+        "models": ["v1-5-pruned-emaonly-fp16.safetensors"],
+        "loras": [],
+        "custom_nodes": []
+      }
     }
   }
 }
@@ -332,7 +359,30 @@ A generic video preset has this shape:
         "coerce": "int"
       }
     },
-    "output": {"node": "90", "key": "gifs", "index": 0}
+    "output": {
+      "node": "90",
+      "key": "gifs",
+      "index": 0,
+      "content_types": ["video/mp4"]
+    },
+    "metadata": {
+      "preset_id": "reviewed-image-to-video",
+      "revision": "1.0.0",
+      "created_at": "2026-08-25T00:00:00+00:00",
+      "media_kind": "video",
+      "provenance": {
+        "source": "locally reviewed API export",
+        "license": "See model and custom-node licenses"
+      },
+      "capabilities": ["image_to_video"],
+      "limits": {"max_duration_seconds": 10, "max_width": 1920, "max_height": 1080},
+      "required_inventory": {
+        "nodes": ["LoadImage", "YourVideoNode", "YourVideoSaveNode"],
+        "models": [],
+        "loras": [],
+        "custom_nodes": ["the pinned package that defines YourVideoNode"]
+      }
+    }
   }
 }
 ```
@@ -345,7 +395,58 @@ or `images`. Run the graph once and inspect `GET /history/{prompt_id}` if unsure
 The `multiply` example converts seconds to frames at 16 fps. Use the actual frame
 rate and duration semantics of the selected graph.
 
-## 6. Binding reference
+## 6. Configure an audio service
+
+Create a **ComfyUI Audio Generation** service. Its required operation is
+`generate_audio`. Bind any of `prompt`, `negative_prompt`, `duration`, `seed`, and
+`model` that the reviewed graph exposes. Reference-aware graphs may also bind
+uploaded `source_audio` and `music_bed` filenames.
+
+The output must identify the exact history list and declare audio content types.
+For example:
+
+```json
+{
+  "generate_audio": {
+    "workflow": {
+      "1": {"class_type": "YourAudioPromptNode", "inputs": {"text": "rain"}},
+      "9": {"class_type": "YourAudioSaveNode", "inputs": {}}
+    },
+    "bindings": {
+      "prompt": {"node": "1", "input": "text"}
+    },
+    "output": {
+      "node": "9",
+      "key": "audio",
+      "index": 0,
+      "content_types": ["audio/wav"]
+    },
+    "metadata": {
+      "preset_id": "reviewed-audio-generation",
+      "revision": "1.0.0",
+      "created_at": "2026-08-25T00:00:00+00:00",
+      "media_kind": "audio",
+      "provenance": {
+        "source": "locally reviewed API export",
+        "license": "See model and custom-node licenses"
+      },
+      "capabilities": ["music"],
+      "limits": {"max_duration_seconds": 240},
+      "required_inventory": {
+        "nodes": ["YourAudioPromptNode", "YourAudioSaveNode"],
+        "models": [],
+        "loras": [],
+        "custom_nodes": ["the pinned package that defines the audio nodes"]
+      }
+    }
+  }
+}
+```
+
+Replace placeholder node names and inventory with the exact reviewed API export
+and `/object_info` results from the target ComfyUI installation.
+
+## 7. Binding reference
 
 One source value can target one node input or a list of node inputs:
 
@@ -371,7 +472,7 @@ Each target supports:
 A value of `null` is not applied, so an optional PawFlow argument can leave the
 trusted workflow default unchanged.
 
-## 7. Service parameters
+## 8. Service parameters
 
 | Parameter | Default | Notes |
 |---|---:|---|
@@ -382,23 +483,24 @@ trusted workflow default unchanged.
 | `api_key_header` | `Authorization` | For example `Authorization` or `X-API-Key`. |
 | `api_key_prefix` | `Bearer` | Leave empty when the header expects the raw key. |
 | `workflows` | Required | Presets keyed by operation name. |
-| `timeout` | Image: 1800 s; video: 3600 s | Overall prompt-history wait. |
+| `timeout` | Image: 1800 s; video/audio: 3600 s | Overall prompt-history wait. |
 | `request_timeout` | 60 s | Individual control/upload request timeout. |
-| `poll_interval` | Image: 1 s; video: 2 s | History polling interval. |
-| `max_input_bytes` | Image: 100 MiB; video: 512 MiB | Per uploaded input. |
-| `max_output_bytes` | Image: 4 GiB; video: 8 GiB | Download limit; output is streamed to disk. |
+| `poll_interval` | Image: 1 s; video/audio: 2 s | History polling interval. |
+| `max_input_bytes` | Image: 100 MiB; video/audio: 512 MiB | Per uploaded input. |
+| `max_output_bytes` | Image/audio: 4 GiB; video: 8 GiB | Download limit; output is streamed to disk. |
 
-## 8. Test from an agent
+## 9. Test from an agent
 
 After saving and connecting the service:
 
 1. Link the relay that can reach ComfyUI to the conversation.
-2. Confirm the service appears in the Image or Video category.
+2. Confirm the service appears in the Image, Video, or Audio category.
 3. If several compatible services exist, choose this service as the conversation or
    agent media preference.
 4. Start with a small output and fixed dimensions.
 5. Call `get_image_model_info` for the image service, then `generate_image`; or
-   call `generate_video` with only the arguments bound by the selected preset.
+   call `generate_video` with only the arguments bound by the selected preset; or
+   call `generate_audio` for an audio revision.
 6. Confirm the result is an `fs://filestore/...` URL or the requested relay file,
    not base64 in the conversation.
 
@@ -406,7 +508,7 @@ Only operations present in `workflows` are advertised to automatic media-service
 selection. A service that contains only `generate` will not be selected for
 `edit_image` or image-to-video.
 
-## 9. Security and operations
+## 10. Security and operations
 
 - Treat every workflow and custom node as executable administrator configuration.
   Install custom nodes only from reviewed sources.
@@ -422,7 +524,7 @@ selection. A service that contains only `generate` will not be selected for
   are written to disk in bounded chunks. Large output files are not accumulated in
   server RAM.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 **Connection failed at `/system_stats`**
 
@@ -452,7 +554,7 @@ Inspect `/history/{prompt_id}`. Set `output.node` to the save/combine node and
 `output.key` to the list containing the desired artifact, commonly `images`,
 `gifs`, or `videos`.
 
-**An image/video operation is not selected**
+**An image/video/audio operation is not selected**
 
 Add a preset with the exact PawFlow operation name. Merely having a Python method
 is not enough; automatic selection uses the configured operation list.

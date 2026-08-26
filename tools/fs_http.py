@@ -8,10 +8,40 @@ Streaming is supported via on_chunk callback for SSE responses.
 """
 
 import base64
+import ipaddress
 import logging
+import socket
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
+
+
+def _public_http_url(url: str) -> str:
+    parsed = urlsplit(str(url or "").strip())
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("URL must be absolute HTTP(S)")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URL must not contain credentials")
+    host = parsed.hostname.rstrip(".").lower()
+    if host in {"localhost", "localhost.localdomain"} or host.endswith(".localhost"):
+        raise ValueError("URL must target a public host")
+    port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    try:
+        addresses = {str(ipaddress.ip_address(host))}
+    except ValueError:
+        rows = socket.getaddrinfo(
+            host, port, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP)
+        addresses = {str(row[4][0]) for row in rows if len(row) >= 5 and row[4]}
+    if not addresses:
+        raise ValueError("URL hostname could not be resolved")
+    for value in addresses:
+        address = ipaddress.ip_address(value)
+        if (address.is_private or address.is_loopback or address.is_link_local
+                or address.is_multicast or address.is_reserved
+                or address.is_unspecified):
+            raise ValueError("URL must resolve only to public addresses")
+    return url
 
 
 def action_http_fetch(root_dir: str, path: str, req: Dict[str, Any], *,
@@ -42,6 +72,8 @@ def action_http_fetch(root_dir: str, path: str, req: Dict[str, Any], *,
     headers = req.get("headers") or {}
     body_raw = req.get("body", "")
     timeout = int(req.get("timeout") or 300)
+    max_bytes = max(0, int(req.get("max_bytes") or 0))
+    public_only = bool(req.get("public_only"))
 
     if not url:
         return {"ok": False, "error": "Missing url"}
@@ -61,15 +93,28 @@ def action_http_fetch(root_dir: str, path: str, req: Dict[str, Any], *,
     _drop = {"host", "connection", "content-length", "transfer-encoding"}
     _headers = {k: v for k, v in headers.items() if k.lower() not in _drop}
 
-    req_obj = urllib.request.Request(url, data=body_bytes, headers=_headers, method=method)
-
     try:
-        with urllib.request.urlopen(req_obj, timeout=timeout) as resp:  # nosec B310 - relay HTTP fetch tool intentionally fetches requested URLs.
-            return _consume(resp, on_chunk)
+        if public_only:
+            url = _public_http_url(url)
+
+            class PublicRedirects(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, request, fp, code, msg, response_headers,
+                                     new_url):
+                    return super().redirect_request(
+                        request, fp, code, msg, response_headers,
+                        _public_http_url(new_url))
+
+            opener = urllib.request.build_opener(PublicRedirects())
+        else:
+            opener = urllib.request.build_opener()
+        req_obj = urllib.request.Request(
+            url, data=body_bytes, headers=_headers, method=method)
+        with opener.open(req_obj, timeout=timeout) as resp:  # nosec B310 - relay HTTP fetch tool intentionally fetches requested URLs.
+            return _consume(resp, on_chunk, max_bytes=max_bytes)
     except urllib.error.HTTPError as e:
         # HTTP error status — still has a body we want to forward.
         try:
-            return _consume(e, on_chunk)
+            return _consume(e, on_chunk, max_bytes=max_bytes)
         except Exception as inner:
             logger.warning("Failed to read HTTP error body: %s", inner)
             if on_chunk:
@@ -87,7 +132,7 @@ def action_http_fetch(root_dir: str, path: str, req: Dict[str, Any], *,
         return {"ok": False, "error": str(e)}
 
 
-def _consume(resp, on_chunk):
+def _consume(resp, on_chunk, max_bytes=0):
     """Either stream chunks (when on_chunk is set) or return the full
     body inline so a sync caller can use http_fetch as a drop-in
     replacement for `urllib.request.urlopen` (status, headers, body).
@@ -106,12 +151,18 @@ def _consume(resp, on_chunk):
     if on_chunk:
         _emit_response_streaming(resp, on_chunk, status, _headers)
         return {"ok": True}
-    body = resp.read()
+    declared_length = int(_headers.get("Content-Length") or 0)
+    if max_bytes and declared_length > max_bytes:
+        raise ValueError("HTTP response exceeds configured byte limit")
+    body = resp.read(max_bytes + 1 if max_bytes else -1)
+    if max_bytes and len(body) > max_bytes:
+        raise ValueError("HTTP response exceeds configured byte limit")
     return {
         "ok": True,
         "status": status,
         "headers": _headers,
         "body": base64.b64encode(body).decode("ascii"),
+        "url": str(resp.geturl()),
     }
 
 

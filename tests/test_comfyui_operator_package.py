@@ -77,7 +77,7 @@ def test_manifest_inspection_lists_the_complete_operator_bundle():
         "flow:validate-video",
         "mcp_server:comfy-mcp",
     }
-    assert plan["version"] == "1.1.0"
+    assert plan["version"] == "1.2.0"
 
 
 def test_all_flow_graphs_are_closed_and_versioned():
@@ -244,14 +244,43 @@ def test_video_validator_gates_cost_and_accepts_a_local_request(
 def test_workflow_validator_accepts_api_graph_and_rejects_ui_export(
         monkeypatch, tmp_path):
     api_graph = {
+        "operation": "generate_audio",
         "workflow": {
             "1": {
-                "class_type": "KSampler",
-                "inputs": {"seed": 1},
+                "class_type": "TextEncode",
+                "inputs": {"text": "rain"},
+            },
+            "2": {
+                "class_type": "SaveAudio",
+                "inputs": {},
             }
         },
         "bindings": {
-            "seed": {"node": "1", "input": "seed"},
+            "prompt": {"node": "1", "input": "text"},
+        },
+        "output": {
+            "node": "2",
+            "key": "audio",
+            "index": 0,
+            "content_types": ["audio/wav"],
+        },
+        "metadata": {
+            "preset_id": "ace-step-music",
+            "revision": "1.0.0",
+            "created_at": "2026-08-25T00:00:00+00:00",
+            "media_kind": "audio",
+            "provenance": {
+                "source": "reviewed workflow",
+                "license": "Apache-2.0",
+            },
+            "capabilities": ["music"],
+            "limits": {"max_duration_seconds": 240},
+            "required_inventory": {
+                "nodes": ["TextEncode", "SaveAudio"],
+                "models": ["ace-step"],
+                "loras": [],
+                "custom_nodes": [],
+            },
         },
     }
     _, output = run_task(
@@ -268,6 +297,15 @@ def test_workflow_validator_accepts_api_graph_and_rejects_ui_export(
         {"mode": "workflow"},
     )
     assert json.loads(ui_output["content"])["valid"] is False
+
+    missing_metadata = dict(api_graph)
+    del missing_metadata["metadata"]
+    _, metadata_output = run_task(
+        monkeypatch, tmp_path, "validate", missing_metadata, {"mode": "workflow"}
+    )
+    report = json.loads(metadata_output["content"])
+    assert report["valid"] is False
+    assert any("metadata" in error for error in report["errors"])
 
 
 def test_probe_refuses_a_remote_target_chosen_by_the_request(

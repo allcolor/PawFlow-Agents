@@ -240,14 +240,13 @@ class FlowDefinitionValidator:
         # synthesizes an executeFlow task under the group id).
         endpoint_ids = set(all_task_ids)
 
-        from core.flow_feature_flags import declarative_workflows_enabled
         from core.flow_layout_contracts import (
             validate_executor_profiles,
             validate_flow_presentation,
         )
         problems.extend(validate_flow_presentation(
             definition,
-            require_relation_ids=declarative_workflows_enabled(),
+            require_relation_ids=True,
         ))
         problems.extend(validate_executor_profiles(definition))
 

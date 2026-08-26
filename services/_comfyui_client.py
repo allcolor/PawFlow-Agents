@@ -16,7 +16,13 @@ import uuid
 from typing import Any, Dict, Iterable
 
 from core import ServiceError
-from core.relay_proxy_url import relay_proxy_ssl_context, resolve_relay_aware_url
+from core.comfyui_workflow import ComfyWorkflowRevision
+from core.relay_proxy_url import (
+    CONV_RELAY_EXPR,
+    parse_relay_proxy_url,
+    relay_proxy_ssl_context,
+    resolve_relay_aware_url,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -65,8 +71,8 @@ class ComfyUIClient:
     """Submit configured workflows and download their selected artifact."""
 
     def __init__(self, config: dict, *, media_kind: str):
-        if media_kind not in {"image", "video"}:
-            raise ValueError("ComfyUI media_kind must be image or video")
+        if media_kind not in {"image", "video", "audio"}:
+            raise ValueError("ComfyUI media_kind must be image, video, or audio")
         self.media_kind = media_kind
         defaults = ({
             "timeout": 1800,
@@ -79,7 +85,9 @@ class ComfyUIClient:
             "request_timeout": 60,
             "poll_interval": 2.0,
             "max_input_bytes": 512 * 1024 * 1024,
-            "max_output_bytes": 8 * 1024 * 1024 * 1024,
+            "max_output_bytes": (
+                8 * 1024 * 1024 * 1024
+                if media_kind == "video" else 4 * 1024 * 1024 * 1024),
         })
         self._raw_base_url = str(raw_config(
             config, "base_url", "relay://MyWorkspace/localhost:8188")
@@ -116,24 +124,39 @@ class ComfyUIClient:
         self._runtime_user_id = ""
         self._runtime_conversation_id = ""
         self._runtime_agent_name = ""
+        self._runtime_relay_id = ""
+        self._runtime_relay_local = None
 
     def set_runtime_context(self, *, user_id: str = "",
                             conversation_id: str = "",
-                            agent_name: str = "") -> None:
+                            agent_name: str = "",
+                            relay_id: str = "", relay_local=None) -> None:
         self._runtime_user_id = user_id or ""
         self._runtime_conversation_id = conversation_id or ""
         self._runtime_agent_name = agent_name or ""
+        self._runtime_relay_id = str(relay_id or "").strip()
+        self._runtime_relay_local = relay_local
 
     def _base_url(self) -> str:
+        raw_base_url = self._raw_base_url
+        if self._runtime_relay_id:
+            raw_base_url = raw_base_url.replace(
+                CONV_RELAY_EXPR, self._runtime_relay_id)
+            if parse_relay_proxy_url(raw_base_url) is not None:
+                parsed = urllib.parse.urlsplit(raw_base_url)
+                raw_base_url = urllib.parse.urlunsplit(parsed._replace(
+                    netloc=self._runtime_relay_id))
         return resolve_relay_aware_url(
-            self._raw_base_url,
+            raw_base_url,
             user_id=self._runtime_user_id,
             conversation_id=self._runtime_conversation_id,
             agent_name=self._runtime_agent_name,
             allow_private=self.allow_private_base_url,
             service_name="ComfyUI",
             transform_relay=True,
-            relay_local=self.relay_local,
+            relay_local=(
+                self.relay_local if self._runtime_relay_local is None
+                else bool(self._runtime_relay_local)),
         )
 
     def _headers(self, *, json_body: bool = False) -> Dict[str, str]:
@@ -151,11 +174,14 @@ class ComfyUIClient:
         return headers
 
     def _validate_workflows(self) -> None:
+        revisions = {}
         for operation, preset in self.workflows.items():
             if not isinstance(operation, str) or not operation.strip():
                 raise ValueError("ComfyUI workflow operation names must be strings")
             if not isinstance(preset, dict):
                 raise ValueError(f"workflows.{operation} must be an object")
+            revisions[operation] = ComfyWorkflowRevision.from_preset(
+                operation, preset, media_kind=self.media_kind)
             workflow = preset.get("workflow")
             if not isinstance(workflow, dict) or not workflow:
                 raise ValueError(
@@ -202,6 +228,17 @@ class ComfyUIClient:
             if index < 0:
                 raise ValueError(
                     f"workflows.{operation}.output.index must be non-negative")
+            content_types = output.get("content_types")
+            if not isinstance(content_types, list) or not content_types:
+                raise ValueError(
+                    f"workflows.{operation}.output.content_types must be a non-empty array")
+            prefix = self.media_kind + "/"
+            if any(not isinstance(value, str) or not value.startswith(prefix)
+                   for value in content_types):
+                raise ValueError(
+                    f"workflows.{operation}.output.content_types must contain only "
+                    f"{self.media_kind} media types")
+        self.workflow_revisions = revisions
 
     @staticmethod
     def _validate_binding(operation: str, workflow: dict,
@@ -434,6 +471,19 @@ class ComfyUIClient:
         artifact = self._select_artifact(
             history, preset["output"], prompt_id=prompt_id)
         path, content_type = self._download_artifact(artifact)
+        normalized_type = str(content_type or "").split(";", 1)[0].strip().lower()
+        declared_types = {
+            str(value).split(";", 1)[0].strip().lower()
+            for value in preset["output"]["content_types"]
+        }
+        if normalized_type not in declared_types:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise ServiceError(
+                f"ComfyUI workflow '{operation}' returned undeclared content type "
+                f"{content_type or '<empty>'}")
         return {
             "path": path,
             "content_type": content_type,
@@ -515,8 +565,11 @@ class ComfyUIClient:
         if key:
             candidates = node.get(key) or []
         else:
-            preferred = (["images"] if self.media_kind == "image"
-                         else ["gifs", "videos", "images"])
+            preferred = {
+                "image": ["images"],
+                "video": ["gifs", "videos", "images"],
+                "audio": ["audio", "audios", "files"],
+            }[self.media_kind]
             lists = [node.get(name) for name in preferred]
             lists.extend(value for value in node.values()
                          if isinstance(value, list))
@@ -545,7 +598,9 @@ class ComfyUIClient:
             headers=self._headers(), method="GET")
         suffix = os.path.splitext(os.path.basename(str(artifact["filename"])))[1]
         if not suffix:
-            suffix = ".png" if self.media_kind == "image" else ".mp4"
+            suffix = {
+                "image": ".png", "video": ".mp4", "audio": ".wav",
+            }[self.media_kind]
         fd, path = tempfile.mkstemp(prefix="pawflow-comfyui-", suffix=suffix)
         total = 0
         try:

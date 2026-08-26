@@ -1,6 +1,7 @@
 """ConversationStore save/append_message/append_messages/delegate routing."""
 
 import logging
+import threading
 import time
 import uuid
 from typing import Any, Dict, List
@@ -44,6 +45,13 @@ class _CsAppendMixin:
         return uuid.uuid4().hex[:16]
 
     def exists(self, cid: str) -> bool:
+        # A caller can arrive while another startup thread is still building
+        # the cid -> owner index. Wait for that one atomic bootstrap before
+        # deciding a durable conversation is absent; otherwise invariant reads
+        # such as conv_agents can transiently observe an empty roster.
+        if (not self._loaded
+                and self._load_owner_ident != threading.get_ident()):
+            self._ensure_loaded()
         if cid in self._cid_user:
             return True
         with self._cache_lock:

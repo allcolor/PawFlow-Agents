@@ -176,13 +176,17 @@
             "public": true
           }
         ]
-      }
+      },
+      "label": "Http IN",
+      "description": "Receives or initiates the http in step using httpReceiver."
     },
     "relay_proxy": {
       "type": "serveRelayProxy",
       "parameters": {
         "service_id": "http_listener"
-      }
+      },
+      "label": "Relay Proxy",
+      "description": "Processes the relay proxy step using serveRelayProxy."
     },
     "validate_auth": {
       "type": "validateSessionAuth",
@@ -191,27 +195,35 @@
         "cookie_name": "pawflow_token",
         "login_redirect": "/auth/login",
         "listener_service_id": "http_listener"
-      }
+      },
+      "label": "Validate Auth",
+      "description": "Validates and routes the validate auth step using validateSessionAuth."
     },
     "oauth_login": {
       "type": "oauthRedirect",
       "parameters": {
         "oauth_service_id": "oauth"
-      }
+      },
+      "label": "Oauth Login",
+      "description": "Validates and routes the oauth login step using oauthRedirect."
     },
     "oauth_callback": {
       "type": "oauthCallback",
       "parameters": {
         "oauth_service_id": "oauth",
         "success_redirect": "/chat"
-      }
+      },
+      "label": "Oauth Callback",
+      "description": "Validates and routes the oauth callback step using oauthCallback."
     },
     "oauth_logout": {
       "type": "oauthLogout",
       "parameters": {
         "cookie_name": "pawflow_token",
         "redirect_to": "/chat"
-      }
+      },
+      "label": "Oauth Logout",
+      "description": "Validates and routes the oauth logout step using oauthLogout."
     },
     "mobile_auth": {
       "type": "mobileAuth",
@@ -219,7 +231,9 @@
         "auth_service_id": "auth",
         "oauth_service_id": "oauth",
         "cookie_name": "pawflow_token"
-      }
+      },
+      "label": "Mobile Auth",
+      "description": "Validates and routes the mobile auth step using mobileAuth."
     },
     "agent": {
       "type": "agentLoop",
@@ -236,20 +250,26 @@
         "conversation_ttl": "${conversation_ttl}",
         "file_base_url": "",
         "streaming": true
-      }
+      },
+      "label": "Agent",
+      "description": "Processes the agent step using agentLoop."
     },
     "agent_actions": {
       "type": "agentActions",
       "max_instances": 1000,
       "parameters": {
         "conversation_store": true
-      }
+      },
+      "label": "Agent Actions",
+      "description": "Processes the agent actions step using agentActions."
     },
     "agent_events": {
       "type": "agentSSEStream",
       "parameters": {
         "timeout": 600
-      }
+      },
+      "label": "Agent Events",
+      "description": "Processes the agent events step using agentSSEStream."
     },
     "chat_ui": {
       "type": "serveChatUI",
@@ -257,15 +277,21 @@
         "agent_path": "/api/agent",
         "sse_path": "/api/agent/events",
         "login_url": "/auth/login"
-      }
+      },
+      "label": "Chat UI",
+      "description": "Processes the chat ui step using serveChatUI."
     },
     "serve_file": {
       "type": "serveFile",
-      "parameters": {}
+      "parameters": {},
+      "label": "Serve File",
+      "description": "Processes the serve file step using serveFile."
     },
     "serve_relay_file": {
       "type": "serveRelayFile",
-      "parameters": {}
+      "parameters": {},
+      "label": "Serve Relay File",
+      "description": "Processes the serve relay file step using serveRelayFile."
     },
     "route_after_auth": {
       "type": "routeOnAttribute",
@@ -314,7 +340,9 @@
           }
         },
         "default_relationship": "api"
-      }
+      },
+      "label": "Route After Auth",
+      "description": "Validates and routes the route after auth step using routeOnAttribute."
     },
     "format_response": {
       "type": "updateAttribute",
@@ -324,7 +352,9 @@
           "http.response.header.Content-Type": "application/json",
           "http.response.status": "200"
         }
-      }
+      },
+      "label": "Format Response",
+      "description": "Delivers the format response step using updateAttribute."
     },
     "send_response": {
       "type": "handleHTTPResponse",
@@ -332,7 +362,9 @@
       "parameters": {
         "service_id": "http_listener",
         "content_type": "application/json"
-      }
+      },
+      "label": "Send Response",
+      "description": "Delivers the send response step using handleHTTPResponse."
     },
     "chat_assets": {
       "type": "serveAssets",
@@ -340,14 +372,18 @@
         "assets_prefix": "chat_ui",
         "base_path": "/chat/js",
         "cache_control": "public, max-age=31536000, immutable"
-      }
+      },
+      "label": "Chat Assets",
+      "description": "Processes the chat assets step using serveAssets."
     },
     "chat_ext_assets": {
       "type": "servePfpExtensionAssets",
       "max_instances": "${agent_max_instances}",
       "parameters": {
         "cache_control": "public, max-age=31536000, immutable"
-      }
+      },
+      "label": "Chat EXT Assets",
+      "description": "Processes the chat ext assets step using servePfpExtensionAssets."
     },
     "apps_assets": {
       "type": "servePfpWebAppAssets",
@@ -355,229 +391,275 @@
       "parameters": {
         "asset_cache_control": "public, max-age=31536000, immutable",
         "entry_cache_control": "no-cache"
-      }
+      },
+      "label": "Apps Assets",
+      "description": "Processes the apps assets step using servePfpWebAppAssets."
     }
   },
   "relations": [
     {
       "from": "http_in",
       "to": "validate_auth",
-      "type": "POST:/api/agent"
+      "type": "POST:/api/agent",
+      "relation_id": "rel_d9dd9d5a244dcd82"
     },
     {
       "from": "http_in",
       "to": "validate_auth",
-      "type": "POST:/api/ui"
+      "type": "POST:/api/ui",
+      "relation_id": "rel_909dc99a95108536"
     },
     {
       "from": "http_in",
       "to": "validate_auth",
-      "type": "GET:/chat"
+      "type": "GET:/chat",
+      "relation_id": "rel_88e67ddcd9993e98"
     },
     {
       "from": "http_in",
       "to": "validate_auth",
-      "type": "GET:/api/agent/events"
+      "type": "GET:/api/agent/events",
+      "relation_id": "rel_9739bc86ce8beca6"
     },
     {
       "from": "http_in",
       "to": "validate_auth",
-      "type": "GET:/files"
+      "type": "GET:/files",
+      "relation_id": "rel_20ef20c7a445ccdf"
     },
     {
       "from": "http_in",
       "to": "validate_auth",
-      "type": "GET:/fs"
+      "type": "GET:/fs",
+      "relation_id": "rel_b5931d5225e40fa1"
     },
     {
       "from": "validate_auth",
       "to": "route_after_auth",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_78fcf849793064e1"
     },
     {
       "from": "validate_auth",
       "to": "send_response",
-      "type": "failure"
+      "type": "failure",
+      "relation_id": "rel_e9e3b00e31c52ec1"
     },
     {
       "from": "route_after_auth",
       "to": "agent",
-      "type": "api"
+      "type": "api",
+      "relation_id": "rel_8a1f4c293c4864fb"
     },
     {
       "from": "route_after_auth",
       "to": "agent_actions",
-      "type": "ui"
+      "type": "ui",
+      "relation_id": "rel_86a94ccc3be06d77"
     },
     {
       "from": "agent_actions",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_2426bde1d8ed54b8"
     },
     {
       "from": "route_after_auth",
       "to": "chat_ui",
-      "type": "chat"
+      "type": "chat",
+      "relation_id": "rel_de16606c577298b7"
     },
     {
       "from": "route_after_auth",
       "to": "agent_events",
-      "type": "sse"
+      "type": "sse",
+      "relation_id": "rel_949e7f3264716217"
     },
     {
       "from": "route_after_auth",
       "to": "serve_file",
-      "type": "files"
+      "type": "files",
+      "relation_id": "rel_23e9b29c1fbf4fe4"
     },
     {
       "from": "route_after_auth",
       "to": "serve_relay_file",
-      "type": "fs"
+      "type": "fs",
+      "relation_id": "rel_a3d4933085f07efe"
     },
     {
       "from": "http_in",
       "to": "oauth_login",
-      "type": "GET:/auth/login"
+      "type": "GET:/auth/login",
+      "relation_id": "rel_d226d3ecbf1651bc"
     },
     {
       "from": "http_in",
       "to": "oauth_login",
-      "type": "POST:/auth/login/builtin"
+      "type": "POST:/auth/login/builtin",
+      "relation_id": "rel_0e82c1706928bb28"
     },
     {
       "from": "http_in",
       "to": "oauth_login",
-      "type": "POST:/auth/login/token"
+      "type": "POST:/auth/login/token",
+      "relation_id": "rel_017a30406b000503"
     },
     {
       "from": "http_in",
       "to": "oauth_login",
-      "type": "GET:/auth/login/provider"
+      "type": "GET:/auth/login/provider",
+      "relation_id": "rel_742b4c4d09115393"
     },
     {
       "from": "http_in",
       "to": "oauth_callback",
-      "type": "GET:/auth/callback"
+      "type": "GET:/auth/callback",
+      "relation_id": "rel_f155033d9e50bc9f"
     },
     {
       "from": "http_in",
       "to": "mobile_auth",
-      "type": "GET:/auth/mobile/providers"
+      "type": "GET:/auth/mobile/providers",
+      "relation_id": "rel_e3a74ef348ac986d"
     },
     {
       "from": "http_in",
       "to": "mobile_auth",
-      "type": "POST:/auth/mobile/start"
+      "type": "POST:/auth/mobile/start",
+      "relation_id": "rel_588b000d7577856c"
     },
     {
       "from": "http_in",
       "to": "mobile_auth",
-      "type": "POST:/auth/mobile/builtin"
+      "type": "POST:/auth/mobile/builtin",
+      "relation_id": "rel_6588ecbc21f62d32"
     },
     {
       "from": "http_in",
       "to": "mobile_auth",
-      "type": "POST:/auth/mobile/consume"
+      "type": "POST:/auth/mobile/consume",
+      "relation_id": "rel_c219f124135d5a22"
     },
     {
       "from": "mobile_auth",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_09b62d69c4284fd1"
     },
     {
       "from": "http_in",
       "to": "oauth_logout",
-      "type": "POST:/auth/logout"
+      "type": "POST:/auth/logout",
+      "relation_id": "rel_c2d13bb20b46cbc5"
     },
     {
       "from": "agent",
       "to": "format_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_d4e568097931d11b"
     },
     {
       "from": "format_response",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_6e85b557ecb52a9f"
     },
     {
       "from": "agent_events",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_087df42ab35a6e0f"
     },
     {
       "from": "chat_ui",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_6780c27896b7f512"
     },
     {
       "from": "serve_file",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_0bb288fb7647f547"
     },
     {
       "from": "serve_relay_file",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_51820483ef4a04f7"
     },
     {
       "from": "oauth_login",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_7a9047fecbd1b364"
     },
     {
       "from": "oauth_callback",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_cf466c1dfb429930"
     },
     {
       "from": "oauth_logout",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_d59e45adf1551a79"
     },
     {
       "from": "route_after_auth",
       "to": "chat_assets",
-      "type": "chat_js"
+      "type": "chat_js",
+      "relation_id": "rel_e985c03d979ab104"
     },
     {
       "from": "chat_assets",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_5c93b67272ec3bb7"
     },
     {
       "from": "http_in",
       "to": "validate_auth",
-      "type": "GET:/chat/js"
+      "type": "GET:/chat/js",
+      "relation_id": "rel_7fa0bff01fd41903"
     },
     {
       "from": "http_in",
       "to": "validate_auth",
-      "type": "GET:/chat/ext"
+      "type": "GET:/chat/ext",
+      "relation_id": "rel_f84dd108d651c234"
     },
     {
       "from": "route_after_auth",
       "to": "chat_ext_assets",
-      "type": "chat_ext"
+      "type": "chat_ext",
+      "relation_id": "rel_801b5fc6dd3d85f4"
     },
     {
       "from": "chat_ext_assets",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_312e9ad414c646b9"
     },
     {
       "from": "http_in",
       "to": "validate_auth",
-      "type": "GET:/apps"
+      "type": "GET:/apps",
+      "relation_id": "rel_a4eae07eff0dc94e"
     },
     {
       "from": "route_after_auth",
       "to": "apps_assets",
-      "type": "apps"
+      "type": "apps",
+      "relation_id": "rel_093a14241ee34154"
     },
     {
       "from": "apps_assets",
       "to": "send_response",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_6849c8d937a80da7"
     }
   ],
   "entries": [
@@ -587,5 +669,937 @@
     "send_response"
   ],
   "fqn": "default.pawflow_agent:1.0.0",
-  "package": "default"
+  "package": "default",
+  "layout_schema_version": 1,
+  "default_layout_id": "functional",
+  "layouts": {
+    "functional": {
+      "id": "functional",
+      "name": "pawflow_agent functional stages",
+      "kind": "declarative",
+      "root_group_id": "",
+      "viewport": {
+        "x": 40,
+        "y": 40,
+        "zoom": 0.75
+      },
+      "direction": "LR",
+      "nodes": {
+        "http_in": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "validate_auth": {
+          "x": 360,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "accent": "#f59e0b",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "oauth_login": {
+          "x": 360,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "accent": "#f59e0b",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "oauth_callback": {
+          "x": 360,
+          "y": 300,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "accent": "#f59e0b",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "oauth_logout": {
+          "x": 360,
+          "y": 450,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "accent": "#f59e0b",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "mobile_auth": {
+          "x": 360,
+          "y": 600,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "accent": "#f59e0b",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "route_after_auth": {
+          "x": 360,
+          "y": 750,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "accent": "#f59e0b",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "relay_proxy": {
+          "x": 720,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "agent": {
+          "x": 720,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "agent_actions": {
+          "x": 720,
+          "y": 300,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "agent_events": {
+          "x": 720,
+          "y": 450,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "chat_ui": {
+          "x": 720,
+          "y": 600,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "serve_file": {
+          "x": 720,
+          "y": 750,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "serve_relay_file": {
+          "x": 720,
+          "y": 900,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "chat_assets": {
+          "x": 720,
+          "y": 1050,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "chat_ext_assets": {
+          "x": 720,
+          "y": 1200,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "apps_assets": {
+          "x": 720,
+          "y": 1350,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "format_response": {
+          "x": 1080,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "send_response": {
+          "x": 1080,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        }
+      },
+      "relations": {
+        "rel_d9dd9d5a244dcd82": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_909dc99a95108536": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_88e67ddcd9993e98": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_9739bc86ce8beca6": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_20ef20c7a445ccdf": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_b5931d5225e40fa1": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_78fcf849793064e1": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_e9e3b00e31c52ec1": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_8a1f4c293c4864fb": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_86a94ccc3be06d77": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_2426bde1d8ed54b8": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_de16606c577298b7": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_949e7f3264716217": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_23e9b29c1fbf4fe4": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_a3d4933085f07efe": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_d226d3ecbf1651bc": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_0e82c1706928bb28": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_017a30406b000503": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_742b4c4d09115393": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_f155033d9e50bc9f": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_e3a74ef348ac986d": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_588b000d7577856c": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_6588ecbc21f62d32": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_c219f124135d5a22": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_09b62d69c4284fd1": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_c2d13bb20b46cbc5": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_d4e568097931d11b": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_6e85b557ecb52a9f": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_087df42ab35a6e0f": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_6780c27896b7f512": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_0bb288fb7647f547": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_51820483ef4a04f7": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_7a9047fecbd1b364": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_cf466c1dfb429930": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_d59e45adf1551a79": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_e985c03d979ab104": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_5c93b67272ec3bb7": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_7fa0bff01fd41903": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_f84dd108d651c234": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_801b5fc6dd3d85f4": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_312e9ad414c646b9": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_a4eae07eff0dc94e": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_093a14241ee34154": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_6849c8d937a80da7": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        }
+      },
+      "annotations": {},
+      "frames": {
+        "stage_inputs": {
+          "id": "stage_inputs",
+          "label": "Inputs & triggers",
+          "description": "Receives requests and starts scheduled work.",
+          "x": -32,
+          "y": -72,
+          "width": 304,
+          "height": 214,
+          "member_ids": [
+            "http_in"
+          ],
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_routing": {
+          "id": "stage_routing",
+          "label": "Validation & routing",
+          "description": "Validates inputs, authenticates callers, and selects paths.",
+          "x": 328,
+          "y": -72,
+          "width": 304,
+          "height": 964,
+          "member_ids": [
+            "validate_auth",
+            "oauth_login",
+            "oauth_callback",
+            "oauth_logout",
+            "mobile_auth",
+            "route_after_auth"
+          ],
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_processing": {
+          "id": "stage_processing",
+          "label": "Core processing",
+          "description": "Performs the flow's main transformation or agent work.",
+          "x": 688,
+          "y": -72,
+          "width": 304,
+          "height": 1564,
+          "member_ids": [
+            "relay_proxy",
+            "agent",
+            "agent_actions",
+            "agent_events",
+            "chat_ui",
+            "serve_file",
+            "serve_relay_file",
+            "chat_assets",
+            "chat_ext_assets",
+            "apps_assets"
+          ],
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_outputs": {
+          "id": "stage_outputs",
+          "label": "Delivery & outputs",
+          "description": "Publishes results and completes external responses.",
+          "x": 1048,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "format_response",
+            "send_response"
+          ],
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        }
+      },
+      "visibility": {}
+    }
+  }
 }

@@ -19,25 +19,17 @@ records. The migration is opt-in, server-owned, and fail-closed.
 - Do not delete PlanStore files or code until the compatibility release and
   production canary evidence are complete.
 
-## Server feature flags
+## Permanent feature state
 
-All flags default to disabled:
-
-| Flag | Purpose |
-|---|---|
-| `PAWFLOW_MULTI_VIEW_LAYOUTS_ENABLED` | Persist and render versioned multi-view layouts. |
-| `PAWFLOW_DECLARATIVE_WORKFLOWS_ENABLED` | Enable declarative lowering and authoring actions. |
-| `PAWFLOW_FLOW_RUNS_ENABLED` | Enable durable one-shot FlowRun execution. |
-| `PAWFLOW_WORKFLOW_PROPOSALS_ENABLED` | Select the canonical proposal writer and disable all 18 legacy PlanStore HTTP actions and Web surfaces. |
-| `PAWFLOW_PLAN_MIGRATION_ENABLED` | Permit manifest activation; preparation remains read-only with respect to cutover. |
-
-Use `1`, `true`, `yes`, or `on` to enable a flag. Invalid values stop
-configuration resolution instead of silently choosing a default.
+Multi-view layouts, declarative workflows, durable FlowRuns, canonical workflow
+proposals, and migration activation are permanent capabilities. They do not use
+server rollout flags. The migration manifest, exact source digests, authenticated
+operator authority, and first-write fence remain the safety boundary.
 
 ## 1. Establish the baseline
 
 1. Back up the PlanStore directory and PawFlow runtime databases.
-2. Leave all five flags disabled.
+2. Confirm the canonical proposal APIs and clients are available.
 3. Run the full CI, security, Web template/SSE, PawCode, and VS Code gates.
 4. Record the legacy record count and state distribution.
 5. Confirm no migration manifest is already active under
@@ -75,20 +67,14 @@ manifest by hand.
 
 ## 3. Stage and validate the canonical runtime
 
-Enable and restart the canary with:
-
-- `PAWFLOW_MULTI_VIEW_LAYOUTS_ENABLED=1`;
-- `PAWFLOW_DECLARATIVE_WORKFLOWS_ENABLED=1`;
-- `PAWFLOW_FLOW_RUNS_ENABLED=1`.
-
-Keep `PAWFLOW_WORKFLOW_PROPOSALS_ENABLED=0` until activation is ready, so the
-legacy writer remains the only writer. Validate flow publication, durable
+No feature flag or restart is required. Before migration activation, keep the
+legacy source immutable while validating flow publication, durable
 interactions, recovery, exact ResourceRef resolution, authorization snapshots,
 and one non-Web client.
 
 ## 4. Activate once
 
-Set `PAWFLOW_PLAN_MIGRATION_ENABLED=1`, restart, and call:
+Call:
 
 ```python
 from core.plan_migration_runtime import activate_legacy_plan_migration
@@ -105,8 +91,7 @@ publishes immutable converted flows, imports terminal/inactive/active records
 through compensating sagas, and commits the manifest only after all artifacts
 exist. Exact retries are idempotent.
 
-After activation, set `PAWFLOW_WORKFLOW_PROPOSALS_ENABLED=1` and restart. This
-switch is exclusive:
+After activation, the canonical proposal path is exclusive:
 
 - all 18 legacy PlanStore actions return HTTP 404 without opening PlanStore;
 - legacy Web panel, menu, scripts, listeners, and OpenSpace projections are absent;
@@ -141,7 +126,7 @@ rolled_back = rollback_legacy_plan_migration(prepared["migration_id"])
 ```
 
 Rollback removes only provenance-matching imported artifacts and restores the
-exact backed-up PlanStore bytes. Then disable the canonical flags and restart.
+exact backed-up PlanStore bytes. No feature flag or restart is involved.
 
 If the manifest has `first_write_at`, stop. Rollback is prohibited because
 canonical state now has user-visible writes that cannot be safely merged back
@@ -158,8 +143,7 @@ interaction, recovery, cancellation, terminal, inspect, and replay paths pass:
    policy;
 3. keep legacy reads/code until the declared compatibility release;
 4. perform destructive cleanup only in a separately reviewed change;
-5. record the canary evidence, active flag set, migration ID, and
-   `first_write_at`.
+5. record the canary evidence, migration ID, and `first_write_at`.
 
 See [Declarative Workflows Implementation Plan](DECLARATIVE_WORKFLOWS_IMPLEMENTATION_PLAN.md)
 for design rationale and [Security Model](security_model.md) for trust boundaries.

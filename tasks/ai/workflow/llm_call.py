@@ -185,6 +185,25 @@ class AgentLLMCallTask(_WorkflowContextTask):
             timeout_seconds = self._bound_timeout(context)
             response = self._complete_with_cancellation(
                 client, messages, cancel_event, timeout_seconds)
+            if str(response.content or "").strip():
+                self._emit_execution(
+                    context,
+                    "agent_message",
+                    role="assistant",
+                    model=str(response.model or ""),
+                    **self._observable_agent_message_values(
+                        context, str(response.content or "")),
+                )
+            for call in response.tool_calls or []:
+                self._emit_execution(
+                    context,
+                    "tool_call",
+                    tool_call_id=str(call.id),
+                    tool_name=str(call.name),
+                    arguments=self._observable_event_value(
+                        context, dict(call.arguments or {}),
+                        max_string=800, max_items=32),
+                )
             track_tokens = getattr(service, "_track_tokens", None)
             if callable(track_tokens):
                 track_tokens(response, messages)
@@ -610,6 +629,73 @@ class AgentLLMCallTask(_WorkflowContextTask):
                 )
             }
         callback("workflow_progress", data)
+
+    def _observable_event_value(
+        self,
+        context,
+        value: Any,
+        *,
+        max_string: int = 4000,
+        max_items: int = 48,
+    ) -> Any:
+        secrets = getattr(self, "_workflow_observable_secrets", None)
+        if secrets is None:
+            secrets = ()
+            try:
+                from services.tool_relay_service import resolve_secret_values
+                resolved, _names = resolve_secret_values(
+                    context.user_id, context.conversation_id)
+                secrets = tuple(resolved or ())
+            except Exception:
+                secrets = ()
+            self._workflow_observable_secrets = secrets
+        if isinstance(value, str) and "__image_data__:" in value:
+            value = "\n".join(
+                "<image omitted>" if line.startswith("__image_data__:") else line
+                for line in value.splitlines()
+            )
+        from core.gating_policy import redact_arguments
+        return redact_arguments(
+            value,
+            secrets,
+            max_string=max_string,
+            max_items=max_items,
+            max_depth=6,
+        )
+
+    def _observable_agent_message_values(
+        self,
+        context,
+        content: str,
+    ) -> dict[str, Any]:
+        try:
+            structured = json.loads(content)
+        except (TypeError, ValueError):
+            structured = None
+        if isinstance(structured, (dict, list)):
+            return {
+                "structured_content": self._observable_event_value(
+                    context, structured, max_string=2000, max_items=64),
+            }
+        if str(content or "").lstrip().startswith(("{", "[")):
+            return {"content": "Structured response incomplete."}
+        return {
+            "content": self._observable_event_value(
+                context, content, max_string=8000),
+        }
+
+    def _emit_execution(self, context, event_type: str, **values: Any) -> None:
+        callback = getattr(self, "_workflow_event_callback", None)
+        if callback is None:
+            return
+        callback(event_type, {
+            "turn_id": context.root_turn_id,
+            "run_id": context.run_id,
+            "agent_name": context.agent_name,
+            "flow_fqn": context.flow_ref.name,
+            "task_id": self.get_task_id(),
+            **values,
+        })
 
 
 TaskFactory.register(AgentLLMCallTask)

@@ -151,6 +151,15 @@ def test_active_agents_is_a_header_icon_with_count_and_popover():
     assert "function _updateActiveAgentsCount(count)" in ACTIVE_JS
     assert "badge.hidden = count === 0" in ACTIVE_JS
     assert "_updateActiveAgentsCount(names.length)" in ACTIVE_JS
+    # A partial/live asset rollout must not leave the panel behind in the
+    # transcript: every render repairs the mount before touching its rows.
+    assert "mountComposerChrome();" in ACTIVE_JS
+    # The header establishes the top interactive layer; the popover and its
+    # action buttons must receive pointer events above the scrolling transcript.
+    assert ".header { position: relative; z-index: 200;" in TEMPLATE
+    assert "pointer-events: auto;" in TEMPLATE[TEMPLATE.index(".hdr-pop {"):
+                                                TEMPLATE.index(".hdr-pop.open")]
+    assert ".hdr-pop .active-row .a-actions button { pointer-events: auto; }" in TEMPLATE
 
 
 def test_action_status_is_an_icon_animated_while_working():

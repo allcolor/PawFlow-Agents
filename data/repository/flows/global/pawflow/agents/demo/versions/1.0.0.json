@@ -7,47 +7,341 @@
   "description": "Experimental WP3 queue-only workflow-agent vertical slice.",
   "agent_contract": {
     "version": 1,
-    "input": {"port": "turn_in"},
-    "terminal": {"port": "turn_out"},
+    "input": {
+      "port": "turn_in"
+    },
+    "terminal": {
+      "port": "turn_out"
+    },
     "parameters": {},
-    "supported_preempt_policies": ["queue"],
-    "allowed_effects": ["resource.read"]
+    "supported_preempt_policies": [
+      "queue"
+    ],
+    "allowed_effects": [
+      "resource.read"
+    ]
   },
   "parameters": {},
   "services": {},
-  "entries": ["turn_in"],
-  "exits": ["turn_out"],
+  "entries": [
+    "turn_in"
+  ],
+  "exits": [
+    "turn_out"
+  ],
   "tasks": {
     "turn_in": {
       "type": "inputPort",
-      "parameters": {"port_name": "agent_turn"}
+      "parameters": {
+        "port_name": "agent_turn"
+      },
+      "label": "Turn IN",
+      "description": "Receives or initiates the turn in step using inputPort."
     },
     "validate_request": {
       "type": "agentWorkflowInput",
-      "parameters": {}
+      "parameters": {},
+      "label": "Validate Request",
+      "description": "Receives or initiates the validate request step using agentWorkflowInput."
     },
     "progress": {
       "type": "emitAgentProgress",
-      "parameters": {"stage": "compose"}
+      "parameters": {
+        "stage": "compose"
+      },
+      "label": "Progress",
+      "description": "Processes the progress step using emitAgentProgress."
     },
     "fake_llm": {
       "type": "workflowFakeLLM",
-      "parameters": {"response_prefix": "Workflow completed: "}
+      "parameters": {
+        "response_prefix": "Workflow completed: "
+      },
+      "label": "Fake LLM",
+      "description": "Processes the fake llm step using workflowFakeLLM."
     },
     "complete": {
       "type": "completeAgentTurn",
-      "parameters": {}
+      "parameters": {},
+      "label": "Complete",
+      "description": "Delivers the complete step using completeAgentTurn."
     },
     "turn_out": {
       "type": "outputPort",
-      "parameters": {"port_name": "agent_terminal"}
+      "parameters": {
+        "port_name": "agent_terminal"
+      },
+      "label": "Turn OUT",
+      "description": "Delivers the turn out step using outputPort."
     }
   },
   "relations": [
-    {"from": "turn_in", "to": "validate_request", "type": "success"},
-    {"from": "validate_request", "to": "progress", "type": "success"},
-    {"from": "progress", "to": "fake_llm", "type": "success"},
-    {"from": "fake_llm", "to": "complete", "type": "success"},
-    {"from": "complete", "to": "turn_out", "type": "success"}
-  ]
+    {
+      "from": "turn_in",
+      "to": "validate_request",
+      "type": "success",
+      "relation_id": "rel_97bf3a08cad1ba52"
+    },
+    {
+      "from": "validate_request",
+      "to": "progress",
+      "type": "success",
+      "relation_id": "rel_f6ba4a094cf4b1c1"
+    },
+    {
+      "from": "progress",
+      "to": "fake_llm",
+      "type": "success",
+      "relation_id": "rel_8cc0a8ea55310e11"
+    },
+    {
+      "from": "fake_llm",
+      "to": "complete",
+      "type": "success",
+      "relation_id": "rel_c237d181c1741c4d"
+    },
+    {
+      "from": "complete",
+      "to": "turn_out",
+      "type": "success",
+      "relation_id": "rel_953f407e8be05acd"
+    }
+  ],
+  "layout_schema_version": 1,
+  "default_layout_id": "functional",
+  "layouts": {
+    "functional": {
+      "id": "functional",
+      "name": "Workflow Agent Demo functional stages",
+      "kind": "declarative",
+      "root_group_id": "",
+      "viewport": {
+        "x": 40,
+        "y": 40,
+        "zoom": 0.75
+      },
+      "direction": "LR",
+      "nodes": {
+        "turn_in": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "validate_request": {
+          "x": 0,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "progress": {
+          "x": 360,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "fake_llm": {
+          "x": 360,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "complete": {
+          "x": 720,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "turn_out": {
+          "x": 720,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        }
+      },
+      "relations": {
+        "rel_97bf3a08cad1ba52": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_f6ba4a094cf4b1c1": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_8cc0a8ea55310e11": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_c237d181c1741c4d": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_953f407e8be05acd": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        }
+      },
+      "annotations": {},
+      "frames": {
+        "stage_inputs": {
+          "id": "stage_inputs",
+          "label": "Inputs & triggers",
+          "description": "Receives requests and starts scheduled work.",
+          "x": -32,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "turn_in",
+            "validate_request"
+          ],
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_processing": {
+          "id": "stage_processing",
+          "label": "Core processing",
+          "description": "Performs the flow's main transformation or agent work.",
+          "x": 328,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "progress",
+            "fake_llm"
+          ],
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_outputs": {
+          "id": "stage_outputs",
+          "label": "Delivery & outputs",
+          "description": "Publishes results and completes external responses.",
+          "x": 688,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "complete",
+            "turn_out"
+          ],
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        }
+      },
+      "visibility": {}
+    }
+  }
 }

@@ -87,16 +87,10 @@ def _handle_flow_editor(self, action, body, store, user_id, flowfile):
                 str(body.get("service_type", "") or ""),
                 params if isinstance(params, dict) else {}))
         if action == "flow_editor_declarative_catalog":
-            from core.flow_feature_flags import declarative_workflows_enabled
-            if not declarative_workflows_enabled():
-                return _reply({"error": "Declarative workflows are disabled"}, "404")
             from core.declarative_flow.registry import DeclarativeBlockRegistry
             return _reply({"schema_version": 1,
                            "blocks": DeclarativeBlockRegistry.catalog()})
         if action == "flow_editor_declarative_project":
-            from core.flow_feature_flags import declarative_workflows_enabled
-            if not declarative_workflows_enabled():
-                return _reply({"error": "Declarative workflows are disabled"}, "404")
             definition = body.get("definition")
             if not isinstance(definition, dict):
                 return _reply({"error": "definition is required"}, "400")
@@ -183,9 +177,6 @@ def _handle_flow_editor(self, action, body, store, user_id, flowfile):
         if action in (
                 "flow_editor_declarative_preview",
                 "flow_editor_declarative_apply"):
-            from core.flow_feature_flags import declarative_workflows_enabled
-            if not declarative_workflows_enabled():
-                return _reply({"error": "Declarative workflows are disabled"}, "404")
             if body.get("base_revision") is None:
                 return _reply({"error": "base_revision is required"}, "400")
             operation = body.get("operation")
@@ -203,21 +194,19 @@ def _handle_flow_editor(self, action, body, store, user_id, flowfile):
             draft = service.save_draft(draft_id, user_id, definition,
                                        body.get("base_revision"))
             proposal = None
-            from core.flow_feature_flags import workflow_proposals_enabled
-            if workflow_proposals_enabled():
-                from core.workflow_proposal_store import (
-                    WorkflowProposalStore,
-                    definition_digest,
-                )
-                proposal = WorkflowProposalStore.instance().note_draft_changed(
-                    draft_id=draft_id, draft_revision=int(draft["revision"]),
-                    digest=definition_digest(draft["definition"]),
-                    actor_id=user_id)
-                if proposal is not None:
-                    from core.conversation_event_bus import ConversationEventBus
-                    ConversationEventBus.instance().publish_event(
-                        proposal["conversation_id"],
-                        "workflow_proposal_updated", {"proposal": proposal})
+            from core.workflow_proposal_store import (
+                WorkflowProposalStore,
+                definition_digest,
+            )
+            proposal = WorkflowProposalStore.instance().note_draft_changed(
+                draft_id=draft_id, draft_revision=int(draft["revision"]),
+                digest=definition_digest(draft["definition"]),
+                actor_id=user_id)
+            if proposal is not None:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    proposal["conversation_id"],
+                    "workflow_proposal_updated", {"proposal": proposal})
             return _reply({"ok": True, "draft_id": draft_id,
                            "revision": draft["revision"],
                            "updated_at": draft["updated_at"],

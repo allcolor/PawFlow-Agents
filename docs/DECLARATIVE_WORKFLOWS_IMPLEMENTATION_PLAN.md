@@ -281,7 +281,9 @@ metadata intentionally rewritten by publication.
 User colors are the base presentation. Runtime states add badges, outlines,
 animation, or overlays with accessible contrast. Running, failed, paused, and
 backpressured states must remain distinguishable regardless of the chosen base
-color.
+color. The runtime viewer renders presentation frames above the canvas background
+and below task nodes. Frame opacity applies to the fill only, so frame labels and
+descriptions remain readable while the grouped tasks stay unobscured.
 
 ## 7. Product terminology
 
@@ -753,7 +755,6 @@ Reusable executor profiles live in the canonical flow definition:
         "content_digest": "sha256"
       },
       "limits": {
-        "max_duration_seconds": 900,
         "max_cost_usd": 1.0
       }
     }
@@ -1078,12 +1079,15 @@ Add <code>invokeWorkflowAgent</code> with required configuration:
   "parameters": {},
   "await_terminal": true,
   "publish_to_conversation": false,
-  "terminal_timeout": "15m",
   "cancellation_policy": "propagate",
   "result_content": "response",
   "artifact_attribute": "review.artifacts"
 }
 ~~~
+
+`terminal_timeout` is optional and has no default. Omitting it preserves the
+child Workflow Agent binding; when neither surface explicitly sets
+`max_duration_seconds`, the invocation has no wall-clock deadline.
 
 The first production version supports exact Workflow Agent resources only.
 A later <code>invokeAgent</code> facade may route other runtime kinds after

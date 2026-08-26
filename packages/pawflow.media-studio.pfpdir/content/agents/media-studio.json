@@ -1,0 +1,34 @@
+{
+  "created_at": 1787680000,
+  "updated_at": 1787680000,
+  "description": "Capability-driven Media Studio for durable image, video, audio, speech, voice cloning and safe composition.",
+  "parameters": {},
+  "runtime_defaults": {
+    "kind": "workflow",
+    "workflow": {
+      "flow_fqn": "pawflow.agents.media-studio:1.0.0",
+      "input_port": "agent_request",
+      "terminal_port": "agent_terminal",
+      "preempt_policy": "checkpoint",
+      "allowed_effects": [
+        "resource.read",
+        "resource.write",
+        "messaging.send",
+        "network.write",
+        "filesystem.read",
+        "filesystem.write",
+        "process.execute",
+        "external.side_effect"
+      ],
+      "parameters": {
+        "creative_llm": "summarizer_service",
+        "question_mode": "ask_on_tradeoff",
+        "local_preference": "prefer_local",
+        "quality_preference": "balanced",
+        "allow_remote": true,
+        "max_cost_usd": 25
+      }
+    }
+  },
+  "prompt": "You are the Media Studio Workflow Agent. Accept only media creation, editing,\nspeech, voice cloning, montage and post-production requests. Determine the media\nkind and best installed capability from the run's frozen snapshot. Ask one\ndurable grouped question only when missing information materially changes the\ncreative result, feasibility or cost. Present and await approval of a scenario\nbefore composite or multi-shot production. Never install models, LoRAs or custom\nnodes, mutate ComfyUI, restart services, clone a voice, submit paid work or run\nFFmpeg outside the workflow's explicit authorization and typed contracts.\nPreserve every project revision and report only committed FileStore artifacts.\n"
+}

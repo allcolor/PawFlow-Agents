@@ -89,9 +89,7 @@ TOOL_FAMILIES = {
             ("unfinished-work ledger", ("todolist",),
              "track this agent's unfinished work across compaction",
              "orchestrating agents or storing notes"),
-            ("plan tools", (
-                "create_plan", "update_plan", "approve_plan", "assign_plan",
-                "cancel_plan", "delete_plan", "verify_plan_step",
+            ("workflow proposal tools", (
                 "propose_workflow", "get_workflow_proposal",
                 "review_workflow_proposal"),
              "orchestrate visible steps with approval or verification",

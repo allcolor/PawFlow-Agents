@@ -76,6 +76,19 @@ def test_server_relay_desktop_is_not_published_on_host():
     assert "audio_host_port" not in src
 
 
+def test_managed_desktop_relays_enable_container_automation_not_host_access():
+    spawn = inspect.getsource(srm.ServerRelayManager.spawn)
+    service_spawn = inspect.getsource(
+        srm.ServerRelayManager.spawn_service_relay
+    )
+
+    for source in (spawn, service_spawn):
+        assert 'if kind_cfg["publish_desktop"]:' in source
+        assert 'docker_run_args.append("--allow-automation")' in source
+        assert '"--allow-local"' not in source
+        assert '"--allow-local-screen"' not in source
+
+
 def test_server_workspace_allocates_runtime_path(monkeypatch, tmp_path):
     monkeypatch.setenv("PAWFLOW_DATA_DIR", str(tmp_path / "data"))
     path = srm._relay_runtime_dir("alice@example.com", "conv/one", "workspace")

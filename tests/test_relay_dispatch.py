@@ -7,6 +7,7 @@ allow_exec gate. First execution coverage of the dispatch routing.
 """
 import sys
 import types
+import urllib.request
 from pathlib import Path
 
 
@@ -15,6 +16,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent / "tools"))
 
 from pawflow_relay import _relay_dispatch as d
+import fs_http
 
 
 def _ctx(**over):
@@ -67,6 +69,56 @@ def test_local_true_forwards_to_host(monkeypatch):
                             {"action": "http_fetch", "local": True, "path": "."})
     assert res == {"ok": True, "data": {"forwarded": True}}
     assert seen["hh"] == "http://host-helper"
+
+
+def test_http_fetch_public_only_rejects_private_literal_without_network(monkeypatch):
+    monkeypatch.setattr(
+        urllib.request, "build_opener",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("network opened")),
+        raising=False,
+    )
+
+    result = fs_http.action_http_fetch("/root", ".", {
+        "url": "http://127.0.0.1/private.png",
+        "public_only": True,
+    })
+
+    assert result["ok"] is False
+    assert "public" in result["error"]
+
+
+def test_http_fetch_enforces_response_byte_limit(monkeypatch):
+    class Response:
+        status = 200
+        headers = {"Content-Type": "image/png"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size=-1):
+            return b"oversized"
+
+        def geturl(self):
+            return "https://example.com/image.png"
+
+    class Opener:
+        def open(self, _request, timeout=0):
+            assert timeout == 30
+            return Response()
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: Opener())
+
+    result = fs_http.action_http_fetch("/root", ".", {
+        "url": "https://example.com/image.png",
+        "timeout": 30,
+        "max_bytes": 3,
+    })
+
+    assert result["ok"] is False
+    assert "byte limit" in result["error"]
 
 
 def test_open_terminal_gated_by_allow_exec():

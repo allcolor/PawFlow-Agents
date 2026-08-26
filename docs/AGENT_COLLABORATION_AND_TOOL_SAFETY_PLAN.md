@@ -559,7 +559,8 @@ At force stop:
 
 - cancel pending requests;
 - retire call and turn grants;
-- cancel in-flight tools;
+- cancel in-flight tools and the active LLM through the provider-specific cancellation interface;
+- atomically retire the target's active context, provider-agnostic turn marker, and provider client, including task-scoped targets;
 - publish terminal lifecycle events;
 - do not persist an assistant error;
 - leave conversation grants unchanged unless the user explicitly revoked them.
@@ -1872,9 +1873,9 @@ Gate:
 Implementation note (2026-08-24): assigned-skill v2 now expands legacy names
 to exact `ResourceRef` identities, validates digests and visibility, and writes
 one per-conversation activation marker through a serialized, idempotent
-preflight/activate path. Runtime selection requires both that marker and the
-disabled-by-default `PAWFLOW_RESOURCE_BINDINGS_V2_ENABLED` server flag. Broken
-or duplicate assignments block the whole activation; changed rosters and stale
+preflight/activate path. Runtime selection requires that marker and no server
+rollout flag. Broken or duplicate assignments block the whole activation;
+changed rosters and stale
 resource identities fail closed. `explicit_only` and `disabled` assignments are
 absent from both the model manifest and `load_skill` path, while an
 `explicit_only` skill remains available through explicit user invocation.

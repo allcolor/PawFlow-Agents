@@ -39,7 +39,10 @@ def _definition():
             "gen": {"type": "log", "parameters": {"message": "${greeting}"}},
             "out": {"type": "log", "parameters": {"message": "bye"}},
         },
-        "relations": [{"from": "gen", "to": "out", "type": "success"}],
+        "relations": [{
+            "relation_id": "rel_gen_out",
+            "from": "gen", "to": "out", "type": "success",
+        }],
         "entries": ["gen"], "exits": ["out"],
         "runtime_links": [{"from": "gen", "to": "${port}", "type": "agentRuntime"}],
         "future_feature": {"x": 1},
@@ -134,7 +137,10 @@ def test_publish_refuses_invalid_definitions(svc):
     _seed(svc)
     draft = svc.create_draft("my_flows.demo", "user", "alice")
     broken = copy.deepcopy(draft["definition"])
-    broken["relations"].append({"from": "gen", "to": "nope", "type": "failure"})
+    broken["relations"].append({
+        "relation_id": "rel_gen_nope",
+        "from": "gen", "to": "nope", "type": "failure",
+    })
     svc.save_draft(draft["draft_id"], "alice", broken, base_revision=0)
     with pytest.raises(FlowValidationFailed) as exc:
         svc.publish(draft["draft_id"], "alice", "1.1.0")
@@ -209,8 +215,10 @@ def test_diff_reports_structured_changes(svc):
     after["tasks"]["validate"] = {"type": "log", "parameters": {"message": "v"}}
     after["tasks"]["out"]["parameters"]["message"] = "changed"
     after["relations"] = [
-        {"from": "gen", "to": "validate", "type": "success"},
-        {"from": "gen", "to": "validate", "type": "failure"},   # same pair, 2 queues
+        {"relation_id": "rel_gen_validate_success",
+         "from": "gen", "to": "validate", "type": "success"},
+        {"relation_id": "rel_gen_validate_failure",
+         "from": "gen", "to": "validate", "type": "failure"},   # same pair, 2 queues
     ]
     after["parameters"]["timeout"] = {"type": "integer", "default": 5}
     after["exits"] = ["validate"]
@@ -221,9 +229,9 @@ def test_diff_reports_structured_changes(svc):
     rows = {(c["op"], c["kind"], c["id"]) for c in diff["changes"]}
     assert ("added", "task", "validate") in rows
     assert ("changed", "task", "out") in rows
-    assert ("removed", "relation", "conn_gen__success__out") in rows
-    assert ("added", "relation", "conn_gen__success__validate") in rows
-    assert ("added", "relation", "conn_gen__failure__validate") in rows
+    assert ("removed", "relation", "rel_gen_out") in rows
+    assert ("added", "relation", "rel_gen_validate_success") in rows
+    assert ("added", "relation", "rel_gen_validate_failure") in rows
     assert ("added", "parameter", "timeout") in rows
     assert ("removed", "exit", "out") in rows and ("added", "exit", "validate") in rows
     changed_out = next(c for c in diff["changes"] if c["kind"] == "task" and c["id"] == "out")
@@ -252,9 +260,11 @@ def test_validator_reports_structured_problems():
             "lonely": {"type": "log"},
         },
         "relations": [
-            {"from": "a", "to": "b", "type": "success"},
-            {"from": "a", "to": "b", "type": "success"},
-            {"from": "a", "to": "ghost"},
+            {"relation_id": "rel_a_b_1",
+             "from": "a", "to": "b", "type": "success"},
+            {"relation_id": "rel_a_b_2",
+             "from": "a", "to": "b", "type": "success"},
+            {"relation_id": "rel_a_ghost", "from": "a", "to": "ghost"},
             "garbage",
         ],
         "entries": ["nope"], "exits": ["a"],
@@ -292,9 +302,12 @@ def test_validator_is_static_and_keeps_two_relationships_apart():
             "b": {"type": "log", "parameters": {"message": "ok"}},
         },
         "relations": [
-            {"from": "a", "to": "b", "type": "success"},
-            {"from": "a", "to": "b", "type": "failure"},
-            {"source": "b", "target": "a", "relationships": ["retry"]},  # package shape
+            {"relation_id": "rel_a_b_success",
+             "from": "a", "to": "b", "type": "success"},
+            {"relation_id": "rel_a_b_failure",
+             "from": "a", "to": "b", "type": "failure"},
+            {"relation_id": "rel_b_a_retry", "source": "b", "target": "a",
+             "relationships": ["retry"]},  # package shape
         ],
     })
     assert report == {"ok": True, "errors": 0, "warnings": 0, "problems": []}

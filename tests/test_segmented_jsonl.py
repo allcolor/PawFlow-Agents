@@ -154,6 +154,19 @@ def test_segmented_jsonl_cached_append_does_not_stat_index(monkeypatch, tmp_path
     log.append_dicts([{"seq": 2, "content": "two"}])
 
 
+def test_segmented_jsonl_cached_empty_index_creates_directory_on_append(tmp_path):
+    path = tmp_path / "agent" / "context.jsonl"
+    log = SegmentedJsonl(path, max_rows=100)
+
+    assert log._load_index()["segments"] == []
+    assert not log.segment_dir.exists()
+
+    log.append_dicts([{"seq": 1, "content": "one"}])
+
+    assert log.segment_dir.is_dir()
+    assert [row["seq"] for row in log.iter_rows()] == [1]
+
+
 def test_segmented_jsonl_deferred_hot_index_load_does_not_scan_segments(monkeypatch, tmp_path):
     path = tmp_path / "transcript.jsonl"
     log = SegmentedJsonl(path, max_rows=100)

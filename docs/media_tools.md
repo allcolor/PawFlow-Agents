@@ -234,14 +234,17 @@ the `relay://&#36;{conv.relay}` URL form for local relay endpoints; set
 `allow_private_base_url=true` only when the endpoint is trusted and must be
 reached directly from the PawFlow server.
 
-`comfyUIImageGeneration` and `comfyUIVideoGeneration` run administrator-configured
-ComfyUI Server API workflows. Workflows must be exported in API format and stored
-as trusted service presets with explicit PawFlow-to-node bindings and an explicit
-history output node. Agents cannot submit workflows at call time. Relay URLs can
-target either the relay host (`relay_local=true`) or relay container
-(`relay_local=false`); downloaded outputs are streamed to temporary files and
-removed after the media handler persists them. See the complete [ComfyUI install
-and configuration guide](comfyui.md).
+`comfyUIImageGeneration`, `comfyUIVideoGeneration`, and
+`comfyUIAudioGeneration` run administrator-configured ComfyUI Server API
+workflows. Workflows must be exported in API format and stored as trusted,
+immutable service preset revisions with explicit PawFlow-to-node bindings,
+declared output content types, provenance/license metadata, limits, and exact
+required inventory. Agents cannot submit workflows at call time. Audio presets
+use `generate_audio` and may bind uploaded `source_audio` and `music_bed`
+references. Relay URLs can target either the relay host (`relay_local=true`) or
+relay container (`relay_local=false`); downloaded outputs are streamed to
+temporary files and removed after the media handler persists them. See the
+complete [ComfyUI install and configuration guide](comfyui.md).
 
 `openaiCompatibleImageGeneration` and `openaiCompatibleVideoGeneration` reuse an
 existing `llmConnection` whose provider is `openai`. Configure that LLM service
@@ -355,6 +358,26 @@ requests execute through the relay host helper. Use this for endpoints such as
 Ollama on `http://localhost:11434/v1` when the relay itself runs in Docker. Set
 `relay_local=false` only when the target HTTP service runs inside the relay
 container network namespace.
+
+### Media Studio relay selection
+
+Media Studio resolves relay authority before project or capability access. The
+run uses the optional `relay` workflow parameter first, then the agent or
+conversation default, then the sole linked relay. If several relays are linked
+without a default, the run publishes one durable choice form and resumes with
+the selected ID. If none is linked, it stops before media access and asks the
+user to link a relay and retry.
+
+The linked candidates and any automatic choice are stored in the immutable
+WorkflowRun service snapshot. A durable answer may select only one of those
+frozen candidates. ComfyUI receives the chosen relay ID explicitly, so changing
+the conversation default while a run is waiting does not redirect the resumed
+provider call.
+
+Approved multi-shot scenarios are split into correlated provider jobs. Total
+jobs cannot exceed `WorkflowLimits.max_fanout`; `submitMediaGeneration` runs at
+most four instances concurrently. Each job has a distinct durable idempotency
+key, and a checkpointable join combines jobs and FileStore artifacts before QA.
 
 `voxcpmTTS` is an external VoxCPM client. PawFlow does not install, start, or
 stop VoxCPM; the user runs their own VoxCPM runtime on the PawFlow server or on
@@ -545,6 +568,54 @@ Recommended config:
 The `llm_service` field is a service selector filtered to `llmConnection` services whose `provider` is `codex-app-server`. The image job reuses that service's Codex OAuth credential pool or API-key fallback, then runs in `data/runtime/sessions/codex/<user>/_image_generation/<job>/` inside the common CLI Docker image.
 
 For generation, the service runs a prompt equivalent to `codex exec "... $imagegen"`. For editing, source images are copied into the job directory and passed with repeated `-i` / `--image` inputs. `fs://filestore/<id>/<name>` references stay local for this service and are read from FileStore directly instead of being rewritten to HTTP. The installed Codex CLI currently supports image inputs and `$imagegen`; it does not expose a stable `--image-dir` flag, so output collection is handled by reading `output.*` first and falling back to `$CODEX_HOME/generated_images`.
+
+## Media Studio Workflow Agent
+
+The installable `pawflow.media-studio:1.0.0` package publishes the exact
+`pawflow.agents.media-studio:1.0.0` Workflow Agent flow and its agent resource.
+The provider-independent `MediaCapabilityCatalog` consumes a bounded, immutable
+service snapshot rather than consulting mutable service state while choosing a
+route.
+
+Each capability identifies its exact engine, service revision, scope, media
+kinds, operations, accepted reference roles, output types, preset/model,
+availability, limits, estimated cost, and routing tags. Selection:
+
+1. rejects unavailable or incompatible candidates using stable reason codes;
+2. enforces media kind, operation, reference, output, duration, dimension,
+   remote-provider, cost, exact-model, and exact-preset constraints;
+3. scores explicit local/remote, quality, and speed preferences;
+4. returns one selected capability when a candidate dominates;
+5. returns a typed user-choice result for a material trade-off;
+6. returns an unavailable result with every rejection reason when no route
+   remains.
+
+Deterministic workflow tasks normalize the visible service registry, immutable
+ComfyUI image/video/audio revisions, generic media and speech/voice services,
+and FFmpeg into the snapshot. LLM prose never decides availability or
+authorization. Provider submission resolves the exact frozen service definition,
+persists job correlation, and fails closed when the service revision changed.
+Composition accepts only a closed `FFmpegRecipe` compiled to argv without a
+shell. Questions, scenario approval, and voice consent use the canonical durable
+interaction stores; every successful output is appended to MediaProjectStore
+lineage and returned as an exact FileStore artifact.
+
+Reference media enters Media Studio as an owner- and conversation-authorized
+FileStore attachment. Webchat streams each initial or durably requested file to
+FileStore and passes only its `file_id`; the workflow reads the authoritative
+name and content type, records the originating turn, and assigns an explicit
+creative role. Browser attachments without role metadata receive a deterministic
+operation-specific role, while API callers may provide a supported explicit
+role. Multiple files requested by a durable form remain correlated in one
+answer. A request may also name an explicit path and linked relay. The strict
+intent schema preserves only paths actually written by the user; that relay must
+match one frozen linked candidate. Media Studio streams the path into FileStore
+once using a run-scoped idempotency key, records the source relay and path, and
+then uses the same immutable FileStore transport as a browser attachment.
+References from more than one relay in the same run are rejected.
+
+The complete staged design is in
+[Media Studio Workflow Agent Implementation Plan](MEDIA_STUDIO_WORKFLOW_AGENT_IMPLEMENTATION_PLAN.md).
 
 ## Flow Usage
 

@@ -109,6 +109,7 @@ _ACTION_ROLES = {
     "inspect_workflow_run": "read",
     "workflow_operations": "read",
     "retry_workflow_run": "write",
+    "delete_workflow_run": "write",
     # _agentres_k6 — publication delegates the owner's tool authority, so all
     # mutations are write-gated and then additionally owner-only in the handler.
     "mcp_server_get": "read",

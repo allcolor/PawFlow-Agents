@@ -139,6 +139,155 @@ def migrate_legacy_presentation(
     return result
 
 
+_STAGE_PRESENTATION = {
+    "inputs": {
+        "label": "Inputs & triggers",
+        "description": "Receives requests and starts scheduled work.",
+        "fill": "#e0f2fe", "border": "#0284c7", "accent": "#0ea5e9",
+    },
+    "routing": {
+        "label": "Validation & routing",
+        "description": "Validates inputs, authenticates callers, and selects paths.",
+        "fill": "#fef3c7", "border": "#d97706", "accent": "#f59e0b",
+    },
+    "processing": {
+        "label": "Core processing",
+        "description": "Performs the flow's main transformation or agent work.",
+        "fill": "#ede9fe", "border": "#7c3aed", "accent": "#8b5cf6",
+    },
+    "outputs": {
+        "label": "Delivery & outputs",
+        "description": "Publishes results and completes external responses.",
+        "fill": "#dcfce7", "border": "#16a34a", "accent": "#22c55e",
+    },
+}
+
+
+def _presentation_stage(task_id: str, task_type: str) -> str:
+    value = f"{task_id} {task_type}".lower()
+    if any(token in value for token in (
+        "receiver", "trigger", "inputport", "webhook", "receive", "http_in",
+        "turn_in", "request",
+    )):
+        return "inputs"
+    if any(token in value for token in (
+        "validate", "verify", "auth", "route", "decide", "filter",
+        "only_", "prepare",
+    )):
+        return "routing"
+    if any(token in value for token in (
+        "response", "send", "outputport", "publish", "complete", "terminal",
+        "finalize", "reply", "redirect",
+    )):
+        return "outputs"
+    return "processing"
+
+
+def _human_label(identifier: str) -> str:
+    words = re.sub(r"[-_.:]+", " ", str(identifier)).strip().split()
+    return " ".join(word.upper() if len(word) <= 3 else word.capitalize()
+                    for word in words) or "Task"
+
+
+def _task_description(label: str, task_type: str, stage: str) -> str:
+    action = {
+        "inputs": "Receives or initiates",
+        "routing": "Validates and routes",
+        "processing": "Processes",
+        "outputs": "Delivers",
+    }[stage]
+    return f"{action} the {label.lower()} step using {task_type}."
+
+
+def normalize_flow_presentation(
+    definition: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a deterministic functional presentation for a legacy flow.
+
+    Existing versioned layouts are preserved. Missing task labels and
+    descriptions, however, are filled for every flow so static and live viewers
+    expose the same human-readable metadata.
+    """
+    result = ensure_relation_ids(definition)
+    tasks = result.get("tasks")
+    if not isinstance(tasks, dict):
+        tasks = {}
+    stages: dict[str, list[str]] = {key: [] for key in _STAGE_PRESENTATION}
+    for task_id, task in tasks.items():
+        if not isinstance(task, dict):
+            continue
+        task_type = str(task.get("type") or "task")
+        stage = _presentation_stage(str(task_id), task_type)
+        stages[stage].append(str(task_id))
+        label = str(task.get("label") or "").strip() or _human_label(str(task_id))
+        task["label"] = label
+        if not str(task.get("description") or "").strip():
+            task["description"] = _task_description(label, task_type, stage)
+
+    if isinstance(result.get("layouts"), dict) and result["layouts"]:
+        return result
+
+    result.pop("layout", None)
+    nodes: dict[str, Any] = {}
+    frames: dict[str, Any] = {}
+    visible_stages = [key for key, members in stages.items() if members]
+    for column, stage in enumerate(visible_stages):
+        members = stages[stage]
+        spec = _STAGE_PRESENTATION[stage]
+        x = column * 360
+        for row, task_id in enumerate(members):
+            nodes[task_id] = {
+                "x": x, "y": row * 150, "width": 240, "height": 96,
+                "style": {
+                    "fill": spec["fill"], "border": spec["border"],
+                    "text": "#111827", "accent": spec["accent"],
+                    "border_width": 2, "border_style": "solid", "opacity": 1,
+                },
+            }
+        frames[f"stage_{stage}"] = {
+            "id": f"stage_{stage}", "label": spec["label"],
+            "description": spec["description"],
+            "x": x - 32, "y": -72, "width": 304,
+            "height": max(210, len(members) * 150 + 64),
+            "member_ids": members,
+            "style": {
+                "fill": spec["fill"], "border": spec["border"],
+                "text": "#111827", "border_width": 2,
+                "border_style": "solid", "opacity": 0.18,
+            },
+        }
+    relation_styles = {}
+    for relation in result.get("relations") or []:
+        if not isinstance(relation, dict) or not relation.get("relation_id"):
+            continue
+        relation_styles[str(relation["relation_id"])] = {
+            "routing": "smoothstep", "label_t": 0.5,
+            "style": {
+                "stroke": "#64748b", "stroke_width": 2,
+                "stroke_style": "solid", "animated": False,
+                "arrow": "closed", "opacity": 0.9,
+            },
+        }
+    result["layout_schema_version"] = LAYOUT_SCHEMA_VERSION
+    result["default_layout_id"] = "functional"
+    result["layouts"] = {
+        "functional": {
+            "id": "functional",
+            "name": f"{str(result.get('name') or result.get('id') or 'Flow')} functional stages",
+            "kind": "declarative",
+            "root_group_id": "",
+            "viewport": {"x": 40, "y": 40, "zoom": 0.75},
+            "direction": "LR",
+            "nodes": nodes,
+            "relations": relation_styles,
+            "annotations": {},
+            "frames": frames,
+            "visibility": {},
+        },
+    }
+    return result
+
+
 def _all_node_ids(definition: dict[str, Any]) -> set[str]:
     result = set(map(str, (definition.get("tasks") or {}).keys()))
     groups = definition.get("groups") or {}

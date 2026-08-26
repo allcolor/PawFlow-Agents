@@ -132,10 +132,6 @@ class ResolveGroupSnapshotTask(_GroupTask):
     DESCRIPTION = "Attach the immutable run-start group and member snapshot."
 
     def execute(self, flowfile: FlowFile) -> list[FlowFile]:
-        from core.agent_feature_flags import agent_groups_enabled
-
-        if not agent_groups_enabled():
-            raise ValueError("agent groups are disabled by the server")
         state = _load(flowfile)
         context = self._context()
         snapshot = dict((context.service_snapshot or {}).get("agent_group") or {})

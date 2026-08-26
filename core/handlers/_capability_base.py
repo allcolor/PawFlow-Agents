@@ -135,6 +135,10 @@ class _CapabilityHandlerBase(ToolHandler):
     def set_agent_name(self, agent_name: str):
         self._agent_name = agent_name
 
+    def set_relay_id(self, relay_id: str, relay_local=None):
+        self._relay_id = str(relay_id or "")
+        self._relay_local = relay_local
+
     def set_service_resolver(self, resolver):
         self._service_resolver = resolver
 
@@ -163,6 +167,8 @@ class _CapabilityHandlerBase(ToolHandler):
                     user_id=self._user_id,
                     conversation_id=self._conversation_id,
                     agent_name=self._agent_name,
+                    relay_id=getattr(self, "_relay_id", "") or "",
+                    relay_local=getattr(self, "_relay_local", None),
                 )
             if hasattr(svc, "set_callback_base_url"):
                 svc.set_callback_base_url(self._base_url)
@@ -175,6 +181,8 @@ class _CapabilityHandlerBase(ToolHandler):
                 user_id=self._user_id,
                 conversation_id=self._conversation_id,
                 agent_name=self._agent_name,
+                relay_id=getattr(self, "_relay_id", "") or "",
+                relay_local=getattr(self, "_relay_local", None),
             )
         if svc and hasattr(svc, "set_callback_base_url"):
             svc.set_callback_base_url(self._base_url)

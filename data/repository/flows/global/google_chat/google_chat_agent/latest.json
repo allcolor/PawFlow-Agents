@@ -4,30 +4,258 @@
   "version": "1.0.0",
   "description": "Owner-scoped Google Chat app with deny-by-default space authorization and shared PawFlow agent runtime.",
   "parameters": {
-    "service_account_json": {"type": "string", "default": "", "sensitive": true, "required": true, "description": "Google Cloud service-account JSON for the Chat app."},
-    "google_chat_audience": {"type": "string", "default": "", "required": true, "description": "Expected audience in Google-signed interaction tokens."},
-    "google_chat_audience_type": {"type": "string", "default": "endpoint_url", "required": false, "description": "Google Chat authentication audience type: endpoint_url (recommended) or project_number."},
-    "owner_google_user_id": {"type": "string", "default": "", "required": true, "description": "Immutable Google Chat owner identity, for example users/123456."},
-    "direct_conversation_id": {"type": "string", "default": "", "required": false, "description": "Existing owner conversation used for direct messages."},
+    "service_account_json": {
+      "type": "string",
+      "default": "",
+      "sensitive": true,
+      "required": true,
+      "description": "Google Cloud service-account JSON for the Chat app."
+    },
+    "google_chat_audience": {
+      "type": "string",
+      "default": "",
+      "required": true,
+      "description": "Expected audience in Google-signed interaction tokens."
+    },
+    "google_chat_audience_type": {
+      "type": "string",
+      "default": "endpoint_url",
+      "required": false,
+      "description": "Google Chat authentication audience type: endpoint_url (recommended) or project_number."
+    },
+    "owner_google_user_id": {
+      "type": "string",
+      "default": "",
+      "required": true,
+      "description": "Immutable Google Chat owner identity, for example users/123456."
+    },
+    "direct_conversation_id": {
+      "type": "string",
+      "default": "",
+      "required": false,
+      "description": "Existing owner conversation used for direct messages."
+    },
     "http_host": "0.0.0.0",
     "http_port": 8080,
     "webhook_slot": "${_instance_id}",
     "agent_runtime_port": "pawflow_agent.agent_runtime_in"
   },
-  "runtime_links": [{"from": "agent_client", "to": "${agent_runtime_port}", "type": "agentRuntime", "description": "Submit Google Chat messages to the shared PawFlow runtime"}],
+  "runtime_links": [
+    {
+      "from": "agent_client",
+      "to": "${agent_runtime_port}",
+      "type": "agentRuntime",
+      "description": "Submit Google Chat messages to the shared PawFlow runtime"
+    }
+  ],
   "services": {
-    "http_listener": {"type": "httpListener", "parameters": {"host": "${http_host}", "port": "${http_port}"}},
-    "google_chat": {"type": "googleChatBot", "parameters": {"service_account_json": "${service_account_json}", "audience": "${google_chat_audience}", "audience_type": "${google_chat_audience_type}"}}
+    "http_listener": {
+      "type": "httpListener",
+      "parameters": {
+        "host": "${http_host}",
+        "port": "${http_port}"
+      }
+    },
+    "google_chat": {
+      "type": "googleChatBot",
+      "parameters": {
+        "service_account_json": "${service_account_json}",
+        "audience": "${google_chat_audience}",
+        "audience_type": "${google_chat_audience_type}"
+      }
+    }
   },
   "tasks": {
-    "receive": {"type": "httpReceiver", "parameters": {"service_id": "http_listener", "routes": [{"method": "POST", "pattern": "/webhooks/google-chat/${webhook_slot}", "relationship": "google_chat_event", "public": true}]}},
-    "verify_and_ack": {"type": "googleChatWebhook", "parameters": {"service_id": "google_chat", "http_service_id": "http_listener"}},
-    "agent_client": {"type": "googleChatAgentClient", "max_instances": 20, "parameters": {"service_id": "google_chat", "owner_google_user_id": "${owner_google_user_id}", "direct_conversation_id": "${direct_conversation_id}", "agent_runtime_port": "${agent_runtime_port}"}}
+    "receive": {
+      "type": "httpReceiver",
+      "parameters": {
+        "service_id": "http_listener",
+        "routes": [
+          {
+            "method": "POST",
+            "pattern": "/webhooks/google-chat/${webhook_slot}",
+            "relationship": "google_chat_event",
+            "public": true
+          }
+        ]
+      },
+      "label": "Receive",
+      "description": "Receives or initiates the receive step using httpReceiver."
+    },
+    "verify_and_ack": {
+      "type": "googleChatWebhook",
+      "parameters": {
+        "service_id": "google_chat",
+        "http_service_id": "http_listener"
+      },
+      "label": "Verify AND ACK",
+      "description": "Receives or initiates the verify and ack step using googleChatWebhook."
+    },
+    "agent_client": {
+      "type": "googleChatAgentClient",
+      "max_instances": 20,
+      "parameters": {
+        "service_id": "google_chat",
+        "owner_google_user_id": "${owner_google_user_id}",
+        "direct_conversation_id": "${direct_conversation_id}",
+        "agent_runtime_port": "${agent_runtime_port}"
+      },
+      "label": "Agent Client",
+      "description": "Processes the agent client step using googleChatAgentClient."
+    }
   },
   "fqn": "google_chat.google_chat_agent:1.0.0",
   "package": "google_chat",
   "relations": [
-    {"source": "receive", "target": "verify_and_ack", "relationships": ["success"]},
-    {"source": "verify_and_ack", "target": "agent_client", "relationships": ["success"]}
-  ]
+    {
+      "source": "receive",
+      "target": "verify_and_ack",
+      "relationships": [
+        "success"
+      ],
+      "relation_id": "rel_d383733bd127b055"
+    },
+    {
+      "source": "verify_and_ack",
+      "target": "agent_client",
+      "relationships": [
+        "success"
+      ],
+      "relation_id": "rel_ff9b52c59415a43d"
+    }
+  ],
+  "layout_schema_version": 1,
+  "default_layout_id": "functional",
+  "layouts": {
+    "functional": {
+      "id": "functional",
+      "name": "google_chat_agent functional stages",
+      "kind": "declarative",
+      "root_group_id": "",
+      "viewport": {
+        "x": 40,
+        "y": 40,
+        "zoom": 0.75
+      },
+      "direction": "LR",
+      "nodes": {
+        "receive": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "verify_and_ack": {
+          "x": 0,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "agent_client": {
+          "x": 360,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        }
+      },
+      "relations": {
+        "rel_d383733bd127b055": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_ff9b52c59415a43d": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        }
+      },
+      "annotations": {},
+      "frames": {
+        "stage_inputs": {
+          "id": "stage_inputs",
+          "label": "Inputs & triggers",
+          "description": "Receives requests and starts scheduled work.",
+          "x": -32,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "receive",
+            "verify_and_ack"
+          ],
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_processing": {
+          "id": "stage_processing",
+          "label": "Core processing",
+          "description": "Performs the flow's main transformation or agent work.",
+          "x": 328,
+          "y": -72,
+          "width": 304,
+          "height": 214,
+          "member_ids": [
+            "agent_client"
+          ],
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        }
+      },
+      "visibility": {}
+    }
+  }
 }

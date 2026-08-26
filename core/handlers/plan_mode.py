@@ -23,21 +23,10 @@ from core.tool_handler import ToolHandler
 logger = logging.getLogger(__name__)
 
 
-def _workflow_proposal_cutover() -> bool:
-    from core.flow_feature_flags import workflow_proposals_enabled
-
-    return workflow_proposals_enabled()
-
-
 def _plan_mode_protocol() -> tuple[str, str]:
-    if _workflow_proposal_cutover():
-        return (
-            "propose_workflow(package, name, version, title, definition)",
-            "the user to accept the workflow proposal",
-        )
     return (
-        "create_plan(title, steps)",
-        "the user to call approve_plan",
+        "propose_workflow(package, name, version, title, definition)",
+        "the user to accept the workflow proposal",
     )
 
 

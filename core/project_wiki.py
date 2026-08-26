@@ -999,6 +999,68 @@ class ProjectWiki:
         }
         return {**normalized, "patch_digest": self._digest(normalized)}
 
+    def _repair_llm_page_sources(
+            self, selection: Dict[str, Any], payload: Dict[str, Any]
+            ) -> Dict[str, Any]:
+        """Conservatively cite processed live sources omitted by the LLM."""
+        if not isinstance(payload, dict) or not isinstance(payload.get("pages"), list):
+            return payload
+        selected = {
+            entry["path"]: entry
+            for entry in self._selection_entries(selection)
+        }
+        candidates = []
+        processed = payload.get("processed_sources")
+        if isinstance(processed, list):
+            for raw_path in processed:
+                try:
+                    path = self._clean_source_path(raw_path)
+                except (TypeError, ValueError):
+                    continue
+                entry = selected.get(path)
+                if entry is not None and entry["state"] != "removed":
+                    if path not in candidates:
+                        candidates.append(path)
+        if processed is None or processed == []:
+            candidates = [
+                path for path, entry in selected.items()
+                if entry["state"] != "removed"
+            ]
+        if not candidates:
+            pages = [
+                raw_page for raw_page in payload["pages"]
+                if not (
+                    isinstance(raw_page, dict)
+                    and (
+                        not isinstance(raw_page.get("sources"), list)
+                        or not raw_page.get("sources")
+                    )
+                )
+            ]
+            if len(pages) == len(payload["pages"]):
+                return payload
+            return {**payload, "pages": pages}
+        repaired_pages = []
+        changed = False
+        for raw_page in payload["pages"]:
+            if not isinstance(raw_page, dict):
+                repaired_pages.append(raw_page)
+                continue
+            sources = raw_page.get("sources")
+            if not isinstance(sources, list) or not sources:
+                page = dict(raw_page)
+                page["sources"] = list(candidates)
+                repaired_pages.append(page)
+                changed = True
+            else:
+                repaired_pages.append(raw_page)
+        if not changed:
+            return payload
+        repaired = {**payload, "pages": repaired_pages}
+        if processed is None or processed == []:
+            repaired["processed_sources"] = list(candidates)
+        return repaired
+
     def _selection_superseded(
             self, service, selection: Dict[str, Any],
             entries: List[Dict[str, Any]]) -> List[str]:
@@ -1239,6 +1301,7 @@ class ProjectWiki:
                 str(getattr(response, "finish_reason", "") or ""))
             return {"status": "pending", "reason": "invalid LLM response",
                     "remaining": pending_count}
+        payload = self._repair_llm_page_sources(selection, payload)
         try:
             patch = self.validate_update_patch(selection, payload)
         except (TypeError, ValueError) as exc:

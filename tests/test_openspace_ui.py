@@ -763,7 +763,6 @@ def test_poster_wall_covers_all_side_panels():
         ("'todos'", "showTodosDialog"),
         ("'cost'", "showUsageCostPanel"),
         ("'context'", "cmdShowContext"),
-        ("'plans'", "togglePlansPanel"),
         ("'scheduled'", "toggleSchedsPanel"),
         ("'files'", "toggleFilesPanel"),
         ("'desktop'", "cmdDesktop"),

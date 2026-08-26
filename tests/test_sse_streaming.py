@@ -645,6 +645,9 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 # submission creates it.
                 return ""
 
+            def get_extra(self, cid, key):
+                return None
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             fake_store = _FakeStore(root)
@@ -830,6 +833,9 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 # submission creates it.
                 return ""
 
+            def get_extra(self, cid, key):
+                return None
+
             def message_count(self, cid):
                 return 0
 
@@ -920,6 +926,9 @@ class TestAgentLoopStreaming(unittest.TestCase):
 
             def resolve_owner(self, cid):
                 return ""
+
+            def get_extra(self, cid, key):
+                return None
 
             def message_count(self, cid):
                 return 0
@@ -1034,6 +1043,9 @@ class TestAgentLoopStreaming(unittest.TestCase):
 
             def resolve_owner(self, cid):
                 return ""
+
+            def get_extra(self, cid, key):
+                return None
 
             def message_count(self, cid):
                 return 0
@@ -1341,6 +1353,9 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 # submission creates it.
                 return ""
 
+            def get_extra(self, cid, key):
+                return None
+
         class _FakeAgent:
             _drain_pending = None
 
@@ -1461,6 +1476,9 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 # submission creates it.
                 return ""
 
+            def get_extra(self, cid, key):
+                return None
+
             def message_count(self, cid):
                 return 0
 
@@ -1532,6 +1550,9 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 # pass-through case: no such conversation yet, so this
                 # submission creates it.
                 return ""
+
+            def get_extra(self, cid, key):
+                return None
 
             def message_count(self, cid):
                 return 0
@@ -1614,6 +1635,9 @@ class TestAgentLoopStreaming(unittest.TestCase):
 
             def resolve_owner(self, _cid):
                 return ""
+
+            def get_extra(self, cid, key):
+                return None
 
             def message_count(self, _cid):
                 return 0
@@ -1705,6 +1729,26 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 "agent_name": agent_name,
             },
         )]
+
+    def test_interrupt_marks_provider_agnostic_active_turn_without_context(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+
+        conversation_id = "test-conv-interrupt-preparing"
+        agent_name = "assistant"
+        agent_key = f"{conversation_id}:{agent_name}"
+        task = AgentLoopTask({"api_key": "k", "streaming": True})
+        with task._active_contexts_lock:
+            task._active_turns[agent_key] = {
+                "agent_name": agent_name,
+                "generation": 7,
+            }
+
+        with patch("services.tool_relay_service.ToolRelayService.cancel_agent"):
+            task.interrupt_agent(conversation_id, agent_name)
+
+        assert task._check_interrupt(agent_key)
+        with task._active_contexts_lock:
+            task._active_turns.pop(agent_key, None)
 
     def test_streaming_config_dispatches(self):
         from tasks.ai.agent_loop import AgentLoopTask
@@ -2356,10 +2400,14 @@ class TestStreamingFlowStructure(unittest.TestCase):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         relations = data["relations"]
+        relation_keys = {
+            (relation["from"], relation["to"], relation["type"])
+            for relation in relations
+        }
         # SSE route goes through validate_auth → route_after_auth → agent_events
-        assert {"from": "http_in", "to": "validate_auth", "type": "GET:/api/agent/events"} in relations
-        assert {"from": "route_after_auth", "to": "agent_events", "type": "sse"} in relations
-        assert {"from": "agent_events", "to": "send_response", "type": "success"} in relations
+        assert ("http_in", "validate_auth", "GET:/api/agent/events") in relation_keys
+        assert ("route_after_auth", "agent_events", "sse") in relation_keys
+        assert ("agent_events", "send_response", "success") in relation_keys
 
     def test_routes_from_http_in_have_relations(self):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"

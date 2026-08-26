@@ -38,6 +38,7 @@ from core.workflow_agent_resources import (
     validate_agent_workflow_definition,
 )
 from core.workflow_agent_runtime import (
+    _MAX_PENDING_CACHE_PER_AGENT,
     WorkflowAgentRuntime,
     _ActiveRun,
     require_single_workflow_terminal,
@@ -323,6 +324,44 @@ def test_zero_or_multiple_terminals_fail_closed():
         require_single_workflow_terminal([object(), object()])
 
 
+def test_new_conversation_run_refreshes_only_a_stale_binding(monkeypatch):
+    current_ref = ResourceRef.from_dict({
+        **_ref().to_dict(),
+        "content_digest": "b" * 64,
+    })
+    stale_binding = WorkflowInstanceConfig.from_dict({
+        "flow_fqn": _ref().name,
+        "flow_scope": "global",
+        "input_port": "turn_in",
+        "terminal_port": "turn_out",
+        "preempt_policy": "queue",
+        "allowed_effects": EFFECTS,
+        "flow_ref": _ref().to_dict(),
+    })
+    refreshed_binding = {
+        **stale_binding.to_dict(),
+        "flow_ref": current_ref.to_dict(),
+    }
+    resolved = ResolvedAgentWorkflow(_definition(), current_ref)
+    monkeypatch.setattr(
+        "core.workflow_agent_runtime.resolve_exact_agent_workflow",
+        lambda *_args: resolved)
+    rebound = []
+    monkeypatch.setattr(
+        "core.workflow_agent_resources.bind_agent_workflow",
+        lambda workflow, user_id, conversation_id: (
+            rebound.append((workflow, user_id, conversation_id))
+            or refreshed_binding))
+
+    binding, reusable_resolution = (
+        WorkflowAgentRuntime._refresh_new_conversation_binding(
+            _turn(1), stale_binding))
+
+    assert binding.flow_ref == current_ref
+    assert reusable_resolution is None
+    assert rebound == [(stale_binding.to_dict(), "alice", "conv-1")]
+
+
 def test_executor_reasserts_reserved_identity_at_every_boundary():
     from core import FlowFile, TaskFactory
     from core.base_task import BaseTask
@@ -429,7 +468,14 @@ def test_isolated_executor_stages_one_terminal_and_progress_only():
     assert execution.success
     assert len(terminals) == 1
     assert terminals[0].response == "Workflow completed: hello"
-    assert [kind for kind, _ in events] == ["workflow_progress"]
+    lifecycle = [data for kind, data in events
+                 if kind == "workflow_progress"
+                 and data.get("stage") in {"task_started", "task_completed"}]
+    task_ids = list(_definition()["tasks"])
+    assert [(row["task_id"], row["stage"]) for row in lifecycle] == [
+        item for task_id in task_ids
+        for item in ((task_id, "task_started"), (task_id, "task_completed"))
+    ]
 
 
 def test_recovery_preserves_read_only_permission_mode():
@@ -553,6 +599,70 @@ def test_checkpoint_policy_queues_for_active_run(monkeypatch):
     assert not active.cancel_event.is_set()
 
 
+def test_conversation_submission_deduplicates_active_and_pending_root_turns(
+        monkeypatch):
+    runtime = WorkflowAgentRuntime()
+    key = runtime._key("conv-1", "Demo")
+    runtime._active[key] = _ActiveRun(
+        request=_turn(1, "web:first"), run_id="wr_first")
+    monkeypatch.setattr(runtime, "_preempt_policy", lambda _request: "queue")
+
+    active_duplicate = runtime.submit(_turn(2, "web:first"))
+    first_pending = runtime.submit(_turn(3, "web:follow-up"))
+    pending_duplicate = runtime.submit(_turn(4, "web:follow-up"))
+
+    assert active_duplicate == {
+        "status": "accepted", "queued": False, "run_id": "wr_first"}
+    assert first_pending["queued"] is True
+    assert pending_duplicate["queued"] is True
+    assert len(runtime._pending[key]) == 1
+
+
+def test_pending_cache_is_bounded_and_spills_conversation_turns_to_inbox(
+        monkeypatch):
+    runtime = WorkflowAgentRuntime()
+    key = runtime._key("conv-1", "Demo")
+    runtime._active[key] = _ActiveRun(
+        request=_turn(1, "web:first"), run_id="wr_first")
+    monkeypatch.setattr(runtime, "_preempt_policy", lambda _request: "queue")
+
+    for index in range(_MAX_PENDING_CACHE_PER_AGENT):
+        assert runtime.submit(_turn(
+            index + 2, f"web:pending-{index}"))["queued"] is True
+    overflow = runtime.submit(_turn(99, "web:durable-overflow"))
+
+    assert len(runtime._pending[key]) == _MAX_PENDING_CACHE_PER_AGENT
+    assert overflow == {
+        "status": "accepted", "queued": True, "checkpoint": False,
+        "run_id": "", "durable_queue": True,
+    }
+
+
+def test_pending_cache_overflow_rejects_non_durable_bound_submission(
+        monkeypatch):
+    runtime = WorkflowAgentRuntime()
+    key = runtime._key("conv-1", "Demo")
+    runtime._active[key] = _ActiveRun(
+        request=_turn(1, "web:first"), run_id="wr_first")
+    monkeypatch.setattr(runtime, "_preempt_policy", lambda _request: "queue")
+    for index in range(_MAX_PENDING_CACHE_PER_AGENT):
+        runtime.submit(_turn(index + 2, f"web:pending-{index}"))
+    binding = WorkflowInstanceConfig.from_dict({
+        "flow_fqn": _ref().name,
+        "flow_scope": "global",
+        "input_port": "turn_in",
+        "terminal_port": "turn_out",
+        "preempt_policy": "queue",
+        "allowed_effects": EFFECTS,
+        "flow_ref": _ref().to_dict(),
+    })
+
+    with pytest.raises(RuntimeError, match="pending queue is full"):
+        runtime.submit_bound(
+            _turn(99, "web:maintenance"), binding,
+            invocation_mode="silent_maintenance")
+
+
 def test_bound_silent_submission_pins_binding_and_invocation_mode(monkeypatch):
     runtime = WorkflowAgentRuntime()
     binding = WorkflowInstanceConfig.from_dict({
@@ -621,6 +731,25 @@ def test_active_snapshot_exposes_conversation_run_and_hides_silent_maintenance()
     }
 
 
+def test_active_snapshot_hides_durable_waits_and_retryable_pauses():
+    runtime = WorkflowAgentRuntime()
+    runtime._active = {
+        runtime._key("conv-1", "Waiting"): _ActiveRun(
+            request=_turn(1, "web:waiting"), run_id="wr_waiting",
+            status="waiting"),
+        runtime._key("conv-1", "Paused"): _ActiveRun(
+            request=_turn(2, "web:paused"), run_id="wr_paused",
+            status="retryable_failed"),
+        runtime._key("conv-1", "Working"): _ActiveRun(
+            request=_turn(3, "web:working"), run_id="wr_working",
+            status="reviewing"),
+    }
+
+    rows = runtime.active_snapshot("conv-1")
+
+    assert [row["workflow_run_id"] for row in rows] == ["wr_working"]
+
+
 def test_restart_policy_transfers_claims_and_replaces_generation(monkeypatch):
     runtime = WorkflowAgentRuntime()
     key = runtime._key("conv-1", "Demo")
@@ -658,6 +787,14 @@ def test_recovery_fails_closed_when_exact_flow_is_missing(
 
     run_store = WorkflowRunStore(tmp_path / "runs.sqlite3")
     inbox = AgentInboxStore(tmp_path / "inbox.sqlite3")
+    request = _turn(1, "web:missing-flow")
+    inbox.enqueue("conv-1", "Demo", {
+        "msg_id": request.root_turn_id,
+        "content": request.message,
+        "attachments": [],
+        "channel": "web",
+        "source": request.source,
+    }, source="user")
     binding = {
         "flow_fqn": _ref().name,
         "flow_scope": "global",
@@ -687,9 +824,17 @@ def test_recovery_fails_closed_when_exact_flow_is_missing(
         "core.workflow_agent_runtime.resolve_exact_agent_workflow",
         lambda *_args: (_ for _ in ()).throw(
             FileNotFoundError("exact flow version is missing")))
+    original_fail = run_store.fail
+
+    def fail_after_inbox_cleanup(run_id, reason):
+        assert [item.state for item in inbox.list_items("conv-1", "Demo")] == [
+            "discarded"]
+        return original_fail(run_id, reason)
+
+    monkeypatch.setattr(run_store, "fail", fail_after_inbox_cleanup)
 
     runtime = WorkflowAgentRuntime()
-    ack = runtime.submit(_turn(1, "web:missing-flow"))
+    ack = runtime.submit(request)
     deadline = time.monotonic() + 3
     record = None
     while time.monotonic() < deadline:
@@ -701,6 +846,77 @@ def test_recovery_fails_closed_when_exact_flow_is_missing(
     assert record is not None
     assert record["status"] == "failed"
     assert "exact flow version is missing" in record["reason"]
+    assert [item.state for item in inbox.list_items("conv-1", "Demo")] == [
+        "discarded"]
+    assert inbox.pending_count("conv-1", "Demo") == 0
+
+
+def test_terminal_failure_discards_inbox_instead_of_replaying(
+        monkeypatch, tmp_path):
+    from core.agent_inbox_store import AgentInboxStore
+    from core.workflow_run_store import WorkflowRunStore
+    from engine.continuous_executor import ContinuousFlowExecutor
+
+    run_store = WorkflowRunStore(tmp_path / "runs.sqlite3")
+    inbox = AgentInboxStore(tmp_path / "inbox.sqlite3")
+    resolved = ResolvedAgentWorkflow(definition=_definition(), ref=_ref())
+    binding = {
+        "flow_fqn": resolved.ref.name,
+        "flow_scope": "global",
+        "input_port": "turn_in",
+        "terminal_port": "turn_out",
+        "preempt_policy": "queue",
+        "allowed_effects": EFFECTS,
+        "parameters": {},
+        "limits": {
+            "max_duration_seconds": 30,
+            "max_llm_calls": 1,
+            "max_flowfiles": 10,
+            "max_fanout": 2,
+        },
+        "flow_ref": resolved.ref.to_dict(),
+    }
+    request = _turn(1, "web:terminal-failure")
+    inbox.enqueue("conv-1", "Demo", {
+        "msg_id": request.root_turn_id,
+        "content": request.message,
+        "attachments": [],
+        "channel": "web",
+        "source": request.source,
+    }, source="user")
+    monkeypatch.setattr(
+        "core.workflow_run_store.WorkflowRunStore.instance",
+        classmethod(lambda cls: run_store))
+    monkeypatch.setattr(
+        "core.agent_inbox_store.AgentInboxStore.instance",
+        classmethod(lambda cls: inbox))
+    monkeypatch.setattr(
+        "core.workflow_agent_runtime.resolve_exact_agent_workflow",
+        lambda *_args, **_kwargs: resolved)
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_agent_config",
+        lambda *_args, **_kwargs: {
+            "runtime_kind": "workflow", "workflow": binding})
+    monkeypatch.setattr(
+        ContinuousFlowExecutor, "run_batch",
+        classmethod(lambda cls, *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("deterministic terminal failure"))))
+
+    runtime = WorkflowAgentRuntime()
+    ack = runtime.submit(request)
+    deadline = time.monotonic() + 3
+    record = None
+    while time.monotonic() < deadline:
+        record = run_store.get_run(ack["run_id"])
+        if record is not None and record["status"] == "failed":
+            break
+        time.sleep(0.01)
+
+    assert record is not None
+    assert record["status"] == "failed"
+    items = inbox.list_items("conv-1", "Demo")
+    assert [item.state for item in items] == ["discarded"]
+    assert inbox.pending_count("conv-1", "Demo") == 0
 
 
 def test_recovery_uses_durable_binding_not_current_config(
@@ -806,7 +1022,26 @@ def test_stale_generation_cannot_finalize(monkeypatch):
     )
 
 
+def test_active_agent_soft_stop_routes_to_workflow_runtime(monkeypatch):
+    from tasks.ai.actions.cancel_interrupt import _cancel_workflow_runtime
+
+    calls = []
+
+    class Runtime:
+        def cancel(self, key, reason, force):
+            calls.append((key, reason, force))
+            return True
+
+    monkeypatch.setattr(WorkflowAgentRuntime, "_instance", Runtime())
+
+    assert _cancel_workflow_runtime(
+        "conv-1", "Demo", reason="interrupt", force=False)
+    assert calls == [(AgentRunKey("conv-1", "demo"), "interrupt", False)]
+
+
 def test_runtime_executes_and_commits_one_correlated_terminal(monkeypatch):
+    from engine.continuous_executor import ContinuousFlowExecutor
+
     definition = _definition()
     resolved = ResolvedAgentWorkflow(definition=definition, ref=_ref())
     binding = {
@@ -818,7 +1053,6 @@ def test_runtime_executes_and_commits_one_correlated_terminal(monkeypatch):
         "allowed_effects": EFFECTS,
         "parameters": {},
         "limits": {
-            "max_duration_seconds": 30,
             "max_llm_calls": 1,
             "max_flowfiles": 10,
             "max_fanout": 2,
@@ -832,6 +1066,16 @@ def test_runtime_executes_and_commits_one_correlated_terminal(monkeypatch):
         "core.conv_agent_config.get_agent_config",
         lambda *_args, **_kwargs: {
             "runtime_kind": "workflow", "workflow": binding})
+
+    batch_timeouts = []
+    original_run_batch = ContinuousFlowExecutor.run_batch.__func__
+
+    def capture_timeout(cls, *args, **kwargs):
+        batch_timeouts.append(kwargs.get("timeout"))
+        return original_run_batch(cls, *args, **kwargs)
+
+    monkeypatch.setattr(
+        ContinuousFlowExecutor, "run_batch", classmethod(capture_timeout))
 
     events = []
     committed = []
@@ -863,6 +1107,7 @@ def test_runtime_executes_and_commits_one_correlated_terminal(monkeypatch):
     while runtime._active and time.monotonic() < deadline:
         time.sleep(0.01)
     assert not runtime._active
+    assert batch_timeouts == [None]
     assert len(committed) == 1
     assert committed[0][0]["content"] == "Workflow completed: hello"
     done_events = [row for row in events if row[1] == "done"]

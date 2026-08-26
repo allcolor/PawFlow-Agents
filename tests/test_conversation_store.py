@@ -141,6 +141,48 @@ class TestCreateConversation:
         assert meta["user_id"] == user_id
         assert meta["message_count"] == 1
 
+    def test_exists_waits_for_owner_index_bootstrap_before_negative_fallback(
+            self, store, monkeypatch):
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        warmed = ConversationStore(store_dir=str(store._store_dir))
+        entered = threading.Event()
+        release = threading.Event()
+        original = warmed._load_cache_metadata
+
+        def blocked_load(found_cid, user_id=""):
+            entered.set()
+            assert release.wait(timeout=2)
+            return original(found_cid, user_id)
+
+        monkeypatch.setattr(warmed, "_load_cache_metadata", blocked_load)
+        original_conv_dir = warmed._conv_dir
+
+        def guarded_conv_dir(*args, **kwargs):
+            if threading.current_thread().name == "owner-index-reader":
+                raise ValueError("negative fallback must not run during bootstrap")
+            return original_conv_dir(*args, **kwargs)
+
+        monkeypatch.setattr(warmed, "_conv_dir", guarded_conv_dir)
+        loader = threading.Thread(target=warmed._ensure_loaded)
+        loader.start()
+        assert entered.wait(timeout=1)
+        result = {}
+        reader = threading.Thread(
+            target=lambda: result.setdefault("exists", warmed.exists(cid)),
+            name="owner-index-reader")
+        reader.start()
+        try:
+            assert reader.is_alive(), "exists must wait for the owner index"
+        finally:
+            release.set()
+            loader.join(timeout=2)
+            reader.join(timeout=2)
+
+        assert not loader.is_alive()
+        assert not reader.is_alive()
+        assert result == {"exists": True}
+
     def test_first_append_after_restart_seeds_seq_without_full_bootstrap_scan(
             self, store, monkeypatch):
         cid = store.generate_id()

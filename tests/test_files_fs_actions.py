@@ -342,7 +342,24 @@ def test_flow_runtime_graph_instance_uses_repository_runtime_links(tmp_path, mon
     instance_id = dep_reg.deploy(str(stale_path), owner="alice")
     inst = dep_reg.get(instance_id)
     inst.flow_fqn = "default.telegram_agent:1.0.0"
-    inst.flow_scope = "global"
+    # Runtime deployment modes such as "independent" are not repository
+    # scopes; the loader must still fall through to the global FQN.
+    inst.flow_scope = "independent"
+    inst.layout = {
+        "nodes": {
+            "agent_client": {
+                "x": 320, "y": 80, "label": "Live agent bridge",
+                "description": "Uses the deployment-specific presentation.",
+            },
+        },
+        "frames": {
+            "live": {
+                "id": "live", "label": "Live",
+                "x": 280, "y": 20, "width": 320, "height": 220,
+                "member_ids": ["agent_client"],
+            },
+        },
+    }
     dep_reg._save_instance(inst)
     ff = FlowFile(content=b"")
 
@@ -352,6 +369,10 @@ def test_flow_runtime_graph_instance_uses_repository_runtime_links(tmp_path, mon
 
     payload = _payload(ff)
     assert result == [ff]
+    assert payload["layout"] == inst.layout
+    assert payload["nodes"]["agent_client"]["label"] == "Live agent bridge"
+    assert payload["nodes"]["agent_client"]["description"] == (
+        "Uses the deployment-specific presentation.")
     assert "runtime:pawflow_agent.agent_runtime_in" in payload["nodes"]
     assert payload["edges"] == [{
         "source": "agent_client",

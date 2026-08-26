@@ -8,19 +8,25 @@
       "type": "generateFlowFile",
       "parameters": {
         "content": "run"
-      }
+      },
+      "label": "Trigger",
+      "description": "Receives or initiates the trigger step using generateFlowFile."
     },
     "fetch_crypto": {
       "type": "executeScript",
       "parameters": {
         "script": "import json, time, urllib.request, urllib.parse\n\nids = ['bitcoin','ethereum','binancecoin','palm-ai','spectre-ai']\nvs = 'eur'\nurl = 'https://api.coingecko.com/api/v3/simple/price?' + urllib.parse.urlencode({\n    'ids': ','.join(ids),\n    'vs_currencies': vs,\n    'include_24hr_change': 'true'\n})\n\nattempt_delays = [0, 5, 15]\nlast_error = None\nraw = None\nfor delay in attempt_delays:\n    if delay:\n        time.sleep(delay)\n    try:\n        req = urllib.request.Request(url, headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0'})\n        with urllib.request.urlopen(req, timeout=30) as resp:\n            raw = resp.read().decode('utf-8', errors='replace')\n        data = json.loads(raw)\n        if isinstance(data, dict) and 'status' in data and isinstance(data['status'], dict) and data['status'].get('error_code') == 429:\n            last_error = 'CoinGecko rate limit: ' + raw\n            continue\n        break\n    except Exception as e:\n        last_error = str(e)\nelse:\n    raise Exception('Impossible de récupérer CoinGecko après retries: ' + str(last_error))\n\nif raw is None:\n    raise Exception('Réponse CoinGecko vide.')\n\nobj = json.loads(raw)\nname_map = {\n    'bitcoin': 'BTC',\n    'ethereum': 'ETH',\n    'binancecoin': 'BNB',\n    'palm-ai': 'PALM AI',\n    'spectre-ai': 'SPECTRE AI'\n}\nout = {}\nfor cid, symbol in name_map.items():\n    item = obj.get(cid, {})\n    out[symbol] = {\n        'price_eur': item.get('eur'),\n        'change_24h_pct': item.get('eur_24h_change')\n    }\n\nflow_file.content = json.dumps(out, ensure_ascii=False, indent=2).encode('utf-8')"
-      }
+      },
+      "label": "Fetch Crypto",
+      "description": "Processes the fetch crypto step using executeScript."
     },
     "prepare_llm_input": {
       "type": "executeScript",
       "parameters": {
         "script": "import json\ncrypto = json.loads(flow_file.content.decode('utf-8'))\nprompt = (\n    'Tu es un analyste crypto concis. À partir des données JSON suivantes, rédige un résumé quotidien en français en 5 à 8 phrases maximum. '\n    'Mentionne les mouvements marquants, compare brièvement les actifs, et termine par une note de prudence. '\n    'N\\'invente aucune donnée. JSON:\\n' + json.dumps(crypto, ensure_ascii=False)\n)\nflow_file.content = prompt.encode('utf-8')"
-      }
+      },
+      "label": "Prepare LLM Input",
+      "description": "Validates and routes the prepare llm input step using executeScript."
     },
     "generate_llm_summary": {
       "type": "inferLLM",
@@ -28,20 +34,26 @@
         "service": "llm_local",
         "system_prompt": "Tu es un analyste financier prudent, clair et concis.",
         "temperature": 0.3
-      }
+      },
+      "label": "Generate LLM Summary",
+      "description": "Processes the generate llm summary step using inferLLM."
     },
     "merge_email_parts": {
       "type": "mergeContent",
       "parameters": {
         "separator": "\n\n===SUMMARY===\n\n",
         "min_entries": 2
-      }
+      },
+      "label": "Merge Email Parts",
+      "description": "Processes the merge email parts step using mergeContent."
     },
     "compose_email_body": {
       "type": "executeScript",
       "parameters": {
         "script": "import json\ntext = flow_file.content.decode('utf-8', errors='replace')\nsep = '\\n\\n===SUMMARY===\\n\\n'\nif sep not in text:\n    raise Exception('Séparateur summary absent du contenu fusionné.')\nleft, right = text.split(sep, 1)\nleft = left.strip()\nright = right.strip()\n\ncrypto = None\nsummary = None\nfor a, b in ((left, right), (right, left)):\n    try:\n        crypto = json.loads(a)\n        summary = b\n        break\n    except Exception:\n        pass\n\nif crypto is None or summary is None:\n    raise Exception('Impossible d\\'identifier la partie JSON crypto et la partie résumé.')\n\nlines = []\nlines.append('Bonjour,')\nlines.append('')\nlines.append('Voici votre résumé quotidien du marché crypto :')\nlines.append('')\nfor symbol, info in crypto.items():\n    price = info.get('price_eur')\n    change = info.get('change_24h_pct')\n    price_txt = 'N/A' if price is None else f\"{price:.6f}\".rstrip('0').rstrip('.')\n    change_txt = 'N/A' if change is None else f\"{change:+.2f}%\"\n    lines.append(f'- {symbol}: {price_txt} EUR ({change_txt} sur 24h)')\nlines.append('')\nlines.append('Résumé IA :')\nlines.append(summary)\nlines.append('')\nlines.append('Cordialement,')\nlines.append('Votre robot crypto')\n\nflow_file.content = '\\n'.join(lines).encode('utf-8')"
-      }
+      },
+      "label": "Compose Email Body",
+      "description": "Processes the compose email body step using executeScript."
     },
     "send_email": {
       "type": "sendEmail",
@@ -56,55 +68,67 @@
         "from": "quentin.anciaux@allcolor.org",
         "to": "quentin.anciaux@allcolor.org",
         "subject": "Résumé quotidien crypto (test manuel)"
-      }
+      },
+      "label": "Send Email",
+      "description": "Delivers the send email step using sendEmail."
     },
     "in_port": {
       "type": "inputPort",
       "parameters": {
         "port_name": "manual_input"
-      }
+      },
+      "label": "IN Port",
+      "description": "Receives or initiates the in port step using inputPort."
     }
   },
   "relations": [
     {
       "from": "trigger",
       "to": "fetch_crypto",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_400ad4fa43116639"
     },
     {
       "from": "in_port",
       "to": "fetch_crypto",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_454c856f2e5eb7a4"
     },
     {
       "from": "fetch_crypto",
       "to": "prepare_llm_input",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_713ec7a806030441"
     },
     {
       "from": "fetch_crypto",
       "to": "merge_email_parts",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_1fb95c7afa5ff4e6"
     },
     {
       "from": "prepare_llm_input",
       "to": "generate_llm_summary",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_9fc8a9bbd60a3d38"
     },
     {
       "from": "generate_llm_summary",
       "to": "merge_email_parts",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_17e6756b31c478d5"
     },
     {
       "from": "merge_email_parts",
       "to": "compose_email_body",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_8eecaba5187a52a4"
     },
     {
       "from": "compose_email_body",
       "to": "send_email",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_3c69db87bf846c02"
     }
   ],
   "services": {
@@ -123,5 +147,329 @@
   "created_at": 1780763709.7670918,
   "entries": [
     "in_port"
-  ]
+  ],
+  "layout_schema_version": 1,
+  "default_layout_id": "functional",
+  "layouts": {
+    "functional": {
+      "id": "functional",
+      "name": "manual_crypto_email_oauth2 functional stages",
+      "kind": "declarative",
+      "root_group_id": "",
+      "viewport": {
+        "x": 40,
+        "y": 40,
+        "zoom": 0.75
+      },
+      "direction": "LR",
+      "nodes": {
+        "trigger": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "in_port": {
+          "x": 0,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "prepare_llm_input": {
+          "x": 360,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "accent": "#f59e0b",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "fetch_crypto": {
+          "x": 720,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "generate_llm_summary": {
+          "x": 720,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "merge_email_parts": {
+          "x": 720,
+          "y": 300,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "compose_email_body": {
+          "x": 720,
+          "y": 450,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "send_email": {
+          "x": 1080,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        }
+      },
+      "relations": {
+        "rel_400ad4fa43116639": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_454c856f2e5eb7a4": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_713ec7a806030441": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_1fb95c7afa5ff4e6": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_9fc8a9bbd60a3d38": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_17e6756b31c478d5": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_8eecaba5187a52a4": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_3c69db87bf846c02": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        }
+      },
+      "annotations": {},
+      "frames": {
+        "stage_inputs": {
+          "id": "stage_inputs",
+          "label": "Inputs & triggers",
+          "description": "Receives requests and starts scheduled work.",
+          "x": -32,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "trigger",
+            "in_port"
+          ],
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_routing": {
+          "id": "stage_routing",
+          "label": "Validation & routing",
+          "description": "Validates inputs, authenticates callers, and selects paths.",
+          "x": 328,
+          "y": -72,
+          "width": 304,
+          "height": 214,
+          "member_ids": [
+            "prepare_llm_input"
+          ],
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_processing": {
+          "id": "stage_processing",
+          "label": "Core processing",
+          "description": "Performs the flow's main transformation or agent work.",
+          "x": 688,
+          "y": -72,
+          "width": 304,
+          "height": 664,
+          "member_ids": [
+            "fetch_crypto",
+            "generate_llm_summary",
+            "merge_email_parts",
+            "compose_email_body"
+          ],
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_outputs": {
+          "id": "stage_outputs",
+          "label": "Delivery & outputs",
+          "description": "Publishes results and completes external responses.",
+          "x": 1048,
+          "y": -72,
+          "width": 304,
+          "height": 214,
+          "member_ids": [
+            "send_email"
+          ],
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        }
+      },
+      "visibility": {}
+    }
+  }
 }

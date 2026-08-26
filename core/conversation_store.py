@@ -86,6 +86,10 @@ class ConversationStore(
         self._enc_enabled: Dict[str, bool] = {}  # cid -> encryption-enabled (cached)
         self._secret_runtime_scrubbed = set()
         self._loaded = False
+        self._load_lock = threading.Lock()
+        self._load_complete = threading.Event()
+        self._load_started = False
+        self._load_owner_ident: Optional[int] = None
         try:
             _csb._HOT_METADATA_EXECUTOR.submit(lambda: None)
         except Exception:

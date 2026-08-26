@@ -29,6 +29,7 @@ keep their fast intra-process semantics for short synchronizations.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import math
@@ -233,6 +234,15 @@ def validate_interaction_answer(
             raise ValueError(f"{label} datetime must include a timezone")
         return value.isoformat()
     if kind == "file":
+        if schema.get("multiple"):
+            if not isinstance(answer, list) or not answer:
+                raise ValueError(f"{label} must be a non-empty list of file references")
+            item_schema = {**schema, "multiple": False}
+            return [
+                validate_interaction_answer(
+                    "file", item, item_schema, label=f"{label}[{index}]")
+                for index, item in enumerate(answer)
+            ]
         if isinstance(answer, str):
             file_id = answer.strip()
             result = {"file_id": file_id}
@@ -426,7 +436,7 @@ class UserInteractionStore:
         requester: str, message: str, title: str = "", kind: str = "text",
         options: Any = None, response_schema: Any = None,
         expires_in_seconds: float = 0, continuation: Any = None,
-        signal_prefix: str = "interaction",
+        signal_prefix: str = "interaction", idempotency_key: str = "",
     ) -> Dict[str, Any]:
         if not conversation_id or not user_id:
             raise ValueError("conversation_id and user_id are required")
@@ -446,7 +456,14 @@ class UserInteractionStore:
         if not isinstance(continuation, dict):
             raise ValueError("continuation must be an object")
         now = time.time()
-        request_id = "req_" + uuid.uuid4().hex[:16]
+        idempotency_key = str(idempotency_key or "").strip()
+        if idempotency_key:
+            identity = "\x00".join((
+                conversation_id, user_id, requester_kind, idempotency_key,
+            )).encode("utf-8")
+            request_id = "req_" + hashlib.sha256(identity).hexdigest()[:16]
+        else:
+            request_id = "req_" + uuid.uuid4().hex[:16]
         signal_id = f"{signal_prefix}:{request_id}"
         record = {
             "request_id": request_id, "conversation_id": conversation_id,
@@ -461,6 +478,30 @@ class UserInteractionStore:
             "answered_by": "", "answered_at": 0,
         }
         with self._lock, self._connect() as connection:
+            existing = connection.execute(
+                "SELECT * FROM confirmations WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if existing is not None:
+                current = self._confirmation_row(existing)
+                comparable = {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "requester_kind": requester_kind,
+                    "requester": requester or "",
+                    "title": title or "",
+                    "message": message,
+                    "kind": kind,
+                    "options": opts,
+                    "response_schema": schema,
+                    "signal_id": signal_id,
+                    "continuation": continuation,
+                }
+                if any(current.get(key) != value
+                       for key, value in comparable.items()):
+                    raise ValueError(
+                        "idempotency key already identifies a different interaction")
+                return current
             connection.execute(
                 "INSERT INTO confirmations "
                 "(request_id, conversation_id, user_id, requester_kind, requester, "
@@ -484,7 +525,7 @@ class UserInteractionStore:
         self, *, conversation_id: str, user_id: str, requester_kind: str,
         requester: str, message: str, title: str = "",
         mode: str = "confirm", options: Any = None,
-        expires_in_seconds: float = 0,
+        expires_in_seconds: float = 0, idempotency_key: str = "",
     ) -> Dict[str, Any]:
         mode = str(mode or "confirm").strip().lower()
         if mode not in {"confirm", "choice", "multi"}:
@@ -495,6 +536,7 @@ class UserInteractionStore:
             title=title, kind=mode, options=options,
             expires_in_seconds=expires_in_seconds,
             signal_prefix="confirmation",
+            idempotency_key=idempotency_key,
         )
 
     def get_confirmation(self, request_id: str) -> Optional[Dict[str, Any]]:
@@ -656,8 +698,20 @@ class UserInteractionStore:
             self._stamp_interaction_resolution(flowfile, signal_id, existing)
             return None
         now = time.time()
-        wait_id = "wait_" + uuid.uuid4().hex[:16]
+        process_id = str(getattr(flowfile, "process_id", "") or "")
+        if not process_id:
+            raise ValueError("flowfile process_id is required")
+        identity = "\x00".join((
+            signal_id, instance_id, task_id, process_id,
+        )).encode("utf-8")
+        wait_id = "wait_" + hashlib.sha256(identity).hexdigest()[:16]
         with self._lock, self._connect() as connection:
+            existing_wait = connection.execute(
+                "SELECT wait_id FROM durable_waits WHERE wait_id=?",
+                (wait_id,),
+            ).fetchone()
+            if existing_wait is not None:
+                return wait_id
             connection.execute(
                 "INSERT INTO durable_waits "
                 "(wait_id, signal_id, instance_id, task_id, flowfile_json, "
@@ -888,13 +942,19 @@ class UserInteractionStore:
         return delivered
 
     def _deliver_wait(self, wait: Dict[str, Any]) -> bool:
-        try:
-            from core.executor_registry import ExecutorRegistry
-            executor = ExecutorRegistry.get_instance().get(wait["instance_id"])
-        except Exception:
-            executor = None
-        if executor is None or not getattr(executor, "is_running", False):
-            return False
+        instance_id = str(wait.get("instance_id") or "")
+        workflow_run_id = (
+            instance_id.split(":", 1)[1]
+            if instance_id.startswith("workflow:") else "")
+        executor = None
+        if not workflow_run_id:
+            try:
+                from core.executor_registry import ExecutorRegistry
+                executor = ExecutorRegistry.get_instance().get(instance_id)
+            except Exception:
+                executor = None
+            if executor is None or not getattr(executor, "is_running", False):
+                return False
         try:
             flowfile = self._restore_flowfile(wait["flowfile_json"])
             if wait.get("kind") == "timer":
@@ -923,8 +983,15 @@ class UserInteractionStore:
                         flowfile, wait["signal_id"], value)
                 elif wait["signal_id"].startswith(("interaction:", "confirmation:")):
                     flowfile.set_attribute("interaction.status", status)
-            if not executor.inject(flowfile, entry_task_id=wait["task_id"]):
-                return False   # backpressure: retried by the sweeper
+            if workflow_run_id:
+                from core.workflow_agent_runtime import WorkflowAgentRuntime
+                accepted = WorkflowAgentRuntime.instance().resume_wait(
+                    workflow_run_id, flowfile, str(wait["task_id"]))
+            else:
+                accepted = executor.inject(
+                    flowfile, entry_task_id=wait["task_id"])
+            if not accepted:
+                return False   # CAS/backpressure: retried by the sweeper
         except Exception:
             logger.exception("[durable-wait] delivery failed for %s",
                              wait["wait_id"])

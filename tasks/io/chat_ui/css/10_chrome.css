@@ -28,7 +28,7 @@
 .header-logo a { display: inline-flex; align-items: center; }
 .header-logo img { display: block; width: 28px; height: 28px; }
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-.header { background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
+.header { position: relative; z-index: 200; background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
            display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .header h1 { font-size: 18px; color: #e94560; }
 .header .status { font-size: 12px; color: #6c6c8a; }
@@ -73,6 +73,7 @@
              border-radius: 7px; background: var(--pf-accent); color: #fff; font-size: 9px;
              font-weight: 700; line-height: 14px; padding: 0 3px; text-align: center; }
 .hdr-pop { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 5000;
+           pointer-events: auto;
            background: var(--pf-panel); border: 1px solid var(--pf-border); border-radius: 8px;
            padding: 8px 10px; box-shadow: 0 4px 14px rgba(0,0,0,0.4);
            min-width: 230px; max-width: min(480px, 92vw); }
@@ -81,3 +82,4 @@
    itself is the only show/hide switch the reader interacts with. */
 .hdr-pop .active-panel { display: block; position: static; max-width: 440px;
                          max-height: 300px; overflow-y: auto; backdrop-filter: none; }
+.hdr-pop .active-row .a-actions button { pointer-events: auto; }

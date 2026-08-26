@@ -35,8 +35,37 @@ def test_appearance_and_language_are_compact_controls_in_the_header():
     ) == 1
     assert header_lead.count('class="header-icon-select"') == 1
     assert 'id="appearanceBtn"' in header_lead
-    assert '<path d="M12 3a9 9 0 1 0' in header_lead
+    appearance_start = header_lead.index('id="appearanceBtn"')
+    appearance_button = header_lead[header_lead.rindex("<button", 0, appearance_start):
+                                    header_lead.index("</button>", appearance_start)]
+    conversation_controls = Path(
+        "tasks/io/chat_ui/templates/composer/controls.html"
+    ).read_text(encoding="utf-8")
+    conversation_start = conversation_controls.index('id="conversationAppearanceBtn"')
+    conversation_button = conversation_controls[
+        conversation_controls.rindex("<button", 0, conversation_start):
+        conversation_controls.index("</button>", conversation_start)
+    ]
+    assert appearance_button.count("&#x1F3A8;") == 1
+    assert conversation_button.count("&#x1F3A8;") == 1
+    assert "<svg" not in appearance_button
     assert '&#x1F310;' in header_lead
+    component_contract = Path(
+        "tasks/io/chat_ui/css/100_component_contract.css"
+    ).read_text(encoding="utf-8")
+    assert ".header .header-dock-item" in component_contract
+    assert ".hdr-icon-btn" in component_contract
+    assert ".conversation-control-button" in component_contract
+    assert ".action-dock-menu > .action-menu-item" in component_contract
+    assert "background: var(--pf-sidebar) !important" in component_contract
+    chat_template = Path("tasks/io/chat_ui/templates/chat.html").read_text(
+        encoding="utf-8"
+    )
+    assert chat_template.index("{{ theme_block|safe }}") < chat_template.index(
+        "/chat/js/css/100_component_contract.css"
+    )
+    themes_js = Path("tasks/io/chat_ui/themes.js").read_text(encoding="utf-8")
+    assert "insertBefore(themeEl, contract || null)" in themes_js
     assert (
         header_lead.index('<h1 class="header-logo">')
         < header_lead.index('id="appearanceBtn"')
@@ -272,7 +301,9 @@ def test_composer_context_row_orders_controls_and_action_dock():
         context_row.index('id="promptControlsPanel"')
         < context_row.index('id="composerActionMount"')
     )
+    assert "actionDock.parentNode !== actionMount" in STATE_JS
     assert "actionMount.appendChild(actionDock)" in STATE_JS
+    assert "activePanel.parentNode !== activePop" in STATE_JS
     assert "activePop.appendChild(activePanel)" in STATE_JS
     assert context_row in input_area
     assert ".composer-context-row { display: grid;" in TEMPLATE_HTML

@@ -8,7 +8,9 @@
       "type": "cronTrigger",
       "parameters": {
         "schedule": "0 7 * * *"
-      }
+      },
+      "label": "Trigger",
+      "description": "Receives or initiates the trigger step using cronTrigger."
     }
   },
   "groups": {
@@ -30,10 +32,82 @@
     {
       "from": "trigger",
       "to": "manual_crypto_email",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_aa42ae566029a8b1"
     }
   ],
   "fqn": "cryptos.daily_crypto_email_oauth2:1.0.0",
   "package": "cryptos",
-  "created_at": 1780763709.7675998
+  "created_at": 1780763709.7675998,
+  "layout_schema_version": 1,
+  "default_layout_id": "functional",
+  "layouts": {
+    "functional": {
+      "id": "functional",
+      "name": "daily_crypto_email_oauth2 functional stages",
+      "kind": "declarative",
+      "root_group_id": "",
+      "viewport": {
+        "x": 40,
+        "y": 40,
+        "zoom": 0.75
+      },
+      "direction": "LR",
+      "nodes": {
+        "trigger": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        }
+      },
+      "relations": {
+        "rel_aa42ae566029a8b1": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        }
+      },
+      "annotations": {},
+      "frames": {
+        "stage_inputs": {
+          "id": "stage_inputs",
+          "label": "Inputs & triggers",
+          "description": "Receives requests and starts scheduled work.",
+          "x": -32,
+          "y": -72,
+          "width": 304,
+          "height": 214,
+          "member_ids": [
+            "trigger"
+          ],
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        }
+      },
+      "visibility": {}
+    }
+  }
 }

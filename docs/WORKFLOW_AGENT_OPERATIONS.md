@@ -16,15 +16,18 @@ separate server-owned capabilities.
 - Run the focused workflow-agent, inbox, Wiki, authorization, and UI gates, then
   the full suite before production cutover.
 
-## Enable workflow agents
+## Configure workflow agents
 
-Set `PAWFLOW_WORKFLOW_AGENTS_ENABLED=1` in the server environment and restart
-or redeploy. Invalid boolean values fail closed. Leaving it unset keeps
-workflow-agent definitions and existing LLM/external agents on the legacy path.
+Workflow agents are a permanent runtime capability and require no feature flag
+or restart. Existing LLM and external agents retain their own runtime paths.
 
 Add the agent through Resources or the conversation agent dialog. Select an
 exact compatible flow version, bind every required parameter/service, select a
-supported preemption policy, and set finite run limits. Save invokes the same
+supported preemption policy, and set only the budgets the workflow actually
+needs. Workflow runs have no implicit timeout: omit `max_duration_seconds` and
+`terminal_timeout` to run until success, an explicit stop, or a real error. An
+explicit positive duration remains available when a user intentionally needs a
+deadline. Save invokes the same
 strict server validator used by Flow Editor publication.
 
 An optional workflow service shown as `Disabled` has no binding. The empty
@@ -42,6 +45,19 @@ effective LLM directly; they never call the Summarizer wrapper.
 Each task boundary also re-evaluates user follow-ups recorded in the workflow
 run's authorization lineage. A newer independent turn has its own lineage and
 does not replace the immutable authority accepted for an already-running turn.
+
+At the start of a new conversation run, PawFlow revalidates the saved workflow
+configuration against the currently visible exact flow resource. If an
+operator replaced that version in place, the new run receives the new digest
+and a fresh validated binding. Existing, waiting, retrying, and recovering runs
+keep their durable binding and still fail closed if their pinned resource
+changes.
+
+Tool-enabled Workflow tasks execute through ephemeral provider conversations.
+Those internal `::workflow::` conversations inherit the parent conversation's
+conversation-wide and agent-specific relay bindings. An explicit workflow relay
+therefore remains available to filesystem and Desktop tools without enabling
+host-local execution; the relay's configured `local` mode is unchanged.
 
 ## Migrate one PendingQueue
 
@@ -64,6 +80,14 @@ After migration, verify the expected pending count and send one canary message.
 Do not bulk-migrate all agents until the representative canary completes,
 acknowledges only its answered turn IDs, and survives a restart.
 
+Conversation turns are deduplicated by their root message ID. While one run is
+active, the process keeps at most 20 distinct successors per agent as a fast
+cache; any further conversation turns remain only in the durable inbox and are
+drained in sequence after cached work. Bound automation and child-flow
+submissions are not backed by that inbox, so a full cache rejects them explicitly
+instead of dropping work. A growing process-resident pending list therefore
+indicates an old runtime or a broken deployment, not normal backlog behavior.
+
 ## Observe and inspect
 
 The conversation-scoped agent-resource actions are:
@@ -73,22 +97,157 @@ The conversation-scoped agent-resource actions are:
 | `workflow_operations` | read | `conversation_id` | Health, redacted counters, usage, inbox states, and stable alerts; optional `agent_name`/`backlog_alert`. |
 | `list_workflow_runs` | read | `conversation_id` | Newest redacted runs; optional `agent_name`/`limit` (maximum 200). |
 | `inspect_workflow_run` | read | `conversation_id`, `run_id` | Redacted run state and ordered lifecycle events. |
-| `retry_workflow_run` | write | `conversation_id`, `run_id` | Reacquire only the current safely recoverable generation. |
+| `retry_workflow_run` | write | `conversation_id`, `run_id` | Reacquire a crashed live run or resume the current `retryable_failed` generation from its exact task checkpoint. |
+| `delete_workflow_run` | write | `conversation_id`, `run_id` | Delete one terminal run and its cascaded technical state. Active and non-terminal runs are rejected. |
 
-The UI exposes list/inspect/retry from a workflow agent's context menu. Treat a
-retry HTTP 409 as authoritative: the run is terminal, superseded, unsafe, or
-another worker won the recovery race. Never create a replacement run merely to
-hide that conflict; inspect the durable run and inbox state first.
+The UI exposes list/inspect/retry/delete from a workflow agent's context menu.
+Its history column requests the 25 newest runs; older durable runs remain stored
+until an explicit terminal-run deletion or an operator-configured retention
+cleanup. The
+inspector refreshes immediately on matching `workflow_progress` events and uses
+a bounded visibility-aware polling fallback. It follows the newest run until an
+operator selects an older one and highlights the selected row. The graph marks
+the latest authorized flow task as current even when task-internal telemetry uses
+a runtime class name instead of the flow task ID. Its primary view shows the
+current step and total, a progress bar, current activity, latest redacted return,
+and any error. Flow blocks, usage, terminal commit state, and the full ordered
+event history remain available in collapsed technical details. Opening those
+details survives background refreshes of the selected run. Treat a retry HTTP 409 as
+authoritative: the run is terminal, superseded, unsafe, already has a live
+worker, or another worker won the recovery race. Never create a replacement run
+merely to hide that conflict; inspect the durable run and inbox state first.
+
+The primary inspector also shows a live execution timeline for redacted
+assistant messages, tool-call names and arguments, tool results, and errors.
+Values are bounded before durable event storage; sensitive-named fields and
+resolved secret values are redacted, while image/base64 payloads are omitted.
+System prompts, hidden reasoning, and reasoning signatures are never recorded.
+
+Durable interaction tasks in an exact-version Workflow Agent use the task ID
+injected by that run's executor for their idempotency identity. The global
+continuous-flow registry remains only a fallback for conventionally deployed
+flows; an exact-version task must not depend on registry membership to ask for
+confirmation or typed user input.
+
+### Error and retry semantics
+
+`inspect_workflow_run` exposes a redacted structured `error` with `code`,
+`message`, `retryable`, `task_id`, and timestamp. The runtime handles failures as
+follows:
+
+- `retryable_failed` is non-terminal. The run still owns its generation and inbox
+  claim, consumes no worker, and survives server restart. `safe_retry=true` means
+  an exact pre-attempt FlowFile and task ID are durably available.
+- Retry resumes the same `run_id` at the failed task. Run-cached and keyed-effect
+  tasks therefore reuse the same cache/idempotency boundary. A second concurrent
+  retry receives HTTP 409 and cannot start another worker.
+- `failed`, `timed_out`, `budget_exceeded`, `recovery_failed`, unsafe-task,
+  authorization, invalid-binding, and uncheckpointed errors are terminal or not
+  automatically replayable. Correct the cause and submit a new user turn only
+  when the operator intentionally wants a new generation.
+- A conversation run that reaches a terminal failure discards its claimed or
+  still-pending ingress message before releasing the worker. The poller must
+  never turn one deterministic error into successive run generations.
+- A provider job already marked `submitted` without a durable provider recovery
+  result remains non-retryable. PawFlow fails closed rather than submitting it a
+  second time.
+- Cancel and force-stop work from `waiting` and `retryable_failed` exactly as they
+  do from a running generation. When an explicit deadline exists, time paused for
+  user input or operator retry is excluded from it; runs without one remain
+  unlimited.
+
+After retry, inspect ordered `error` and `retrying` events and verify that the
+recovery count increased once, the run ID and generation did not change, and no
+duplicate provider job or terminal transcript row appeared.
 
 Alert meanings:
 
 | Code | Severity | First response |
 |---|---|---|
 | `workflow_failed_runs` | warning | Inspect the newest failed run and its redacted authorization/progress events. |
-| `workflow_overdue_runs` | critical | Stop new cutover work; inspect deadline, worker ownership, and recovery eligibility. |
+| `workflow_overdue_runs` | critical | An explicitly bounded run exceeded its deadline; inspect worker ownership and recovery eligibility. Unlimited runs never raise this alert. |
 | `workflow_recovery_churn` | warning | Investigate repeated process loss or deterministic task failure before retrying. |
 | `workflow_inbox_backlog` | warning | Compare ingress rate, active runs, and configured backlog threshold. |
 | `workflow_expired_claims` | critical | Verify startup reconciliation and recover/release only through the durable runtime. |
+
+## Media Studio canary
+
+Install `pawflow.media-studio:1.0.0`, bind the exact
+`pawflow.agents.media-studio:1.0.0` flow, select a concrete `creative_llm`, and
+leave optional media preferences empty unless the canary requires one. The flow
+has no activation flag.
+
+Validate these branches before broad use:
+
+1. An unrelated request terminates before project, FileStore, or service access.
+2. Image, video, ComfyUI audio, generic audio, and ordinary speech each select an
+   exact frozen capability and return owner-scoped FileStore artifacts.
+3. Missing material fields produce one grouped durable form and resume after a
+   reconnect without duplicating the question.
+4. Composite work shows the exact scenario digest and cannot produce after
+   Revise or Cancel.
+5. Voice cloning does not call a provider without explicit durable authorization.
+6. FFmpeg composition accepts only a closed recipe and rejects shell, arbitrary
+   arguments, traversal, or a changed service definition.
+7. Retrying a completed run reuses its durable provider result; an orphaned
+   submitted job fails closed instead of resubmitting.
+8. Modification appends a child revision and leaves the prior artifact intact.
+9. An explicit/default/unique relay is frozen before capability discovery;
+   several linked relays produce one durable choice, and zero linked relays stop
+   before project or provider access.
+10. A multi-shot scenario never exceeds `max_fanout`, runs no more than four
+    provider submissions concurrently, and joins every correlated artifact
+    before validation and revision commit.
+
+Inspect the run through `workflow_operations` and `inspect_workflow_run`. Record
+the exact flow digest, service revisions, package versions, artifacts, and test
+results. A ComfyUI model, LoRA, custom-node, or workflow change must go through
+the operator package's reviewed provisioning plan; publish a new immutable
+preset/service revision and never mutate the active revision in place.
+
+## Website Creator canary
+
+Install `pawflow.website-creator:1.0.0`, bind the exact
+`pawflow.agents.website-creator:1.0.0` flow, select a vision-capable
+`creator_llm`, and bind a concrete/default/sole linked relay that provides the
+Chromium desktop and filesystem access. Requests must provide two
+public HTTP(S) URLs, either through `source_url` and `template_url` parameters
+or in the user message.
+
+Managed Desktop relays always enable automation inside their relay container.
+This is independent from server-local execution and host-screen access, which
+remain disabled unless separately and explicitly authorized.
+
+The first version supports self-contained static HTML/CSS/JavaScript sites. It
+does not expose shell, test-code execution, arbitrary patch paths, package
+installation, Git, deployment, Playwright/headless navigation, or private/local
+URLs. Every run writes only below
+`/workspace/pawflow-sites/<run_id>` (or the configured absolute
+`workspace_root`).
+
+Validate these branches before broad use:
+
+1. Localhost, private IP literals, credentials in URLs, and hostnames resolving to
+   any private address fail before desktop, filesystem, or network access.
+2. Exploration calls both `screen` and `see` for the source and template;
+   `fetch` is supplementary and cannot satisfy the visual-observation gate.
+3. The proposed source-to-template mapping is shown in one durable form. Reject
+   stops without project writes; approve continues after reconnect without
+   duplicating the request.
+4. Generation stays inside the stable run workspace; relative traversal and
+   non-workspace `file://` previews fail closed.
+5. Final review uses the visible desktop and vision. Accept terminates; Revise
+   permits exactly one correction pass and cannot cycle back to the review gate.
+6. The terminal result contains one workspace artifact and reports tool-call and
+   correction-pass metrics.
+
+Inspect the exact run, confirm both durable waits survive a server restart, and
+verify that cancellation, deadline, service-revision, authorization, and
+workspace-boundary failures remain fail-closed.
+
+See [Website Creator Workflow Agent](WEBSITE_CREATOR_WORKFLOW_AGENT.md) for the
+supported template catalogs, license constraints, version 1 scope, and chat
+test procedure.
 
 ## Wiki shadow and cutover
 
@@ -137,10 +296,9 @@ around that check by weakening the binding.
 ## Rollback and incident response
 
 Remove `PAWFLOW_WIKI_WORKFLOW_CUTOVER` and restart/redeploy to route future
-automatic maintenance back to the legacy scheduler. This does not rewrite
-completed workflow records or wiki data. Keep
-`PAWFLOW_WORKFLOW_AGENTS_ENABLED` enabled if interactive workflow agents still
-need to run; disable it separately only when that broader rollback is intended.
+automatic maintenance back to the legacy scheduler. This temporary cutover
+flag does not control interactive workflow agents and removing it does not
+rewrite completed workflow records or wiki data.
 
 For an incident:
 

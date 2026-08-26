@@ -163,14 +163,9 @@ def test_exact_binding_detects_content_change_without_scope_fallback():
         resolve_exact_skill(ref, "conv-1", resource_store=resources)
 
 
-def test_runtime_selection_requires_flag_and_active_marker(monkeypatch):
+def test_runtime_selection_requires_only_active_marker():
     _result, store, _resources = _migrate()
     legacy = ["legacy"]
-    monkeypatch.delenv("PAWFLOW_RESOURCE_BINDINGS_V2_ENABLED", raising=False)
-    assert runtime_skill_assignments(
-        "conv-1", "assistant", legacy, conversation_store=store) == legacy
-
-    monkeypatch.setenv("PAWFLOW_RESOURCE_BINDINGS_V2_ENABLED", "1")
     selected = runtime_skill_assignments(
         "conv-1", "assistant", legacy, conversation_store=store)
     assert selected[0]["schema_version"] == 2
@@ -179,7 +174,6 @@ def test_runtime_selection_requires_flag_and_active_marker(monkeypatch):
 
 def test_first_v2_write_retires_rollback_and_prevents_rollback(monkeypatch):
     _result, store, resources = _migrate()
-    monkeypatch.setenv("PAWFLOW_RESOURCE_BINDINGS_V2_ENABLED", "1")
     current = store.extras[RESOURCE_BINDINGS_V2_KEY]["agents"]["assistant"]
 
     assert replace_active_skill_assignments(
@@ -196,7 +190,6 @@ def test_first_v2_write_retires_rollback_and_prevents_rollback(monkeypatch):
 
 def test_rollback_before_first_write_restores_legacy_runtime(monkeypatch):
     _result, store, _resources = _migrate()
-    monkeypatch.setenv("PAWFLOW_RESOURCE_BINDINGS_V2_ENABLED", "1")
 
     result = rollback_skill_binding_migration(
         "conv-1", conversation_store=store)
@@ -238,7 +231,6 @@ def test_failed_activation_write_leaves_no_partial_marker():
 def test_active_marker_fails_closed_when_legacy_roster_drifted(monkeypatch):
     _result, store, _resources = _migrate()
     store.extras["conv_agents"]["assistant"]["assigned_skills"] = ["other"]
-    monkeypatch.setenv("PAWFLOW_RESOURCE_BINDINGS_V2_ENABLED", "1")
 
     with pytest.raises(ValueError, match="activation is stale"):
         runtime_skill_assignments(

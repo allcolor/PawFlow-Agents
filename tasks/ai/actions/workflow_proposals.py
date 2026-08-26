@@ -141,9 +141,6 @@ def _handle_workflow_proposals(
 
     if not user_id:
         return _reply({"error": "Authentication required"}, "401")
-    from core.flow_feature_flags import workflow_proposals_enabled
-    if not workflow_proposals_enabled():
-        return _reply({"error": "Workflow proposals are disabled"}, "404")
 
     conversation_id = str(body.get("conversation_id") or "")
     if not conversation_id:

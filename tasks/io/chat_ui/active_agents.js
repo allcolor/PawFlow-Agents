@@ -174,6 +174,8 @@ function trackAgentStart(agentName, msgPreview, taskId, turnId) {
     geminiReuseCount: existing.geminiReuseCount || 0,
     geminiLivedSeconds: existing.geminiLivedSeconds || 0,
     geminiIdleSeconds: existing.geminiIdleSeconds || 0,
+    runtimeKind: existing.runtimeKind || '',
+    workflowRunId: existing.workflowRunId || '',
     updatedAt: Date.now(),
   };
   if (typeof setConversationWorking === 'function') {
@@ -228,6 +230,8 @@ function trackWorkflowProgress(data) {
   const key = activeAgentKey(agentName, '');
   const info = activeInteractions[key];
   if (!info) return;
+  info.runtimeKind = 'workflow';
+  info.workflowRunId = data.run_id || info.workflowRunId || '';
   const status = String(data.label || data.stage || '').trim();
   if (status) info.status = status.replace(/_/g, ' ');
   info.updatedAt = Date.now();
@@ -266,6 +270,9 @@ function _updateActiveAgentsCount(count) {
 }
 
 function updateActivePanel() {
+  // Repair the long-lived mount on every render. This also makes mixed/live
+  // asset rollouts self-healing when state.js ran before either node existed.
+  mountComposerChrome();
   // Same poll: whether the selected agent has a tmux to grab.
   if (typeof updateGrabButton === 'function') updateGrabButton();
   const panel = document.getElementById('activePanel');
@@ -395,6 +402,7 @@ function updateActivePanel() {
       + ctxHtml
       + '<span class="a-time">' + timeStr + '</span>'
       + '<span class="a-actions">'
+      + (info.runtimeKind === 'workflow' ? '<button title="' + escapeAttr(t('workflowRunsMenu')) + '" onclick="showWorkflowRunInspector(' + jsStringArg(apiName) + ')">&#x25A7;</button>' : '')
       + (info.taskId ? '<button title="' + escapeAttr(t('openInTaskTab')) + '" onclick="if(typeof openTaskTab===\'function\')openTaskTab(' + jsStringArg(info.taskId) + ',' + jsStringArg(apiName) + ')">↗</button>' : '')
       + '<button title="' + escapeAttr(t('stopTitle')) + '" onclick="interruptSingle(' + jsStringArg(apiName) + ',' + jsStringArg(info.taskId || '') + ')">&#x23F8;</button>'
       + restartBtn
@@ -508,6 +516,8 @@ function syncActiveFromServer(force) {
         geminiReuseCount: a.gemini_reuse_count || 0,
         geminiLivedSeconds: a.gemini_lived_seconds || 0,
         geminiIdleSeconds: a.gemini_idle_seconds || 0,
+        runtimeKind: a.runtime_kind || (existing ? existing.runtimeKind : ''),
+        workflowRunId: a.workflow_run_id || (existing ? existing.workflowRunId : ''),
         updatedAt: now,
       };
       // list_active is status-only. Context gauge hydration is handled by

@@ -126,6 +126,10 @@ class ImageGenerationHandler(ToolHandler):
     def set_agent_name(self, agent_name: str):
         self._agent_name = agent_name
 
+    def set_relay_id(self, relay_id: str, relay_local=None):
+        self._relay_id = str(relay_id or "")
+        self._relay_local = relay_local
+
     def set_service_resolver(self, resolver):
         """Set a resolver function: () -> (service, error_msg)."""
         self._service_resolver = resolver
@@ -175,6 +179,8 @@ class ImageGenerationHandler(ToolHandler):
                     user_id=self._user_id,
                     conversation_id=getattr(self, "_conversation_id", "") or "",
                     agent_name=getattr(self, "_agent_name", "") or "",
+                    relay_id=getattr(self, "_relay_id", "") or "",
+                    relay_local=getattr(self, "_relay_local", None),
                 )
             if hasattr(service, "set_callback_base_url"):
                 service.set_callback_base_url(self._base_url)
@@ -294,6 +300,9 @@ class EditImageHandler(ToolHandler):
     def set_agent_name(self, agent_name: str):
         self._agent_name = agent_name
 
+    def set_relay_id(self, relay_id: str):
+        self._relay_id = str(relay_id or "")
+
     def set_service_resolver(self, resolver):
         """Set a resolver: () -> (service, error_msg). Same shape as ImageGenerationHandler."""
         self._service_resolver = resolver
@@ -343,6 +352,8 @@ class EditImageHandler(ToolHandler):
                     user_id=self._user_id,
                     conversation_id=getattr(self, "_conversation_id", "") or "",
                     agent_name=getattr(self, "_agent_name", "") or "",
+                    relay_id=getattr(self, "_relay_id", "") or "",
+                    relay_local=getattr(self, "_relay_local", None),
                 )
             if hasattr(service, "set_callback_base_url"):
                 service.set_callback_base_url(self._base_url)
@@ -425,6 +436,9 @@ class ImageModelInfoHandler(ToolHandler):
     def set_agent_name(self, agent_name: str):
         self._agent_name = agent_name
 
+    def set_relay_id(self, relay_id: str):
+        self._relay_id = str(relay_id or "")
+
     def set_service_resolver(self, resolver):
         self._service_resolver = resolver
 
@@ -449,6 +463,8 @@ class ImageModelInfoHandler(ToolHandler):
                 user_id=self._user_id,
                 conversation_id=getattr(self, "_conversation_id", "") or "",
                 agent_name=getattr(self, "_agent_name", "") or "",
+                relay_id=getattr(self, "_relay_id", "") or "",
+                relay_local=getattr(self, "_relay_local", None),
             )
         if hasattr(service, 'get_model_info'):
             info = service.get_model_info()

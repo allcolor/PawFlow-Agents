@@ -5,67 +5,469 @@
   "fqn": "pawflow.agents.group-deliberation:1.0.0",
   "kind": "agent_workflow",
   "description": "Bounded first-party multi-agent deliberation with one terminal response.",
-  "group_contract": {"version": 1, "parameter": "group_name"},
+  "group_contract": {
+    "version": 1,
+    "parameter": "group_name"
+  },
   "agent_contract": {
     "version": 1,
-    "input": {"port": "group_request"},
-    "terminal": {"port": "group_terminal"},
-    "parameters": {
-      "group_name": {"type": "string", "required": true}
+    "input": {
+      "port": "group_request"
     },
-    "supported_preempt_policies": ["queue", "restart"],
-    "allowed_effects": ["resource.read"]
+    "terminal": {
+      "port": "group_terminal"
+    },
+    "parameters": {
+      "group_name": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "supported_preempt_policies": [
+      "queue",
+      "restart"
+    ],
+    "allowed_effects": [
+      "resource.read"
+    ]
   },
   "parameters": {},
   "services": {},
-  "entries": ["group_request"],
-  "exits": ["group_terminal"],
+  "entries": [
+    "group_request"
+  ],
+  "exits": [
+    "group_terminal"
+  ],
   "tasks": {
     "group_request": {
       "type": "inputPort",
-      "parameters": {"port_name": "group_request"}
+      "parameters": {
+        "port_name": "group_request"
+      },
+      "label": "Group Request",
+      "description": "Receives or initiates the group request step using inputPort."
     },
     "validate_group_request": {
       "type": "groupDeliberationInput",
-      "parameters": {}
+      "parameters": {},
+      "label": "Validate Group Request",
+      "description": "Receives or initiates the validate group request step using groupDeliberationInput."
     },
     "resolve_group_snapshot": {
       "type": "resolveGroupSnapshot",
-      "parameters": {}
+      "parameters": {},
+      "label": "Resolve Group Snapshot",
+      "description": "Processes the resolve group snapshot step using resolveGroupSnapshot."
     },
     "select_responders": {
       "type": "selectGroupResponders",
-      "parameters": {}
+      "parameters": {},
+      "label": "Select Responders",
+      "description": "Processes the select responders step using selectGroupResponders."
     },
     "initialize_room": {
       "type": "initializeSharedRoom",
-      "parameters": {}
+      "parameters": {},
+      "label": "Initialize Room",
+      "description": "Processes the initialize room step using initializeSharedRoom."
     },
     "participant_calls": {
       "type": "agentParticipantCall",
-      "parameters": {}
+      "parameters": {},
+      "label": "Participant Calls",
+      "description": "Processes the participant calls step using agentParticipantCall."
     },
     "synthesize": {
       "type": "synthesizeGroupResult",
-      "parameters": {}
+      "parameters": {},
+      "label": "Synthesize",
+      "description": "Processes the synthesize step using synthesizeGroupResult."
     },
     "complete_group_turn": {
       "type": "completeAgentTurn",
-      "parameters": {}
+      "parameters": {},
+      "label": "Complete Group Turn",
+      "description": "Delivers the complete group turn step using completeAgentTurn."
     },
     "group_terminal": {
       "type": "outputPort",
-      "parameters": {"port_name": "group_terminal"}
+      "parameters": {
+        "port_name": "group_terminal"
+      },
+      "label": "Group Terminal",
+      "description": "Delivers the group terminal step using outputPort."
     }
   },
   "relations": [
-    {"from": "group_request", "to": "validate_group_request", "type": "success"},
-    {"from": "validate_group_request", "to": "resolve_group_snapshot", "type": "success"},
-    {"from": "resolve_group_snapshot", "to": "initialize_room", "type": "success"},
-    {"from": "initialize_room", "to": "select_responders", "type": "success"},
-    {"from": "select_responders", "to": "participant_calls", "type": "success"},
-    {"from": "participant_calls", "to": "synthesize", "type": "success"},
-    {"from": "synthesize", "to": "complete_group_turn", "type": "success"},
-    {"from": "complete_group_turn", "to": "group_terminal", "type": "success"}
-  ]
+    {
+      "from": "group_request",
+      "to": "validate_group_request",
+      "type": "success",
+      "relation_id": "rel_7535183936927156"
+    },
+    {
+      "from": "validate_group_request",
+      "to": "resolve_group_snapshot",
+      "type": "success",
+      "relation_id": "rel_842ce1fd29a85b4b"
+    },
+    {
+      "from": "resolve_group_snapshot",
+      "to": "initialize_room",
+      "type": "success",
+      "relation_id": "rel_22478e5ba2cc39c4"
+    },
+    {
+      "from": "initialize_room",
+      "to": "select_responders",
+      "type": "success",
+      "relation_id": "rel_157844320fee8ab8"
+    },
+    {
+      "from": "select_responders",
+      "to": "participant_calls",
+      "type": "success",
+      "relation_id": "rel_4c829d704e8455ca"
+    },
+    {
+      "from": "participant_calls",
+      "to": "synthesize",
+      "type": "success",
+      "relation_id": "rel_20c8504a1a1a4e71"
+    },
+    {
+      "from": "synthesize",
+      "to": "complete_group_turn",
+      "type": "success",
+      "relation_id": "rel_08cee449a264d8f7"
+    },
+    {
+      "from": "complete_group_turn",
+      "to": "group_terminal",
+      "type": "success",
+      "relation_id": "rel_eb34693ed6afce4f"
+    }
+  ],
+  "layout_schema_version": 1,
+  "default_layout_id": "functional",
+  "layouts": {
+    "functional": {
+      "id": "functional",
+      "name": "Group Deliberation functional stages",
+      "kind": "declarative",
+      "root_group_id": "",
+      "viewport": {
+        "x": 40,
+        "y": 40,
+        "zoom": 0.75
+      },
+      "direction": "LR",
+      "nodes": {
+        "group_request": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "validate_group_request": {
+          "x": 0,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "resolve_group_snapshot": {
+          "x": 360,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "select_responders": {
+          "x": 360,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "initialize_room": {
+          "x": 360,
+          "y": 300,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "participant_calls": {
+          "x": 360,
+          "y": 450,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "synthesize": {
+          "x": 360,
+          "y": 600,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "complete_group_turn": {
+          "x": 720,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "group_terminal": {
+          "x": 720,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        }
+      },
+      "relations": {
+        "rel_7535183936927156": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_842ce1fd29a85b4b": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_22478e5ba2cc39c4": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_157844320fee8ab8": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_4c829d704e8455ca": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_20c8504a1a1a4e71": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_08cee449a264d8f7": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_eb34693ed6afce4f": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        }
+      },
+      "annotations": {},
+      "frames": {
+        "stage_inputs": {
+          "id": "stage_inputs",
+          "label": "Inputs & triggers",
+          "description": "Receives requests and starts scheduled work.",
+          "x": -32,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "group_request",
+            "validate_group_request"
+          ],
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_processing": {
+          "id": "stage_processing",
+          "label": "Core processing",
+          "description": "Performs the flow's main transformation or agent work.",
+          "x": 328,
+          "y": -72,
+          "width": 304,
+          "height": 814,
+          "member_ids": [
+            "resolve_group_snapshot",
+            "select_responders",
+            "initialize_room",
+            "participant_calls",
+            "synthesize"
+          ],
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_outputs": {
+          "id": "stage_outputs",
+          "label": "Delivery & outputs",
+          "description": "Publishes results and completes external responses.",
+          "x": 688,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "complete_group_turn",
+            "group_terminal"
+          ],
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        }
+      },
+      "visibility": {}
+    }
+  }
 }

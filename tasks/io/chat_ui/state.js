@@ -15,8 +15,12 @@ function mountComposerChrome() {
   const actionDock = document.getElementById('actionMenuWrap');
   const activePop = document.getElementById('activeAgentsPop');
   const activePanel = document.getElementById('activePanel');
-  if (actionMount && actionDock) actionMount.appendChild(actionDock);
-  if (activePop && activePanel) activePop.appendChild(activePanel);
+  if (actionMount && actionDock && actionDock.parentNode !== actionMount) {
+    actionMount.appendChild(actionDock);
+  }
+  if (activePop && activePanel && activePanel.parentNode !== activePop) {
+    activePop.appendChild(activePanel);
+  }
 }
 
 mountComposerChrome();

@@ -60,6 +60,15 @@ def _binding() -> WorkflowInstanceConfig:
     })
 
 
+def test_workflow_agent_has_no_implicit_timeout():
+    assert _binding().limits.max_duration_seconds is None
+    timeout_schema = InvokeWorkflowAgentTask({
+        "agent_ref": _agent_ref().to_dict(),
+        "message": "Review this",
+    }).get_parameter_schema()["terminal_timeout"]
+    assert "default" not in timeout_schema
+
+
 def _turn(generation: int = 1) -> PreparedAgentTurn:
     turn_id = "web:root"
     authorization = AuthorizationRefContract(

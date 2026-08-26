@@ -1,0 +1,20 @@
+/* Component invariants intentionally load after the selected theme. Themes may
+   choose the --pf-* palette, but must not turn compact chrome controls back
+   into generic content buttons. */
+.header .header-dock-item,
+.header .hdr-icon-btn,
+.conversation-control-button,
+.action-dock-menu > .action-menu-item {
+  background: var(--pf-sidebar) !important;
+  color: var(--pf-text) !important;
+  border-color: var(--pf-accent) !important;
+}
+
+:is(.header .header-dock-item,
+    .header .hdr-icon-btn,
+    .conversation-control-button,
+    .action-dock-menu > .action-menu-item):is(:hover, :focus-visible, [aria-expanded="true"]) {
+  background: color-mix(in srgb, var(--pf-accent) 18%, var(--pf-sidebar)) !important;
+  color: var(--pf-text) !important;
+  border-color: var(--pf-accent) !important;
+}

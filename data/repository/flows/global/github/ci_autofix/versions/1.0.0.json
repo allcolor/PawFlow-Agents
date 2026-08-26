@@ -33,7 +33,9 @@
             "public": true
           }
         ]
-      }
+      },
+      "label": "Webhook IN",
+      "description": "Receives or initiates the webhook in step using httpReceiver."
     },
     "inject_secret": {
       "type": "updateAttribute",
@@ -41,14 +43,18 @@
         "set": {
           "webhook.secret": "${github_webhook_secret}"
         }
-      }
+      },
+      "label": "Inject Secret",
+      "description": "Processes the inject secret step using updateAttribute."
     },
     "decide": {
       "type": "executeScript",
       "parameters": {
         "script_engine": "python",
         "script": "import hmac, hashlib, json\nsecret = (attributes.get('webhook.secret') or '')\nsig = (attributes.get('http.header.x-hub-signature-256') or '')\nraw = content.encode('utf-8')\nexpected = 'sha256=' + hmac.new(secret.encode('utf-8'), raw, hashlib.sha256).hexdigest()\nvalid = bool(secret) and bool(sig) and hmac.compare_digest(sig, expected)\ntarget_branch = '${ci_branch}'\ndecision = 'ignore'\nif not valid:\n    decision = 'bad_sig'\nelse:\n    try:\n        body = json.loads(content)\n    except Exception:\n        body = {}\n    wr = body.get('workflow_run') or {}\n    action = body.get('action', '')\n    branch = wr.get('head_branch', '')\n    conclusion = wr.get('conclusion', '')\n    repo = (body.get('repository') or {}).get('full_name', '')\n    flowfile.set_attribute('gh.action', action)\n    flowfile.set_attribute('gh.branch', branch)\n    flowfile.set_attribute('gh.conclusion', conclusion)\n    flowfile.set_attribute('gh.run_url', wr.get('html_url', ''))\n    flowfile.set_attribute('gh.sha', wr.get('head_sha', ''))\n    flowfile.set_attribute('gh.workflow', wr.get('name', ''))\n    flowfile.set_attribute('gh.run_id', str(wr.get('id', '')))\n    flowfile.set_attribute('gh.repo', repo)\n    if action == 'completed' and branch == target_branch and conclusion == 'failure':\n        decision = 'fix'\nflowfile.set_attribute('flow.decision', decision)\n"
-      }
+      },
+      "label": "Decide",
+      "description": "Validates and routes the decide step using executeScript."
     },
     "route": {
       "type": "routeOnAttribute",
@@ -72,14 +78,18 @@
           }
         },
         "default_relationship": "ignore"
-      }
+      },
+      "label": "Route",
+      "description": "Validates and routes the route step using routeOnAttribute."
     },
     "build_prompt": {
       "type": "executeScript",
       "parameters": {
         "script_engine": "python",
         "script": "repo = attributes.get('gh.repo', '')\nbranch = attributes.get('gh.branch', '')\nrun_url = attributes.get('gh.run_url', '')\nsha = attributes.get('gh.sha', '')\nwf = attributes.get('gh.workflow', '')\nresult = (\n    'Le CI GitHub a echoue sur ' + repo + ' (branche ' + branch + ').\\n'\n    'Workflow: ' + wf + '\\n'\n    'Run: ' + run_url + '\\n'\n    'Commit: ' + sha + '\\n\\n'\n    'Analyse les logs du run echoue (gh run view --log-failed, ou via le web), identifie la cause racine, '\n    'corrige le code, puis commit + push la correction sur ' + branch + '.\\n'\n    'Garde-fou: si apres 3 tentatives le CI echoue toujours, arrete, ne repush pas, et signale le blocage.'\n)\n"
-      }
+      },
+      "label": "Build Prompt",
+      "description": "Processes the build prompt step using executeScript."
     },
     "spawn_fix": {
       "type": "spawnAgent",
@@ -89,68 +99,83 @@
         "agent_name": "${target_agent}",
         "mode": "async",
         "context_mode": "isolated"
-      }
+      },
+      "label": "Spawn FIX",
+      "description": "Processes the spawn fix step using spawnAgent."
     },
     "finalize_ack": {
       "type": "executeScript",
       "parameters": {
         "script_engine": "python",
         "script": "import json\ndecision = attributes.get('flow.decision', 'ignore')\nstatus = '401' if decision == 'bad_sig' else '200'\nflowfile.set_attribute('http.response.status', status)\nflowfile.set_attribute('http.response.header.Content-Type', 'application/json')\nlabel = {'bad_sig': 'rejected', 'fix': 'accepted', 'ignore': 'ignored'}.get(decision, 'ignored')\nresult = json.dumps({'status': label, 'decision': decision})\n"
-      }
+      },
+      "label": "Finalize ACK",
+      "description": "Delivers the finalize ack step using executeScript."
     },
     "respond": {
       "type": "handleHTTPResponse",
       "parameters": {
         "service_id": "http_listener",
         "content_type": "application/json"
-      }
+      },
+      "label": "Respond",
+      "description": "Delivers the respond step using handleHTTPResponse."
     }
   },
   "relations": [
     {
       "from": "webhook_in",
       "to": "inject_secret",
-      "type": "github_webhook"
+      "type": "github_webhook",
+      "relation_id": "rel_b0e1c40934a05384"
     },
     {
       "from": "inject_secret",
       "to": "decide",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_25bb89ad140e8580"
     },
     {
       "from": "decide",
       "to": "route",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_5cad9286418a0230"
     },
     {
       "from": "route",
       "to": "finalize_ack",
-      "type": "bad_sig"
+      "type": "bad_sig",
+      "relation_id": "rel_71eb510c222c3efa"
     },
     {
       "from": "route",
       "to": "finalize_ack",
-      "type": "ignore"
+      "type": "ignore",
+      "relation_id": "rel_0a7a2d1fe4059e70"
     },
     {
       "from": "route",
       "to": "build_prompt",
-      "type": "fix"
+      "type": "fix",
+      "relation_id": "rel_d2945b21d8f92761"
     },
     {
       "from": "build_prompt",
       "to": "spawn_fix",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_0d0b8147026438ab"
     },
     {
       "from": "spawn_fix",
       "to": "finalize_ack",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_0edb985b12e53e9f"
     },
     {
       "from": "finalize_ack",
       "to": "respond",
-      "type": "success"
+      "type": "success",
+      "relation_id": "rel_75e9987676563f8c"
     }
   ],
   "entries": [
@@ -160,5 +185,341 @@
     "respond"
   ],
   "fqn": "github.ci_autofix:1.0.0",
-  "package": "github"
+  "package": "github",
+  "layout_schema_version": 1,
+  "default_layout_id": "functional",
+  "layouts": {
+    "functional": {
+      "id": "functional",
+      "name": "ci_autofix functional stages",
+      "kind": "declarative",
+      "root_group_id": "",
+      "viewport": {
+        "x": 40,
+        "y": 40,
+        "zoom": 0.75
+      },
+      "direction": "LR",
+      "nodes": {
+        "webhook_in": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "accent": "#0ea5e9",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "decide": {
+          "x": 360,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "accent": "#f59e0b",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "route": {
+          "x": 360,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "accent": "#f59e0b",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "inject_secret": {
+          "x": 720,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "build_prompt": {
+          "x": 720,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "spawn_fix": {
+          "x": 720,
+          "y": 300,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "accent": "#8b5cf6",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "finalize_ack": {
+          "x": 1080,
+          "y": 0,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        },
+        "respond": {
+          "x": 1080,
+          "y": 150,
+          "width": 240,
+          "height": 96,
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "accent": "#22c55e",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 1
+          }
+        }
+      },
+      "relations": {
+        "rel_b0e1c40934a05384": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_25bb89ad140e8580": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_5cad9286418a0230": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_71eb510c222c3efa": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_0a7a2d1fe4059e70": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_d2945b21d8f92761": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_0d0b8147026438ab": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_0edb985b12e53e9f": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        },
+        "rel_75e9987676563f8c": {
+          "routing": "smoothstep",
+          "label_t": 0.5,
+          "style": {
+            "stroke": "#64748b",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "animated": false,
+            "arrow": "closed",
+            "opacity": 0.9
+          }
+        }
+      },
+      "annotations": {},
+      "frames": {
+        "stage_inputs": {
+          "id": "stage_inputs",
+          "label": "Inputs & triggers",
+          "description": "Receives requests and starts scheduled work.",
+          "x": -32,
+          "y": -72,
+          "width": 304,
+          "height": 214,
+          "member_ids": [
+            "webhook_in"
+          ],
+          "style": {
+            "fill": "#e0f2fe",
+            "border": "#0284c7",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_routing": {
+          "id": "stage_routing",
+          "label": "Validation & routing",
+          "description": "Validates inputs, authenticates callers, and selects paths.",
+          "x": 328,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "decide",
+            "route"
+          ],
+          "style": {
+            "fill": "#fef3c7",
+            "border": "#d97706",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_processing": {
+          "id": "stage_processing",
+          "label": "Core processing",
+          "description": "Performs the flow's main transformation or agent work.",
+          "x": 688,
+          "y": -72,
+          "width": 304,
+          "height": 514,
+          "member_ids": [
+            "inject_secret",
+            "build_prompt",
+            "spawn_fix"
+          ],
+          "style": {
+            "fill": "#ede9fe",
+            "border": "#7c3aed",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        },
+        "stage_outputs": {
+          "id": "stage_outputs",
+          "label": "Delivery & outputs",
+          "description": "Publishes results and completes external responses.",
+          "x": 1048,
+          "y": -72,
+          "width": 304,
+          "height": 364,
+          "member_ids": [
+            "finalize_ack",
+            "respond"
+          ],
+          "style": {
+            "fill": "#dcfce7",
+            "border": "#16a34a",
+            "text": "#111827",
+            "border_width": 2,
+            "border_style": "solid",
+            "opacity": 0.18
+          }
+        }
+      },
+      "visibility": {}
+    }
+  }
 }

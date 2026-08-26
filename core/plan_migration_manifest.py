@@ -64,9 +64,7 @@ class PlanMigrationManifestStore:
         self.root = Path(root)
         self._lock = threading.RLock()
         if activation_enabled is None:
-            from core.flow_feature_flags import plan_migration_enabled
-
-            activation_enabled = plan_migration_enabled
+            activation_enabled = lambda: True
         if not callable(activation_enabled):
             raise TypeError("activation_enabled must be callable")
         self.activation_enabled = activation_enabled

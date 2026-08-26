@@ -149,32 +149,37 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
         from core.conv_agent_config import add_agent_to_conv as _add
-        _add(conv_id, instance_name,
-             llm_service=llm_service,
-             definition=definition,
-             params=inst_params,
-             model=body.get("model", ""),
-             tools=body.get("tools", []),
-             max_depth=int(body.get("max_depth", 1000) or 1000),
-             skills=(body["skills"] if "skills" in body
-                     else agent.get("assigned_skills", [])),
-             flash_delegate_llm_service=body.get(
-                 "flash_delegate_llm_service", "").strip(),
-             runtime_kind=runtime_kind,
-             workflow=(body.get("workflow")
-                       or ((agent.get("runtime_defaults") or {}).get("workflow")
-                           if (agent.get("runtime_defaults") or {}).get("kind") == "workflow"
-                           else None)),
-             user_id=user_id,
-             agui_url=str(body.get("agui_url") or "").strip(),
-             agui_service=str(body.get("agui_service") or "").strip(),
-             agui_timeout=max(1, int(body.get("agui_timeout") or 300)),
-             agui_max_tool_rounds=max(
-                 0, min(32, int(
-                     body.get("agui_max_tool_rounds")
-                     if body.get("agui_max_tool_rounds") not in (None, "")
-                     else 8))),
-             gating_service=body.get("gating_service") or "")
+        try:
+            _add(conv_id, instance_name,
+                 llm_service=llm_service,
+                 definition=definition,
+                 params=inst_params,
+                 model=body.get("model", ""),
+                 tools=body.get("tools", []),
+                 max_depth=int(body.get("max_depth", 1000) or 1000),
+                 skills=(body["skills"] if "skills" in body
+                         else agent.get("assigned_skills", [])),
+                 flash_delegate_llm_service=body.get(
+                     "flash_delegate_llm_service", "").strip(),
+                 runtime_kind=runtime_kind,
+                 workflow=(body.get("workflow")
+                           or ((agent.get("runtime_defaults") or {}).get("workflow")
+                               if (agent.get("runtime_defaults") or {}).get("kind") == "workflow"
+                               else None)),
+                 user_id=user_id,
+                 agui_url=str(body.get("agui_url") or "").strip(),
+                 agui_service=str(body.get("agui_service") or "").strip(),
+                 agui_timeout=max(1, int(body.get("agui_timeout") or 300)),
+                 agui_max_tool_rounds=max(
+                     0, min(32, int(
+                         body.get("agui_max_tool_rounds")
+                         if body.get("agui_max_tool_rounds") not in (None, "")
+                         else 8))),
+                 gating_service=body.get("gating_service") or "")
+        except ValueError as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         active = store.get_extra(conv_id, "active_resources") or {}
         if not active.get("agent"):
             active["agent"] = instance_name
@@ -417,9 +422,8 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
         from core.workflow_agent_resources import (
             list_compatible_agent_workflows,
         )
-        from core.agent_feature_flags import workflow_agents_enabled
         flowfile.set_content(json.dumps({
-            "enabled": workflow_agents_enabled(),
+            "enabled": True,
             "workflows": list_compatible_agent_workflows(user_id, conv_id),
         }, ensure_ascii=False).encode())
         return [flowfile]

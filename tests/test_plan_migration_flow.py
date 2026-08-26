@@ -10,6 +10,7 @@ register_all_tasks()
 
 from core.flow_authoring import FlowAuthoringService
 from core.flow_definition_validator import FlowDefinitionValidator
+from core.flow_layout_contracts import relation_id_seed
 from core.plan_migration_flow import (
     build_legacy_flow_definition,
     publish_legacy_flow,
@@ -124,9 +125,13 @@ def test_compiler_builds_valid_exact_durable_flow_with_stable_resume_target():
         _agent_ref("builder"))
     assert definition["tasks"]["step_1_verify"]["parameters"]["agent_ref"] == (
         _agent_ref("reviewer"))
-    assert definition["relations"] == [
+    expected_relations = [
         {"from": "step_1_execute", "to": "step_1_verify", "type": "completed"},
         {"from": "step_1_verify", "to": "complete", "type": "completed"},
+    ]
+    assert definition["relations"] == [
+        {**relation, "relation_id": relation_id_seed(relation)}
+        for relation in expected_relations
     ]
     assert definition["entries"] == ["step_1_execute"]
     assert definition["exits"] == ["complete"]

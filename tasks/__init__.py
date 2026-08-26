@@ -67,6 +67,7 @@ def _register_all_services():
     import services.codex_image_service       # noqa: F401
     import services.openai_compatible_media_service  # noqa: F401
     import services.comfyui_image_service     # noqa: F401
+    import services.ffmpeg_media_service      # noqa: F401
     import services.realtime_voice_service   # noqa: F401
 
     # Video generation services
@@ -74,6 +75,7 @@ def _register_all_services():
     import services.comfyui_video_service     # noqa: F401
 
     # Audio generation services
+    import services.comfyui_audio_service       # noqa: F401
     import services.suno_audio_service         # noqa: F401  — sunoapi.org wrapper
     import services.supertonic_tts_service     # noqa: F401  — local Supertonic TTS
     import services.pocket_tts_service         # noqa: F401  — local Pocket TTS
@@ -267,18 +269,28 @@ def register_all_tasks():
     from tasks.ai.agent_actions_task import AgentActionsTask
     from tasks.ai.workflow import (  # noqa: F401
         AgentLLMCallTask, AgentParticipantCallTask, AgentWorkflowInputTask,
-        ApplyWikiPatchTask,
+        AppendMediaRevisionTask, ApplyWebsiteDecisionTask, ApplyWikiPatchTask,
         CompleteAgentTurnTask, EmitAgentProgressTask, FetchWikiSourcesTask,
-        FormatWikiWorkReportTask, LintProjectWikiTask,
+        FormatMediaStudioResultTask, FormatWebsiteCreatorResultTask,
+        FormatWikiWorkReportTask,
+        LintProjectWikiTask, LoadMediaProjectTask,
         GroupDeliberationInputTask, InitializeSharedRoomTask,
         MergeWikiExtractionsTask, NormalizeProjectSourcesTask,
-        PrepareWikiIntentTask, PrepareWikiReviewTask, RouteWikiIntentTask,
+        PrepareMediaBriefTask, PrepareMediaIntentTask,
+        PrepareMediaProvisioningTask, PrepareMediaQuestionsTask,
+        PrepareMediaScenarioTask, PrepareWebsiteDecisionTask,
+        PrepareWebsiteRequestTask, PrepareWikiIntentTask,
+        PrepareWikiReviewTask, ResolveMediaReferencesTask,
+        RouteMediaIntentTask, RouteWikiIntentTask,
         ResolveGroupSnapshotTask, SelectGroupRespondersTask,
-        ScanProjectWikiSourcesTask, SelectWikiSourceBatchTask,
+        ScanProjectWikiSourcesTask, SelectMediaCapabilityTask,
+        SelectWikiSourceBatchTask, SnapshotMediaCapabilitiesTask,
         SynthesizeGroupResultTask,
-        SplitWikiSourceBatchesTask, ValidateWikiPatchTask,
-        ValidateWikiReviewTask,
-        WorkflowFakeLLMTask,
+        SubmitMediaGenerationTask,
+        SplitWikiSourceBatchesTask, ValidateMediaArtifactTask,
+        ValidateMediaBriefTask, ValidateMediaScenarioTask,
+        ValidateWikiPatchTask, ValidateWikiReviewTask,
+        WebsiteCreatorToolTask, WorkflowFakeLLMTask,
     )
 
     # Auto-register ToolHandlers as flow tasks (tool.*)

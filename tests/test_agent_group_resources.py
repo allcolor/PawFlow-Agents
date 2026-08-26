@@ -174,27 +174,24 @@ def test_group_contract_rejects_nested_or_declared_tool_members():
         )
 
 
-def test_group_binding_is_server_gated(monkeypatch):
+def test_group_binding_ignores_obsolete_activation_variable(monkeypatch):
     resources, _configs, services, conversations = _fixture(monkeypatch)
-    monkeypatch.delenv("PAWFLOW_AGENT_GROUPS_ENABLED", raising=False)
 
-    with pytest.raises(ValueError, match="disabled by the server"):
-        bind_agent_group(
-            "review-board",
-            "alice",
-            "conv-1",
-            resource_store=resources,
-            conversation_store=conversations,
-            service_registry=services,
-        )
+    binding = bind_agent_group(
+        "review-board",
+        "alice",
+        "conv-1",
+        resource_store=resources,
+        conversation_store=conversations,
+        service_registry=services,
+    )
+    assert binding["definition"]["name"] == "review-board"
 
 
 def test_group_binding_snapshots_exact_members_and_rejects_stale_group(
     monkeypatch,
 ):
     resources, configs, services, conversations = _fixture(monkeypatch)
-    monkeypatch.setenv("PAWFLOW_AGENT_GROUPS_ENABLED", "true")
-
     binding = bind_agent_group(
         "review-board",
         "alice",

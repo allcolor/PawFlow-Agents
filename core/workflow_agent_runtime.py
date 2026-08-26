@@ -18,6 +18,7 @@ from core.agent_runtime_router import AgentRunKey
 from core.agent_turn_identity import AgentTurnIdentity
 from core.resource_identity import ResourceRef
 from core.workflow_agent_contracts import (
+    WORKFLOW_TERMINAL_STATUSES,
     AgentWorkflowRequest,
     PreparedAgentTurn,
     WorkflowConversationRef,
@@ -25,6 +26,7 @@ from core.workflow_agent_contracts import (
     WorkflowLimits,
     WorkflowRequestBody,
     WorkflowRunContext,
+    WorkflowRunError,
     WorkflowTurnRef,
 )
 from core.workflow_agent_resources import (
@@ -34,6 +36,14 @@ from core.workflow_agent_resources import (
 )
 
 logger = logging.getLogger(__name__)
+
+_MAX_PENDING_CACHE_PER_AGENT = 20
+_WORKFLOW_LEASE_SECONDS = 300
+
+
+def _lease_seconds(binding: WorkflowInstanceConfig) -> int:
+    duration = binding.limits.max_duration_seconds
+    return _WORKFLOW_LEASE_SECONDS if duration is None else duration + 60
 
 BOOTSTRAP_WORKFLOW_TASK_TYPES = frozenset({
     "inputPort",
@@ -57,12 +67,34 @@ def _utc_timestamp(value: float) -> str:
     return datetime.fromtimestamp(value, timezone.utc).isoformat()
 
 
+def _ingress_source_identity(source: dict[str, Any]) -> tuple[str, str | None]:
+    source_type = str(source.get("type") or "user")
+    if source_type == "agent_delegate":
+        return "delegate", str(source.get("from") or "") or None
+    if source_type == "a2a":
+        return "a2a", str(source.get("name") or "") or None
+    return "user", str(source.get("name") or "") or None
+
+
 def require_single_workflow_terminal(terminals):
     """Return the sole staged result or fail closed on zero/fan-out terminals."""
     if len(terminals) != 1:
         raise RuntimeError(
             f"workflow must stage exactly one terminal; got {len(terminals)}")
     return terminals[0]
+
+
+class _WorkflowExecutionFailure(RuntimeError):
+    """Structured batch failure retained until the durable run handles it."""
+
+    def __init__(self, message: str, *, code: str = "task_failed",
+                 task_id: str = "", retryable: bool = False,
+                 checkpoint: FlowFile | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.task_id = task_id
+        self.retryable = bool(retryable and task_id and checkpoint is not None)
+        self.checkpoint = checkpoint
 
 
 @dataclass
@@ -77,6 +109,8 @@ class _ActiveRun:
     finalized: bool = False
     started_at: float = field(default_factory=time.time)
     status: str = "preparing"
+    resume_flowfile: FlowFile | None = None
+    resume_task_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -193,7 +227,8 @@ class WorkflowAgentRuntime:
             run["run_id"] for run in recoverable)
         live = tuple(
             run for run in recoverable
-            if run["status"] in {"accepted", "running", "cancelling"})
+            if run["status"] in {
+                "accepted", "running", "waiting", "retryable_failed", "cancelling"})
         newest: dict[AgentRunKey, dict[str, Any]] = {}
         for run in live:
             key = self._key(run["conversation_id"], run["agent_name"])
@@ -211,6 +246,22 @@ class WorkflowAgentRuntime:
                 store.transition(
                     run["run_id"], "cancelling", "cancelled",
                     "cancel completed during recovery")
+                continue
+            if run["status"] in {"waiting", "retryable_failed"}:
+                request = self._prepared_from_run(run)
+                key = self._key(request.conversation_id, request.agent_name)
+                self._active[key] = _ActiveRun(
+                    request=request,
+                    run_id=run["run_id"],
+                    binding=(
+                        WorkflowInstanceConfig.from_dict(run["binding"])
+                        if run["binding"] else None),
+                    invocation_mode=str(
+                        run["invocation_mode"] or "conversation"),
+                    parent_invocation=run["parent_invocation"],
+                    publish_to_conversation=run["publish_to_conversation"],
+                    status=str(run["status"]),
+                )
                 continue
             try:
                 self.recover(run["run_id"])
@@ -256,12 +307,104 @@ class WorkflowAgentRuntime:
             self._start_worker(key, active)
         return {"status": "recovering", "run_id": run_id}
 
+    def resume_wait(self, run_id: str, flowfile: FlowFile,
+                    task_id: str) -> bool:
+        """Resume one exact durable wait without replaying the root turn."""
+        from core.workflow_run_store import WorkflowRunStore
+        store = WorkflowRunStore.instance()
+        run = store.get_run(run_id)
+        if run is None or run["status"] != "waiting":
+            return False
+        request = self._prepared_from_run(run)
+        key = self._key(request.conversation_id, request.agent_name)
+        binding = WorkflowInstanceConfig.from_dict(run["binding"])
+        if not store.resume_wait(
+                run_id, task_id=task_id, flowfile=flowfile,
+                lease_seconds=_lease_seconds(binding)):
+            return False
+        with self._lock:
+            active = self._active.get(key)
+            if active is not None and active.run_id != run_id:
+                store.transition(
+                    run_id, "running", "failed",
+                    "another workflow generation became active during resume")
+                return False
+            if active is None:
+                active = _ActiveRun(
+                    request=request,
+                    run_id=run_id,
+                    binding=binding,
+                    invocation_mode=str(
+                        run["invocation_mode"] or "conversation"),
+                    parent_invocation=run["parent_invocation"],
+                    publish_to_conversation=run["publish_to_conversation"],
+                )
+                self._active[key] = active
+            active.resume_flowfile = flowfile
+            active.resume_task_id = str(task_id)
+            active.status = "resuming"
+            self._start_worker(key, active)
+        return True
+
+    def retry(self, run_id: str):
+        """Retry one explicitly retryable failure from its exact task checkpoint."""
+        from core.confirmation_store import ConfirmationStore
+        from core.workflow_run_store import WorkflowRunStore
+        store = WorkflowRunStore.instance()
+        run = store.get_run(run_id)
+        if run is None:
+            raise KeyError("workflow run does not exist")
+        if run["status"] != "retryable_failed":
+            return None
+        task_id = str(run.get("resume_task_id") or "")
+        serialized = run.get("resume_flowfile_json")
+        if not task_id or not serialized:
+            return None
+        request = self._prepared_from_run(run)
+        key = self._key(request.conversation_id, request.agent_name)
+        binding = WorkflowInstanceConfig.from_dict(run["binding"])
+        if not store.retry_failure(
+                run_id,
+                lease_seconds=_lease_seconds(binding)):
+            return None
+        checkpoint = ConfirmationStore._restore_flowfile(serialized)
+        with self._lock:
+            active = self._active.get(key)
+            if active is not None and active.run_id != run_id:
+                store.transition(
+                    run_id, "running", "failed",
+                    "another workflow generation became active during retry")
+                return None
+            if active is None:
+                active = _ActiveRun(
+                    request=request,
+                    run_id=run_id,
+                    binding=binding,
+                    invocation_mode=str(
+                        run["invocation_mode"] or "conversation"),
+                    parent_invocation=run["parent_invocation"],
+                    publish_to_conversation=run["publish_to_conversation"],
+                )
+                self._active[key] = active
+            active.resume_flowfile = checkpoint
+            active.resume_task_id = task_id
+            active.status = "retrying"
+            self._start_worker(key, active)
+        store.append_event(run_id, "retrying", {
+            "task_id": task_id,
+            "recovery_count": int(run.get("recovery_count") or 0) + 1,
+        })
+        return {"status": "retrying", "run_id": run_id, "task_id": task_id}
+
     @staticmethod
     def _prepared_from_run(run: dict[str, Any]) -> PreparedAgentTurn:
         authorization = AuthorizationRefContract.from_dict(
             run["authorization_ref"])
         workflow_request = AgentWorkflowRequest.from_dict(run["request"])
         now = _utc_timestamp(run["created_at"])
+        source = run.get("ingress_source") or {
+            "type": "user", "authorization": authorization.to_dict()}
+        source_kind, source_id = _ingress_source_identity(source)
         identity = AgentTurnIdentity(
             conversation_id=run["conversation_id"],
             root_conversation_id=run["conversation_id"],
@@ -272,7 +415,7 @@ class WorkflowAgentRuntime:
             run_generation=run["run_generation"],
             authorization_context_id=authorization.context_id,
             authorization_revision_at_start=authorization.revision,
-            source_kind="user", created_at=now)
+            source_kind=source_kind, source_id=source_id, created_at=now)
         return PreparedAgentTurn(
             turn_identity=identity,
             conversation_id=run["conversation_id"],
@@ -283,12 +426,31 @@ class WorkflowAgentRuntime:
             channel=run["channel"],
             message=workflow_request.request.message,
             attachments=workflow_request.request.attachments,
-            source={"type": "user", "authorization": authorization.to_dict()},
+            source=source,
             permission_mode=run["permission_mode"],
             authorization_ref=authorization)
 
     def submit(self, request: PreparedAgentTurn) -> dict[str, Any]:
         return self._submit(_QueuedRun(request=request))
+
+    @staticmethod
+    def _refresh_new_conversation_binding(
+        request: PreparedAgentTurn,
+        binding: WorkflowInstanceConfig,
+    ) -> tuple[WorkflowInstanceConfig, Any | None]:
+        try:
+            resolved = resolve_exact_agent_workflow(
+                binding.flow_fqn, request.user_id, request.conversation_id)
+        except (FileNotFoundError, KeyError, TypeError, ValueError):
+            # Preserve the normal durable failure path: _run creates the run,
+            # claims/discards its inbox item, then records the resolver error.
+            return binding, None
+        if resolved.ref == binding.flow_ref:
+            return binding, resolved
+        from core.workflow_agent_resources import bind_agent_workflow
+        refreshed = WorkflowInstanceConfig.from_dict(bind_agent_workflow(
+            binding.to_dict(), request.user_id, request.conversation_id))
+        return refreshed, None
 
     def submit_bound(
         self,
@@ -338,24 +500,36 @@ class WorkflowAgentRuntime:
         key = self._key(request.conversation_id, request.agent_name)
         with self._lock:
             if key in self._active:
+                active = self._active[key]
+                if (submission.invocation_mode == "conversation"
+                        and active.invocation_mode == "conversation"
+                        and active.request.root_turn_id == request.root_turn_id):
+                    return {
+                        "status": "accepted", "queued": False,
+                        "run_id": active.run_id,
+                    }
                 requested_run_id = submission.run_id
-                if requested_run_id and self._active[key].run_id == requested_run_id:
+                if requested_run_id and active.run_id == requested_run_id:
                     return {
                         "status": "accepted", "queued": False,
                         "run_id": requested_run_id,
                     }
-                if requested_run_id:
-                    existing = next((
-                        item for item in self._pending.get(key, ())
-                        if item.run_id == requested_run_id), None)
-                    if existing is not None:
-                        return {
-                            "status": "accepted", "queued": True,
-                            "checkpoint": (
-                                existing.binding is not None
-                                and existing.binding.preempt_policy == "checkpoint"),
-                            "run_id": requested_run_id,
-                        }
+                pending = self._pending.get(key, ())
+                existing = next((
+                    item for item in pending
+                    if (requested_run_id and item.run_id == requested_run_id)
+                    or (submission.invocation_mode == "conversation"
+                        and item.invocation_mode == "conversation"
+                        and item.root_turn_id == request.root_turn_id)
+                ), None)
+                if existing is not None:
+                    return {
+                        "status": "accepted", "queued": True,
+                        "checkpoint": (
+                            existing.binding is not None
+                            and existing.binding.preempt_policy == "checkpoint"),
+                        "run_id": existing.run_id,
+                    }
                 policy = (
                     submission.binding.preempt_policy
                     if submission.binding is not None
@@ -390,6 +564,15 @@ class WorkflowAgentRuntime:
                         "status": "accepted", "queued": False,
                         "restarted": True, "run_id": active.run_id,
                     }
+                if len(pending) >= _MAX_PENDING_CACHE_PER_AGENT:
+                    if submission.invocation_mode == "conversation":
+                        return {
+                            "status": "accepted", "queued": True,
+                            "checkpoint": policy == "checkpoint",
+                            "run_id": "", "durable_queue": True,
+                        }
+                    raise RuntimeError(
+                        "workflow pending queue is full for this agent")
                 self._pending.setdefault(key, []).append(submission)
                 return {
                     "status": "accepted", "queued": True,
@@ -437,9 +620,10 @@ class WorkflowAgentRuntime:
                         store.transition(
                             active.run_id, "accepted", "cancelled",
                             reason or "cancelled")
-                    elif run is not None and run["status"] == "running":
+                    elif run is not None and run["status"] in {
+                            "running", "waiting", "retryable_failed"}:
                         store.transition(
-                            active.run_id, "running", "cancelling",
+                            active.run_id, run["status"], "cancelling",
                             reason or "cancelling")
             except Exception:
                 logger.exception("workflow cancel run transition failed")
@@ -468,6 +652,10 @@ class WorkflowAgentRuntime:
                 return False
             if row["status"] == "accepted":
                 if not store.transition(run_id, "accepted", "running"):
+                    return False
+                row = store.get_run(run_id)
+            if row["status"] in {"waiting", "retryable_failed"}:
+                if not store.transition(run_id, row["status"], "running"):
                     return False
                 row = store.get_run(run_id)
             if row["status"] != "running":
@@ -509,8 +697,23 @@ class WorkflowAgentRuntime:
                 }
                 for key, active in self._active.items()
                 if (key.conversation_id == conversation_id
-                    and active.invocation_mode == "conversation")
+                    and active.invocation_mode == "conversation"
+                    and active.status not in {"waiting", "retryable_failed"})
             ]
+
+    def live_run_ids(self, conversation_id: str = "") -> frozenset[str]:
+        """Return process-resident run IDs, optionally scoped to a conversation."""
+
+        with self._lock:
+            return frozenset(
+                active.run_id for key, active in self._active.items()
+                if not conversation_id or key.conversation_id == conversation_id
+            )
+
+    def is_live_run(self, run_id: str) -> bool:
+        """Return whether this process currently owns a worker for ``run_id``."""
+
+        return str(run_id or "") in self.live_run_ids()
 
     def _record_progress(
             self, key: AgentRunKey, active: _ActiveRun,
@@ -592,6 +795,8 @@ class WorkflowAgentRuntime:
     def _run(self, key: AgentRunKey, active: _ActiveRun) -> None:
         request = active.request
         run_store = None
+        stored = None
+        resolved = None
         try:
             if not self._is_current(key, active):
                 return
@@ -611,6 +816,9 @@ class WorkflowAgentRuntime:
                     request.conversation_id, request.agent_name)
                 binding = WorkflowInstanceConfig.from_dict(
                     config.get("workflow") or {})
+                if stored is None:
+                    binding, resolved = self._refresh_new_conversation_binding(
+                        request, binding)
             context = self._context(active, binding)
             workflow_request = AgentWorkflowRequest(
                 request=WorkflowRequestBody(
@@ -626,10 +834,11 @@ class WorkflowAgentRuntime:
                 stored = run_store.create_run(
                     context=context, request=workflow_request,
                     parameters=binding.parameters,
-                    lease_seconds=binding.limits.max_duration_seconds + 60,
+                    lease_seconds=_lease_seconds(binding),
                     binding=binding.to_dict(),
                     parent_invocation=active.parent_invocation,
-                    publish_to_conversation=active.publish_to_conversation)
+                    publish_to_conversation=active.publish_to_conversation,
+                    ingress_source=request.source)
             if stored["status"] == "accepted":
                 if not run_store.transition(
                         active.run_id, "accepted", "running"):
@@ -656,8 +865,9 @@ class WorkflowAgentRuntime:
                 "turn_id": request.root_turn_id,
                 "recovery_count": stored["recovery_count"],
             })
-            resolved = resolve_exact_agent_workflow(
-                binding.flow_fqn, request.user_id, request.conversation_id)
+            if resolved is None:
+                resolved = resolve_exact_agent_workflow(
+                    binding.flow_fqn, request.user_id, request.conversation_id)
             if resolved.ref != binding.flow_ref:
                 raise ValueError("pinned workflow identity or digest changed")
             from tasks import register_all_tasks
@@ -668,7 +878,7 @@ class WorkflowAgentRuntime:
             if not stored["service_snapshot"]:
                 service_snapshot = snapshot_agent_workflow_services(
                     binding, resolved.definition, request.user_id,
-                    request.conversation_id)
+                    request.conversation_id, agent_name=request.agent_name)
                 group_contract = resolved.definition.get("group_contract")
                 if group_contract is not None:
                     if group_contract != {"version": 1, "parameter": "group_name"}:
@@ -688,14 +898,37 @@ class WorkflowAgentRuntime:
             inbox = AgentInboxStore.instance()
             visible_through_sequence = inbox.latest_sequence(
                 request.conversation_id, request.agent_name)
-            _root_claim, root_items = inbox.claim(
-                request.conversation_id, request.agent_name,
-                active.run_id, "__workflow_input__", max_messages=1,
-                lease_seconds=binding.limits.max_duration_seconds + 60,
-                include_msg_ids=request.request_message_ids)
-            run_store.record_claimed_ids(
-                active.run_id, [item.msg_id for item in root_items])
             attributes = self._reserved_attributes(context)
+            resume_flowfile = active.resume_flowfile
+            resume_task_id = str(active.resume_task_id or "")
+            if resume_flowfile is None and stored.get("resume_flowfile_json"):
+                from core.confirmation_store import ConfirmationStore
+                resume_flowfile = ConfirmationStore._restore_flowfile(
+                    stored["resume_flowfile_json"])
+                resume_task_id = str(stored.get("resume_task_id") or "")
+            if resume_flowfile is None:
+                _root_claim, root_items = inbox.claim(
+                    request.conversation_id, request.agent_name,
+                    active.run_id, "__workflow_input__", max_messages=1,
+                    lease_seconds=_lease_seconds(binding),
+                    include_msg_ids=request.request_message_ids)
+                run_store.record_claimed_ids(
+                    active.run_id, [item.msg_id for item in root_items])
+                input_flowfile = FlowFile(
+                    content=json.dumps(
+                        workflow_request.to_dict(), ensure_ascii=False
+                    ).encode("utf-8"),
+                    attributes=attributes,
+                )
+                entry_task_id = binding.input_port
+            else:
+                if not resume_task_id:
+                    raise RuntimeError(
+                        "workflow continuation is missing its resume task")
+                for name, value in attributes.items():
+                    resume_flowfile.set_attribute(name, value)
+                input_flowfile = resume_flowfile
+                entry_task_id = resume_task_id
             terminals = []
             terminal_lock = threading.Lock()
 
@@ -723,20 +956,21 @@ class WorkflowAgentRuntime:
                 "flow_fqn": binding.flow_fqn,
                 "stage": "started",
             })
-            from core.relay_bindings import get_default
             from engine.continuous_executor import ContinuousFlowExecutor
             from engine.parser import FlowParser
-            relay_id = str(get_default(
-                request.conversation_id, agent=request.agent_name) or "")
+            relay_snapshot = dict(
+                (context.service_snapshot or {}).get("relay") or {})
+            allowed_relay_ids = list(relay_snapshot.get("candidates") or ())
+            if not allowed_relay_ids and "relay" not in (
+                    context.service_snapshot or {}):
+                from core.relay_bindings import get_default
+                relay_id = str(get_default(
+                    request.conversation_id, agent=request.agent_name) or "")
+                allowed_relay_ids = [relay_id] if relay_id else []
             flow = FlowParser.parse(resolved.definition)
             execution = ContinuousFlowExecutor.run_batch(
                 flow,
-                input_flowfiles=[FlowFile(
-                    content=json.dumps(
-                        workflow_request.to_dict(), ensure_ascii=False
-                    ).encode("utf-8"),
-                    attributes=attributes,
-                )],
+                input_flowfiles=[input_flowfile],
                 parameters=run_parameters,
                 max_workers=min(4, binding.limits.max_fanout),
                 max_retries=3,
@@ -757,11 +991,10 @@ class WorkflowAgentRuntime:
                     "workflow_visible_through_sequence": visible_through_sequence,
                     "workflow_allowed_effects": [
                         effect.value for effect in binding.allowed_effects],
-                    "workflow_allowed_relay_ids": (
-                        [relay_id] if relay_id else []),
+                    "workflow_allowed_relay_ids": allowed_relay_ids,
                     "workflow_resource_roots": [],
                 },
-                entry_task_id=binding.input_port,
+                entry_task_id=entry_task_id,
                 suppress_one_shot_roots=True,
             )
             if not self._is_current(key, active):
@@ -769,9 +1002,50 @@ class WorkflowAgentRuntime:
             discarded_errors = list(
                 execution.statistics.get("discarded_flowfile_errors") or [])
             if not execution.success or discarded_errors:
-                raise RuntimeError(
-                    "workflow execution failed: " + json.dumps(
-                        [*execution.errors, *discarded_errors]))
+                failures = list(execution.failure_checkpoints or ())
+                if failures:
+                    failure = failures[0]
+                    code = str(failure.get("code") or "task_failed")
+                    if code not in {
+                            "invalid_request", "invalid_binding", "invalid_terminal",
+                            "unsafe_task", "authorization_denied", "cancelled",
+                            "superseded", "timed_out", "budget_exceeded",
+                            "task_failed", "recovery_failed", "internal_error"}:
+                        code = "task_failed"
+                    raise _WorkflowExecutionFailure(
+                        str(failure.get("error") or "workflow task failed"),
+                        code=code,
+                        task_id=str(failure.get("task_id") or ""),
+                        retryable=bool(failure.get("retryable")),
+                        checkpoint=failure.get("flowfile"),
+                    )
+                message = "workflow execution failed: " + json.dumps(
+                    [*execution.errors, *discarded_errors])
+                lowered = message.casefold()
+                raise _WorkflowExecutionFailure(
+                    message,
+                    code="timed_out" if "timeout" in lowered else "internal_error",
+                )
+            from core.confirmation_store import ConfirmationStore
+            wait_instance_id = f"workflow:{active.run_id}"
+            if ConfirmationStore.instance().has_pending_waits(wait_instance_id):
+                if terminals:
+                    raise RuntimeError(
+                        "workflow staged a terminal while a durable wait is pending")
+                if not run_store.transition(
+                        active.run_id, "running", "waiting",
+                        "waiting for durable user interaction"):
+                    raise RuntimeError("workflow wait transition CAS lost")
+                active.status = "waiting"
+                run_store.append_event(active.run_id, "waiting", {
+                    "turn_id": request.root_turn_id,
+                    "instance_id": wait_instance_id,
+                })
+                stored = run_store.get_run(active.run_id)
+                inbox.acknowledge(
+                    request.conversation_id, request.agent_name,
+                    active.run_id, stored.get("claimed_ids") or ())
+                return
             terminal = require_single_workflow_terminal(terminals)
             self._finalize(key, active, context, terminal)
         except Exception as exc:
@@ -783,7 +1057,49 @@ class WorkflowAgentRuntime:
                     committing = bool(
                         stored and stored["status"] == "committing")
                     if not committing:
-                        if active.invocation_mode == "flow" and stored:
+                        error_code = str(getattr(exc, "code", "") or (
+                            "budget_exceeded"
+                            if type(exc).__name__ == "WorkflowBudgetExceeded"
+                            else "internal_error"))
+                        if error_code not in {
+                                "invalid_request", "invalid_binding",
+                                "invalid_terminal", "unsafe_task",
+                                "authorization_denied", "cancelled", "superseded",
+                                "timed_out", "budget_exceeded", "task_failed",
+                                "recovery_failed", "internal_error"}:
+                            error_code = "internal_error"
+                        error = WorkflowRunError(
+                            error_id=str(uuid.uuid4()),
+                            run_id=active.run_id,
+                            code=error_code,
+                            message=str(exc),
+                            retryable=bool(getattr(exc, "retryable", False)),
+                            task_id=(str(getattr(exc, "task_id", "") or "") or None),
+                            details={"exception_type": type(exc).__name__},
+                            created_at=datetime.now(timezone.utc).isoformat(),
+                        )
+                        paused = False
+                        checkpoint = getattr(exc, "checkpoint", None)
+                        if error.retryable and error.task_id and checkpoint is not None:
+                            paused = run_store.pause_retryable_failure(
+                                active.run_id,
+                                error=error,
+                                task_id=error.task_id,
+                                flowfile=checkpoint,
+                                lease_seconds=_lease_seconds(binding),
+                            )
+                        if paused:
+                            active.status = "retryable_failed"
+                            run_store.append_event(
+                                active.run_id, "error", error.to_dict())
+                            stored = run_store.get_run(active.run_id)
+                            from core.agent_inbox_store import AgentInboxStore
+                            AgentInboxStore.instance().acknowledge(
+                                request.conversation_id, request.agent_name,
+                                active.run_id, stored.get("claimed_ids") or ())
+                        else:
+                            run_store.record_error(active.run_id, error)
+                        if not paused and active.invocation_mode == "flow" and stored:
                             from core.workflow_turn_coordinator import (
                                 WorkflowTurnCoordinator,
                             )
@@ -803,11 +1119,29 @@ class WorkflowAgentRuntime:
                                     context, status=status, reason=str(exc))
                             active.finalized = terminal is not None
                             committing = not active.finalized
-                        else:
+                        elif not paused:
+                            stored = run_store.get_run(active.run_id)
+                            failed_message_ids = set(request.request_message_ids)
+                            if stored is not None:
+                                failed_message_ids.update(
+                                    stored.get("claimed_ids") or ())
+                            if (stored is not None and stored["status"]
+                                    not in WORKFLOW_TERMINAL_STATUSES):
+                                from core.agent_inbox_store import AgentInboxStore
+                                AgentInboxStore.instance().discard_msg_ids(
+                                    request.conversation_id,
+                                    request.agent_name,
+                                    failed_message_ids,
+                                )
                             run_store.fail(active.run_id, str(exc))
                 if not committing:
                     if active.invocation_mode != "flow":
-                        self._publish_error(active, str(exc))
+                        self._publish_error(
+                            active, str(exc),
+                            code=str(getattr(exc, "code", "") or "internal_error"),
+                            retryable=bool(getattr(exc, "retryable", False)),
+                            task_id=str(getattr(exc, "task_id", "") or ""),
+                        )
         finally:
             committing = False
             if run_store is not None:
@@ -817,7 +1151,9 @@ class WorkflowAgentRuntime:
                     run_store.transition(
                         active.run_id, "cancelling", "cancelled",
                         "worker cancelled")
-            if not active.finalized and not committing:
+            paused = bool(
+                stored and stored["status"] in {"waiting", "retryable_failed"})
+            if not active.finalized and not committing and not paused:
                 try:
                     from core.agent_inbox_store import AgentInboxStore
                     AgentInboxStore.instance().release(
@@ -827,6 +1163,11 @@ class WorkflowAgentRuntime:
                     logger.exception("workflow inbox claim release failed")
             with self._lock:
                 if self._active.get(key) is active:
+                    if paused:
+                        active.resume_flowfile = None
+                        active.resume_task_id = ""
+                        active.status = str(stored["status"])
+                        return
                     self._active.pop(key, None)
                     if not committing:
                         self._launch_next_locked(
@@ -842,8 +1183,10 @@ class WorkflowAgentRuntime:
         parent = (
             stored["parent_invocation"]
             if stored is not None else active.parent_invocation)
-        deadline = datetime.now(timezone.utc) + timedelta(
-            seconds=binding.limits.max_duration_seconds)
+        duration = binding.limits.max_duration_seconds
+        deadline = (
+            datetime.now(timezone.utc) + timedelta(seconds=duration)
+            if duration is not None else None)
         return WorkflowRunContext(
             run_id=active.run_id,
             turn_identity=request.turn_identity,
@@ -858,8 +1201,9 @@ class WorkflowAgentRuntime:
             permission_mode=request.permission_mode,
             authorization_ref=request.authorization_ref,
             deadline_at=(
-                stored["deadline_at"] if stored is not None
-                else deadline.isoformat()),
+                (str(stored["deadline_at"] or "") or None)
+                if stored is not None
+                else (deadline.isoformat() if deadline is not None else None)),
             limits=(
                 WorkflowLimits.from_dict(stored["limits"])
                 if stored is not None else binding.limits),
@@ -916,7 +1260,9 @@ class WorkflowAgentRuntime:
         active.finalized = True
 
     @staticmethod
-    def _publish_error(active: _ActiveRun, message: str) -> None:
+    def _publish_error(active: _ActiveRun, message: str, *,
+                       code: str = "internal_error", retryable: bool = False,
+                       task_id: str = "") -> None:
         request = active.request
         from core.conversation_event_bus import ConversationEventBus
         ConversationEventBus.instance().publish_event(
@@ -927,6 +1273,9 @@ class WorkflowAgentRuntime:
                 "agent_name": request.agent_name,
                 "channel": request.channel,
                 "message": message,
+                "code": code,
+                "retryable": bool(retryable),
+                "task_id": task_id or None,
                 "finish_reason": "error",
             })
 
@@ -950,6 +1299,7 @@ def prepare_workflow_turn(
     key = WorkflowAgentRuntime._key(conversation_id, agent_name)
     generation = (runtime or WorkflowAgentRuntime.instance()).reserve_generation(key)
     now = datetime.now(timezone.utc).isoformat()
+    source_kind, source_id = _ingress_source_identity(source)
     identity = AgentTurnIdentity(
         conversation_id=conversation_id,
         root_conversation_id=conversation_id,
@@ -960,8 +1310,8 @@ def prepare_workflow_turn(
         run_generation=generation,
         authorization_context_id=authorization.context_id,
         authorization_revision_at_start=authorization.revision,
-        source_kind="a2a" if source.get("type") == "a2a" else "user",
-        source_id=str(source.get("name") or "") or None,
+        source_kind=source_kind,
+        source_id=source_id,
         created_at=now,
     )
     return PreparedAgentTurn(

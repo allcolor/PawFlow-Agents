@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -1302,6 +1303,8 @@ def test_pfp_media_handlers_pass_agent_name_to_runtime_services(monkeypatch):
         "user_id": "alice",
         "conversation_id": "conv1",
         "agent_name": "agentA",
+        "relay_id": "",
+        "relay_local": None,
     }
 
     class _CapabilityService:
@@ -1325,6 +1328,8 @@ def test_pfp_media_handlers_pass_agent_name_to_runtime_services(monkeypatch):
         "user_id": "alice",
         "conversation_id": "conv1",
         "agent_name": "agentA",
+        "relay_id": "",
+        "relay_local": None,
     }
 
 
@@ -1727,6 +1732,171 @@ def test_pfp_uninstall_removes_installed_flow(tmp_path, monkeypatch):
     assert removed["ok"] is True
     assert removed["removed"][0]["kind"] == "flow"
     assert after is None
+
+
+def test_shipped_media_studio_package_lifecycle(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    package_dir = (
+        Path(__file__).resolve().parents[1]
+        / "packages"
+        / "pawflow.media-studio.pfpdir"
+    )
+
+    development_plan = pfp_package.inspect_pfp(str(package_dir), user_id="alice")
+    assert development_plan["ok"] is True
+    assert {
+        row["id"]: (row["installable"], row["status"], row["selected"])
+        for row in development_plan["objects"]
+    } == {
+        "flow:media-studio": (True, "new", True),
+        "agent:media-studio": (True, "new", True),
+    }
+
+    keypair = pfp_package.create_signing_key()
+    built = pfp_package.build_pfp(
+        str(package_dir),
+        str(tmp_path / "pawflow.media-studio-1.0.0.pfp"),
+        private_key=keypair["private_key"],
+    )
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    assert plan["verified"] is True
+    assert [row["id"] for row in plan["objects"]] == [
+        "flow:media-studio",
+        "agent:media-studio",
+    ]
+
+    installed = pfp_package.install_pfp(
+        built["path"], user_id="alice", force=True)
+    assert installed["ok"] is True
+    assert [row["id"] for row in installed["installed"]] == [
+        "flow:media-studio",
+        "agent:media-studio",
+    ]
+
+    from core.repository import ScopedRepository
+    from core.resource_store import ResourceStore
+
+    flow = ScopedRepository.instance().get_flow(
+        "pawflow.agents.media-studio:1.0.0", "user", user_id="alice")
+    agent = ResourceStore.instance().get("agent", "media-studio", "alice")
+    assert flow["kind"] == "agent_workflow"
+    assert agent["runtime_defaults"]["workflow"]["flow_fqn"] == (
+        "pawflow.agents.media-studio:1.0.0"
+    )
+
+    update_dir = tmp_path / "pawflow.media-studio-1.1.0.pfpdir"
+    shutil.copytree(package_dir, update_dir)
+    update_manifest_path = update_dir / "pfp.json"
+    update_manifest = json.loads(update_manifest_path.read_text(encoding="utf-8"))
+    update_manifest["version"] = "1.1.0"
+    update_manifest["objects"][0]["name"] = "pawflow.agents.media-studio:1.1.0"
+    update_manifest["objects"][0]["fqn"] = "pawflow.agents.media-studio:1.1.0"
+    update_manifest_path.write_text(
+        json.dumps(update_manifest), encoding="utf-8")
+    update_flow_path = update_dir / "content" / "flows" / "media-studio.json"
+    update_flow = json.loads(update_flow_path.read_text(encoding="utf-8"))
+    update_flow["version"] = "1.1.0"
+    update_flow["fqn"] = "pawflow.agents.media-studio:1.1.0"
+    update_flow_path.write_text(json.dumps(update_flow), encoding="utf-8")
+    update_agent_path = update_dir / "content" / "agents" / "media-studio.json"
+    update_agent = json.loads(update_agent_path.read_text(encoding="utf-8"))
+    update_agent["runtime_defaults"]["workflow"]["flow_fqn"] = (
+        "pawflow.agents.media-studio:1.1.0"
+    )
+    update_agent_path.write_text(json.dumps(update_agent), encoding="utf-8")
+    update_build = pfp_package.build_pfp(
+        str(update_dir),
+        str(tmp_path / "pawflow.media-studio-1.1.0.pfp"),
+        private_key=keypair["private_key"],
+    )
+
+    updated = pfp_package.update_pfp(
+        update_build["path"], user_id="alice", force=True)
+    assert updated["errors"] == []
+    assert updated["skipped"] == []
+    assert updated["ok"] is True
+    assert [row["id"] for row in updated["updated"]] == [
+        "flow:media-studio",
+        "agent:media-studio",
+    ]
+    agent = ResourceStore.instance().get("agent", "media-studio", "alice")
+    assert agent["runtime_defaults"]["workflow"]["flow_fqn"] == (
+        "pawflow.agents.media-studio:1.1.0"
+    )
+
+    removed = pfp_package.uninstall_pfp(
+        "pawflow.media-studio", user_id="alice", force=True)
+    assert removed["ok"] is True
+    assert [row["object_id"] for row in removed["removed"]] == [
+        "agent:media-studio",
+        "flow:media-studio",
+    ]
+    assert ResourceStore.instance().get("agent", "media-studio", "alice") is None
+    assert ScopedRepository.instance().get_flow(
+        "pawflow.agents.media-studio:1.0.0", "user", user_id="alice") is None
+
+
+def test_shipped_website_creator_package_lifecycle(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    package_dir = (
+        Path(__file__).resolve().parents[1]
+        / "packages"
+        / "pawflow.website-creator.pfpdir"
+    )
+
+    development_plan = pfp_package.inspect_pfp(str(package_dir), user_id="alice")
+    assert development_plan["ok"] is True
+    assert {
+        row["id"]: (row["installable"], row["status"], row["selected"])
+        for row in development_plan["objects"]
+    } == {
+        "flow:website-creator": (True, "new", True),
+        "agent:website-creator": (True, "new", True),
+    }
+
+    keypair = pfp_package.create_signing_key()
+    built = pfp_package.build_pfp(
+        str(package_dir),
+        str(tmp_path / "pawflow.website-creator-1.0.0.pfp"),
+        private_key=keypair["private_key"],
+    )
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    assert plan["verified"] is True
+    assert [row["id"] for row in plan["objects"]] == [
+        "flow:website-creator",
+        "agent:website-creator",
+    ]
+
+    installed = pfp_package.install_pfp(
+        built["path"], user_id="alice", force=True)
+    assert installed["ok"] is True
+    assert [row["id"] for row in installed["installed"]] == [
+        "flow:website-creator",
+        "agent:website-creator",
+    ]
+
+    from core.repository import ScopedRepository
+    from core.resource_store import ResourceStore
+
+    flow = ScopedRepository.instance().get_flow(
+        "pawflow.agents.website-creator:1.0.0", "user", user_id="alice")
+    agent = ResourceStore.instance().get("agent", "website-creator", "alice")
+    assert flow["kind"] == "agent_workflow"
+    assert agent["runtime_defaults"]["workflow"]["flow_fqn"] == (
+        "pawflow.agents.website-creator:1.0.0"
+    )
+
+    removed = pfp_package.uninstall_pfp(
+        "pawflow.website-creator", user_id="alice", force=True)
+    assert removed["ok"] is True
+    assert [row["object_id"] for row in removed["removed"]] == [
+        "agent:website-creator",
+        "flow:website-creator",
+    ]
+    assert ResourceStore.instance().get(
+        "agent", "website-creator", "alice") is None
+    assert ScopedRepository.instance().get_flow(
+        "pawflow.agents.website-creator:1.0.0", "user", user_id="alice") is None
 
 
 def test_pfp_uninstall_blocks_service_provider_used_by_explicit_instances(
@@ -4670,7 +4840,7 @@ def test_service_registry_task_subconversation_inherits_parent_services(tmp_path
     assert delegate_service.config["package_runtime"]["package"] == "pkg.parent"
 
 
-def test_task_subconversation_inherits_parent_relay_binding(tmp_path, monkeypatch):
+def test_internal_subconversations_inherit_parent_relay_binding(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     from core.conversation_store import ConversationStore
     from core import relay_bindings
@@ -4678,11 +4848,22 @@ def test_task_subconversation_inherits_parent_relay_binding(tmp_path, monkeypatc
     ConversationStore.instance().save(
         "conv1", [{"role": "user", "content": "hello"}], user_id="alice")
     assert relay_bindings.link_relay("conv1", "relay-main") is True
+    assert relay_bindings.link_relay(
+        "conv1", "relay-desktop", agent="website-creator") is True
 
     assert relay_bindings.get_default("conv1::task::t_123") == "relay-main"
     assert relay_bindings.get_linked("conv1::task::t_123") == ["relay-main"]
     assert relay_bindings.get_default("conv1::delegate::agent") == "relay-main"
     assert relay_bindings.get_linked("conv1::delegate::agent") == ["relay-main"]
+    workflow_cid = (
+        "conv1::workflow::wr_123::WebsiteCreatorToolTask"
+        "__ephemeral_0123456789abcdef0123456789abcdef"
+    )
+    assert relay_bindings.get_default(
+        workflow_cid, agent="website-creator") == "relay-desktop"
+    assert relay_bindings.get_linked(
+        workflow_cid, agent="website-creator") == [
+            "relay-main", "relay-desktop"]
 
 
 def test_task_verify_subconversation_inherits_parent_services_and_relay(tmp_path, monkeypatch):

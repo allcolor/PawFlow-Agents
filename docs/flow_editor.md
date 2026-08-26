@@ -115,6 +115,13 @@ Relations are identified exactly like runtime queues:
 Layout-only and name/description changes carry `runtime_impact: false`:
 they never require a hot-swap of a running instance.
 
+The runtime viewer normally selects `default_layout_id` from the immutable flow
+version. A deployed instance may persist a non-empty `DeploymentRegistry.layout`
+override; that presentation takes priority for the live viewer without rebuilding,
+stopping, or mutating its executor, queues, parameters, services, or checkpoints.
+Node-level `label` and `description` values in the override are presentation-only
+metadata and take priority over the template values.
+
 ## Actions (`tasks/ai/actions/flow_editor.py`)
 
 All actions require a session user. `scope` accepts `global`, `user`,
@@ -392,14 +399,14 @@ Runtime actions are owner-scoped (admin-only for global instances):
 
 ## Declarative authoring, views, and proposals
 
-When `PAWFLOW_DECLARATIVE_WORKFLOWS_ENABLED` is enabled, the editor can lower
-supported semantic blocks into the same technical `FlowDefinition` shown by
+The editor can lower supported semantic blocks into the same technical
+`FlowDefinition` shown by
 the graph. Declarative and technical views never maintain separate executable
 graphs: edits round-trip through one draft revision and unsupported structures
 fall back to a Custom Group instead of being dropped.
 
-With `PAWFLOW_MULTI_VIEW_LAYOUTS_ENABLED`, named layouts, geometry, routing,
-frames, annotations, and viewport state are versioned presentation metadata.
+Named layouts, geometry, routing, frames, annotations, and viewport state are
+versioned presentation metadata.
 Layout-only changes do not rebuild a running executor.
 
 The template and runtime viewers project the selected layout as well as the

@@ -27,7 +27,8 @@ from core.resource_identity import ResourceRef
 
 WorkflowPreemptPolicy = Literal["checkpoint", "queue", "restart"]
 WorkflowRunStatus = Literal[
-    "accepted", "running", "cancelling", "committing", "completed", "cancelled",
+    "accepted", "running", "waiting", "retryable_failed", "cancelling",
+    "committing", "completed", "cancelled",
     "superseded", "failed", "timed_out", "budget_exceeded", "force_stopped",
     "recovery_failed",
 ]
@@ -56,8 +57,17 @@ WORKFLOW_TERMINAL_STATUSES = frozenset({
 _WORKFLOW_TRANSITIONS = {
     "accepted": frozenset({"running", "cancelled", "superseded", "failed"}),
     "running": frozenset({
-        "cancelling", "superseded", "committing", "failed", "timed_out",
+        "waiting", "retryable_failed", "cancelling", "superseded", "committing",
+        "failed", "timed_out",
         "budget_exceeded", "force_stopped",
+    }),
+    "waiting": frozenset({
+        "running", "cancelling", "cancelled", "superseded", "failed",
+        "timed_out", "force_stopped",
+    }),
+    "retryable_failed": frozenset({
+        "running", "cancelling", "cancelled", "superseded", "failed",
+        "timed_out", "force_stopped",
     }),
     "cancelling": frozenset({"cancelled", "force_stopped", "failed"}),
     "committing": WORKFLOW_TERMINAL_STATUSES,
@@ -201,19 +211,25 @@ class PreparedAgentTurn(VersionedContract):
 
 
 class WorkflowLimits(ContractModel):
-    max_duration_seconds: int
+    max_duration_seconds: int | None = None
     max_llm_calls: int
     max_flowfiles: int
     max_fanout: int
     max_cost_usd: float | None = None
 
     @field_validator(
-        "max_duration_seconds", "max_llm_calls", "max_flowfiles", "max_fanout",
+        "max_llm_calls", "max_flowfiles", "max_fanout",
         mode="before",
     )
     @classmethod
     def _limits_are_positive(cls, value: int, info) -> int:
         return require_positive(value, info.field_name)
+
+    @field_validator("max_duration_seconds", mode="before")
+    @classmethod
+    def _duration_is_optional_positive(cls, value: int | None) -> int | None:
+        return None if value is None else require_positive(
+            value, "max_duration_seconds")
 
     @field_validator("max_cost_usd", mode="before")
     @classmethod
@@ -228,7 +244,6 @@ class WorkflowLimits(ContractModel):
 
 def _default_workflow_limits() -> WorkflowLimits:
     return WorkflowLimits(
-        max_duration_seconds=900,
         max_llm_calls=24,
         max_flowfiles=200,
         max_fanout=16,
@@ -333,7 +348,7 @@ class WorkflowRunContext(VersionedContract):
         "conversation", "automation", "silent_maintenance", "flow"]
     permission_mode: str
     authorization_ref: AuthorizationRefContract
-    deadline_at: str
+    deadline_at: str | None = None
     limits: WorkflowLimits
     service_snapshot: dict[str, Any]
     cancel_token: str
@@ -359,8 +374,9 @@ class WorkflowRunContext(VersionedContract):
 
     @field_validator("deadline_at")
     @classmethod
-    def _deadline_is_utc(cls, value: str) -> str:
-        return require_utc_timestamp(value, "deadline_at")
+    def _deadline_is_utc(cls, value: str | None) -> str | None:
+        return None if value is None else require_utc_timestamp(
+            value, "deadline_at")
 
     @model_validator(mode="after")
     def _server_identity_is_consistent(self):

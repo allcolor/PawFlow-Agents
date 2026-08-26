@@ -691,15 +691,6 @@ def create_default_registry() -> ToolRegistry:
 
     # Memory navigation
 
-    from core.flow_feature_flags import workflow_proposals_enabled
-    if not workflow_proposals_enabled():
-        registry.register(CreatePlanHandler())
-        registry.register(UpdatePlanHandler())
-        registry.register(ApprovePlanHandler())
-        registry.register(AssignPlanHandler())
-        registry.register(CancelPlanHandler())
-        registry.register(DeletePlanHandler())
-        registry.register(VerifyPlanStepHandler())
     registry.register(ProposeWorkflowHandler())
     registry.register(GetWorkflowProposalHandler())
     registry.register(ReviewWorkflowProposalHandler())

@@ -76,7 +76,8 @@ class ScreenHandler(BaseFsHandler):
                     "type": "string",
                     "enum": ["screenshot", "click", "double_click", "type",
                              "key", "move", "scroll", "mouse_position",
-                             "windows", "window_state", "status"],
+                             "windows", "window_state", "clipboard_read",
+                             "clipboard_write", "status"],
                     "description": (
                         "screenshot: capture the screen (returns image). "
                         "click: click at (x,y). double_click: double-click at (x,y). "
@@ -88,7 +89,9 @@ class ScreenHandler(BaseFsHandler):
                         "(pid and/or window_id) with element indexes and a grounding "
                         "screenshot — then click/type can target element_index directly, "
                         "even on background windows (CUA backend only). "
-                        "status: screen backend health report."
+                        "clipboard_read: return bounded text copied by a desktop "
+                        "application. clipboard_write: place text on the desktop "
+                        "clipboard. status: screen backend health report."
                     ),
                 },
                 "x": {"type": "integer", "description": "X coordinate in physical screenshot pixels, not resized chat-image pixels (for click/move/scroll)"},
@@ -293,6 +296,15 @@ class ScreenHandler(BaseFsHandler):
 
         if action == "mouse_position" and isinstance(data, dict):
             return f"Mouse position: x={data.get('x', '?')}, y={data.get('y', '?')}"
+
+        if action == "clipboard_read" and isinstance(data, dict):
+            return _cap_text(str(data.get("text") or ""))
+
+        if action == "clipboard_write" and isinstance(data, dict):
+            return (
+                f"Written {int(data.get('written') or 0)} characters "
+                "to the clipboard"
+            )
 
         if action == "windows" and isinstance(data, dict) and "windows" in data:
             import json as _json

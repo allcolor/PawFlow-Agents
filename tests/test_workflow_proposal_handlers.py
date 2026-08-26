@@ -17,7 +17,6 @@ def isolated(tmp_path, monkeypatch):
     from core import paths
     monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
     monkeypatch.setattr(paths, "RUNTIME_DIR", tmp_path / "runtime")
-    monkeypatch.setenv("PAWFLOW_WORKFLOW_PROPOSALS_ENABLED", "1")
     register_all_tasks()
     FlowAuthoringService.reset()
     WorkflowProposalStore.reset()
@@ -110,10 +109,9 @@ def test_planner_refuses_a_draft_changed_after_exact_submission():
         "planner_review_invalidated")
 
 
-def test_planner_tool_is_dormant_by_default(monkeypatch):
-    monkeypatch.setenv("PAWFLOW_WORKFLOW_PROPOSALS_ENABLED", "0")
+def test_planner_tool_is_always_available():
     result = _configured(ProposeWorkflowHandler()).execute({
         "package": "plans", "name": "release", "version": "1.0.0",
         "title": "Prepare release", "definition": _definition(),
     })
-    assert result == "Error: workflow proposals are disabled by the server"
+    assert json.loads(result)["proposal"]["status"] == "user_review"

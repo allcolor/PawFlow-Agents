@@ -30,6 +30,9 @@ class _ConversationStore:
     def set_extra(self, conversation_id, key, value):
         self.extras.setdefault(conversation_id, {})[key] = deepcopy(value)
 
+    def resolve_owner(self, conversation_id):
+        return "alice" if conversation_id in self.extras else ""
+
 
 class _ResourceStore:
     def __init__(self):

@@ -835,6 +835,38 @@ function safeLayoutGraph(nodes, edges) {
 // ── State colors ──
 const STATE_COLORS = { running: '#28a745', stopped: '#6c757d', error: '#dc3545', disabled: '#343a40' };
 
+function layoutPresentation(item = {}) {
+  const style = item?.style && typeof item.style === 'object' ? item.style : {};
+  const opacity = Number(style.opacity);
+  return {
+    width: Number(item.width) || 0, height: Number(item.height) || 0,
+    fill: style.fill || '', border: style.border || '', text: style.text || '',
+    accent: style.accent || '', borderWidth: Number(style.border_width) || 0,
+    borderStyle: style.border_style || '',
+    opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : null,
+  };
+}
+
+function presentationFill(fill, opacity) {
+  if (!fill || opacity == null || opacity >= 1) return fill || undefined;
+  return `color-mix(in srgb, ${fill} ${Math.round(opacity * 10000) / 100}%, transparent)`;
+}
+
+function flowNodePresentation(data, state) {
+  const runtimeOwnsBorder = state === 'running' || state === 'error'
+    || state === 'disabled' || data.isSubflow || data.isRuntimePort || data.in_flight;
+  return {
+    width: data.width || undefined, minHeight: data.height || undefined,
+    background: data.isRuntimePort ? undefined : (data.fill || undefined),
+    color: data.text || undefined,
+    borderColor: runtimeOwnsBorder ? undefined : (data.border || undefined),
+    borderWidth: data.borderWidth || undefined,
+    borderStyle: runtimeOwnsBorder ? undefined : (data.borderStyle || undefined),
+    opacity: state === 'disabled' || data.opacity == null ? undefined : data.opacity,
+    boxShadow: data.in_flight || !data.accent ? undefined : `inset 4px 0 0 ${data.accent}`,
+  };
+}
+
 function queueColor(size, max) {
   const pct = max > 0 ? (size / max) * 100 : 0;
   if (pct >= 90) return '#dc3545';
@@ -856,6 +888,7 @@ const FlowNode = memo(({ data }) => {
   };
   return jsx('div', {
     className: cls,
+    style: flowNodePresentation(data, st),
     onDoubleClick: open,
     'data-subflow-ref': data.isSubflow ? JSON.stringify(data.subflowRef || {}) : '',
     children: jsxs(Fragment, { children: [
@@ -890,7 +923,10 @@ const FlowFrame = memo(({ data }) => jsxs('div', {
   className: 'flow-frame',
   style: { width: data.width, height: data.height,
            borderColor: data.border || undefined,
-           background: data.fill || undefined },
+           borderWidth: data.borderWidth || undefined,
+           borderStyle: data.borderStyle || undefined,
+           color: data.text || undefined,
+           background: presentationFill(data.fill, data.opacity) },
   children: [
     jsx('div', { className: 'flow-frame-title', children: data.label }),
     data.description && jsx('div', { className: 'flow-frame-description',
@@ -910,6 +946,7 @@ function toRFNodes(apiNodes, onOpenSubflow, layout = {}) {
   const nodes = entries.map(([id, n]) => ({
     id: String(id),
     type: 'flowNode',
+    zIndex: 1,
     className: n?.subflow_ref && n.subflow_ref.path ? 'nopan' : '',
     position: layoutNodes[id]
       ? { x: Number(layoutNodes[id].x) || 0, y: Number(layoutNodes[id].y) || 0 }
@@ -927,6 +964,7 @@ function toRFNodes(apiNodes, onOpenSubflow, layout = {}) {
       isRuntimePort: !!(n?.runtime_link || n?.runtime_port),
       portDirection: n?.port_direction || 'input',
       onOpenSubflow,
+      ...layoutPresentation(layoutNodes[id]),
     },
   }));
   Object.entries(layout?.frames || {}).forEach(([id, frame]) => {
@@ -934,12 +972,10 @@ function toRFNodes(apiNodes, onOpenSubflow, layout = {}) {
     nodes.push({
       id: `frame:${id}`, type: 'flowFrame', position: {
         x: Number(frame.x) || 0, y: Number(frame.y) || 0,
-      }, zIndex: Number(frame.z_index) || -10, selectable: false,
+      }, zIndex: Math.max(0, Number(frame.z_index) || 0), selectable: false,
       draggable: false, connectable: false, deletable: false,
       data: { isFrame: true, label: frame.label || frame.name || String(id),
-        description: frame.description || '', width: Number(frame.width) || 400,
-        height: Number(frame.height) || 240, fill: frame.style?.fill || '',
-        border: frame.style?.border || '' },
+        description: frame.description || '', ...layoutPresentation(frame) },
     });
   });
   return nodes;
@@ -1062,10 +1098,11 @@ function flowToReactFlow(def, onOpenSubflow) {
     editable: true, onOpenSubflow, ...extra,
   });
   const nodes = Object.entries(tasks).map(([id, t]) => ({
-    id: String(id), type: 'flowNode', className: '',
+    id: String(id), type: 'flowNode', className: '', zIndex: 1,
     position: layoutNodes[id] ? { x: Number(layoutNodes[id].x) || 0, y: Number(layoutNodes[id].y) || 0 } : null,
     data: nodeData(String(id), { label: (t && t.label) || String(id),
-      description: (t && t.description) || '', taskType: (t && t.type) || '?' }),
+      description: (t && t.description) || '', taskType: (t && t.type) || '?',
+      ...layoutPresentation(layoutNodes[id]) }),
   }));
   // Process groups stay collapsed in the parent projection and drill down in
   // this same canvas. flow_ref groups are executable relation endpoints;
@@ -1074,24 +1111,22 @@ function flowToReactFlow(def, onOpenSubflow) {
     if (!g || typeof g !== 'object') return;
     const ref = g.flow_ref || { inline_group_id: String(gid) };
     nodes.push({
-      id: String(gid), type: 'flowNode', className: 'nopan',
+      id: String(gid), type: 'flowNode', className: 'nopan', zIndex: 1,
       position: layoutNodes[gid] ? { x: Number(layoutNodes[gid].x) || 0, y: Number(layoutNodes[gid].y) || 0 } : null,
       data: nodeData(String(gid), { label: g.name || String(gid),
         taskType: g.flow_ref ? 'subflow' : 'processGroup', subflowRef: ref,
         inlineGroupId: g.flow_ref ? '' : String(gid), isInlineGroup: !g.flow_ref,
-        isSubflow: true }),
+        isSubflow: true, ...layoutPresentation(layoutNodes[gid]) }),
     });
   });
   Object.entries(selectedLayout.frames || {}).forEach(([id, frame]) => {
     if (!frame || typeof frame !== 'object') return;
     nodes.push({ id: `frame:${id}`, type: 'flowFrame', position: {
       x: Number(frame.x) || 0, y: Number(frame.y) || 0,
-    }, zIndex: Number(frame.z_index) || -10, selectable: false,
+    }, zIndex: Math.max(0, Number(frame.z_index) || 0), selectable: false,
     draggable: false, connectable: false, deletable: false,
     data: { isFrame: true, label: frame.label || frame.name || String(id),
-      description: frame.description || '', width: Number(frame.width) || 400,
-      height: Number(frame.height) || 240, fill: frame.style?.fill || '',
-      border: frame.style?.border || '' } });
+      description: frame.description || '', ...layoutPresentation(frame) } });
   });
   const ids = new Set(nodes.map(n => n.id));
   const membership = topGroupMembership(def.groups || {});

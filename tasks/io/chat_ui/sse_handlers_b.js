@@ -66,48 +66,6 @@ function _sseWireB() {
     }
   });
 
-  // ── Plan events ──────────────────────────────────────────────
-  if (!window.PAWFLOW_WORKFLOW_PROPOSALS_ENABLED) {
-    eventSource.addEventListener('plan_created', (e) => {
-    lastSSEActivity = Date.now();
-    const data = JSON.parse(e.data);
-    const plan = data.plan || data;
-    const title = plan.title || data.title || '';
-    const stepCount = (plan.steps && plan.steps.length) || data.steps || 0;
-    const planId = plan.id || plan.plan_id || '';
-    const isPendingApproval = (plan.status || '') === 'pending_approval';
-    let msgHtml = '\u{1F4CB} Plan created: <strong>' + escapeHtml(title) + '</strong> (' + stepCount + ' steps)';
-    if (isPendingApproval && planId) {
-      msgHtml += ' &mdash; <button onclick="planAction(\'approve_plan\',' + jsStringArg(planId) + ')" style="margin-left:6px;padding:2px 10px;background:#6c5ce7;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.9em">\u2705 Approve</button>';
-    }
-    // Show step list
-    if (plan.steps && plan.steps.length) {
-      msgHtml += '<ol style="margin:6px 0 0 16px;padding:0;font-size:0.9em;color:#c0c0d0">';
-      for (const s of plan.steps) {
-        const desc = typeof s === 'string' ? s : (s.description || s.title || '');
-        const icon = (s.status === 'done') ? '\u2713' : '\u25CB';
-        msgHtml += '<li style="margin:2px 0">' + icon + ' ' + escapeHtml(desc) + '</li>';
-      }
-      msgHtml += '</ol>';
-    }
-    addMsg('system', msgHtml, {html: true});
-    // Refresh plans panel if open
-    if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
-    scrollBottom();
-    });
-
-    eventSource.addEventListener('plan_updated', (e) => {
-      lastSSEActivity = Date.now();
-      const data = JSON.parse(e.data);
-      if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
-    });
-
-    eventSource.addEventListener('plan_deleted', (e) => {
-      lastSSEActivity = Date.now();
-      if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
-    });
-  }
-
   eventSource.addEventListener('relay_status_changed', (e) => {
     lastSSEActivity = Date.now();
     loadResources();

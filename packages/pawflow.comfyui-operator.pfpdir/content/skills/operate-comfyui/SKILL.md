@@ -135,6 +135,7 @@ result correlation. Do not duplicate all of `comfy-cli` in package flow tasks.
 Use configured PawFlow services for trusted presets:
 - comfyUIImageGeneration: generate_image and optional edit_image.
 - comfyUIVideoGeneration: generate, image_to_video, frame_to_video, reference_to_video, video_edit, video_extend.
+- comfyUIAudioGeneration: generate_audio, with optional source_audio and music_bed inputs.
 
 Use the direct legacy ComfyUI API for preset administration, a reviewed bespoke graph, or a controlled production sequence. Direct host-local API operations must still execute through the relay with local=true.
 
@@ -211,7 +212,14 @@ An API graph is keyed by node IDs and contains class_type and inputs. Validate a
 A PawFlow preset contains:
 - workflow: reviewed API graph.
 - bindings: external parameters mapped to node inputs.
-- output: exact output node and slot.
+- output: exact output node, slot, and declared content types.
+- metadata: preset ID, immutable revision, timezone-aware creation time, media
+  kind, provenance and license, declared capabilities and limits, and exact
+  required node/model/LoRA/custom-node inventory.
+
+Publish changes as a new preset revision. Never overwrite an active revision in
+place; retain the prior service definition for rollback and allow active runs to
+finish against the revision they selected.
 
 Bindings may target one or several inputs and may use index, multiply, and coerce. Null preserves a graph default. Expose model selection only intentionally.
 
@@ -223,6 +231,10 @@ Video service inputs:
 - frame_to_video: above plus image and end_image.
 - reference_to_video: above plus image and images.
 - video_edit/video_extend: above plus video.
+
+Audio service inputs:
+- generate_audio: prompt, negative_prompt, duration, seed, and model.
+- Reference-aware graphs may additionally bind uploaded source_audio and music_bed.
 
 If duration maps to frames, use actual FPS and an explicit multiplier; verify the node's inclusive/exclusive convention.
 

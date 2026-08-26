@@ -29,6 +29,8 @@ def _load_deployed_flow_definition(inst) -> Dict[str, Any]:
         seen = set()
         for scope in scopes:
             repo_scope = "conv" if scope == "conversation" else scope
+            if repo_scope not in {"conv", "user", "global"}:
+                continue
             if repo_scope in seen:
                 continue
             seen.add(repo_scope)
@@ -134,8 +136,10 @@ def _static_flow_graph(raw: Dict[str, Any]):
     return nodes, edges
 
 
-def _apply_definition_node_metadata(raw: Dict[str, Any],
-                                    nodes: Dict[str, Any]) -> None:
+def _apply_definition_node_metadata(
+    raw: Dict[str, Any], nodes: Dict[str, Any],
+    deployed_layout: Dict[str, Any] | None = None,
+) -> None:
     """Overlay human presentation metadata on static or live graph nodes."""
     for task_id, task in (raw.get("tasks") or {}).items():
         if task_id not in nodes or not isinstance(task, dict):
@@ -146,10 +150,22 @@ def _apply_definition_node_metadata(raw: Dict[str, Any],
         if group_id not in nodes or not isinstance(group, dict):
             continue
         nodes[group_id]["description"] = group.get("description", "")
+    layout = _graph_layout(raw, deployed_layout)
+    for node_id, geometry in (layout.get("nodes") or {}).items():
+        if node_id not in nodes or not isinstance(geometry, dict):
+            continue
+        if str(geometry.get("label") or "").strip():
+            nodes[node_id]["label"] = geometry["label"]
+        if str(geometry.get("description") or "").strip():
+            nodes[node_id]["description"] = geometry["description"]
 
 
-def _graph_layout(raw: Dict[str, Any]) -> Dict[str, Any]:
+def _graph_layout(
+    raw: Dict[str, Any], deployed_layout: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     """Return the selected presentation layout without changing the flow."""
+    if isinstance(deployed_layout, dict) and deployed_layout:
+        return deployed_layout
     layouts = raw.get("layouts")
     if isinstance(layouts, dict) and layouts:
         layout_id = str(raw.get("default_layout_id") or "")

@@ -252,6 +252,100 @@ def test_auto_update_keeps_sources_pending_on_empty_llm_response(wiki):
     assert wiki.status()["dirty_sources"] == 1
 
 
+def test_auto_update_repairs_missing_page_sources_from_processed_snapshot(wiki):
+    relay = _Relay(
+        [{"README.md": _source("Project overview")}],
+        files={"README.md": "Project overview"})
+    wiki.scan_from_relay(relay)
+    client = _Client({
+        "pages": [{
+            "slug": "overview",
+            "title": "Overview",
+            "summary": "Project overview",
+            "content": "The project has one main service.",
+        }],
+        "processed_sources": ["README.md"],
+    })
+
+    result = wiki.auto_update(relay, client)
+
+    assert result["status"] == "updated"
+    assert result["remaining"] == 0
+    assert wiki.get_page_data("overview")["sources"] == ["README.md"]
+
+
+def test_auto_update_repairs_missing_sources_when_processed_list_is_empty(wiki):
+    relay = _Relay(
+        [{"README.md": _source("Project overview")}],
+        files={"README.md": "Project overview"})
+    wiki.scan_from_relay(relay)
+    client = _Client({
+        "pages": [{
+            "slug": "overview",
+            "title": "Overview",
+            "summary": "Project overview",
+            "content": "The project has one main service.",
+        }],
+        "processed_sources": [],
+    })
+
+    result = wiki.auto_update(relay, client)
+
+    assert result["status"] == "updated"
+    assert result["remaining"] == 0
+    assert result["cleared"] == ["README.md"]
+    assert wiki.get_page_data("overview")["sources"] == ["README.md"]
+
+
+def test_auto_update_repairs_non_list_page_sources(wiki):
+    relay = _Relay(
+        [{"README.md": _source("Project overview")}],
+        files={"README.md": "Project overview"})
+    wiki.scan_from_relay(relay)
+    client = _Client({
+        "pages": [{
+            "slug": "overview",
+            "title": "Overview",
+            "summary": "Project overview",
+            "content": "The project has one main service.",
+            "sources": "",
+        }],
+        "processed_sources": ["README.md"],
+    })
+
+    result = wiki.auto_update(relay, client)
+
+    assert result["status"] == "updated"
+    assert result["remaining"] == 0
+    assert wiki.get_page_data("overview")["sources"] == ["README.md"]
+
+
+def test_auto_update_ignores_uncitable_page_for_removed_only_batch(wiki):
+    relay = _Relay([
+        {"README.md": _source("Old project overview")},
+        {},
+    ])
+    wiki.scan_from_relay(relay)
+    assert wiki.acknowledge(["README.md"])["cleared"] == ["README.md"]
+    wiki.scan_from_relay(relay)
+    client = _Client({
+        "pages": [{
+            "slug": "removed-overview",
+            "title": "Removed overview",
+            "summary": "Removed source",
+            "content": "The old project overview was removed.",
+        }],
+        "processed_sources": ["README.md"],
+    })
+
+    result = wiki.auto_update(relay, client)
+
+    assert result["status"] == "updated"
+    assert result["processed"] == 1
+    assert result["remaining"] == 0
+    assert wiki.status()["pages"] == 0
+
+
 def test_auto_update_accepts_json_object_inside_markdown(wiki):
     relay = _Relay(
         [{"README.md": _source("Project overview")}],

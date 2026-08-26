@@ -6,6 +6,17 @@ When attached to a conversation, PawFlow resolves the visible flow through
 conversation, user, then global scope, validates its `agent_workflow` contract,
 and stores the resolved scope plus a SHA-256 `ResourceRef`. Prompt-only agent
 definitions and clients that omit `runtime_kind` retain the existing LLM path.
+
+The first-party Media Studio resource is a Workflow Agent bound exactly to
+`pawflow.agents.media-studio:1.0.0`. It rejects unrelated intent before media
+access, freezes scoped service capabilities, uses canonical durable forms and
+confirmations for missing fields/scenarios/voice consent, resolves one exact
+media service revision, and appends every FileStore output to immutable project
+lineage. Its production branches cover image, video, ComfyUI or generic audio,
+speech, authorized voice cloning, and closed-recipe FFmpeg composition. The
+installable package is `pawflow.media-studio:1.0.0`; its nine English colored
+functional frames are presentation metadata, while FlowDefinition remains the
+only executable graph.
 Legacy PlanStore cutover begins with a read-only WP9 preflight. It inventories
 every per-plan JSON record, derives ownership from its storage path, validates
 the embedded conversation identity, classifies all seven legacy lifecycle
@@ -46,7 +57,14 @@ at or before its cutoff, so a racing later arrival is retained.
 Workflow runs are authoritative in SQLite rather than inferred from worker
 threads. `WorkflowRunStore` persists the exact request, flow digest, parameters,
 permission mode, service and authorization snapshots, generation, active lease,
-claimed IDs, step cache, ordered lifecycle events, and recovery count. Legacy
+claimed IDs, step cache, ordered lifecycle events, structured last error, exact
+retry checkpoint, and recovery count. A task failure explicitly marked retryable
+pauses the current generation as `retryable_failed`; its pre-attempt FlowFile and
+task ID are committed before the worker exits. Manual retry CASes that same run
+back to `running` and reinjects the checkpoint at that task. It never allocates a
+new run or changes provider idempotency keys. Duplicate retry requests lose the
+CAS and start no worker. Non-retryable, unsafe, invalid, and uncheckpointed
+failures remain terminal `failed` runs. Legacy
 records without a permission mode migrate to `read_only`, so recovery cannot
 widen their authority. Terminal completion is
 a recoverable saga: the coordinator CASes `running` to `committing`, stores
@@ -56,7 +74,9 @@ event, and only then CASes to `completed`. A crash at any boundary resumes the
 same identities. Completed runs are immutable, while a stale generation becomes
 `superseded` without releasing or rewriting successor state. Startup repairs
 committing runs before restarting the newest accepted or running run from its
-stored input, permission mode, and exact flow.
+stored input, permission mode, and exact flow. Waiting and `retryable_failed`
+runs are restored as active dormant owners without consuming a worker; time
+spent paused is added back to the run deadline when a signal or retry resumes it.
 Startup also releases `wr_` inbox claims whose run is no longer recoverable,
 while preserving live and committing-run claims; a malformed recovery record is
 failed and released without preventing the remaining runs from resuming.
@@ -136,7 +156,11 @@ flow identity, status, generation, aggregate usage, durable terminal state, and
 ordered stage events without request bodies, source text, prompts, credentials,
 or service snapshots. The recovery control is rendered only for the current
 recoverable generation and reports a conflict if another worker wins the
-durable reacquisition race.
+durable reacquisition race. While open, the inspector follows matching workflow
+progress events and polls as a fallback; an event received during an in-flight
+snapshot schedules an immediate follow-up rather than being lost. Structured
+agent messages and tool arguments are displayed as labelled sections and lists,
+not as editable JSON text, while the projection remains bounded and redacted.
 
 ## 1. Overview
 
@@ -189,11 +213,10 @@ workflow run events/errors. These models reject unknown versions, unknown
 fields, missing identities, invalid state transitions, and contradictory safety
 metadata.
 
-WP1 adds the workflow routing seam. The server-owned
-`PAWFLOW_WORKFLOW_AGENTS_ENABLED` capability defaults to false and uses strict
-boolean parsing. Disabled workflow instances fail closed after the accepted
-user row is persisted. WP3 lazily registers the process-resident adapter for
-enabled workflow instances; existing `llm`, `external_mcp`, and
+WP1 adds the workflow routing seam. Workflow is a permanent runtime kind; its
+definitions, bindings, and dispatch path do not depend on a server rollout
+flag. WP3 lazily registers the process-resident adapter for workflow instances;
+existing `llm`, `external_mcp`, and
 `external_agui` runtimes remain on their characterized direct paths. WP4 adds
 durable inbox receipts, boot reconciliation, lease recovery, explicit one-shot
 `PendingQueue` migration, and a behavior-compatible SQLite facade activated
@@ -211,12 +234,6 @@ conversation, relay, service, and filesystem targets to the immutable run
 snapshot, and records a redacted authorization event. PFP task proxies are
 workflow-safe only when their package carries the identical validated
 `workflow_capabilities` declaration.
-
-Agent groups have an independent server-owned prerequisite flag,
-`PAWFLOW_AGENT_GROUPS_ENABLED`. It defaults to false and rejects invalid boolean
-values. Enabling it only makes group capabilities eligible for their versioned
-runtime and resource gates; it does not enable workflow agents, bind a group to
-a conversation, or migrate existing agent configuration.
 
 The tool-free group vertical slice stores reusable definitions as
 `agent_group` resources and binds them to exact conversation instances through
@@ -628,7 +645,7 @@ Skills are effective only when they are listed in `assigned_skills` on the targe
 
 Assigned skills are lazy-loaded. Assigning a skill writes a lightweight context message to the target agent and rebuilt system prompts include only an availability manifest with the skill name and description. The full skill prompt is returned only when the agent calls `load_skill(name="skill-name")`, and `load_skill` refuses skills that are not assigned to the current agent. Updating a skill writes a lightweight context message to assigned conversation agents telling them to reload the skill if needed; deleting or uninstalling a skill removes it from visible agents' `assigned_skills` and writes the normal removal context message. Users can also invoke a visible skill immediately with `/skill run [@agent] <skill> [args...]` or the shortcut `//<skill> [@agent] [args...]`; this does not persist assignment, and queues the rendered skill prompt as a user message for the selected or explicit target agent.
 
-Assigned-skill v2 is disabled by default behind the server-owned `PAWFLOW_RESOURCE_BINDINGS_V2_ENABLED` flag. Enabling the flag alone does not migrate a conversation: v2 reads are selected only when that conversation also has an active `resource_bindings_v2` marker. `manage_resource(action="inspect_skill_bindings", resource_type="skill")` reports the redacted state and counts. `manage_resource(action="migrate_skill_bindings", resource_type="skill")` performs a serialized, idempotent preflight and activation: every legacy assignment is expanded to an exact scope, owner/package identity, version, and digest; unresolved, duplicate, invalid, or changed bindings block the whole activation without altering legacy runtime behavior. Activation rechecks both the roster and resource identities before one atomic marker write. A marker whose legacy roster later drifts fails closed and must be remigrated rather than silently falling back by name.
+Assigned-skill v2 is available permanently. Existing conversations select v2 reads only when they have an active `resource_bindings_v2` migration marker; no server rollout flag is involved. `manage_resource(action="inspect_skill_bindings", resource_type="skill")` reports the redacted state and counts. `manage_resource(action="migrate_skill_bindings", resource_type="skill")` performs a serialized, idempotent preflight and activation: every legacy assignment is expanded to an exact scope, owner/package identity, version, and digest; unresolved, duplicate, invalid, or changed bindings block the whole activation without altering legacy runtime behavior. Activation rechecks both the roster and resource identities before one atomic marker write. A marker whose legacy roster later drifts fails closed and must be remigrated rather than silently falling back by name.
 
 `invocation_policy_override="auto"` follows the normal manifest and `load_skill` path. Both `explicit_only` and `disabled` are excluded from the model's assigned-skill manifest and assigned-skill load path. An `explicit_only` skill remains available only through an explicit user invocation such as `/skill run`; the assignment itself never advertises it to the model. `manage_resource(action="rollback_skill_bindings", resource_type="skill")` restores legacy reads only before the first successful v2 assignment mutation. That first write records `first_write_at`, increments the mutation revision, removes the rollback snapshot, and makes rollback unavailable.
 
@@ -836,6 +853,56 @@ results. The caller receives the original delegate request and only the final
 synthesized reply from the target; the target's intermediate assistant blocks,
 tool calls, and tool results are not appended to the caller's private context.
 Delegate replies are never projected into shared context.
+
+Workflow Agents always use this shared delegate transport. If a caller requests
+`isolated`, `last:N`, `summary:N`, `full`, or another non-shared context for a
+target whose canonical conversation configuration has `runtime_kind:
+"workflow"`, `delegate` coerces the effective mode to `shared` before
+cross-conversation validation, live preemption, or sub-agent spawning. The tool
+result reports `mode: "shared"`, preserves the requested value in
+`requested_context`, sets `context_coerced: true`, and gives
+`coercion_reason: "workflow_runtime_requires_shared"`. A Workflow Agent is
+therefore never sent to `SubAgentExecutor` merely because the caller selected an
+LLM-only context mode. LLM agents retain the requested context behavior.
+
+Workflow ingress snapshots the complete delegate source in the durable run,
+including caller and `task_id`, and restores it during recovery. Successful
+terminal commit reverses that route as one private
+`agent_delegate(kind="reply")` message, publishes the correlated terminal
+event, then preempts or wakes the caller with the same stable message identity.
+Repeating finalization does not persist or wake twice.
+
+#### True isolated Workflow delegation
+
+Supporting a genuinely isolated Workflow Agent is a separate runtime feature,
+not a different context slice passed to `SubAgentExecutor`. It requires a
+durable invocation record that owns both a child conversation identity and a
+`WorkflowRun`, while preserving the parent caller, delegate `task_id`, authority
+snapshot, and exact workflow resource reference. The child transcript policy
+must define whether `last:N`, `summary:N`, and `full` are immutable copies or
+references; copied context must not later absorb unrelated parent turns.
+
+Interactive workflow tasks also need an explicit bridge. A child
+`requestUserInput` must be presented in the parent conversation with the child
+run and interaction identities, and the submitted answer must route back to the
+child durable wait without becoming an ordinary parent-chat reply. Reload,
+restart, duplicate submission, timeout, denial, and cancellation must preserve
+the same checkpoint and authorization context.
+
+Terminal delivery must commit the child result once, correlate it to the
+original delegate `task_id`, wake or preempt the caller, and retain the result
+for `delegate_result` even if the caller is offline. `persist=false` can hide or
+retire the child transcript only after terminal outbox delivery is acknowledged;
+it must not delete recovery state early. Force stop, parent deletion, retention,
+usage and budget aggregation, attachments, and orphan reconciliation need
+explicit parent-child cascade rules.
+
+The implementation boundary should therefore be a runtime-aware delegate
+invocation coordinator: LLM targets continue to use `SubAgentExecutor`, shared
+Workflow targets use the conversation-bound runtime, and isolated Workflow
+targets create the durable child invocation described above. Until that
+coordinator and its recovery tests exist, coercion to shared is the fail-safe
+public contract.
 
 Interactive providers may report each internal delegate turn with text, tool
 calls, and an optional thinking payload. The sub-agent loop accepts both the

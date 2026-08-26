@@ -1519,17 +1519,21 @@ class TestAgentFlowOAuth(unittest.TestCase):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         relations = data["relations"]
+        relation_keys = {
+            (relation["from"], relation["to"], relation["type"])
+            for relation in relations
+        }
         # http_in → validate_auth for all protected routes
-        assert {"from": "http_in", "to": "validate_auth", "type": "POST:/api/agent"} in relations
-        assert {"from": "http_in", "to": "validate_auth", "type": "GET:/chat"} in relations
-        assert {"from": "http_in", "to": "validate_auth", "type": "GET:/api/agent/events"} in relations
+        assert ("http_in", "validate_auth", "POST:/api/agent") in relation_keys
+        assert ("http_in", "validate_auth", "GET:/chat") in relation_keys
+        assert ("http_in", "validate_auth", "GET:/api/agent/events") in relation_keys
         # validate_auth → route_after_auth on success
-        assert {"from": "validate_auth", "to": "route_after_auth", "type": "success"} in relations
+        assert ("validate_auth", "route_after_auth", "success") in relation_keys
         # route_after_auth dispatches to the right handler
-        assert {"from": "route_after_auth", "to": "agent", "type": "api"} in relations
-        assert {"from": "route_after_auth", "to": "chat_ui", "type": "chat"} in relations
+        assert ("route_after_auth", "agent", "api") in relation_keys
+        assert ("route_after_auth", "chat_ui", "chat") in relation_keys
         # validate_auth → send_response on failure
-        assert {"from": "validate_auth", "to": "send_response", "type": "failure"} in relations
+        assert ("validate_auth", "send_response", "failure") in relation_keys
 
     def test_chat_ui_has_login_url(self):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"

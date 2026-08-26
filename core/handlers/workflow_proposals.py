@@ -30,9 +30,6 @@ class _WorkflowProposalHandler(ToolHandler):
         if not self._conversation_id or not self._user_id or not self._agent_name:
             raise ValueError(
                 "user, conversation, and planner agent context are required")
-        from core.flow_feature_flags import workflow_proposals_enabled
-        if not workflow_proposals_enabled():
-            raise ValueError("workflow proposals are disabled by the server")
         return self._user_id, self._conversation_id, self._agent_name
 
 

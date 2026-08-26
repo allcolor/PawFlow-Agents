@@ -44,6 +44,7 @@ from core.flow_definition_validator import (
     static_task_relationships,
     static_task_schema,
 )
+from core.flow_layout_contracts import relation_id_seed
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,12 @@ def split_fqn(fqn: str):
     return fqn, version
 
 
+def _relation(source: str, target: str, relationship: str) -> Dict[str, str]:
+    relation = {"from": source, "to": target, "type": relationship}
+    relation["relation_id"] = relation_id_seed(relation)
+    return relation
+
+
 def _agent_workflow_starter(name: str) -> Dict[str, Any]:
     """Return a runnable, safe v1 agent-workflow editing starter."""
     return {
@@ -142,10 +149,10 @@ def _agent_workflow_starter(name: str) -> Dict[str, Any]:
             },
         },
         "relations": [
-            {"from": "agent_request", "to": "validate_request", "type": "success"},
-            {"from": "validate_request", "to": "draft_response", "type": "success"},
-            {"from": "draft_response", "to": "complete_turn", "type": "success"},
-            {"from": "complete_turn", "to": "agent_terminal", "type": "success"},
+            _relation("agent_request", "validate_request", "success"),
+            _relation("validate_request", "draft_response", "success"),
+            _relation("draft_response", "complete_turn", "success"),
+            _relation("complete_turn", "agent_terminal", "success"),
         ],
         "entries": ["agent_request"],
         "exits": ["agent_terminal"],

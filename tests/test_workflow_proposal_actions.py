@@ -18,7 +18,6 @@ def isolated(tmp_path, monkeypatch):
     from core import paths
     monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
     monkeypatch.setattr(paths, "RUNTIME_DIR", tmp_path / "runtime")
-    monkeypatch.setenv("PAWFLOW_WORKFLOW_PROPOSALS_ENABLED", "1")
     register_all_tasks()
     events = []
     monkeypatch.setattr(
@@ -120,14 +119,13 @@ def _stub_run_start(monkeypatch):
         "core.flow_run_coordinator.FlowRunCoordinator.attach_and_start", attach)
 
 
-def test_actions_are_registered_and_flagged(monkeypatch):
+def test_actions_are_registered_and_always_available():
     from tasks.ai import agent_actions
     assert _handle_workflow_proposals in agent_actions._ACTION_HANDLERS
-    monkeypatch.setenv("PAWFLOW_WORKFLOW_PROPOSALS_ENABLED", "0")
     data, status = _call(
         "workflow_proposal_list", {"conversation_id": "conv"})
-    assert status == "404"
-    assert data["error"] == "Workflow proposals are disabled"
+    assert status == "200"
+    assert data == {"proposals": [], "surfaces": []}
 
 
 def test_user_edits_round_trip_to_planner_then_accepts(isolated):

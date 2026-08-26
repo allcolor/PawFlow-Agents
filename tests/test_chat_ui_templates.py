@@ -42,7 +42,10 @@ def test_boot_scripts_follow_js_modules_order_with_one_asset_version():
     tags = re.findall(
         r'<script defer src="/chat/js/([^"?]+)\?v=([0-9a-f]{8})"'
         r' onerror="window.__pawflowAssetLoadFailed\(\)"></script>', html)
-    assert [mod for mod, _ in tags] == [m for m in _JS_MODULES if (CHAT_UI_DIR / m).exists()]
+    assert [mod for mod, _ in tags] == [
+        m for m in _JS_MODULES
+        if (CHAT_UI_DIR / m).exists() and m != "plans_panel.js"
+    ]
     assert len({version for _, version in tags}) == 1
     assert "window.PAWFLOW_ASSET_VERSION=" in html
     assert "window.PAWFLOW_I18N_CATALOGS=" in html
@@ -68,13 +71,17 @@ def test_server_values_are_json_encoded_and_blocks_land_where_they_did():
     assert 'const SSE_URL = window.location.origin + "/sse";' in html
     assert 'const LOGIN_URL = "/login?next=\\u003ca\\u003e";' in html
     # Theme block just before </head>; extension manifest before the modules.
-    assert '<style id="custom-theme">a{}</style>\n</head>' in html
+    assert html.index('<style id="custom-theme">a{}</style>') < html.index(
+        'id="component-contract-css"'
+    ) < html.index("</head>")
     assert html.index("window.PAWFLOW_EXTENSIONS=[]") < html.index('<script defer src="/chat/js/i18n.js')
     # Custom CSS in its own <style> after the CSS modules, </style> neutralised.
     assert ('<style id="custom-css">\n/* Custom theme */\n'
             '.c{color:red}<\\/style><script>x()</script>\n</style>') in html
     # (the helper inlined the modules: the last one precedes the custom CSS)
-    assert html.rindex('data-css-module=') < html.index('id="custom-css"') < html.index('id="custom-theme"')
+    assert (html.rindex('data-css-module=') < html.index('id="custom-css"')
+            < html.index('id="custom-theme"')
+            < html.index('id="component-contract-css"'))
     assert 'id="custom-css"' not in rendered_chat_html()
 
 
@@ -88,7 +95,10 @@ def test_css_modules_are_linked_in_cascade_order_then_custom_css_then_theme():
     # Served page carries no inline stylesheet of its own any more; the
     # highlight.js theme and the custom theme come after the modules.
     assert "<style>" not in html
-    assert html.rindex('href="/chat/js/css/') < html.index("github-dark.min.css") < html.index('id="custom-theme"')
+    assert (html.index('/chat/js/css/99_theme_bridge.css')
+            < html.index("github-dark.min.css")
+            < html.index('id="custom-theme"')
+            < html.index('id="component-contract-css"'))
     for module in _CSS_MODULES:
         assert (CSS_DIR / module).is_file(), module
         assert len(chat_ui_css(module).splitlines()) <= 300, module
@@ -140,9 +150,9 @@ def test_skeleton_only_includes_and_partials_stay_small():
     assert len(includes) >= 12
     for name in includes:
         assert (TEMPLATES_DIR / name).is_file(), name
-    # No element with an id lives in the skeleton itself except the tab
-    # content wrapper whose children are the includes.
-    assert _ids(skeleton) == ["tabContentChat"]
+    # Only the component-contract stylesheet and the tab content wrapper live
+    # in the skeleton itself; the wrapper's children are the includes.
+    assert _ids(skeleton) == ["component-contract-css", "tabContentChat"]
     for path in TEMPLATES_DIR.rglob("*.html"):
         rel = path.relative_to(TEMPLATES_DIR).as_posix()
         if rel == "chat.html":

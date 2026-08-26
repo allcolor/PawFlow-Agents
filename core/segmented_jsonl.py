@@ -106,6 +106,8 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
             cached = _INDEX_CACHE.get(cache_key)
             if cached is not None:
                 cached["last_used"] = time.monotonic()
+            directory_ready = bool(
+                cached is not None and cached.get("directory_ready"))
         mark("cache", t0)
         # The hot path must not touch filesystem metadata when the index is
         # already cached. Python running on Windows against a WSL UNC path can
@@ -122,6 +124,7 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         if cached is None:
             t0 = time.monotonic()
             self.segment_dir.mkdir(parents=True, exist_ok=True)
+            directory_ready = True
             if index_missing and not segment_dir_exists:
                 index = {
                     "version": 1,
@@ -136,6 +139,12 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
             mark("load_index", t0)
         else:
             index = cached["index"]
+        if not directory_ready:
+            self.segment_dir.mkdir(parents=True, exist_ok=True)
+        with _INDEX_CACHE_LOCK:
+            state = _INDEX_CACHE.get(cache_key)
+            if state is not None:
+                state["directory_ready"] = True
         created_segment = False
         pending_by_path: Dict[Path, List[str]] = {}
         for line, line_bytes in zip(lines, line_sizes):
@@ -315,6 +324,10 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         # now. Otherwise the next reader/seed path sees a segment directory
         # with no index and falls back to glob/rebuild work in a user path.
         self._remember_index(index, flushed=True)
+        with _INDEX_CACHE_LOCK:
+            state = _INDEX_CACHE.get(cache_key)
+            if state is not None:
+                state["directory_ready"] = True
         if not self.index_path.exists():
             self._write_index_hot(index)
         self._append_lines_to_path(

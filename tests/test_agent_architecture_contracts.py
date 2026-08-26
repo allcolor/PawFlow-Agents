@@ -7,12 +7,6 @@ import uuid
 import pytest
 
 from core.agent_contracts import CapabilityMetadata
-from core.agent_feature_flags import (
-    DEFAULT_AGENT_FEATURE_FLAGS,
-    AgentFeatureFlags,
-    agent_groups_enabled,
-    get_agent_feature_flags,
-)
 from core.agent_group_contracts import AgentGroupDefinition, ParticipantPost
 from core.agent_run_contracts import AgentRunSummary
 from core.agent_turn_identity import AgentTurnIdentity
@@ -99,24 +93,11 @@ def agent_ref(name: str, source_id: str):
     }
 
 
-def test_all_new_agent_features_are_dormant_by_default():
-    assert set(DEFAULT_AGENT_FEATURE_FLAGS.to_dict().values()) == {False}
-    with pytest.raises(ValueError):
-        AgentFeatureFlags.from_dict({"workflow_agents_enabled": "true"})
-    with pytest.raises(ValueError):
-        AgentFeatureFlags.from_dict({"request_can_enable_workflows": True})
+def test_agent_architecture_has_no_rollout_feature_flags():
+    import core.agent_feature_flags as runtime_kinds
 
-
-def test_agent_group_capability_is_server_owned_and_strict(monkeypatch):
-    monkeypatch.delenv("PAWFLOW_AGENT_GROUPS_ENABLED", raising=False)
-    assert agent_groups_enabled() is False
-
-    monkeypatch.setenv("PAWFLOW_AGENT_GROUPS_ENABLED", "1")
-    assert get_agent_feature_flags().agent_groups_enabled is True
-
-    monkeypatch.setenv("PAWFLOW_AGENT_GROUPS_ENABLED", "sometimes")
-    with pytest.raises(ValueError, match="PAWFLOW_AGENT_GROUPS_ENABLED"):
-        get_agent_feature_flags()
+    assert not any(name.endswith("_ENV") for name in vars(runtime_kinds))
+    assert not hasattr(runtime_kinds, "get_agent_feature_flags")
 
 
 @pytest.mark.parametrize("change", [

@@ -66,19 +66,23 @@ function _confTypedInput(kind, schema) {
     const input = document.createElement('input');
     input.className = 'conf-input';
     input.type = 'file';
+    input.multiple = schema.multiple === true;
     return {
       element: input,
       read: async () => {
-        const file = input.files && input.files[0];
-        if (!file) return null;
+        const files = Array.from(input.files || []);
+        if (!files.length) return null;
         if (typeof uploadFileToStore !== 'function') throw new Error('File upload unavailable');
-        const uploaded = await uploadFileToStore(file);
-        return {
-          file_id: uploaded.file_id,
-          name: uploaded.filename || file.name,
-          mime_type: uploaded.mime_type || file.type || '',
-          size: uploaded.size || file.size,
-        };
+        const uploadedFiles = await Promise.all(files.map(async (file) => {
+          const uploaded = await uploadFileToStore(file);
+          return {
+            file_id: uploaded.file_id,
+            name: uploaded.filename || file.name,
+            mime_type: uploaded.mime_type || file.type || '',
+            size: uploaded.size || file.size,
+          };
+        }));
+        return input.multiple ? uploadedFiles : uploadedFiles[0];
       },
     };
   }

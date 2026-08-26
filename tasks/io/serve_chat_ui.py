@@ -516,9 +516,6 @@ def render_chat_page(*, agent_path: str = "/api/agent",
     every other value is autoescaped by the template (paths go through
     ``tojson`` in scripts).
     """
-    from core.flow_feature_flags import workflow_proposals_enabled
-
-    proposals_enabled = workflow_proposals_enabled()
     sig = _asset_signature()
     if extensions_block is None:
         extensions_block = _initial_extensions_block(records=[])
@@ -527,7 +524,7 @@ def render_chat_page(*, agent_path: str = "/api/agent",
         js_modules=[
             mod for mod in _JS_MODULES
             if (_CHAT_UI_DIR / mod).exists()
-            and not (proposals_enabled and mod == "plans_panel.js")
+            and mod != "plans_panel.js"
         ],
         css_modules=list(_CSS_MODULES),
         i18n_block=_initial_i18n_block(),
@@ -538,7 +535,6 @@ def render_chat_page(*, agent_path: str = "/api/agent",
         sse_path=sse_path,
         login_url=login_url,
         custom_css=_safe_style_text(custom_css),
-        workflow_proposals_enabled=proposals_enabled,
     )
 
 

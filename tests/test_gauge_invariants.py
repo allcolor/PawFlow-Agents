@@ -2586,9 +2586,9 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     llm_client_src = (Path("core/llm_client.py").read_text(encoding="utf-8")
                       + Path("core/_llm_client_driver.py").read_text(encoding="utf-8"))
     assert "_kill_live_cli_sessions(conv_id, agent_name, \"force_stop\")" in cancel_src
-    assert "client.abort()" in cancel_src
-    assert "or getattr(_cc, 'abort', None)" in loop_src
-    assert "or getattr(_cc, 'cancel_codex', None)" in loop_src
+    assert "_cancel_provider_client(client, force=True)" in cancel_src
+    assert '"cancel_codex_interactive"' in cancel_src
+    assert "_cancel_provider_client(_cc, force=True)" in loop_src
     assert "hasattr(client, 'send_user_message') or hasattr(client, 'abort')" in core_src
     assert "ToolRelayService.uncancel_agent(" in core_src
     assert "self._active_http_conn = conn" in openai_src

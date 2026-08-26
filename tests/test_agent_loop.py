@@ -1707,6 +1707,25 @@ class TestContextActionsAsync(unittest.TestCase):
         assert started_while_traffic_continued, (
             "new UI actions must not postpone an already queued action")
 
+    def test_ui_action_scheduler_queue_is_explicitly_bounded(self):
+        from tasks.ai import agent_actions
+
+        with agent_actions._BG_ACTION_QUEUE_COND:
+            agent_actions._BG_ACTION_QUEUE.clear()
+        try:
+            with patch.object(agent_actions, "_ensure_bg_action_scheduler"), \
+                    patch.object(agent_actions, "_BG_ACTION_QUEUE_MAX", 2):
+                assert agent_actions._schedule_bg_action(
+                    lambda: None, action="first", call_id="1") is True
+                assert agent_actions._schedule_bg_action(
+                    lambda: None, action="second", call_id="2") is True
+                assert agent_actions._schedule_bg_action(
+                    lambda: None, action="overflow", call_id="3") is False
+                assert len(agent_actions._BG_ACTION_QUEUE) == 2
+        finally:
+            with agent_actions._BG_ACTION_QUEUE_COND:
+                agent_actions._BG_ACTION_QUEUE.clear()
+
     def test_unhandled_ui_action_publishes_error_and_clears_status(self):
         import time
 

@@ -312,8 +312,12 @@ class _ToolRelayToolsMixin:
     def _handle_list_tools(self, request_id: str,
                            user_id: str, conversation_id: str) -> dict:
         registry = self._get_registry(user_id, conversation_id)
+        from core.workflow_tool_scope import workflow_tool_visible_names
+        visible = workflow_tool_visible_names(conversation_id)
         tools = []
         for h in registry.list_tools():
+            if visible is not None and h.name not in visible:
+                continue
             tools.append({
                 "name": h.name,
                 "display_name": h.display_name,
@@ -325,6 +329,13 @@ class _ToolRelayToolsMixin:
                            user_id: str = "",
                            conversation_id: str = "") -> dict:
         registry = self._get_registry(user_id, conversation_id)
+        from core.workflow_tool_scope import workflow_tool_visible_names
+        visible = workflow_tool_visible_names(conversation_id)
+        if visible is not None and tool_name not in visible:
+            return {
+                "type": "error", "request_id": request_id,
+                "error": f"Tool '{tool_name}' is not allowed in this workflow phase",
+            }
         handler = registry.get(tool_name)
         if not handler:
             available = [h.name for h in registry.list_tools()]

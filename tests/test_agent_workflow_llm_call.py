@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -251,6 +252,28 @@ def test_successful_retry_uses_cache_and_records_usage_once(environment):
     assert summary["calls"] == 1
     assert summary["tokens_in"] == 100
     assert summary["tokens_out"] == 20
+
+
+def test_agent_message_event_preserves_structured_json(environment):
+    store, _ledger, _definition, service, snapshot = environment
+    context = _running(store, snapshot)
+    service.client.response.content = json.dumps({
+        "summary": "Readable",
+        "notes": "x" * 9000,
+        "password": "do-not-expose",
+    })
+    task = _task(context, store, response_format="text")
+    events = []
+    task._workflow_event_callback = lambda kind, data: events.append((kind, data))
+
+    task.execute(FlowFile(content=b"hello"))
+
+    message = next(data for kind, data in events if kind == "agent_message")
+    assert "content" not in message
+    assert message["structured_content"]["summary"] == "Readable"
+    assert message["structured_content"]["password"] == "<redacted>"
+    assert "more chars" in message["structured_content"]["notes"]
+    assert "do-not-expose" not in str(message)
 
 
 def test_retry_after_ledger_failure_reuses_completed_provider_result(

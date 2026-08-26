@@ -5,7 +5,9 @@ from core.flow_definition_validator import FlowDefinitionValidator
 from core.flow_layout_contracts import (
     ensure_relation_ids,
     migrate_legacy_presentation,
+    normalize_flow_presentation,
     relation_id_seed,
+    validate_flow_presentation,
 )
 
 
@@ -50,6 +52,33 @@ def test_duplicate_legacy_relations_get_stable_collision_suffix():
     migrated = ensure_relation_ids(flow)
     ids = [item["relation_id"] for item in migrated["relations"]]
     assert ids[1] == ids[0] + "_2"
+
+
+def test_functional_normalization_is_complete_deterministic_and_non_mutating():
+    legacy = _legacy()
+    original = copy.deepcopy(legacy)
+
+    first = normalize_flow_presentation(legacy)
+    second = normalize_flow_presentation(legacy)
+
+    assert legacy == original
+    assert first == second
+    assert first["default_layout_id"] == "functional"
+    assert validate_flow_presentation(first, require_relation_ids=True) == []
+    assert set(first["layouts"]["functional"]["nodes"]) == {"source", "sink"}
+    assert first["layouts"]["functional"]["frames"]
+    assert all(task["label"] and task["description"]
+               for task in first["tasks"].values())
+
+
+def test_functional_normalization_preserves_existing_versioned_layout():
+    versioned = migrate_legacy_presentation(_legacy())
+    original_layouts = copy.deepcopy(versioned["layouts"])
+
+    normalized = normalize_flow_presentation(versioned)
+
+    assert normalized["layouts"] == original_layouts
+    assert normalized["default_layout_id"] == "technical"
 
 
 def test_versioned_layout_and_executor_profiles_validate(monkeypatch):

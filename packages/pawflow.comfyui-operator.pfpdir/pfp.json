@@ -1,7 +1,7 @@
 {
   "format": "pawflow.package.v1",
   "package": "pawflow.comfyui-operator",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "category": "Media & AI",
   "description": "All-in-one self-hosted ComfyUI operator with an orchestration skill, durable flows, deterministic flow tasks, and the official Comfy MCP connection.",
   "developer": {
@@ -62,7 +62,7 @@
       "version": "1.0.0",
       "path": "content/flow-tasks/validate/task.py",
       "runner": "python",
-      "description": "Validate provisioning plans, API workflows, video requests, and structural results.",
+      "description": "Validate provisioning plans, immutable image/video/audio API workflow revisions, video requests, and structural results.",
       "parameters": {
         "mode": {"type": "string"},
         "allow_partner_api": {"type": "boolean"},

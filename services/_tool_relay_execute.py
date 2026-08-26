@@ -98,11 +98,39 @@ class _ToolRelayExecuteMixin:
                     break
             else:
                 break
+        workflow_scoped = False
+        workflow_call_name = ""
+        try:
+            from core.workflow_tool_scope import authorize_workflow_tool
+            scoped = authorize_workflow_tool(
+                conversation_id, tool_name, arguments,
+            )
+            if scoped is not None:
+                workflow_scoped = True
+                tool_name = scoped["tool_name"]
+                arguments = scoped["arguments"]
+                workflow_call_name = str(
+                    scoped.get("target_tool_name") or tool_name
+                )
+        except (PermissionError, ValueError) as exc:
+            return {
+                "type": "result", "request_id": request_id,
+                "data": f"Error: {exc}",
+            }
+
+        def _record_workflow_result(result):
+            if workflow_call_name:
+                from core.workflow_tool_scope import record_workflow_tool_result
+                record_workflow_tool_result(
+                    conversation_id, workflow_call_name, result,
+                )
+            return result
+
         # Idempotent: if this request_id was already executed, return cached result
         with self._cache_lock:
             if request_id in self._result_cache:
                 logger.info("[tool-relay] returning cached result for %s", request_id)
-                return self._result_cache[request_id]
+                return _record_workflow_result(self._result_cache[request_id])
             if request_id in self._executing:
                 # Another connection is executing this — wait for it
                 evt = self._executing[request_id]
@@ -111,7 +139,9 @@ class _ToolRelayExecuteMixin:
             evt.wait()
             with self._cache_lock:
                 if request_id in self._result_cache:
-                    return self._result_cache[request_id]
+                    return _record_workflow_result(
+                        self._result_cache[request_id]
+                    )
             return {"type": "result", "request_id": request_id,
                     "data": "Error: in-flight request completed without a cached result"}
 
@@ -232,9 +262,15 @@ class _ToolRelayExecuteMixin:
                     for attempt in range(
                             1, _RELAY_TRANSPORT_RETRY_ATTEMPTS + 1):
                         try:
-                            _result_holder[0] = self._do_execute(
-                                request_id, tool_name, arguments,
-                                user_id, conversation_id, agent_name)
+                            if workflow_scoped:
+                                _result_holder[0] = self._do_execute(
+                                    request_id, tool_name, arguments,
+                                    user_id, conversation_id, agent_name,
+                                    workflow_scoped=True)
+                            else:
+                                _result_holder[0] = self._do_execute(
+                                    request_id, tool_name, arguments,
+                                    user_id, conversation_id, agent_name)
                             break
                         except Exception as e:
                             if (not _is_relay_transport_error(e)
@@ -367,7 +403,7 @@ class _ToolRelayExecuteMixin:
                     cc_tc_id or "")
                 self._publish_code_mode_result(
                     conversation_id, agent_name, code_mode_row, result)
-                return result
+                return _record_workflow_result(result)
 
             if cancel_event.is_set():
                 # Cancelled — return interrupt result immediately. The
@@ -390,7 +426,7 @@ class _ToolRelayExecuteMixin:
                     cc_tc_id or "")
                 self._publish_code_mode_result(
                     conversation_id, agent_name, code_mode_row, result)
-                return result
+                return _record_workflow_result(result)
 
             wake_event.wait()
             wake_event.clear()
@@ -432,10 +468,11 @@ class _ToolRelayExecuteMixin:
             result_len, cc_tc_id or "")
         self._publish_code_mode_result(
             conversation_id, agent_name, code_mode_row, result)
-        return result
+        return _record_workflow_result(result)
 
     def _do_execute(self, request_id, tool_name, arguments,
-                    user_id, conversation_id, agent_name):
+                    user_id, conversation_id, agent_name, *,
+                    workflow_scoped=False):
         # Never mutate the caller-owned tool-call arguments. Provider adapters
         # retain that object for their transcript, so adding runtime secrets to
         # it exposes plaintext after the call completes.
@@ -578,7 +615,7 @@ class _ToolRelayExecuteMixin:
                         if approval != "approved":
                             return {"type": "result", "request_id": request_id,
                                     "data": f"Error: Command rejected by user: {_cmd[:100]}"}
-            else:
+            elif not workflow_scoped:
                 # default / approve_edits — use approval gate
                 from core.tool_approval import ToolApprovalGate
                 _path = arguments.get("path", "") if isinstance(arguments, dict) else ""
@@ -588,6 +625,10 @@ class _ToolRelayExecuteMixin:
                 if approval != "approved":
                     return {"type": "result", "request_id": request_id,
                             "data": f"Error: Tool '{tool_name}' was {approval} by the user."}
+            # A workflow-scoped call already passed a server-side phase
+            # allowlist and argument guard. That bounded capability replaces
+            # only the generic default-mode prompt; explicit deny/confirm,
+            # read-only policy, and hard-confirm policy gates above still win.
             approval_ms = (time.perf_counter() - approval_started) * 1000
         except Exception as e:
             logger.error("Tool approval check failed; denying tool for safety: %s", e,

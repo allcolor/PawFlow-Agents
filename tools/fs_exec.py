@@ -53,19 +53,35 @@ def _scratch_command_paths(command: str, root_abs: str) -> str:
 
 def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
                 allow_exec: bool = False) -> Any:
-    """Execute a shell command in the sandbox directory."""
+    """Execute either a shell command or an explicit argument vector."""
     if not allow_exec:
         raise PermissionError("Shell execution disabled. Start relay with --allow-exec")
     command = req.get("command", "")
+    argv = req.get("argv")
     timeout = req.get("timeout")  # None = no limit
     shell_name = req.get("shell", "")  # optional: powershell, bash, python, node, cmd
-    if not command:
-        raise ValueError("Missing 'command' parameter")
+    if command and argv is not None:
+        raise ValueError("Provide exactly one of 'command' or 'argv'")
+    if argv is not None:
+        if (not isinstance(argv, list) or not argv or len(argv) > 256
+                or any(not isinstance(arg, str) or not arg or len(arg) > 8192
+                       for arg in argv)):
+            raise ValueError("'argv' must contain 1 to 256 non-empty strings")
+        argv = list(argv)
+    elif not command:
+        raise ValueError("Missing 'command' or 'argv' parameter")
     # Resolve fs:// URLs in the command to real local paths
     root_abs = str(Path(root_dir).resolve())
     run_cwd = str(Path(path).resolve())
     is_scratchdir = isinstance(req.get("scratchdir"), dict)
-    if is_scratchdir:
+    if argv is not None:
+        def _resolve_argv_path(value: str) -> str:
+            if value.startswith("fs://scratchdir/"):
+                return str(Path(root_abs) / value[len("fs://scratchdir/"):])
+            match = re.fullmatch(r"fs://[^/]+/(.*)", value)
+            return str(Path(root_abs) / match.group(1)) if match else value
+        argv = [_resolve_argv_path(value) for value in argv]
+    elif is_scratchdir:
         command = _scratch_command_paths(command, root_abs)
     else:
         _fs_url_pattern = re.compile(r'fs://[^/\s]+/(\S+)')
@@ -92,7 +108,9 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
                 "scratchdir_unavailable: persistent execution container "
                 "does not expose the scoped /scratch mount")
         # Determine shell/interpreter for the container
-        if shell_name in ("python", "python3"):
+        if argv is not None:
+            _container_shell = argv
+        elif shell_name in ("python", "python3"):
             _container_shell = ["python3", "-c", command]
         elif shell_name == "node":
             _container_shell = ["node", "-e", command]
@@ -102,8 +120,12 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         if isinstance(_extra_env, dict):
             for _ek, _ev in _extra_env.items():
                 _docker_env_args.extend(["-e", f"{_ek}={_ev}"])
+        relative_cwd = os.path.relpath(run_cwd, root_abs).replace(os.sep, "/")
+        container_cwd = "/workspace"
+        if relative_cwd != ".":
+            container_cwd += "/" + relative_cwd
         docker_exec_cmd = _docker_cmd() + [
-            "exec", "-w", "/workspace",
+            "exec", "-w", container_cwd,
         ] + _docker_env_args + [
             _relay_container,
         ] + _container_shell
@@ -123,7 +145,17 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         return {"stdout": stdout, "stderr": stderr, "returncode": result.returncode}
 
     # Docker-based execution: docker-python, docker-node, docker-bash
-    if shell_name and shell_name.startswith("docker-"):
+    if argv is not None and shell_name:
+        raise ValueError("'shell' is not supported with 'argv'")
+    if argv is not None:
+        result = _run_cancellable(
+            req.get("request_id", ""), argv,
+            shell=False,
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=timeout, cwd=run_cwd, env=env,
+        )
+    elif shell_name and shell_name.startswith("docker-"):
         _lang = shell_name.split("-", 1)[1]
         _images = {
             "python": "python:3.12-slim",

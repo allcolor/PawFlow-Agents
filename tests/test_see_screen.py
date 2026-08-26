@@ -103,6 +103,24 @@ def test_screen_schema_warns_about_physical_pixels_not_chat_preview():
     assert schema["properties"]["target_bbox"]["minItems"] == 4
 
 
+def test_screen_exposes_bounded_clipboard_read_and_write():
+    handler = ScreenHandler()
+    actions = handler.parameters_schema["properties"]["action"]["enum"]
+
+    assert "clipboard_read" in actions
+    assert "clipboard_write" in actions
+    assert handler._handle_result(
+        "clipboard_read", {"text": "copied from Chromium"},
+    ) == "copied from Chromium"
+    bounded = handler._handle_result(
+        "clipboard_read", {"text": "x" * 20000},
+    )
+    assert "[truncated" in bounded
+    assert handler._handle_result(
+        "clipboard_write", {"written": 12},
+    ) == "Written 12 characters to the clipboard"
+
+
 def test_screen_click_resolves_revision_to_private_guard(monkeypatch):
     _patch_screen_store(monkeypatch)
     relay = _Relay({"clicked": True, "x": 0, "y": 0})

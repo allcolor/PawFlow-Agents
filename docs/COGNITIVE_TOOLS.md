@@ -381,6 +381,15 @@ and the newer source remains pending for the next worker run.
 An empty, malformed, or structurally invalid LLM response is also fail-closed:
 no page or source marker changes, the batch remains pending, and the graph/source
 scan portion of project maintenance still completes.
+If an otherwise structured LLM response omits only a page's `sources` field,
+the embedded maintainer conservatively fills it from the non-removed
+`processed_sources` in the exact selected snapshot. When that list is itself
+absent or empty, it uses all non-removed sources from the exact selected batch
+and records them as processed. It then runs the same strict patch and citation
+validation, and never repairs malformed, removed, or out-of-snapshot citations.
+For a removed-only batch there is no live citation to infer: uncited page
+proposals are discarded, while the declared removals remain processed. PawFlow
+never invents a factual page citation from a deleted source.
 The Auto Wiki prompt separately budgets the final JSON document. It does not use
 that response budget as the provider generation ceiling, because some providers
 include internal reasoning in their output-token limit. The provider transport

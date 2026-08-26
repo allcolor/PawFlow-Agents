@@ -46,6 +46,11 @@ def test_canvas_renders_layout_frames_and_human_task_metadata():
     assert "description: n?.description || ''" in source
     assert "data.description && jsx('div', { className: 'node-description'" in source
     assert "positionRuntimeNodes(rfNodes, rfEdges)" in source
+    assert "function layoutPresentation(item = {})" in source
+    assert "...layoutPresentation(layoutNodes[id])" in source
+    assert "style: flowNodePresentation(data, st)" in source
+    assert "background: presentationFill(data.fill, data.opacity)" in source
+    assert "zIndex: Math.max(0, Number(frame.z_index) || 0)" in source
 
 
 def test_repository_menu_opens_a_draft_in_the_same_canvas():

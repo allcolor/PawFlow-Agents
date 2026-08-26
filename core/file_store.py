@@ -363,6 +363,69 @@ class FileStore:
                 f"bytes missing on disk")
         return (entry["filename"], content, entry["content_type"])
 
+    def get_metadata_required(self, file_id: str, user_id: str,
+                              conversation_id: str) -> Dict[str, Any]:
+        """Return authorized metadata without materializing the file bytes.
+
+        This is the strict, streaming-safe counterpart of ``get_required`` for
+        code that needs to forward a FileStore reference rather than its
+        content. Pending web uploads are adopted by the first conversation that
+        references them under the same ownership rules as ``get_required``.
+        """
+        if not user_id:
+            raise ValueError("FileStore.get_metadata_required: user_id is required")
+        if not conversation_id:
+            raise ValueError(
+                "FileStore.get_metadata_required: conversation_id is required")
+        if not file_id:
+            raise ValueError("FileStore.get_metadata_required: file_id is required")
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._entries.get(file_id)
+            if entry is None:
+                raise FileNotFoundError(
+                    f"FileStore: no entry for file_id={file_id}")
+        if entry.get("ttl", 0) > 0:
+            if time.time() - entry.get("created_at", 0) > entry["ttl"]:
+                self._delete_entry(file_id)
+                raise FileNotFoundError(
+                    f"FileStore: file_id={file_id} has expired")
+        entry_conversation = entry.get("conversation_id", "")
+        if entry_conversation == "_upload":
+            entry_user = entry.get("user_id", "")
+            if entry_user and entry_user not in ("_anonymous", user_id):
+                raise FileNotFoundError(
+                    f"FileStore: file_id={file_id} is pending upload owned "
+                    f"by {entry_user}, cannot be adopted by {user_id}")
+            with self._store_lock:
+                entry["conversation_id"] = conversation_id
+                self._save_index()
+            entry_conversation = conversation_id
+        if entry_conversation and entry_conversation != conversation_id:
+            raise FileNotFoundError(
+                f"FileStore: file_id={file_id} belongs to conv "
+                f"{entry_conversation}, not {conversation_id}")
+        if not self.check_access(file_id, user_id=user_id):
+            owner = entry.get("user_id", "")
+            raise FileNotFoundError(
+                f"FileStore: access denied for file_id={file_id} "
+                f"(owner={owner}, requester={user_id})")
+        if not Path(entry.get("path", "")).exists():
+            self._delete_entry(file_id)
+            raise FileNotFoundError(
+                f"FileStore: file_id={file_id} index entry present but "
+                "bytes missing on disk")
+        return {
+            "file_id": file_id,
+            "filename": entry["filename"],
+            "content_type": entry["content_type"],
+            "size": entry["size"],
+            "created_at": entry.get("created_at", 0),
+            "user_id": entry.get("user_id", ""),
+            "conversation_id": entry.get("conversation_id", ""),
+            "category": entry.get("category", ""),
+        }
+
     def check_access(self, file_id: str, user_id: str = "",
                      gateway_key: str = "") -> bool:
         """Check if access is allowed for the given credentials.

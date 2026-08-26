@@ -2,10 +2,6 @@
   <div class="files-header"><strong data-i18n="confPending">Pending confirmations</strong><button class="btn-close-panel" onclick="toggleConfirmationsPanel()">&times;</button></div>
   <div class="files-list" id="confirmationsList"></div>
 </div>
-{% if not workflow_proposals_enabled %}<div class="files-panel" id="plansPanel" style="display:none">
-  <div class="files-header"><strong data-i18n="plans">Plans</strong><button class="btn-close-panel" onclick="togglePlansPanel()">&times;</button></div>
-  <div class="files-list" id="plansList"></div>
-</div>{% endif %}
 <div class="files-panel" id="schedsPanel" style="display:none">
   <div class="files-header"><strong data-i18n="scheduledTasks">Scheduled Tasks</strong><button class="btn-close-panel" onclick="toggleSchedsPanel()">&times;</button></div>
   <div class="files-list" id="schedsList"></div>

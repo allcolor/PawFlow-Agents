@@ -12,6 +12,14 @@ does not watermark outputs — downstream misuse is the caller's
 responsibility. Reference samples and rendered outputs live in the
 user-scoped FileStore and are purged on cascade delete.
 
+The Media Studio Workflow Agent adds a deterministic authorization gate before
+its `clone_voice` production branch. It parks through the canonical durable
+confirmation store and records `voice_clone_authorized=true` only after an
+explicit affirmative answer. A denied or absent answer terminates before the
+voice provider call. The selected voice service and its definition revision are
+frozen with the WorkflowRun; a request cannot substitute another service or
+expand the accepted authority during execution.
+
 ## Tools
 
 Three agent-facing tools, all bound to the active voice-clone

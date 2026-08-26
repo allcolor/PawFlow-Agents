@@ -224,8 +224,8 @@ def test_howto_canvas_indexes_every_recipe_and_keeps_full_reader() -> None:
     assert len(recipe_ids) == len(set(recipe_ids))
     assert "workflow-agents" in recipe_ids
     assert "workflow-proposals" in recipe_ids
-    assert "PAWFLOW_WORKFLOW_AGENTS_ENABLED=1" in html
-    assert "PAWFLOW_AGENT_GROUPS_ENABLED=1" in html
+    assert "WORKFLOW_AGENTS_ENABLED" not in html
+    assert "AGENT_GROUPS_ENABLED" not in html
     assert 'data-howto-canvas' in html
     assert 'class="howto-reader"' in html
     assert html.count('data-zoom-target') == 9

@@ -181,6 +181,9 @@ function _sseWireA() {
     lastSSEActivity = Date.now();
     const data = e.data ? JSON.parse(e.data) : {};
     trackWorkflowProgress(data);
+    window.dispatchEvent(new CustomEvent('pawflow:workflow-progress', {
+      detail: data,
+    }));
   });
 
   eventSource.addEventListener('agui_activity', (e) => {

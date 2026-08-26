@@ -207,6 +207,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             nodes = {}
             edges = []
             raw = {}
+            deployed_layout = {}
             flow_name = instance_id or template_id
 
             if flow_ref:
@@ -222,6 +223,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 dep_reg = DeploymentRegistry.get_instance()
                 inst = dep_reg.get(instance_id)
                 flow_name = inst.flow_name if inst else instance_id
+                deployed_layout = inst.layout if inst and isinstance(inst.layout, dict) else {}
 
                 executor = ExecutorRegistry.get_instance().get(instance_id)
                 if executor:
@@ -284,7 +286,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             if raw:
-                _apply_definition_node_metadata(raw, nodes)
+                _apply_definition_node_metadata(raw, nodes, deployed_layout)
 
             for e in edges:
                 target = e["target"]
@@ -294,7 +296,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({
                 "flow_name": flow_name, "instance_id": instance_id,
                 "template_id": template_id, "is_running": is_running,
-                "nodes": nodes, "edges": edges, "layout": _graph_layout(raw),
+                "nodes": nodes, "edges": edges,
+                "layout": _graph_layout(raw, deployed_layout),
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

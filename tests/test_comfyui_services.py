@@ -2,11 +2,17 @@
 
 import copy
 import os
+from dataclasses import FrozenInstanceError
 
 import pytest
 
 from core import ServiceError, ServiceFactory
+from core.comfyui_workflow import (
+    ComfyProvisioningAsset,
+    ComfyProvisioningProposal,
+)
 from services._comfyui_client import ComfyUIClient
+from services.comfyui_audio_service import ComfyUIAudioService
 from services.comfyui_image_service import ComfyUIImageService
 from services.comfyui_video_service import ComfyUIVideoService
 
@@ -32,7 +38,10 @@ def _workflow(output_key="images"):
 
 def _config(*operations, media_kind="image"):
     workflow, bindings, output = _workflow(
-        "images" if media_kind == "image" else "gifs")
+        {"image": "images", "video": "gifs", "audio": "audio"}[media_kind])
+    output["content_types"] = [{
+        "image": "image/png", "video": "video/mp4", "audio": "audio/wav",
+    }[media_kind]]
     return {
         "base_url": "https://comfy.example.test",
         "workflows": {
@@ -40,6 +49,24 @@ def _config(*operations, media_kind="image"):
                 "workflow": copy.deepcopy(workflow),
                 "bindings": copy.deepcopy(bindings),
                 "output": copy.deepcopy(output),
+                "metadata": {
+                    "preset_id": f"test.{media_kind}.{operation}",
+                    "revision": "1.0.0",
+                    "created_at": "2026-08-25T00:00:00+00:00",
+                    "media_kind": media_kind,
+                    "provenance": {
+                        "source": "test fixture",
+                        "license": "CC0-1.0",
+                    },
+                    "capabilities": [],
+                    "limits": {},
+                    "required_inventory": {
+                        "nodes": [],
+                        "models": [],
+                        "loras": [],
+                        "custom_nodes": [],
+                    },
+                },
             }
             for operation in (operations or ("generate",))
         },
@@ -69,12 +96,31 @@ def test_client_validates_binding_and_output_nodes():
 
 def test_client_rejects_invalid_kind_and_non_positive_limits():
     with pytest.raises(ValueError, match="media_kind"):
-        ComfyUIClient(_config("generate"), media_kind="audio")
+        ComfyUIClient(_config("generate"), media_kind="speech")
 
     config = _config("generate")
     config["timeout"] = 0
     with pytest.raises(ValueError, match="timeouts must be positive"):
         ComfyUIClient(config, media_kind="image")
+
+
+def test_client_requires_immutable_versioned_preset_metadata():
+    missing = _config("generate")
+    del missing["workflows"]["generate"]["metadata"]
+    with pytest.raises(ValueError, match="metadata"):
+        ComfyUIClient(missing, media_kind="image")
+
+    mismatch = _config("generate")
+    mismatch["workflows"]["generate"]["metadata"]["media_kind"] = "video"
+    with pytest.raises(ValueError, match="media_kind"):
+        ComfyUIClient(mismatch, media_kind="image")
+
+    client = ComfyUIClient(_config("generate"), media_kind="image")
+    revision = client.workflow_revisions["generate"]
+    assert revision.preset_id == "test.image.generate"
+    assert revision.revision == "1.0.0"
+    assert revision.media_kind == "image"
+    assert len(revision.digest) == 64
 
 
 def test_client_selects_relay_host_or_container_explicitly(monkeypatch):
@@ -95,6 +141,34 @@ def test_client_selects_relay_host_or_container_explicitly(monkeypatch):
     assert container_client._base_url() == "http://resolved.test"
     assert captured[0][1]["relay_local"] is True
     assert captured[1][1]["relay_local"] is False
+
+
+def test_client_frozen_relay_override_is_cleared_by_next_runtime_context(
+        monkeypatch):
+    captured = []
+
+    def resolve(url, **kwargs):
+        captured.append(url)
+        return "http://resolved.test"
+
+    monkeypatch.setattr(
+        "services._comfyui_client.resolve_relay_aware_url", resolve)
+    config = _config("generate")
+    config["base_url"] = "relay://MyWorkspace/localhost:8188"
+    client = ComfyUIClient(config, media_kind="image")
+    client.set_runtime_context(
+        user_id="alice", conversation_id="conv-1",
+        agent_name="Media Studio", relay_id="Relay-B")
+    client._base_url()
+    client.set_runtime_context(
+        user_id="alice", conversation_id="conv-1",
+        agent_name="Media Studio")
+    client._base_url()
+
+    assert captured == [
+        "relay://Relay-B/localhost:8188",
+        "relay://MyWorkspace/localhost:8188",
+    ]
 
 
 def test_run_applies_bindings_to_a_copy_and_selects_configured_output(monkeypatch):
@@ -141,6 +215,51 @@ def test_run_applies_bindings_to_a_copy_and_selects_configured_output(monkeypatc
             "type": "output",
         },
     }
+
+
+def test_run_rejects_output_type_outside_the_preset_revision(monkeypatch, tmp_path):
+    client = ComfyUIClient(_config("generate_audio", media_kind="audio"),
+                           media_kind="audio")
+    target = tmp_path / "wrong.png"
+    target.write_bytes(b"not audio")
+    monkeypatch.setattr(client, "request_json", lambda method, *_args, **_kwargs: (
+        {"prompt_id": "audio-prompt"} if method == "POST" else {
+            "audio-prompt": {
+                "status": {"status_str": "success"},
+                "outputs": {"9": {"audio": [{"filename": "wrong.png"}]}},
+            },
+        }))
+    monkeypatch.setattr(
+        client, "_download_artifact", lambda _artifact: (str(target), "image/png"))
+
+    with pytest.raises(ServiceError, match="undeclared content type"):
+        client.run("generate_audio", {"prompt": "rain"})
+    assert not target.exists()
+
+
+def test_provisioning_proposal_is_immutable_and_digest_pinned():
+    revision = ComfyUIClient(
+        _config("generate_audio", media_kind="audio"),
+        media_kind="audio").workflow_revisions["generate_audio"]
+    asset = ComfyProvisioningAsset(
+        kind="model",
+        name="ace-step.safetensors",
+        source="https://models.example.test/ace-step.safetensors",
+        license="Apache-2.0",
+        sha256="a" * 64,
+    )
+
+    proposal = ComfyProvisioningProposal.create(revision, assets=(asset,))
+
+    assert proposal.workflow_digest == revision.digest
+    assert len(proposal.digest) == 64
+    with pytest.raises(FrozenInstanceError):
+        proposal.digest = "tampered"
+
+    with pytest.raises(ValueError, match="absolute HTTPS"):
+        ComfyProvisioningAsset(
+            kind="model", name="unsafe", source="http://localhost/model",
+            license="unknown", sha256="b" * 64)
 
 
 def test_wait_history_surfaces_comfyui_execution_failure(monkeypatch):
@@ -261,6 +380,7 @@ def test_input_redirect_is_revalidated():
 def test_media_defaults_match_service_schemas():
     image = ComfyUIImageService(_config("generate"))
     video = ComfyUIVideoService(_config("generate", media_kind="video"))
+    audio = ComfyUIAudioService(_config("generate_audio", media_kind="audio"))
 
     assert image.client.timeout == image.get_parameter_schema()["timeout"]["default"]
     assert image.client.poll_interval == image.get_parameter_schema()["poll_interval"]["default"]
@@ -268,6 +388,8 @@ def test_media_defaults_match_service_schemas():
     assert video.client.poll_interval == video.get_parameter_schema()["poll_interval"]["default"]
     assert video.client.max_input_bytes == video.get_parameter_schema()["max_input_bytes"]["default"]
     assert video.client.max_output_bytes == video.get_parameter_schema()["max_output_bytes"]["default"]
+    assert audio.client.timeout == audio.get_parameter_schema()["timeout"]["default"]
+    assert audio.client.poll_interval == audio.get_parameter_schema()["poll_interval"]["default"]
 
 
 def test_services_expose_only_configured_operations():
@@ -278,6 +400,48 @@ def test_services_expose_only_configured_operations():
     assert image.get_operations() == {"edit_image": {}, "generate": {}}
     assert image.get_model_info()["supports_edit"] is True
     assert video.get_operations() == {"generate": {}, "image_to_video": {}}
+
+
+def test_audio_service_returns_file_backed_result_and_uploads_references(monkeypatch):
+    service = ComfyUIAudioService(_config("generate_audio", media_kind="audio"))
+    monkeypatch.setattr(service, "ensure_connected", lambda: None)
+    captured = {}
+
+    def run(operation, values):
+        captured.update({"operation": operation, "values": values})
+        return {
+            "path": "/tmp/generated.wav",
+            "content_type": "audio/wav",
+            "prompt_id": "prompt-audio",
+        }
+
+    monkeypatch.setattr(service.client, "run", run)
+    monkeypatch.setattr(
+        service.client, "upload_source",
+        lambda source, index=0: f"uploaded-{index}-{source.rsplit('/', 1)[-1]}")
+    result = service.generate(
+        prompt="rain on glass", duration=12, seed=7, model="ace-step",
+        source_audio_url="fs://filestore/source/source.wav",
+        music_bed_url="fs://filestore/music/music.wav")
+
+    assert captured == {
+        "operation": "generate_audio",
+        "values": {
+            "prompt": "rain on glass",
+            "negative_prompt": "",
+            "duration": 12,
+            "seed": 7,
+            "model": "ace-step",
+            "source_audio": "uploaded-0-source.wav",
+            "music_bed": "uploaded-1-music.wav",
+        },
+    }
+    assert result == {
+        "audio_path": "/tmp/generated.wav",
+        "content_type": "audio/wav",
+        "_delete_media_path": True,
+        "provider_prompt_id": "prompt-audio",
+    }
 
 
 def test_image_service_returns_file_backed_result(monkeypatch):
@@ -307,7 +471,10 @@ def test_comfyui_services_are_registered_and_categorized():
 
     assert ServiceFactory.get("comfyUIImageGeneration") is ComfyUIImageService
     assert ServiceFactory.get("comfyUIVideoGeneration") is ComfyUIVideoService
+    assert ServiceFactory.get("comfyUIAudioGeneration") is ComfyUIAudioService
     assert _service_category(
         "comfyUIImageGeneration", ComfyUIImageService) == "image"
     assert _service_category(
         "comfyUIVideoGeneration", ComfyUIVideoService) == "video"
+    assert _service_category(
+        "comfyUIAudioGeneration", ComfyUIAudioService) == "audio"

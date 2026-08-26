@@ -69,6 +69,29 @@ class TestGet:
         store.delete(fid)
         assert store.get(fid) is None
 
+    def test_required_metadata_adopts_upload_without_reading_bytes(self, store,
+                                                                   monkeypatch):
+        fid = store.store(
+            "reference.png", b"image-bytes", "image/png",
+            conversation_id="_upload", user_id="alice")
+        monkeypatch.setattr(
+            "pathlib.Path.read_bytes",
+            lambda _path: (_ for _ in ()).throw(AssertionError("bytes read")))
+
+        metadata = store.get_metadata_required(fid, "alice", "conv-1")
+
+        assert metadata["filename"] == "reference.png"
+        assert metadata["content_type"] == "image/png"
+        assert metadata["conversation_id"] == "conv-1"
+
+    def test_required_metadata_rejects_wrong_conversation(self, store):
+        fid = store.store(
+            "private.png", b"image-bytes", "image/png",
+            conversation_id="conv-1", user_id="alice")
+
+        with pytest.raises(FileNotFoundError, match="belongs to conv"):
+            store.get_metadata_required(fid, "alice", "conv-2")
+
 
 # -- delete() ----------------------------------------------------------------
 

@@ -152,15 +152,17 @@ class InvokeWorkflowAgentTask(BaseTask):
                 conversation_id=conversation_id,
                 parameters=dict(parameters),
             )
-            timeout = parse_timeout_seconds(
-                self.config.get("terminal_timeout", "15m"))
-            if timeout <= 0:
-                raise ValueError("terminal_timeout must be positive")
+            timeout_value = self.config.get("terminal_timeout")
+            timeout = None
+            if timeout_value not in (None, ""):
+                timeout = parse_timeout_seconds(timeout_value)
+                if timeout <= 0:
+                    raise ValueError("terminal_timeout must be positive")
         except (TypeError, ValueError) as exc:
             raise TaskError(f"Invalid Workflow Agent invocation: {exc}") from exc
 
-        timeout_seconds = max(1, int(timeout))
-        if binding.limits.max_duration_seconds != timeout_seconds:
+        if timeout is not None:
+            timeout_seconds = max(1, int(timeout))
             limits = binding.limits.model_copy(
                 update={"max_duration_seconds": timeout_seconds})
             binding = binding.model_copy(update={"limits": limits})
@@ -292,7 +294,9 @@ class InvokeWorkflowAgentTask(BaseTask):
             "publish_to_conversation": {
                 "type": "boolean", "required": False, "default": False},
             "terminal_timeout": {
-                "type": "string", "required": False, "default": "15m"},
+                "type": "string", "required": False,
+                "description": (
+                    "Optional explicit terminal deadline; omitted waits forever")},
             "cancellation_policy": {
                 "type": "string", "required": False, "default": "propagate",
                 "description": "propagate | detach",

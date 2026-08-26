@@ -255,7 +255,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                              else _source_raw)
             if (isinstance(_source_value, dict)
                     and _source_value.get("type") in {
-                        "a2a", "cross_conversation_delegate"}):
+                        "a2a", "agent_delegate",
+                        "cross_conversation_delegate"}):
                 _persisted_source = dict(_source_value)
                 # Transport provenance is internal, but routing identity remains
                 # authoritative at the authenticated AgentRequest boundary.
@@ -335,32 +336,23 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 }).encode())
                 flowfile.set_attribute("http.response.status", "403")
                 return [flowfile]
-            from core.agent_feature_flags import workflow_agents_enabled
-            if not _already_active or workflow_agents_enabled():
-                from core.agent_runtime_router import (
-                    AgentRuntimeRouter,
-                    AgentRuntimeRoutingError,
-                )
-                try:
-                    _runtime = AgentRuntimeRouter.instance().resolve(
-                        conversation_id, _target)
-                except AgentRuntimeRoutingError as _routing_error:
-                    if (_routing_error.code == "workflow_agents_disabled"
-                            and not _skip_pre_persist):
-                        ConversationWriter.for_conversation(
-                            conversation_id).enqueue_message(
-                                dict(_stamped_user),
-                                agent_name=_target or "", user_id=_uid,
-                                wait=(_channel == "telegram"))
-                    flowfile.set_content(json.dumps({
-                        "error": str(_routing_error),
-                        "code": _routing_error.code,
-                        "conversation_id": conversation_id,
-                    }).encode("utf-8"))
-                    flowfile.set_attribute("http.response.status", "503")
-                    flowfile.set_attribute(
-                        "agent.conversation_id", conversation_id)
-                    return [flowfile]
+            from core.agent_runtime_router import (
+                AgentRuntimeRouter,
+                AgentRuntimeRoutingError,
+            )
+            try:
+                _runtime = AgentRuntimeRouter.instance().resolve(
+                    conversation_id, _target)
+            except AgentRuntimeRoutingError as _routing_error:
+                flowfile.set_content(json.dumps({
+                    "error": str(_routing_error),
+                    "code": _routing_error.code,
+                    "conversation_id": conversation_id,
+                }).encode("utf-8"))
+                flowfile.set_attribute("http.response.status", "503")
+                flowfile.set_attribute(
+                    "agent.conversation_id", conversation_id)
+                return [flowfile]
             _is_workflow = (
                 _runtime is not None and _runtime.runtime_kind == "workflow")
             if _is_workflow:
@@ -374,21 +366,23 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                     _inbox.prepare_receipt(
                         conversation_id, _canonical_agent,
                         dict(_stamped_user), _receipt_source)
-                    if not _skip_pre_persist:
-                        _cw = ConversationWriter.for_conversation(conversation_id)
-                        _cw.enqueue_message_if_absent(
-                            dict(_stamped_user),
-                            agent_name=_canonical_agent,
-                            user_id=_uid,
-                            sse_events=[{"type": "new_message", "data": {
-                                "role": "user",
-                                "content": _stamped_user.get("content", ""),
-                                "msg_id": _stamped_user.get("msg_id", ""),
-                                "ts": _stamped_user.get("ts"),
-                                "source": _stamped_user.get("source") or {},
-                                "channel": _channel,
-                                "attachments": _attachments_body,
-                            }}])
+                    # Shared delegates may already have persisted this exact
+                    # row. The idempotent writer call is still required so
+                    # Workflow ingress has one uniform transcript boundary.
+                    _cw = ConversationWriter.for_conversation(conversation_id)
+                    _cw.enqueue_message_if_absent(
+                        dict(_stamped_user),
+                        agent_name=_canonical_agent,
+                        user_id=_uid,
+                        sse_events=[{"type": "new_message", "data": {
+                            "role": "user",
+                            "content": _stamped_user.get("content", ""),
+                            "msg_id": _stamped_user.get("msg_id", ""),
+                            "ts": _stamped_user.get("ts"),
+                            "source": _stamped_user.get("source") or {},
+                            "channel": _channel,
+                            "attachments": _attachments_body,
+                        }}])
                     _inbox.mark_transcript_persisted(
                         conversation_id, _canonical_agent,
                         str(_stamped_user.get("msg_id") or ""))

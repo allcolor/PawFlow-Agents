@@ -287,53 +287,12 @@ function cmdDiff(text, parts) {
 
 function cmdPlan(text, parts, cmd) {
   const arg = text.slice(cmd.length).trim();
-  if (window.PAWFLOW_WORKFLOW_PROPOSALS_ENABLED) {
-    if (!arg || arg === 'list') {
-      if (typeof loadUiSurfaces === 'function') loadUiSurfaces(conversationId);
-      if (arg === 'list') addMsg('system', 'Workflow proposals are shown in this conversation.');
-      return true;
-    }
-    const proposalMsg = '[Create a canonical workflow proposal using the propose_workflow tool. Analyze the request, build the complete FlowDefinition, then call propose_workflow.]\n\n' + arg;
-    addMsg('user', '/plan ' + arg);
-    const proposalBody = { message: proposalMsg };
-    if (conversationId) proposalBody.conversation_id = conversationId;
-    fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(proposalBody) })
-      .then(r => r.json())
-      .then(data => { if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); } })
-      .catch(e => addMsg('error', e.message));
-    return true;
-  }
   if (!arg || arg === 'list') {
-    const panel = document.getElementById('plansPanel');
-    if (panel.style.display === 'none') panel.style.display = 'block';
-    loadPlans();
-    if (arg === 'list') {
-      action$('get_plans', { conversation_id: conversationId }).subscribe(data => {
-        let planArr = Array.isArray(data.plans) ? data.plans : Object.values(data.plans || {});
-        if (!planArr.length) { addMsg('system', t('noActivePlans')); return; }
-        let lines = [t('plansHeader')];
-        for (const p of planArr) {
-          if (!p || !p.title) continue;
-          const steps = p.steps || [];
-          const done = steps.filter(s => s.status === 'done').length;
-          const icon = {'pending_approval': '\u23F3', 'approved': '\u2705', 'in_progress': '\u25B6', 'completed': '\u2714', 'cancelled': '\u274C'}[p.status] || '\u2753';
-          lines.push('  ' + icon + ' **' + p.title + '** (`' + (p.id || '?') + '`) \u2014 ' + p.status + ' \u2014 ' + t('planStepsDone', { done: done, total: steps.length }));
-        }
-        addMsg('system', lines.join('\n'));
-      });
-    }
+    if (typeof loadUiSurfaces === 'function') loadUiSurfaces(conversationId);
+    if (arg === 'list') addMsg('system', 'Workflow proposals are shown in this conversation.');
     return true;
   }
-  const planParts = arg.split(/\s+/);
-  const subcmd = planParts[0].toLowerCase();
-  if (['approve', 'cancel', 'delete', 'reset'].includes(subcmd)) {
-    const planId = planParts[1];
-    if (!planId) { addMsg('system', t('usagePlanSubcommand', { subcommand: subcmd })); return true; }
-    const actionMap = { 'approve': 'approve_plan', 'cancel': 'cancel_plan', 'delete': 'delete_plan', 'reset': 'reset_plan' };
-    planAction(actionMap[subcmd], planId);
-    return true;
-  }
-  const planMsg = '[Create a structured plan using the create_plan tool. Analyze the request, identify steps, then call create_plan.]\n\n' + arg;
+  const planMsg = '[Create a canonical workflow proposal using the propose_workflow tool. Analyze the request, build the complete FlowDefinition, then call propose_workflow.]\n\n' + arg;
   addMsg('user', '/plan ' + arg);
   const body = { message: planMsg };
   if (conversationId) body.conversation_id = conversationId;

@@ -1,4 +1,4 @@
-"""Incremental runtime router for opt-in workflow agents.
+"""Incremental runtime router for workflow agents.
 
 Legacy runtimes intentionally do not register adapters yet. They keep using
 their characterized AgentLoop and external-runtime branches until separate
@@ -11,10 +11,7 @@ import threading
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from core.agent_feature_flags import (
-    WORKFLOW_AGENT_RUNTIME_KIND,
-    workflow_agents_enabled,
-)
+from core.agent_feature_flags import WORKFLOW_AGENT_RUNTIME_KIND
 from core.workflow_agent_contracts import PreparedAgentTurn
 
 
@@ -94,11 +91,6 @@ class AgentRuntimeRouter:
         kind = str(config.get("runtime_kind") or "llm")
         if kind != WORKFLOW_AGENT_RUNTIME_KIND:
             return ResolvedAgentRuntime(roster_id, canonical, kind, config)
-        if not workflow_agents_enabled():
-            raise AgentRuntimeRoutingError(
-                "Workflow agents are disabled by the server",
-                code="workflow_agents_disabled",
-            )
         with self._adapters_lock:
             adapter = self._adapters.get(kind)
         if adapter is None:

@@ -403,10 +403,9 @@ def bind_agent_workflow(
     for name, spec in contract.parameters.items():
         if spec.required and name not in values:
             raise ValueError(f"workflow parameter is required: {name}")
-        if (spec.type == "service_ref" and not spec.required
-                and values.get(name) in {None, ""}):
+        value = values.get(name)
+        if not spec.required and (value is None or value == ""):
             values.pop(name, None)
-            continue
         if name not in values and spec.default is not None:
             values[name] = spec.default
         value = values.get(name, spec.default)
@@ -444,6 +443,7 @@ def snapshot_agent_workflow_services(
     conversation_id: str,
     *,
     registry=None,
+    agent_name: str = "",
 ) -> dict[str, Any]:
     """Freeze secret-free revisions for every bound service parameter.
 
@@ -488,8 +488,6 @@ def snapshot_agent_workflow_services(
                 spec.capability)
         else:
             requested[f"task:{task_id}"] = (value, "llm")
-    if not requested:
-        return {"bindings": {}, "services": {}}
     if registry is None:
         from core.service_registry import ServiceRegistry
         registry = ServiceRegistry.get_instance()
@@ -549,7 +547,71 @@ def snapshot_agent_workflow_services(
             "definition_revision": compute_service_definition_revision(
                 execution_service),
         }
-    return {"bindings": bindings, "services": services}
+    discovers_media = any(
+        isinstance(task, dict) and task.get("type") == "snapshotMediaCapabilities"
+        for task in (definition.get("tasks") or {}).values())
+    if discovers_media:
+        from core import ServiceFactory
+        from core.media_capability_discovery import _definition_capabilities
+
+        for service in definitions.values():
+            if not _definition_capabilities(
+                    service, service_factory=ServiceFactory):
+                continue
+            service_id = str(service.service_id)
+            services[service_id] = {
+                "service_id": service_id,
+                "service_type": str(service.service_type),
+                "scope": str(service.scope),
+                "scope_id": str(service.scope_id),
+                "definition_revision": compute_service_definition_revision(service),
+            }
+    snapshot = {"bindings": bindings, "services": services}
+    if "relay" in contract.parameters:
+        from core.relay_bindings import (
+            get_default, get_default_local, get_linked,
+        )
+
+        relay_agent = str(agent_name or definition.get("name") or "")
+        candidates = get_linked(conversation_id, relay_agent)
+        requested_relay = str(binding.parameters.get("relay") or "").strip()
+        default_relay = str(get_default(
+            conversation_id, relay_agent) or "").strip()
+        selected_id = ""
+        source = ""
+        if requested_relay:
+            selected_id = next((
+                item for item in candidates
+                if item.casefold() == requested_relay.casefold()
+            ), "")
+            if not selected_id:
+                raise ValueError(
+                    f"Relay '{requested_relay}' is not linked to this conversation")
+            source = "parameter"
+        elif default_relay:
+            selected_id = next((
+                item for item in candidates
+                if item.casefold() == default_relay.casefold()
+            ), "")
+            source = "default" if selected_id else ""
+        elif len(candidates) == 1:
+            selected_id = candidates[0]
+            source = "unique"
+        if selected_id and registry.resolve(
+                selected_id, user_id=user_id, conv_id=conversation_id) is None:
+            raise ValueError(f"Relay '{selected_id}' is linked but not connected")
+        snapshot["relay"] = {
+            "selected_id": selected_id,
+            "candidates": list(candidates),
+            "selection_required": not bool(selected_id),
+            "source": source,
+            "local": (
+                get_default_local(
+                    conversation_id, selected_id,
+                    agent=relay_agent)
+                if selected_id else None),
+        }
+    return snapshot
 
 
 def assert_flow_version_unreferenced(

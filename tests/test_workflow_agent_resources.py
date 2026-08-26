@@ -49,8 +49,10 @@ def _flow(**updates):
             "response": {"type": "outputPort", "parameters": {"port_name": "response"}},
         },
         "relations": [
-            {"from": "request", "to": "work", "type": "success"},
-            {"from": "work", "to": "response", "type": "success"},
+            {"relation_id": "request-work", "from": "request", "to": "work",
+             "type": "success"},
+            {"relation_id": "work-response", "from": "work", "to": "response",
+             "type": "success"},
         ],
         "services": {},
         "parameters": {},
@@ -90,7 +92,8 @@ def test_agent_workflow_validator_rejects_forbidden_tasks_cycles_and_bad_ports()
     definition = _flow()
     definition["tasks"]["request"]["type"] = "cronTrigger"
     definition["relations"].append(
-        {"from": "response", "to": "request", "type": "success"})
+        {"relation_id": "response-request", "from": "response", "to": "request",
+         "type": "success"})
     report = validate_agent_workflow_definition(definition)
     codes = {row["code"] for row in report["problems"]}
     assert "agent_workflow_input_port_invalid" in codes
@@ -101,7 +104,8 @@ def test_agent_workflow_validator_rejects_forbidden_tasks_cycles_and_bad_ports()
 def test_agent_workflow_validator_allows_an_explicitly_bounded_cycle():
     definition = _flow()
     definition["relations"].extend([
-        {"from": "work", "to": "request", "type": "retry", "max_visits": 1},
+        {"relation_id": "work-request-retry", "from": "work", "to": "request",
+         "type": "retry", "max_visits": 1},
     ])
     report = validate_agent_workflow_definition(definition)
     assert "agent_workflow_cycle" not in {
@@ -171,6 +175,41 @@ def test_binding_omits_empty_optional_service_reference():
     }, "alice", "conv-1", repository=repo)
 
     assert result["parameters"] == {"root": "."}
+
+
+def test_binding_omits_empty_optional_strings_and_applies_defaults():
+    definition = _flow()
+    definition["agent_contract"]["parameters"].update({
+        "relay": {"type": "string", "required": False},
+        "source_url": {"type": "string", "required": False},
+        "workspace_root": {
+            "type": "string",
+            "required": False,
+            "default": "/workspace/pawflow-sites",
+        },
+    })
+    repo = MagicMock()
+    repo.get_flow.return_value = definition
+
+    result = bind_agent_workflow({
+        "flow_fqn": "pawflow.wiki:1.0.0",
+        "input_port": "request",
+        "terminal_port": "response",
+        "preempt_policy": "checkpoint",
+        "allowed_effects": EFFECTS,
+        "parameters": {
+            "root": ".",
+            "relay": "",
+            "source_url": "",
+            "workspace_root": "",
+        },
+        "limits": LIMITS,
+    }, "alice", "conv-1", repository=repo)
+
+    assert result["parameters"] == {
+        "root": ".",
+        "workspace_root": "/workspace/pawflow-sites",
+    }
 
 
 def test_binding_accepts_a_visible_summarizer_reference(monkeypatch):
@@ -309,6 +348,94 @@ def test_service_snapshot_resolves_summarizer_to_its_linked_llm():
     assert snapshot["services"]["Writer"]["service_type"] == "llmConnection"
 
 
+def test_service_snapshot_freezes_declared_relay_parameter(monkeypatch):
+    definition = _flow()
+    definition["name"] = "Media Studio"
+    definition["agent_contract"]["parameters"]["relay"] = {
+        "type": "string", "required": False}
+    binding = WorkflowInstanceConfig.from_dict({
+        "flow_fqn": "pawflow.wiki:1.0.0", "flow_scope": "global",
+        "input_port": "request", "terminal_port": "response",
+        "preempt_policy": "checkpoint", "allowed_effects": EFFECTS,
+        "parameters": {"root": ".", "relay": "Relay-B"},
+    })
+    registry = MagicMock()
+    registry.resolve_all.return_value = {}
+    registry.resolve.return_value = object()
+    monkeypatch.setattr(
+        "core.relay_bindings.get_linked",
+        lambda cid, agent="": ["Relay-A", "Relay-B"])
+    monkeypatch.setattr(
+        "core.relay_bindings.get_default", lambda cid, agent="": "Relay-A")
+    monkeypatch.setattr(
+        "core.relay_bindings.get_default_local",
+        lambda cid, relay_id="", agent="": False)
+
+    snapshot = snapshot_agent_workflow_services(
+        binding, definition, "alice", "conv-1", registry=registry)
+
+    assert snapshot["relay"] == {
+        "selected_id": "Relay-B", "candidates": ["Relay-A", "Relay-B"],
+        "selection_required": False, "source": "parameter", "local": False,
+    }
+
+
+def test_service_snapshot_marks_ambiguous_declared_relay(monkeypatch):
+    definition = _flow()
+    definition["name"] = "Media Studio"
+    definition["agent_contract"]["parameters"]["relay"] = {
+        "type": "string", "required": False}
+    binding = WorkflowInstanceConfig.from_dict({
+        "flow_fqn": "pawflow.wiki:1.0.0", "flow_scope": "global",
+        "input_port": "request", "terminal_port": "response",
+        "preempt_policy": "checkpoint", "allowed_effects": EFFECTS,
+        "parameters": {"root": "."},
+    })
+    registry = MagicMock()
+    registry.resolve_all.return_value = {}
+    monkeypatch.setattr(
+        "core.relay_bindings.get_linked",
+        lambda cid, agent="": ["Relay-A", "Relay-B"])
+    monkeypatch.setattr(
+        "core.relay_bindings.get_default", lambda cid, agent="": None)
+
+    snapshot = snapshot_agent_workflow_services(
+        binding, definition, "alice", "conv-1", registry=registry)
+
+    assert snapshot["relay"]["selected_id"] == ""
+    assert snapshot["relay"]["selection_required"] is True
+    assert snapshot["relay"]["candidates"] == ["Relay-A", "Relay-B"]
+
+
+def test_service_snapshot_pins_visible_media_services_for_discovery(monkeypatch):
+    definition = _flow()
+    definition["tasks"]["discover"] = {
+        "type": "snapshotMediaCapabilities", "parameters": {}}
+    binding = WorkflowInstanceConfig.from_dict({
+        "flow_fqn": "pawflow.wiki:1.0.0", "flow_scope": "global",
+        "input_port": "request", "terminal_port": "response",
+        "preempt_policy": "checkpoint", "allowed_effects": EFFECTS,
+        "parameters": {"root": "."},
+    })
+    media = ServiceDef(
+        service_id="Images", service_type="testImage", scope="user",
+        scope_id="alice", created_at=1, config={})
+    registry = MagicMock()
+    registry.resolve_all.return_value = {"Images": media}
+
+    class BaseImageGenerationService:
+        pass
+
+    monkeypatch.setattr(
+        "core.ServiceFactory.get", lambda service_type: BaseImageGenerationService)
+
+    snapshot = snapshot_agent_workflow_services(
+        binding, definition, "alice", "conv-1", registry=registry)
+
+    assert snapshot["services"]["Images"]["service_type"] == "testImage"
+    assert len(snapshot["services"]["Images"]["definition_revision"]) == 64
+
+
 def test_flow_reference_protection_matches_scope_and_exact_version():
     store = MagicMock()
     store.list_conversations.return_value = [{
@@ -332,7 +459,6 @@ def test_flow_reference_protection_matches_scope_and_exact_version():
 
 
 def test_pfp_workflow_agent_requires_and_selects_exact_flow_object(monkeypatch):
-    monkeypatch.setenv("PAWFLOW_WORKFLOW_AGENTS_ENABLED", "1")
     data = {
         "prompt": "",
         "runtime_defaults": {
@@ -409,7 +535,6 @@ def test_workflow_catalog_action_is_gated_and_redacted(monkeypatch):
     from core import FlowFile
     from tasks.ai.actions._agentres_k5 import _handle_agentres_k5
 
-    monkeypatch.setenv("PAWFLOW_WORKFLOW_AGENTS_ENABLED", "1")
     monkeypatch.setattr(
         "core.workflow_agent_resources.list_compatible_agent_workflows",
         lambda user_id, conversation_id: [{"flow_fqn": "pawflow.wiki:1.0.0"}])

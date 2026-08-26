@@ -65,6 +65,68 @@ def require_https(value, label):
         errors.append(f"{label} must be an absolute HTTPS URL")
 
 
+def require_string_array(value, label):
+    if not isinstance(value, list):
+        errors.append(f"{label} must be an array")
+        return
+    if any(not isinstance(item, str) or not item.strip() for item in value):
+        errors.append(f"{label} must contain only non-empty strings")
+    if len(value) != len(set(value)):
+        errors.append(f"{label} must not contain duplicates")
+
+
+def validate_workflow_metadata(metadata, operation):
+    label = "metadata"
+    if not isinstance(metadata, dict):
+        errors.append("metadata must be an object")
+        return ""
+    for name in ("preset_id", "revision", "created_at", "media_kind"):
+        if not str(metadata.get(name) or "").strip():
+            errors.append(f"{label}.{name} is required")
+    media_kind = str(metadata.get("media_kind") or "")
+    if media_kind not in {"image", "video", "audio"}:
+        errors.append("metadata.media_kind must be image, video, or audio")
+    created_at = str(metadata.get("created_at") or "")
+    if created_at and not re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})", created_at):
+        errors.append("metadata.created_at must be a timezone-aware ISO 8601 timestamp")
+    provenance = metadata.get("provenance")
+    if not isinstance(provenance, dict):
+        errors.append("metadata.provenance must be an object")
+    else:
+        for name in ("source", "license"):
+            if not str(provenance.get(name) or "").strip():
+                errors.append(f"metadata.provenance.{name} is required")
+    require_string_array(metadata.get("capabilities"), "metadata.capabilities")
+    limits = metadata.get("limits")
+    allowed_limits = {
+        "max_duration_seconds", "max_width", "max_height", "max_count",
+    }
+    if not isinstance(limits, dict):
+        errors.append("metadata.limits must be an object")
+    else:
+        for name, value in limits.items():
+            if name not in allowed_limits:
+                errors.append(f"metadata.limits contains unsupported key: {name}")
+            if (not isinstance(value, (int, float))
+                    or isinstance(value, bool) or value <= 0):
+                errors.append(f"metadata.limits.{name} must be positive")
+    inventory = metadata.get("required_inventory")
+    inventory_names = {"nodes", "models", "loras", "custom_nodes"}
+    if not isinstance(inventory, dict):
+        errors.append("metadata.required_inventory must be an object")
+    else:
+        for name in inventory_names:
+            require_string_array(
+                inventory.get(name), f"metadata.required_inventory.{name}")
+        for name in set(inventory) - inventory_names:
+            errors.append(
+                f"metadata.required_inventory contains unsupported key: {name}")
+    if not str(operation or "").strip():
+        errors.append("operation is required")
+    return media_kind
+
+
 if mode == "plan":
     if not isinstance(document, dict):
         errors.append("plan input must be a JSON object")
@@ -108,6 +170,12 @@ if mode == "plan":
 elif mode == "workflow":
     workflow = document.get("workflow") if isinstance(document, dict) else None
     bindings = document.get("bindings", {}) if isinstance(document, dict) else {}
+    output_spec = document.get("output") if isinstance(document, dict) else None
+    operation = document.get("operation") if isinstance(document, dict) else None
+    media_kind = validate_workflow_metadata(
+        document.get("metadata") if isinstance(document, dict) else None,
+        operation,
+    )
     if not isinstance(workflow, dict) or not workflow:
         errors.append("workflow must be a non-empty API-format object")
     else:
@@ -140,6 +208,29 @@ elif mode == "workflow":
                         f"binding {binding} references unknown input {node_id}.{input_name}"
                     )
         walk_forbidden({"bindings": bindings})
+    if not isinstance(output_spec, dict):
+        errors.append("output must be an object")
+    else:
+        output_node = str(output_spec.get("node") or "")
+        if not output_node:
+            errors.append("output.node is required")
+        elif isinstance(workflow, dict) and output_node not in {
+                str(node_id) for node_id in workflow}:
+            errors.append("output.node is not in the workflow")
+        try:
+            output_index = int(output_spec.get("index", 0))
+            if output_index < 0:
+                errors.append("output.index must be non-negative")
+        except (TypeError, ValueError):
+            errors.append("output.index must be an integer")
+        content_types = output_spec.get("content_types")
+        if not isinstance(content_types, list) or not content_types:
+            errors.append("output.content_types must be a non-empty array")
+        elif media_kind and any(
+                not isinstance(item, str) or not item.startswith(media_kind + "/")
+                for item in content_types):
+            errors.append(
+                f"output.content_types must contain only {media_kind} media types")
 
 elif mode == "video_request":
     if not isinstance(document, dict):

@@ -874,6 +874,163 @@ class TestMetaToolAliases(unittest.TestCase):
         assert "local" in read_schema["data"]["parameters"]["properties"]
         assert "max_chars" in fetch_schema["data"]["parameters"]["properties"]
 
+    def test_tool_relay_enforces_ephemeral_workflow_scope_before_dispatch(self):
+        from core.workflow_tool_scope import workflow_tool_scope
+        from services.tool_relay_service import ToolRelayService
+
+        svc = ToolRelayService({})
+        conversation_id = "conv::workflow::run::build"
+        with workflow_tool_scope(
+            conversation_id, {"read"}, lambda _name, arguments: arguments,
+        ):
+            listed = svc._handle_list_tools("list", "user", conversation_id)
+            names = {item["name"] for item in listed["data"]}
+            assert names <= {"read", "get_tool_schema", "use_tool"}
+            assert "read" in names
+            denied_schema = svc._handle_get_schema(
+                "schema", "bash", "user", conversation_id,
+            )
+            assert denied_schema["type"] == "error"
+            denied_call = svc._handle_execute(
+                "execute", "bash", {"command": "pwd"},
+                "user", conversation_id, "website-creator",
+            )
+            assert "not allowed" in denied_call["data"]
+
+    def test_tool_relay_scoped_workflow_capability_needs_no_live_prompt(self):
+        from core.tool_approval import ToolApprovalGate
+        from core.workflow_tool_scope import workflow_tool_scope
+        from services.tool_relay_service import ToolRelayService
+
+        registry = ToolRegistry()
+        registry.register(MockHandler(
+            name="screen",
+            schema={
+                "type": "object",
+                "properties": {"action": {"type": "string"}},
+                "required": ["action"],
+            },
+            result="screen-ok",
+        ))
+        svc = ToolRelayService({})
+        workflow_cid = "conv::workflow::run::explore"
+        provider_cid = workflow_cid + "__ephemeral_" + "a" * 32
+
+        with patch.object(svc, "_get_registry", return_value=registry), \
+                patch.object(svc, "_conversation_has_hooks", return_value=False), \
+                patch.object(svc, "_conversation_extra_fast", side_effect=(
+                    lambda _cid, _key, default=None: default
+                )), patch(
+                    "core.tool_authorization.gate_for_runtime", return_value=None
+                ), patch.object(
+                    ToolApprovalGate, "check",
+                    side_effect=AssertionError("bounded workflow call prompted"),
+                ):
+            with workflow_tool_scope(
+                workflow_cid, {"screen"}, lambda _name, arguments: arguments,
+            ) as scope:
+                result = svc._handle_execute(
+                    "execute", "screen", {"action": "screenshot"},
+                    "", provider_cid, "website-creator",
+                )
+
+        assert result["data"] == "screen-ok"
+        assert scope.calls["screen"] == 1
+
+    def test_failed_scoped_workflow_tool_does_not_count_as_observed(self):
+        from core.tool_approval import ToolApprovalGate
+        from core.workflow_tool_scope import workflow_tool_scope
+        from services.tool_relay_service import ToolRelayService
+
+        registry = ToolRegistry()
+        registry.register(MockHandler(
+            name="screen",
+            schema={
+                "type": "object",
+                "properties": {"action": {"type": "string"}},
+                "required": ["action"],
+            },
+            result="Error: no relay connected",
+        ))
+        svc = ToolRelayService({})
+        workflow_cid = "conv::workflow::run::explore"
+        provider_cid = workflow_cid + "__ephemeral_" + "b" * 32
+
+        with patch.object(svc, "_get_registry", return_value=registry), \
+                patch.object(svc, "_conversation_has_hooks", return_value=False), \
+                patch.object(svc, "_conversation_extra_fast", side_effect=(
+                    lambda _cid, _key, default=None: default
+                )), patch(
+                    "core.tool_authorization.gate_for_runtime", return_value=None
+                ), patch.object(
+                    ToolApprovalGate, "check",
+                    side_effect=AssertionError("bounded workflow call prompted"),
+                ):
+            with workflow_tool_scope(
+                workflow_cid, {"screen"}, lambda _name, arguments: arguments,
+            ) as scope:
+                result = svc._handle_execute(
+                    "failed-screen", "screen", {"action": "screenshot"},
+                    "", provider_cid, "website-creator",
+                )
+
+        assert result["data"] == "Error: no relay connected"
+        assert scope.attempts["screen"] == 1
+        assert scope.calls["screen"] == 0
+
+    def test_tool_relay_unscoped_call_still_uses_live_prompt(self):
+        from core.tool_approval import ToolApprovalGate
+        from services.tool_relay_service import ToolRelayService
+
+        registry = ToolRegistry()
+        registry.register(MockHandler(name="screen", result="screen-ok"))
+        svc = ToolRelayService({})
+
+        with patch.object(svc, "_get_registry", return_value=registry), \
+                patch.object(svc, "_conversation_has_hooks", return_value=False), \
+                patch.object(svc, "_conversation_extra_fast", side_effect=(
+                    lambda _cid, _key, default=None: default
+                )), patch(
+                    "core.tool_authorization.gate_for_runtime", return_value=None
+                ), patch.object(
+                    ToolApprovalGate, "check", return_value="denied",
+                ) as approval:
+            result = svc._do_execute(
+                "execute-unscoped", "screen", {}, "", "conv", "assistant",
+            )
+
+        assert "was denied by the user" in result["data"]
+        approval.assert_called_once()
+
+    def test_tool_relay_explicit_deny_wins_over_workflow_scope(self):
+        from core.tool_approval import ToolApprovalGate
+        from services.tool_relay_service import ToolRelayService
+
+        registry = ToolRegistry()
+        registry.register(MockHandler(name="screen", result="screen-ok"))
+        svc = ToolRelayService({})
+
+        def extra(_cid, key, default=None):
+            if key == "tool_permissions":
+                return {"screen": "deny"}
+            return default
+
+        with patch.object(svc, "_get_registry", return_value=registry), \
+                patch.object(svc, "_conversation_has_hooks", return_value=False), \
+                patch.object(svc, "_conversation_extra_fast", side_effect=extra), \
+                patch(
+                    "core.tool_authorization.gate_for_runtime", return_value=None
+                ), patch.object(
+                    ToolApprovalGate, "check",
+                    side_effect=AssertionError("explicit deny prompted"),
+                ):
+            result = svc._do_execute(
+                "execute-deny", "screen", {}, "", "conv", "assistant",
+                workflow_scoped=True,
+            )
+
+        assert "denied by permission settings" in result["data"]
+
     def test_tool_relay_injects_fs_resolver_for_web_search_style_handlers(self):
         from services.tool_relay_service import ToolRelayService
 
@@ -1607,7 +1764,7 @@ class TestCreateDefaultRegistry(unittest.TestCase):
     def test_known_builtins_present(self):
         reg = create_default_registry()
         for name in ("execute_script", "web_search", "share_file",
-                      "remember", "recall", "create_plan", "search"):
+                      "remember", "recall", "propose_workflow", "search"):
             assert reg.get(name) is not None, f"Missing builtin handler: {name}"
 
 

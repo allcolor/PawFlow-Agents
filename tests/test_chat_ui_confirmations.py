@@ -44,6 +44,14 @@ def test_blocks_are_actionable_and_durable():
     assert "hydrateConfirmations()" in conversations
 
 
+def test_file_fields_upload_every_selected_reference():
+    source = _text("tasks/io/chat_ui/confirmations_panel.js")
+    assert "input.multiple = schema.multiple === true" in source
+    assert "Array.from(input.files || [])" in source
+    assert "Promise.all(files.map" in source
+    assert "input.multiple ? uploadedFiles : uploadedFiles[0]" in source
+
+
 def test_header_button_badge_panel_and_command():
     template = rendered_chat_html()
     assert 'id="confirmationsBtn"' in template

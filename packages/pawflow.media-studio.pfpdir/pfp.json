@@ -1,0 +1,32 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "pawflow.media-studio",
+  "version": "1.0.0",
+  "category": "Media & AI",
+  "description": "Installable Media Studio Workflow Agent with durable creative planning, capability selection, exact-service generation, voice consent and safe FFmpeg composition.",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": ""
+  },
+  "origin": {
+    "source": "packages/pawflow.media-studio.pfpdir"
+  },
+  "objects": [
+    {
+      "id": "flow:media-studio",
+      "type": "flow",
+      "name": "pawflow.agents.media-studio:1.0.0",
+      "fqn": "pawflow.agents.media-studio:1.0.0",
+      "path": "content/flows/media-studio.json"
+    },
+    {
+      "id": "agent:media-studio",
+      "type": "agent",
+      "name": "media-studio",
+      "path": "content/agents/media-studio.json",
+      "requires": [
+        "flow:media-studio"
+      ]
+    }
+  ]
+}

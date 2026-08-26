@@ -59,6 +59,8 @@ _BG_ACTION_EXECUTOR = ThreadPoolExecutor(
 )
 atexit.register(_BG_ACTION_EXECUTOR.shutdown, wait=False, cancel_futures=True)
 _BG_ACTION_SUBMIT_DELAY = float(os.getenv("PAWFLOW_BG_ACTION_SUBMIT_DELAY", "1.0") or "1.0")
+_BG_ACTION_QUEUE_MAX = max(
+    1, int(os.getenv("PAWFLOW_BG_ACTION_QUEUE_MAX", "256") or "256"))
 _BG_ACTION_QUEUE = deque()
 _BG_ACTION_QUEUE_COND = threading.Condition()
 _BG_ACTION_SCHEDULER_STARTED = False
@@ -252,15 +254,23 @@ def _ensure_bg_action_scheduler() -> None:
     threading.Thread(target=_loop, daemon=True, name="cmd-action-scheduler").start()
 
 
-def _schedule_bg_action(fn, action: str = "", call_id: str = "") -> None:
+def _schedule_bg_action(fn, action: str = "", call_id: str = "") -> bool:
     _ensure_bg_action_scheduler()
     with _BG_ACTION_QUEUE_COND:
+        if len(_BG_ACTION_QUEUE) >= _BG_ACTION_QUEUE_MAX:
+            logger.warning(
+                "[ui-action-bg] rejected action=%s call_id=%s queued=%d limit=%d",
+                action, str(call_id)[:12], len(_BG_ACTION_QUEUE),
+                _BG_ACTION_QUEUE_MAX,
+            )
+            return False
         queued_at = time.monotonic()
         ready_at = queued_at + max(0.0, _BG_ACTION_SUBMIT_DELAY)
         # Each action owns its deadline. A process-wide "last enqueue" deadline
         # let unrelated tabs/users postpone the entire queue indefinitely.
         _BG_ACTION_QUEUE.append((ready_at, queued_at, fn, str(action), str(call_id)))
         _BG_ACTION_QUEUE_COND.notify()
+        return True
 
 _ACTION_HANDLERS = [
     # PFP UI extension handlers run first: any body carrying `_ext` is
@@ -568,7 +578,9 @@ class AgentActionsMixin(_AgentActionsConvMixin):
         # Defer submitting the real handler until after the HTTP ACK has had a
         # chance to leave the request thread. A single scheduler drains bursty
         # UI refreshes without creating a timer thread for each request.
-        _schedule_bg_action(_bg, action=result_action, call_id=call_id)
+        if not _schedule_bg_action(
+                _bg, action=result_action, call_id=call_id):
+            _publish_error("UI action queue is full; retry shortly")
         return [flowfile]
 
 

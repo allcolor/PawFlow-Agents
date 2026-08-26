@@ -527,6 +527,25 @@ class _RelayFsOpsMixin:
             kwargs["_request_timeout"] = request_timeout
         return self._request("exec", path, **kwargs)
 
+    def exec_argv(self, path: str, argv: list[str], timeout=None,
+                  env: dict = None, local: bool = False):
+        """Execute an explicit argument vector without invoking a shell."""
+        kwargs = {"argv": list(argv)}
+        request_timeout = None
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+            try:
+                request_timeout = max(1.0, float(timeout)) + 5.0
+            except (TypeError, ValueError):
+                request_timeout = None
+        if env:
+            kwargs["env"] = env
+        if local:
+            kwargs["local"] = True
+        if request_timeout is not None:
+            kwargs["_request_timeout"] = request_timeout
+        return self._request("exec", path, **kwargs)
+
     def exec_stream(self, path: str, command: str, timeout=None,
                     shell: str = "", on_output=None):
         """Execute a command with streaming output via on_output(stream, data).
@@ -541,7 +560,8 @@ class _RelayFsOpsMixin:
 
     def http_fetch(self, url: str, method: str = "GET",
                     headers: dict = None, body: bytes = b"",
-                    timeout: int = 300, local: bool = False) -> dict:
+                    timeout: int = 300, local: bool = False,
+                    max_bytes: int = 0, public_only: bool = False) -> dict:
         """Sync HTTP fetch via the relay container.
 
         Returns {ok, status, headers, body_bytes} — body is decoded
@@ -562,6 +582,8 @@ class _RelayFsOpsMixin:
             headers=headers or {},
             body=_b64.b64encode(bytes(_body)).decode("ascii") if _body else "",
             timeout=timeout,
+            max_bytes=max(0, int(max_bytes or 0)),
+            public_only=bool(public_only),
         )
         if not isinstance(result, dict) or not result.get("ok"):
             err = (result or {}).get("error", "http_fetch returned no result")
@@ -573,6 +595,7 @@ class _RelayFsOpsMixin:
             "status": int(result.get("status", 0)),
             "headers": result.get("headers") or {},
             "body_bytes": body_bytes,
+            "url": str(result.get("url") or url),
         }
 
     def http_fetch_stream(self, url: str, method: str = "GET",

@@ -713,4 +713,5 @@ class _ContinuousExecControlMixin:
             statistics=stats,
             errors=errors,
             duration_ms=duration_ms,
+            failure_checkpoints=list(executor._failure_checkpoints),
         )

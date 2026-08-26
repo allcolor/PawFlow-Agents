@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -19,11 +19,15 @@ from core._workflow_run_store_llm import (
 )
 from core.workflow_agent_contracts import (
     WORKFLOW_TERMINAL_STATUSES,
+    WorkflowRunError,
     WorkflowRunRecord,
     validate_workflow_run_transition,
 )
 
-_RECOVERABLE = ("accepted", "running", "cancelling", "committing")
+_RECOVERABLE = (
+    "accepted", "running", "waiting", "retryable_failed", "cancelling",
+    "committing",
+)
 
 
 def _utc(value: float) -> str:
@@ -106,6 +110,7 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                     permission_mode TEXT NOT NULL,
                     root_turn_id TEXT NOT NULL,
                     request_json TEXT NOT NULL,
+                    ingress_source_json TEXT NOT NULL DEFAULT '{}',
                     run_generation INTEGER NOT NULL,
                     flow_ref_json TEXT NOT NULL,
                     invocation_mode TEXT NOT NULL,
@@ -135,7 +140,11 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                     updated_at REAL NOT NULL,
                     terminal_at REAL,
                     recovery_count INTEGER NOT NULL DEFAULT 0,
-                    last_event_sequence INTEGER NOT NULL DEFAULT 0
+                    last_event_sequence INTEGER NOT NULL DEFAULT 0,
+                    waiting_since REAL,
+                    resume_task_id TEXT NOT NULL DEFAULT '',
+                    resume_flowfile_json TEXT,
+                    error_json TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_workflow_runs_recovery
                     ON workflow_runs(status, updated_at);
@@ -223,6 +232,23 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                 connection.execute(
                     "ALTER TABLE workflow_runs ADD COLUMN "
                     "terminal_status TEXT NOT NULL DEFAULT 'completed'")
+            if "waiting_since" not in columns:
+                connection.execute(
+                    "ALTER TABLE workflow_runs ADD COLUMN waiting_since REAL")
+            if "resume_task_id" not in columns:
+                connection.execute(
+                    "ALTER TABLE workflow_runs ADD COLUMN "
+                    "resume_task_id TEXT NOT NULL DEFAULT ''")
+            if "resume_flowfile_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE workflow_runs ADD COLUMN resume_flowfile_json TEXT")
+            if "error_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE workflow_runs ADD COLUMN error_json TEXT")
+            if "ingress_source_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE workflow_runs ADD COLUMN "
+                    "ingress_source_json TEXT NOT NULL DEFAULT '{}'")
 
     def reserve_generation(self, conversation_id: str,
                            agent_name: str) -> int:
@@ -248,7 +274,8 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                    lease_seconds: float,
                    binding: dict[str, Any] | None = None,
                    parent_invocation: dict[str, Any] | None = None,
-                   publish_to_conversation: bool = False) -> dict[str, Any]:
+                   publish_to_conversation: bool = False,
+                   ingress_source: dict[str, Any] | None = None) -> dict[str, Any]:
         now = time.time()
         run_id = _required(context.run_id, "run_id")
         conversation_id = _required(
@@ -261,9 +288,10 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
             _required(context.channel, "channel"),
             _required(context.permission_mode, "permission_mode"),
             _required(context.root_turn_id, "root_turn_id"),
-            _json(request.to_dict()), int(context.run_generation),
+            _json(request.to_dict()), _json(ingress_source or {}),
+            int(context.run_generation),
             _json(context.flow_ref.to_dict()), context.invocation_mode,
-            "accepted", context.deadline_at, _json(parameters),
+            "accepted", context.deadline_at or "", _json(parameters),
             _json(binding or {}),
             _json(context.service_snapshot),
             _json(context.limits.to_dict()),
@@ -282,6 +310,8 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                     or existing["agent_key"] != agent_key
                     or existing["permission_mode"] != context.permission_mode
                     or existing["root_turn_id"] != context.root_turn_id
+                    or existing["ingress_source_json"] != _json(
+                        ingress_source or {})
                     or existing["run_generation"] != context.run_generation
                     or existing["flow_ref_json"] != _json(
                         context.flow_ref.to_dict())
@@ -304,14 +334,14 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                 """INSERT INTO workflow_runs(
                        run_id, conversation_id, agent_key, agent_name, user_id,
                        channel, permission_mode, root_turn_id, request_json,
-                       run_generation,
+                       ingress_source_json, run_generation,
                        flow_ref_json, invocation_mode, status, deadline_at,
                        parameters_json, binding_json, service_snapshot_json,
                        limits_json, authorization_ref_json,
                        parent_invocation_json, publish_to_conversation,
                        created_at, updated_at
                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                             ?, ?, ?, ?, ?, ?, ?)""",
+                             ?, ?, ?, ?, ?, ?, ?, ?)""",
                 values)
             connection.execute(
                 """INSERT INTO workflow_active_runs VALUES (?, ?, ?, ?, ?, ?)
@@ -336,14 +366,167 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
         terminal_at = (
             timestamp if current in WORKFLOW_TERMINAL_STATUSES else None)
         with self._lock, self._connect() as connection:
+            waiting_since = timestamp if current == "waiting" else None
             cursor = connection.execute(
                 """UPDATE workflow_runs
-                   SET status=?, reason=?, updated_at=?, terminal_at=?
+                   SET status=?, reason=?, updated_at=?, terminal_at=?,
+                       waiting_since=?
                    WHERE run_id=? AND status=?""",
-                (current, reason, timestamp, terminal_at, run_id, expected))
+                (current, reason, timestamp, terminal_at, waiting_since,
+                 run_id, expected))
             if cursor.rowcount and current in WORKFLOW_TERMINAL_STATUSES:
                 connection.execute(
                     "DELETE FROM workflow_active_runs WHERE run_id=?", (run_id,))
+            if cursor.rowcount and (
+                    current == "waiting" or current in WORKFLOW_TERMINAL_STATUSES):
+                connection.execute(
+                    "UPDATE workflow_runs SET resume_task_id='', "
+                    "resume_flowfile_json=NULL WHERE run_id=?", (run_id,))
+            return cursor.rowcount == 1
+
+    def resume_wait(self, run_id: str, *, task_id: str, flowfile: Any,
+                    lease_seconds: float) -> bool:
+        """Atomically persist and resume one signalled Workflow Agent wait.
+
+        The continuation is copied into the run row before the interaction wait
+        is acknowledged as delivered. A crash after this method returns can
+        therefore recover from the exact task without replaying the root turn.
+        Time spent waiting for the user is added back to the wall-clock deadline.
+        """
+        run_id = _required(run_id, "run_id")
+        task_id = _required(task_id, "task_id")
+        from core.confirmation_store import ConfirmationStore
+        serialized = ConfirmationStore._serialize_flowfile(flowfile)
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if row is None or row["status"] != "waiting":
+                return False
+            active = connection.execute(
+                """SELECT run_id, generation FROM workflow_active_runs
+                   WHERE conversation_id=? AND agent_key=?""",
+                (row["conversation_id"], row["agent_key"]),
+            ).fetchone()
+            if (active is None or active["run_id"] != run_id
+                    or int(active["generation"]) != int(row["run_generation"])):
+                return False
+            waiting_since = float(row["waiting_since"] or now)
+            deadline_text = str(row["deadline_at"] or "")
+            if deadline_text:
+                deadline = datetime.fromisoformat(deadline_text)
+                deadline_text = (deadline + timedelta(
+                    seconds=max(0.0, now - waiting_since))).isoformat()
+            cursor = connection.execute(
+                """UPDATE workflow_runs
+                   SET status='running', reason=NULL, updated_at=?,
+                       deadline_at=?, waiting_since=NULL, resume_task_id=?,
+                       resume_flowfile_json=?
+                   WHERE run_id=? AND status='waiting'""",
+                (now, deadline_text, task_id, serialized, run_id),
+            )
+            if cursor.rowcount != 1:
+                return False
+            connection.execute(
+                """UPDATE workflow_active_runs
+                   SET lease_expires_at=?, updated_at=? WHERE run_id=?""",
+                (now + max(1.0, float(lease_seconds)), now, run_id),
+            )
+        return True
+
+    def clear_resume(self, run_id: str) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE workflow_runs SET resume_task_id='', "
+                "resume_flowfile_json=NULL WHERE run_id=?", (run_id,))
+
+    def pause_retryable_failure(
+            self, run_id: str, *, error: WorkflowRunError,
+            task_id: str, flowfile: Any, lease_seconds: float) -> bool:
+        """Persist an exact retry checkpoint and pause the current generation."""
+        if error.run_id != run_id or not error.retryable:
+            raise ValueError("retryable workflow error does not match the run")
+        task_id = _required(task_id, "task_id")
+        from core.confirmation_store import ConfirmationStore
+        serialized = ConfirmationStore._serialize_flowfile(flowfile)
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """UPDATE workflow_runs
+                   SET status='retryable_failed', reason=?, error_json=?,
+                       updated_at=?, waiting_since=?, resume_task_id=?,
+                       resume_flowfile_json=?
+                   WHERE run_id=? AND status='running'
+                     AND EXISTS (
+                       SELECT 1 FROM workflow_active_runs active
+                       WHERE active.run_id=workflow_runs.run_id
+                         AND active.generation=workflow_runs.run_generation
+                     )""",
+                (error.message, _json(error.to_dict()), now, now, task_id,
+                 serialized, run_id),
+            )
+            if cursor.rowcount != 1:
+                return False
+            connection.execute(
+                """UPDATE workflow_active_runs
+                   SET lease_expires_at=?, updated_at=? WHERE run_id=?""",
+                (now + max(1.0, float(lease_seconds)), now, run_id),
+            )
+        return True
+
+    def retry_failure(self, run_id: str, *, lease_seconds: float) -> bool:
+        """CAS one paused retryable error back to running on the same run."""
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if (row is None or row["status"] != "retryable_failed"
+                    or not row["resume_task_id"] or not row["resume_flowfile_json"]):
+                return False
+            active = connection.execute(
+                "SELECT run_id, generation FROM workflow_active_runs "
+                "WHERE conversation_id=? AND agent_key=?",
+                (row["conversation_id"], row["agent_key"]),
+            ).fetchone()
+            if (active is None or active["run_id"] != run_id
+                    or int(active["generation"]) != int(row["run_generation"])):
+                return False
+            paused_since = float(row["waiting_since"] or now)
+            deadline_text = str(row["deadline_at"] or "")
+            if deadline_text:
+                deadline = datetime.fromisoformat(deadline_text)
+                deadline_text = (deadline + timedelta(
+                    seconds=max(0.0, now - paused_since))).isoformat()
+            cursor = connection.execute(
+                """UPDATE workflow_runs
+                   SET status='running', reason=NULL, updated_at=?,
+                       deadline_at=?, waiting_since=NULL,
+                       recovery_count=recovery_count+1
+                   WHERE run_id=? AND status='retryable_failed'""",
+                (now, deadline_text, run_id),
+            )
+            if cursor.rowcount != 1:
+                return False
+            connection.execute(
+                """UPDATE workflow_active_runs
+                   SET lease_expires_at=?, updated_at=? WHERE run_id=?""",
+                (now + max(1.0, float(lease_seconds)), now, run_id),
+            )
+        return True
+
+    def record_error(self, run_id: str, error: WorkflowRunError) -> bool:
+        if error.run_id != run_id:
+            raise ValueError("workflow error does not match the run")
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE workflow_runs SET error_json=? WHERE run_id=?",
+                (_json(error.to_dict()), run_id),
+            )
             return cursor.rowcount == 1
 
     def fail(self, run_id: str, reason: str) -> bool:
@@ -357,7 +540,8 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
         run = self.get_run(run_id)
         if run is None or run["status"] in WORKFLOW_TERMINAL_STATUSES:
             return False
-        if run["status"] not in {"accepted", "running", "committing"}:
+        if run["status"] not in {
+                "accepted", "running", "waiting", "retryable_failed", "committing"}:
             return False
         return self.transition(run_id, run["status"], "superseded", reason)
 
@@ -367,7 +551,8 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
             return False
         if run["status"] == "accepted":
             return self.transition(run_id, "accepted", "cancelled", reason)
-        if run["status"] in {"running", "cancelling"}:
+        if run["status"] in {
+                "running", "waiting", "retryable_failed", "cancelling"}:
             return self.transition(
                 run_id, run["status"], "force_stopped", reason)
         return False
@@ -379,9 +564,12 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
         assistant_msg_id = _required(
             assistant_payload.get("msg_id"), "assistant_msg_id")
         event_id = _required(terminal_event.get("event_id"), "event_id")
-        terminal_status = str(
+        result_status = str(
             terminal_event.get("status") or getattr(
                 result, "status", "completed"))
+        terminal_status = (
+            "completed" if result_status == "no_change" else result_status
+        )
         if terminal_status not in WORKFLOW_TERMINAL_STATUSES:
             raise ValueError("terminal status is invalid")
         answered = tuple(result.answered_turn_ids)
@@ -605,7 +793,9 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """SELECT * FROM workflow_runs WHERE run_id=?
-                   AND status IN ('accepted','running','cancelling')""",
+                   AND status IN (
+                     'accepted','running','waiting','retryable_failed','cancelling'
+                   )""",
                 (run_id,)).fetchone()
             if row is None:
                 return False
@@ -738,6 +928,18 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                 (conversation_id,))
             return int(cursor.rowcount)
 
+    def delete_terminal(self, run_id: str, conversation_id: str) -> bool:
+        values = tuple(sorted(WORKFLOW_TERMINAL_STATUSES))
+        marks = ",".join("?" for _ in values)
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                f"DELETE FROM workflow_runs "  # nosec B608 - placeholders only
+                f"WHERE run_id=? AND conversation_id=? "
+                f"AND status IN ({marks})",
+                (_required(run_id, "run_id"),
+                 _required(conversation_id, "conversation_id"), *values))
+            return cursor.rowcount == 1
+
     def prune_terminal(self, retention_seconds: float,
                        *, now: float | None = None) -> int:
         timestamp = time.time() if now is None else float(now)
@@ -760,12 +962,15 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
     @staticmethod
     def _row(row: sqlite3.Row) -> dict[str, Any]:
         result = dict(row)
+        result["deadline_at"] = str(result.get("deadline_at") or "") or None
         for key in (
-            "request_json", "flow_ref_json", "parameters_json", "binding_json",
+            "request_json", "ingress_source_json", "flow_ref_json",
+            "parameters_json", "binding_json",
             "service_snapshot_json", "limits_json", "authorization_ref_json",
             "claimed_ids_json", "usage_json", "staged_result_json",
             "assistant_payload_json", "answered_turn_ids_json",
             "terminal_event_json", "parent_invocation_json",
+            "error_json",
         ):
             raw = result.pop(key)
             result[key[:-5]] = json.loads(raw) if raw is not None else None

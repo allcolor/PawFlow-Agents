@@ -137,9 +137,6 @@ def bind_agent_group(
     service_registry=None,
 ) -> dict[str, Any]:
     """Bind an exact group and concrete LLM members to one conversation."""
-    from core.agent_feature_flags import agent_groups_enabled
-    if not agent_groups_enabled():
-        raise ValueError("agent groups are disabled by the server")
     if not conversation_id:
         raise ValueError("agent group binding requires conversation_id")
     if conversation_store is None:

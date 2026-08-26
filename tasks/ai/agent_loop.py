@@ -253,6 +253,9 @@ class AgentLoopTask(
         """
         inst = cls._live_instance
         if inst:
+            _key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
+            with inst._active_contexts_lock:
+                _cc = inst._active_claude_client.get(_key)
             inst.cancel_agent(conversation_id, agent_name=agent_name, silent=True)
             try:
                 from tasks.ai.actions.cancel_interrupt import (
@@ -263,29 +266,10 @@ class AgentLoopTask(
                 _clear_force_stop_runtime_state(inst, conversation_id, agent_name)
             except Exception:
                 logger.debug("force-stop relaunch cleanup failed", exc_info=True)
-            _key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
-            with inst._active_contexts_lock:
-                _cc = inst._active_claude_client.get(_key)
-            if _cc:
-                # Provider-agnostic cancel: each CLI provider exposes its
-                # own `cancel_<cli>` method (CC writes ESC on stdin, codex /
-                # gemini kill the proc). Pick the one matching this client's
-                # provider — hasattr() probing the CC-only name silently
-                # skipped cancel for codex/gemini agents.
-                _cancel_fn = (
-                    getattr(_cc, 'cancel_claude_code', None)
-                    or getattr(_cc, 'cancel_claude_code_interactive', None)
-                    or getattr(_cc, 'cancel_codex', None)
-                    or getattr(_cc, 'cancel_gemini', None)
-                    or getattr(_cc, 'abort', None)
-                )
-                if _cancel_fn:
-                    if getattr(_cancel_fn, "__name__", "") == "abort":
-                        _cancel_fn()
-                    else:
-                        _cancel_fn(force=True)
-                    if hasattr(_cc, "_cc_catchup_idx"):
-                        _cc._cc_catchup_idx = 0
+            from tasks.ai.actions.cancel_interrupt import _cancel_provider_client
+            if _cancel_provider_client(_cc, force=True) \
+                    and hasattr(_cc, "_cc_catchup_idx"):
+                _cc._cc_catchup_idx = 0
         try:
             from services.tool_relay_service import ToolRelayService
             ToolRelayService.cancel_agent(conversation_id, agent_name)

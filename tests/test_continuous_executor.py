@@ -6,7 +6,8 @@ import time
 from tasks import register_all_tasks
 register_all_tasks()
 
-from core import FlowFile
+from core import FlowFile, TaskFactory
+from core.base_task import BaseTask
 from core.connection import Connection
 from core.task_state import TaskState
 from engine.continuous_executor import ContinuousFlowExecutor
@@ -35,6 +36,43 @@ def make_flow(tasks_dict, relations):
 
 
 class TestContinuousFlowExecutor:
+
+    def test_batch_failure_retains_pre_attempt_checkpoint_and_retryability(self):
+        class RetryableFailure(RuntimeError):
+            retryable = True
+            code = "task_failed"
+
+        class FailingTask(BaseTask):
+            TYPE = "testBatchRetryableFailureCheckpoint"
+
+            def execute(self, flowfile):
+                flowfile.set_content(b"mutated")
+                raise RetryableFailure("temporary outage")
+
+        TaskFactory.register(FailingTask)
+        flow = make_flow({
+            "fail": {"type": FailingTask.TYPE, "parameters": {}},
+        }, [])
+
+        result = ContinuousFlowExecutor.run_batch(
+            flow,
+            input_flowfiles=[FlowFile(
+                content=b"original", attributes={"checkpoint": "yes"})],
+            entry_task_id="fail",
+            suppress_one_shot_roots=True,
+            max_retries=1,
+            timeout=5,
+        )
+
+        assert result.statistics["discarded_flowfile_errors"] == [{
+            "task_id": "fail", "error": "temporary outage"}]
+        assert len(result.failure_checkpoints) == 1
+        failure = result.failure_checkpoints[0]
+        assert failure["task_id"] == "fail"
+        assert failure["retryable"] is True
+        assert failure["code"] == "task_failed"
+        assert failure["flowfile"].get_content() == b"original"
+        assert failure["flowfile"].get_attribute("checkpoint") == "yes"
 
     def test_root_source_skip_if_pending_checks_downstream_queue(self):
         flow = make_flow(

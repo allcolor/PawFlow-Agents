@@ -28,7 +28,23 @@ from datetime import datetime, timezone
 from typing import Any, ClassVar, Dict, List
 
 from core import FlowFile, TaskError, TaskFactory
+from core.agent_contracts import CapabilityEffect, IdempotencyClass
 from core.base_task import BaseTask
+
+
+def _workflow_interaction_idempotency_key(task: BaseTask) -> str:
+    context = getattr(task, "_workflow_run_context", None)
+    if context is None:
+        return ""
+    task_id = str(getattr(task, "_workflow_task_id", "") or "").strip()
+    if not task_id:
+        from core.confirmation_store import find_own_flow_ids
+        ids = find_own_flow_ids(task)
+        task_id = str((ids or {}).get("task_id") or "").strip()
+    if not task_id:
+        raise TaskError(
+            "workflow interaction requires a deployed task identity")
+    return f"{context.run_id}:{task_id}"
 
 
 class RequestConfirmationTask(BaseTask):
@@ -42,6 +58,32 @@ class RequestConfirmationTask(BaseTask):
                    "whenever they want. Chain a durableWait on the stamped "
                    "signal to suspend the flow until the answer.")
     ICON = "question"
+    AGENT_WORKFLOW_SAFE = True
+    EFFECTS = (
+        CapabilityEffect.RESOURCE_WRITE,
+        CapabilityEffect.MESSAGING_SEND,
+    )
+    IDEMPOTENCY = IdempotencyClass.KEYED_EFFECT
+    AUTHORIZATION_TARGET_KIND = "conversation.interaction"
+
+    def set_workflow_run_context(self, context, *, task_id: str = "", **_kwargs):
+        self._workflow_run_context = context
+        if task_id:
+            self._workflow_task_id = str(task_id)
+
+    def workflow_authorization_target(self, _flowfile: FlowFile) -> Dict[str, Any]:
+        context = getattr(self, "_workflow_run_context", None)
+        if context is None:
+            return {}
+        return {
+            "user_id": context.user_id,
+            "conversation_id": context.conversation_id,
+            "scope": "conversation",
+            "scope_id": context.conversation_id,
+        }
+
+    def _idempotency_key(self) -> str:
+        return _workflow_interaction_idempotency_key(self)
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         from core.confirmation_store import ConfirmationStore, parse_timeout_seconds
@@ -75,6 +117,7 @@ class RequestConfirmationTask(BaseTask):
             options=options,
             expires_in_seconds=parse_timeout_seconds(
                 self.config.get("expires_in", "")),
+            idempotency_key=self._idempotency_key(),
         )
         flowfile.set_attribute("confirmation.request_id", record["request_id"])
         flowfile.set_attribute("confirmation.signal_id",
@@ -128,6 +171,30 @@ class RequestUserInputTask(BaseTask):
         "Chain durableWait on interaction.signal_id to suspend until answered.")
     ICON = "question"
     RELATIONSHIPS: ClassVar = ["success", "failure"]
+    AGENT_WORKFLOW_SAFE = True
+    EFFECTS = (
+        CapabilityEffect.RESOURCE_WRITE,
+        CapabilityEffect.MESSAGING_SEND,
+    )
+    IDEMPOTENCY = IdempotencyClass.KEYED_EFFECT
+    AUTHORIZATION_TARGET_KIND = "conversation.interaction"
+
+    def set_workflow_run_context(self, context, **_kwargs):
+        self._workflow_run_context = context
+
+    def workflow_authorization_target(self, _flowfile: FlowFile) -> Dict[str, Any]:
+        context = getattr(self, "_workflow_run_context", None)
+        if context is None:
+            return {}
+        return {
+            "user_id": context.user_id,
+            "conversation_id": context.conversation_id,
+            "scope": "conversation",
+            "scope_id": context.conversation_id,
+        }
+
+    def _idempotency_key(self) -> str:
+        return _workflow_interaction_idempotency_key(self)
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         import json
@@ -142,15 +209,41 @@ class RequestUserInputTask(BaseTask):
         if not conversation_id or not user_id:
             raise TaskError(
                 "requestUserInput requires injected conversation and user runtime context")
-        message = str(self.config.get("message") or "").strip()
+        interaction = {
+            "message": self.config.get("message"),
+            "title": self.config.get("title", ""),
+            "kind": self.config.get("kind", "text"),
+            "options": self.config.get("options", []),
+            "response_schema": self.config.get("response_schema", {}),
+        }
+        payload_attribute = str(
+            self.config.get("payload_attribute") or "").strip()
+        if payload_attribute:
+            raw_payload = flowfile.get_attribute(payload_attribute, "")
+            try:
+                payload = json.loads(raw_payload)
+            except (TypeError, ValueError) as exc:
+                raise TaskError(
+                    "requestUserInput payload attribute must contain valid JSON") from exc
+            if not isinstance(payload, dict):
+                raise TaskError(
+                    "requestUserInput payload attribute must contain an object")
+            allowed = {"message", "title", "kind", "options", "response_schema"}
+            unknown = set(payload) - allowed
+            if unknown:
+                raise TaskError(
+                    "requestUserInput payload attribute contains unsupported fields: "
+                    + ", ".join(sorted(unknown)))
+            interaction.update(payload)
+        message = str(interaction.get("message") or "").strip()
         if not message:
             raise TaskError("The 'message' parameter is required")
-        options_raw = self.config.get("options", [])
+        options_raw = interaction.get("options", [])
         if isinstance(options_raw, str):
             options = [item.strip() for item in options_raw.split(",") if item.strip()]
         else:
             options = options_raw
-        response_schema = self.config.get("response_schema", {})
+        response_schema = interaction.get("response_schema", {})
         if isinstance(response_schema, str):
             try:
                 response_schema = json.loads(response_schema or "{}")
@@ -163,12 +256,13 @@ class RequestUserInputTask(BaseTask):
                 requester_kind="flow",
                 requester=str(self.config.get("requester_label") or self.TYPE),
                 message=message,
-                title=str(self.config.get("title") or ""),
-                kind=str(self.config.get("kind") or "text"),
+                title=str(interaction.get("title") or ""),
+                kind=str(interaction.get("kind") or "text"),
                 options=options,
                 response_schema=response_schema,
                 expires_in_seconds=parse_timeout_seconds(
                     self.config.get("expires_in", "")),
+                idempotency_key=self._idempotency_key(),
             )
         except ValueError as exc:
             raise TaskError(f"Invalid user interaction: {exc}") from exc
@@ -199,6 +293,12 @@ class RequestUserInputTask(BaseTask):
                            "description": "Optional durable expiry"},
             "requester_label": {"type": "string", "required": False,
                                 "description": "Label shown in the pending inbox"},
+            "payload_attribute": {
+                "type": "string", "required": False,
+                "description": (
+                    "Optional FlowFile attribute containing a bounded JSON "
+                    "interaction payload."),
+            },
         }
 
 
@@ -267,6 +367,24 @@ class DurableWaitTask(BaseTask):
                    "durable.wait.value; route downstream with "
                    "routeOnAttribute.")
     ICON = "clock"
+    AGENT_WORKFLOW_SAFE = True
+    EFFECTS = (CapabilityEffect.RESOURCE_WRITE,)
+    IDEMPOTENCY = IdempotencyClass.KEYED_EFFECT
+    AUTHORIZATION_TARGET_KIND = "workflow.wait"
+
+    def set_workflow_run_context(self, context, **_kwargs):
+        self._workflow_run_context = context
+
+    def workflow_authorization_target(self, _flowfile: FlowFile) -> Dict[str, Any]:
+        context = getattr(self, "_workflow_run_context", None)
+        if context is None:
+            return {}
+        return {
+            "user_id": context.user_id,
+            "conversation_id": context.conversation_id,
+            "scope": "conversation",
+            "scope_id": context.conversation_id,
+        }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         from core.confirmation_store import (
@@ -291,12 +409,17 @@ class DurableWaitTask(BaseTask):
                 self.config.get("timeout", ""))
         except ValueError as exc:
             raise TaskError(f"Invalid durableWait timeout: {exc}")
-        ids = find_own_flow_ids(self)
+        context = getattr(self, "_workflow_run_context", None)
+        task_id = str(getattr(self, "_workflow_task_id", "") or "")
+        ids = (
+            {"instance_id": f"workflow:{context.run_id}", "task_id": task_id}
+            if context is not None and task_id
+            else find_own_flow_ids(self)
+        )
         if not ids:
             raise TaskError(
-                "durableWait requires a DEPLOYED continuous flow: the parked "
-                "FlowFile is re-injected through the executor registry, which "
-                "a one-shot batch run cannot receive")
+                "durableWait requires a DEPLOYED continuous flow or a durable "
+                "Workflow Agent run context")
         wait_id = ConfirmationStore.instance().park_wait(
             signal_id=signal_id,
             instance_id=ids["instance_id"],

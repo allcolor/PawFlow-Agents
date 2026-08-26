@@ -1,0 +1,601 @@
+{
+  "id": "website-creator",
+  "name": "Website Creator",
+  "version": "1.0.0",
+  "fqn": "pawflow.agents.website-creator:1.0.0",
+  "kind": "agent_workflow",
+  "description": "Durable desktop-first workflow that maps a public source site into a public template, preserves authorized source images, builds a scoped static site, and repeats visual review and correction until explicit acceptance.",
+  "agent_contract": {
+    "version": 1,
+    "input": {
+      "port": "agent_request"
+    },
+    "terminal": {
+      "port": "agent_terminal"
+    },
+    "parameters": {
+      "creator_llm": {
+        "type": "service_ref",
+        "capability": "llm_resolvable",
+        "required": true,
+        "label": "Creator LLM",
+        "description": "Vision-capable LLM used for bounded desktop exploration, implementation and review."
+      },
+      "relay": {
+        "type": "string",
+        "required": false,
+        "label": "Website relay",
+        "description": "Optional exact linked relay providing Chromium and filesystem access."
+      },
+      "source_url": {
+        "type": "string",
+        "required": false,
+        "label": "Source website URL",
+        "description": "Optional public HTTP(S) source URL; otherwise extracted from the request."
+      },
+      "template_url": {
+        "type": "string",
+        "required": false,
+        "label": "Template website URL",
+        "description": "Optional public HTTP(S) template URL; otherwise extracted from the request."
+      },
+      "workspace_root": {
+        "type": "string",
+        "required": false,
+        "default": "/workspace/pawflow-sites",
+        "label": "Project workspace root",
+        "description": "Absolute relay directory under which one stable run-scoped project is created."
+      }
+    },
+    "supported_preempt_policies": [
+      "checkpoint",
+      "queue"
+    ],
+    "allowed_effects": [
+      "resource.read",
+      "resource.write",
+      "messaging.send",
+      "network.write",
+      "filesystem.read",
+      "filesystem.write",
+      "external.side_effect"
+    ]
+  },
+  "parameters": {},
+  "services": {},
+  "entries": [
+    "agent_request"
+  ],
+  "exits": [
+    "agent_terminal"
+  ],
+  "tasks": {
+    "agent_request": {
+      "type": "inputPort",
+      "label": "Receive website request",
+      "description": "Accept one bounded source-to-template creation request and its run context.",
+      "parameters": {
+        "port_name": "agent_request"
+      }
+    },
+    "validate_request": {
+      "type": "agentWorkflowInput",
+      "label": "Validate request identity",
+      "description": "Validate server-owned conversation, agent and root-turn identity before any access.",
+      "parameters": {}
+    },
+    "prepare_request": {
+      "type": "prepareWebsiteRequest",
+      "label": "Validate URLs and workspace",
+      "description": "Require two public HTTP(S) URLs, block private targets and reserve the stable run workspace.",
+      "parameters": {
+        "workspace_root": "${workspace_root}"
+      }
+    },
+    "explore_sites": {
+      "type": "websiteCreatorTool",
+      "label": "Explore source and template",
+      "description": "Inspect both sites through Chromium screen and vision, with fetch only as supplementary evidence.",
+      "parameters": {
+        "service": "${creator_llm}",
+        "phase": "explore",
+        "required_tools": [
+          "screen",
+          "see"
+        ],
+        "max_iterations": 16,
+        "max_tokens": 5000,
+        "temperature": 0.15
+      }
+    },
+    "prepare_mapping_decision": {
+      "type": "prepareWebsiteDecision",
+      "label": "Present source-template mapping",
+      "description": "Build a bounded form containing the visual mapping, implementation plan, checks and risks.",
+      "parameters": {
+        "decision": "mapping",
+        "output_attribute": "website.mapping_decision"
+      }
+    },
+    "request_mapping_approval": {
+      "type": "requestUserInput",
+      "label": "Request mapping approval",
+      "description": "Publish the proposed mapping and allow approval or rejection with feedback.",
+      "parameters": {
+        "message": "Review the proposed website mapping.",
+        "title": "Approve website mapping",
+        "kind": "form",
+        "response_schema": {
+          "fields": []
+        },
+        "payload_attribute": "website.mapping_decision",
+        "requester_label": "Website Creator"
+      }
+    },
+    "wait_mapping_approval": {
+      "type": "durableWait",
+      "label": "Wait for mapping approval",
+      "description": "Park the run durably before any project files are written.",
+      "parameters": {
+        "signal_id_attribute": "interaction.signal_id"
+      }
+    },
+    "apply_mapping_decision": {
+      "type": "applyWebsiteDecision",
+      "label": "Apply mapping decision",
+      "description": "Validate the durable approval; rejection stops without writing the project.",
+      "parameters": {
+        "decision": "mapping"
+      }
+    },
+    "build_site": {
+      "type": "websiteCreatorTool",
+      "label": "Build website project",
+      "description": "Implement the approved mapping in the stable run workspace and run relevant checks.",
+      "parameters": {
+        "service": "${creator_llm}",
+        "phase": "build",
+        "max_iterations": 20,
+        "max_tokens": 6000,
+        "temperature": 0.15
+      }
+    },
+    "review_site": {
+      "type": "websiteCreatorTool",
+      "label": "Review rendered website",
+      "description": "Inspect the generated site through the visible desktop and vision against approved checks.",
+      "parameters": {
+        "service": "${creator_llm}",
+        "phase": "review",
+        "required_tools": [
+          "screen",
+          "see"
+        ],
+        "max_iterations": 12,
+        "max_tokens": 4500,
+        "temperature": 0.1
+      }
+    },
+    "prepare_review_decision": {
+      "type": "prepareWebsiteDecision",
+      "label": "Present final review",
+      "description": "Build a bounded form containing preview information, passed checks and actionable issues.",
+      "parameters": {
+        "decision": "review",
+        "output_attribute": "website.review_decision"
+      }
+    },
+    "request_final_review": {
+      "type": "requestUserInput",
+      "label": "Request final acceptance",
+      "description": "Let the user accept the site or request another correction with feedback.",
+      "parameters": {
+        "message": "Review the generated website.",
+        "title": "Accept generated website",
+        "kind": "form",
+        "response_schema": {
+          "fields": []
+        },
+        "payload_attribute": "website.review_decision",
+        "requester_label": "Website Creator"
+      }
+    },
+    "wait_final_review": {
+      "type": "durableWait",
+      "label": "Wait for final review",
+      "description": "Park the run durably until the website is accepted or another correction is requested.",
+      "parameters": {
+        "signal_id_attribute": "interaction.signal_id"
+      }
+    },
+    "apply_review_decision": {
+      "type": "applyWebsiteDecision",
+      "label": "Apply final decision",
+      "description": "Route accepted work to delivery or authorize another bounded correction pass.",
+      "parameters": {
+        "decision": "review"
+      }
+    },
+    "correct_site": {
+      "type": "websiteCreatorTool",
+      "label": "Apply requested corrections",
+      "description": "Apply the latest feedback, validate the project and return to visual review.",
+      "parameters": {
+        "service": "${creator_llm}",
+        "phase": "correct",
+        "max_iterations": 12,
+        "max_tokens": 5500,
+        "temperature": 0.1
+      }
+    },
+    "format_result": {
+      "type": "formatWebsiteCreatorResult",
+      "label": "Format website result",
+      "description": "Return the stable project workspace, validation summary and bounded metrics.",
+      "parameters": {}
+    },
+    "complete_turn": {
+      "type": "completeAgentTurn",
+      "label": "Commit terminal result",
+      "description": "Validate and stage the sole Website Creator terminal result.",
+      "parameters": {}
+    },
+    "agent_terminal": {
+      "type": "outputPort",
+      "label": "Return Website Creator result",
+      "description": "Emit the single terminal result to the workflow-agent runtime.",
+      "parameters": {
+        "port_name": "agent_terminal"
+      }
+    }
+  },
+  "layout_schema_version": 1,
+  "default_layout_id": "functional",
+  "layouts": {
+    "functional": {
+      "id": "functional",
+      "name": "Website Creator functional stages",
+      "kind": "technical",
+      "direction": "TB",
+      "root_group_id": "",
+      "viewport": {
+        "x": 0,
+        "y": 0,
+        "zoom": 0.75
+      },
+      "nodes": {
+        "agent_request": {
+          "x": 80,
+          "y": 80
+        },
+        "validate_request": {
+          "x": 360,
+          "y": 80
+        },
+        "prepare_request": {
+          "x": 660,
+          "y": 80
+        },
+        "explore_sites": {
+          "x": 340,
+          "y": 390
+        },
+        "prepare_mapping_decision": {
+          "x": 40,
+          "y": 700
+        },
+        "request_mapping_approval": {
+          "x": 330,
+          "y": 700
+        },
+        "wait_mapping_approval": {
+          "x": 620,
+          "y": 700
+        },
+        "apply_mapping_decision": {
+          "x": 900,
+          "y": 700
+        },
+        "build_site": {
+          "x": 340,
+          "y": 1030
+        },
+        "review_site": {
+          "x": 80,
+          "y": 1330
+        },
+        "prepare_review_decision": {
+          "x": 350,
+          "y": 1330
+        },
+        "request_final_review": {
+          "x": 640,
+          "y": 1330
+        },
+        "wait_final_review": {
+          "x": 930,
+          "y": 1330
+        },
+        "apply_review_decision": {
+          "x": 1210,
+          "y": 1330
+        },
+        "correct_site": {
+          "x": 960,
+          "y": 1650
+        },
+        "format_result": {
+          "x": 320,
+          "y": 1940
+        },
+        "complete_turn": {
+          "x": 610,
+          "y": 1940
+        },
+        "agent_terminal": {
+          "x": 900,
+          "y": 1940
+        }
+      },
+      "relations": {},
+      "annotations": {},
+      "frames": {
+        "ingress": {
+          "id": "ingress",
+          "label": "1. Intake and safety",
+          "description": "Validate run identity, public URLs and the stable run-scoped workspace.",
+          "x": 0,
+          "y": 0,
+          "width": 980,
+          "height": 260,
+          "z_index": -10,
+          "member_ids": [
+            "agent_request",
+            "validate_request",
+            "prepare_request"
+          ],
+          "style": {
+            "fill": "#17263a",
+            "border": "#3f78b5",
+            "opacity": 0.9
+          }
+        },
+        "exploration": {
+          "id": "exploration",
+          "label": "2. Desktop exploration",
+          "description": "Observe both public sites through Chromium screen and vision before planning.",
+          "x": 0,
+          "y": 300,
+          "width": 980,
+          "height": 260,
+          "z_index": -10,
+          "member_ids": [
+            "explore_sites"
+          ],
+          "style": {
+            "fill": "#1b302d",
+            "border": "#45a38d",
+            "opacity": 0.9
+          }
+        },
+        "mapping_gate": {
+          "id": "mapping_gate",
+          "label": "3. Mapping approval gate",
+          "description": "Present the complete mapping and park durably before any file mutation.",
+          "x": 0,
+          "y": 610,
+          "width": 1240,
+          "height": 290,
+          "z_index": -10,
+          "member_ids": [
+            "prepare_mapping_decision",
+            "request_mapping_approval",
+            "wait_mapping_approval",
+            "apply_mapping_decision"
+          ],
+          "style": {
+            "fill": "#392f18",
+            "border": "#c39a36",
+            "opacity": 0.9
+          }
+        },
+        "construction": {
+          "id": "construction",
+          "label": "4. Scoped construction",
+          "description": "Build and validate only inside the stable project workspace.",
+          "x": 0,
+          "y": 950,
+          "width": 980,
+          "height": 260,
+          "z_index": -10,
+          "member_ids": [
+            "build_site"
+          ],
+          "style": {
+            "fill": "#31223d",
+            "border": "#9360b5",
+            "opacity": 0.9
+          }
+        },
+        "final_review": {
+          "id": "final_review",
+          "label": "5. Visual review and acceptance",
+          "description": "Review the rendered site, then park for acceptance or one correction request.",
+          "x": 0,
+          "y": 1250,
+          "width": 1530,
+          "height": 300,
+          "z_index": -10,
+          "member_ids": [
+            "review_site",
+            "prepare_review_decision",
+            "request_final_review",
+            "wait_final_review",
+            "apply_review_decision"
+          ],
+          "style": {
+            "fill": "#17313c",
+            "border": "#3e9cbb",
+            "opacity": 0.9
+          }
+        },
+        "correction": {
+          "id": "correction",
+          "label": "6. User-directed correction loop",
+          "description": "Apply the latest feedback, then repeat visual review until explicit acceptance.",
+          "x": 850,
+          "y": 1580,
+          "width": 500,
+          "height": 250,
+          "z_index": -10,
+          "member_ids": [
+            "correct_site"
+          ],
+          "style": {
+            "fill": "#3a2020",
+            "border": "#bb5c5c",
+            "opacity": 0.9
+          }
+        },
+        "delivery": {
+          "id": "delivery",
+          "label": "7. Durable delivery",
+          "description": "Format, commit and emit the sole terminal result with workspace identity.",
+          "x": 180,
+          "y": 1860,
+          "width": 1050,
+          "height": 280,
+          "z_index": -10,
+          "member_ids": [
+            "format_result",
+            "complete_turn",
+            "agent_terminal"
+          ],
+          "style": {
+            "fill": "#202b38",
+            "border": "#6685ad",
+            "opacity": 0.9
+          }
+        }
+      },
+      "visibility": {}
+    }
+  },
+  "relations": [
+    {
+      "relation_id": "rel_web_001",
+      "from": "agent_request",
+      "to": "validate_request",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_002",
+      "from": "validate_request",
+      "to": "prepare_request",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_003",
+      "from": "prepare_request",
+      "to": "explore_sites",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_004",
+      "from": "explore_sites",
+      "to": "prepare_mapping_decision",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_005",
+      "from": "prepare_mapping_decision",
+      "to": "request_mapping_approval",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_006",
+      "from": "request_mapping_approval",
+      "to": "wait_mapping_approval",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_007",
+      "from": "wait_mapping_approval",
+      "to": "apply_mapping_decision",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_008",
+      "from": "apply_mapping_decision",
+      "to": "build_site",
+      "type": "approved"
+    },
+    {
+      "relation_id": "rel_web_009",
+      "from": "apply_mapping_decision",
+      "to": "format_result",
+      "type": "rejected"
+    },
+    {
+      "relation_id": "rel_web_010",
+      "from": "build_site",
+      "to": "review_site",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_011",
+      "from": "review_site",
+      "to": "prepare_review_decision",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_012",
+      "from": "prepare_review_decision",
+      "to": "request_final_review",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_013",
+      "from": "request_final_review",
+      "to": "wait_final_review",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_014",
+      "from": "wait_final_review",
+      "to": "apply_review_decision",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_015",
+      "from": "apply_review_decision",
+      "to": "format_result",
+      "type": "accepted"
+    },
+    {
+      "relation_id": "rel_web_016",
+      "from": "apply_review_decision",
+      "to": "correct_site",
+      "type": "revise"
+    },
+    {
+      "relation_id": "rel_web_017",
+      "from": "correct_site",
+      "to": "review_site",
+      "type": "success",
+      "max_visits": 100
+    },
+    {
+      "relation_id": "rel_web_018",
+      "from": "format_result",
+      "to": "complete_turn",
+      "type": "success"
+    },
+    {
+      "relation_id": "rel_web_019",
+      "from": "complete_turn",
+      "to": "agent_terminal",
+      "type": "success"
+    }
+  ]
+}

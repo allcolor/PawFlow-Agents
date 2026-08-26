@@ -204,11 +204,10 @@ def test_crypto_email_daily_uses_manual_subflow():
     assert manual["version"] == "1.0.0"
     assert manual["entries"] == ["in_port"]
     assert manual["tasks"]["in_port"]["type"] == "inputPort"
-    assert {
-        "from": "in_port",
-        "to": "fetch_crypto",
-        "type": "success",
-    } in manual["relations"]
+    assert ("in_port", "fetch_crypto", "success") in {
+        (relation["from"], relation["to"], relation["type"])
+        for relation in manual["relations"]
+    }
 
     assert daily_latest == {"version": "1.0.0"}
     assert daily["version"] == "1.0.0"

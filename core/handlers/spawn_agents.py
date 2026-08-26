@@ -361,8 +361,36 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                 return "Error: each delegate task requires agent or a named target"
             _target_conv_id = _target_conv_id or _parent_conv_id
 
+            # Workflow Agents run through the conversation-bound durable
+            # runtime, not SubAgentExecutor. Private context modes are an LLM
+            # sub-agent feature, so make a mistaken request fail-safe by using
+            # the Workflow Agent's shared conversation channel.
+            _requested_context = spec.get("context", "shared")
+            context_mode = _requested_context
+            from core.conv_agent_config import get_agent_config
+            _target_config = get_agent_config(_target_conv_id, agent_name)
+            _workflow_context_coerced = (
+                _target_config.get("runtime_kind") == "workflow"
+                and context_mode != "shared"
+            )
+            if _workflow_context_coerced:
+                context_mode = "shared"
+                logger.info(
+                    "[delegate] coerced context %r to shared for Workflow "
+                    "Agent %s", _requested_context, agent_name)
+
+            def _add_context_coercion(result):
+                if _workflow_context_coerced:
+                    result.update({
+                        "requested_context": _requested_context,
+                        "context_coerced": True,
+                        "coercion_reason":
+                            "workflow_runtime_requires_shared",
+                    })
+                return result
+
             if _target_conv_id != _parent_conv_id:
-                if spec.get("context", "shared") != "shared":
+                if context_mode != "shared":
                     return ("Error: cross-conversation delegates use the target "
                             "agent's shared context; context must be 'shared'.")
                 try:
@@ -371,7 +399,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                         _raw_conv_id, _target_conv_id, task_id)
                 except Exception as exc:
                     return f"Error: cross-conversation delegate failed: {exc}"
-                _injected_results.append({
+                _injected_results.append(_add_context_coercion({
                     "task_id": task_id,
                     "agent": agent_name,
                     "target": _target_alias or _target_conv_id,
@@ -382,7 +410,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                         f"conversation ({_delivery['state']}). You will receive "
                         f"'[Delegate result for task_id={task_id}]' asynchronously."
                     ),
-                })
+                }))
                 continue
 
             # Preempt path: a delegate for (_src_agent, agent_name) is
@@ -406,10 +434,11 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                     if not _delivered:
                         queue_live_delegate_message(
                             _parent_conv_id, _src_agent, agent_name, message)
-                    _injected_results.append({
+                    _injected_results.append(_add_context_coercion({
                         "task_id": _live_tid,
                         "agent": agent_name,
                         "status": "injected" if _delivered else "injected_queued",
+                        "mode": context_mode,
                         "message": (
                             f"A delegate for '{agent_name}' was already "
                             f"running (task_id={_live_tid}) — your new "
@@ -417,18 +446,12 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                             f"You will receive a single follow-up result "
                             f"when that delegate finishes."
                         ),
-                    })
+                    }))
                     logger.info(
                         "[delegate] preempt: (%s→%s) live task %s, "
                         "new message injected (delivered=%s)",
                         _src_agent, agent_name, _live_tid, _delivered)
                     continue
-
-            # Resolve context mode — default "shared" (new semantics:
-            # target agent uses its own conversation context, the
-            # delegate is just a private message in the conv; no
-            # sub-agent spawning).
-            context_mode = spec.get("context", "shared")
 
             # A delegate agent can only use "shared" when it calls
             # delegate itself — prevents nested private sub-contexts.
@@ -453,7 +476,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                     from_agent=_src_agent, to_agent=agent_name,
                     message=message, user_id=user_id,
                     conv_id=_parent_conv_id, task_id=task_id)
-                _injected_results.append({
+                _injected_results.append(_add_context_coercion({
                     "task_id": task_id,
                     "agent": agent_name,
                     "status": "delivered",
@@ -465,7 +488,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                         f"'[Delegate result for task_id={task_id}]' when they "
                         f"reply — READ it and REACT."
                     ),
-                })
+                }))
                 continue
 
             # ISOLATED / last:N / summary:N / full path — spawn a real

@@ -150,29 +150,19 @@ def set_agent_config(conv_id: str, agent_name: str,
         ), agent_name)
     config = dict(config)
     if "assigned_skills" in config:
-        from core.agent_feature_flags import resource_bindings_v2_enabled
-        if resource_bindings_v2_enabled():
-            from core.resource_binding_migration import replace_active_skill_assignments
-            metadata = store.get_metadata(conv_id) or {}
-            owner_id = str(
-                metadata.get("user_id")
-                or getattr(store, "_cid_user", {}).get(conv_id, "")
-                or "")
-            if replace_active_skill_assignments(
-                    conv_id, owner_id, resolved_name,
-                    list(config.get("assigned_skills") or []),
-                    conversation_store=store,
-                    assigned_by=owner_id or "operator"):
-                config.pop("assigned_skills", None)
+        from core.resource_binding_migration import replace_active_skill_assignments
+        owner_id = str(store.resolve_owner(conv_id) or "")
+        if replace_active_skill_assignments(
+                conv_id, owner_id, resolved_name,
+                list(config.get("assigned_skills") or []),
+                conversation_store=store,
+                assigned_by=owner_id or "operator"):
+            config.pop("assigned_skills", None)
     existing = configs.get(resolved_name, {})
     existing.update(config)
     if (existing.get("runtime_kind") or "llm") == "workflow":
         from core.workflow_agent_resources import bind_agent_workflow
-        metadata = store.get_metadata(conv_id) or {}
-        owner_id = str(
-            metadata.get("user_id")
-            or getattr(store, "_cid_user", {}).get(conv_id, "")
-            or "")
+        owner_id = str(store.resolve_owner(conv_id) or "")
         existing["workflow"] = bind_agent_workflow(
             existing.get("workflow") or {}, owner_id, conv_id)
     configs[resolved_name] = existing

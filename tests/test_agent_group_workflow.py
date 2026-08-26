@@ -193,7 +193,6 @@ def group_environment(tmp_path, monkeypatch):
                 return services.get(service_id)
             return None
 
-    monkeypatch.setenv("PAWFLOW_AGENT_GROUPS_ENABLED", "true")
     monkeypatch.setattr(
         "core.service_registry.ServiceRegistry.get_instance",
         classmethod(lambda cls: Registry()),

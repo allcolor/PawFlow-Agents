@@ -83,10 +83,8 @@ class _AgentInterruptMixin:
                 [k for k in self._active_claude_client if (k == conversation_id or k.startswith(conversation_id + ":")) and "::task::" not in k and "::task_verify::" not in k]
             _cc_clients = [(k, self._active_claude_client.get(k)) for k in _cc_keys]
         for _cc_key, client in _cc_clients:
-            if client and hasattr(client, 'cancel_claude_code'):
-                client.cancel_claude_code(force=_force)
-            if client and hasattr(client, 'abort'):
-                client.abort()
+            from tasks.ai.actions.cancel_interrupt import _cancel_provider_client
+            _cancel_provider_client(client, force=_force)
         # Also cancel thought threads and schedules for this agent
         from core.poll_scheduler import PollScheduler
         scheduler = PollScheduler.instance()
@@ -141,7 +139,8 @@ class _AgentInterruptMixin:
         with self._active_contexts_lock:
             _any_active = any(
                 k == conversation_id or k.startswith(conversation_id + ":")
-                for k in self._active_contexts)
+                for mapping in (self._active_turns, self._active_contexts)
+                for k in mapping)
         if not _any_active:
             _any_active = any(
                 t.is_alive() and (
@@ -176,10 +175,8 @@ class _AgentInterruptMixin:
             _esc_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
             with self._active_contexts_lock:
                 _cc_client = self._active_claude_client.get(_esc_key)
-            if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
-                _cc_client.cancel_claude_code(force=True)
-            if _cc_client and hasattr(_cc_client, 'abort'):
-                _cc_client.abort()
+            from tasks.ai.actions.cancel_interrupt import _cancel_provider_client
+            _cancel_provider_client(_cc_client, force=True)
             # Force cleanup
             from core.conversation_event_bus import ConversationEventBus as _CEB_int
             _CEB_int.instance().publish_event(
@@ -193,9 +190,11 @@ class _AgentInterruptMixin:
                 self._user_active_conversations.discard(conversation_id)
             with self._active_contexts_lock:
                 # Remove all agents for this conversation
-                for k in list(self._active_contexts):
-                    if k == conversation_id or k.startswith(conversation_id + ":"):
-                        del self._active_contexts[k]
+                for mapping in (self._active_contexts, self._active_turns,
+                                self._active_claude_client):
+                    for k in list(mapping):
+                        if k == conversation_id or k.startswith(conversation_id + ":"):
+                            mapping.pop(k, None)
             return
 
         logger.info(f"[agent:{conversation_id[:8]}] interrupt for '{agent_name or 'agent'}'")
@@ -234,15 +233,16 @@ class _AgentInterruptMixin:
         _prefix = f"{conversation_id}:"
         _agent_l = (agent_name or "").lower()
         with self._active_contexts_lock:
-            for _ctx_key, _ctx in self._active_contexts.items():
-                if not (_ctx_key == conversation_id or _ctx_key.startswith(_prefix)):
-                    continue
-                if _agent_l and _agent_l not in _ctx_key.lower():
-                    continue
-                if isinstance(_ctx, dict):
-                    _interrupt_keys.add(_ctx.get("_gen_key") or _ctx_key)
-                else:
-                    _interrupt_keys.add(_ctx_key)
+            for _mapping in (self._active_turns, self._active_contexts):
+                for _ctx_key, _ctx in _mapping.items():
+                    if not (_ctx_key == conversation_id or _ctx_key.startswith(_prefix)):
+                        continue
+                    if _agent_l and _agent_l not in _ctx_key.lower():
+                        continue
+                    if isinstance(_ctx, dict):
+                        _interrupt_keys.add(_ctx.get("_gen_key") or _ctx_key)
+                    else:
+                        _interrupt_keys.add(_ctx_key)
         if not _interrupt_keys:
             _interrupt_keys.add(f"{conversation_id}:{agent_name}" if agent_name else conversation_id)
         with self._interrupt_lock:

@@ -8,6 +8,7 @@ Verifies that:
 5. Reverse delegate (parent→task agent) finds the agent in task sub-conv
 6. source_task_id propagates through AgentTask and SSE events
 """
+import json
 import threading
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -109,6 +110,38 @@ class TestRunningDelegateInjection:
             "published_mcp:pmcp_call")
         assert deliver.call_args.kwargs["to_agent"] == "agentA"
         assert deliver.call_args.kwargs["task_id"] == "task-1"
+
+
+class TestWorkflowDelegateContextCoercion:
+    def test_private_context_modes_are_coerced_to_shared_for_workflow_agents(self):
+        for requested_context in ("isolated", "last:5"):
+            h = _make_handler(conversation_id="conv1")
+            with patch(
+                    "core.conv_agent_config.get_agent_config",
+                    return_value={"runtime_kind": "workflow"}), \
+                    patch("core.agent_executor.get_live_delegate",
+                          return_value=None), \
+                    patch.object(
+                        h, "_deliver_shared_delegate",
+                        return_value={"state": "idle (waking)"}) as deliver, \
+                    patch("core.agent_executor.SubAgentExecutor") as executor:
+                result = json.loads(h.execute({"tasks": [{
+                    "id": f"workflow-{requested_context}",
+                    "agent": "Media Studio",
+                    "message": "Create a clip",
+                    "context": requested_context,
+                }]}))
+
+            executor.assert_not_called()
+            deliver.assert_called_once_with(
+                from_agent="agentA", to_agent="Media Studio",
+                message="Create a clip", user_id="user1",
+                conv_id="conv1", task_id=f"workflow-{requested_context}")
+            assert result[0]["mode"] == "shared"
+            assert result[0]["requested_context"] == requested_context
+            assert result[0]["context_coerced"] is True
+            assert result[0]["coercion_reason"] == (
+                "workflow_runtime_requires_shared")
 
 
 class TestFlashDelegate:

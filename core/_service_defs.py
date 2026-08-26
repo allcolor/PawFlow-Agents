@@ -40,7 +40,10 @@ _GLOBAL_SCOPE_ID = "__global__"
 
 def _parent_conversation_id(conv_id: str) -> str:
     conv_id = str(conv_id or "")
-    for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::", "::a2a::"):
+    for marker in (
+        "::task::", "::task_verify::", "::delegate::", "::flash::",
+        "::a2a::", "::workflow::",
+    ):
         if marker in conv_id:
             return conv_id.split(marker, 1)[0]
     return ""

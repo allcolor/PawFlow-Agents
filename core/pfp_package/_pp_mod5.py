@@ -24,6 +24,32 @@ from core.pfp_package._pp_mod4 import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
+def _uninstall_order(objects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return a stable order with dependents before their requirements."""
+    remaining = list(objects)
+    ordered = []
+    while remaining:
+        required_ids = {
+            str(required)
+            for item in remaining
+            for required in item.get("requires") or []
+            if str(required)
+        }
+        candidates = [
+            item for item in remaining
+            if str(item.get("object_id") or "") not in required_ids
+        ]
+        if not candidates:
+            candidates = list(remaining)
+        candidate = next((
+            item for item in candidates
+            if item.get("kind") != "repository_type"
+        ), candidates[0])
+        ordered.append(candidate)
+        remaining.remove(candidate)
+    return ordered
+
+
 def _repository_descriptor_for_object(
         obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         conversation_id: str, scope: str) -> Dict[str, Any]:
@@ -107,9 +133,7 @@ def uninstall_pfp(package_id: str, *, user_id: str, conversation_id: str = "",
     # Repository descriptors are lifecycle roots. Remove concrete resources
     # first so a descriptor can accurately refuse uninstall when a locally
     # modified or user-created resource remains.
-    ordered_objects = sorted(
-        record.get("objects") or [],
-        key=lambda item: item.get("kind") == "repository_type")
+    ordered_objects = _uninstall_order(record.get("objects") or [])
     for obj in ordered_objects:
         try:
             if _uninstall_object(obj, user_id, conversation_id, scope, force):
@@ -946,31 +970,47 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
 def _remove_obsolete_update_objects(record: Dict[str, Any], manifest: Dict[str, Any],
                                     user_id: str, conversation_id: str, scope: str,
                                     selected: set, force: bool,
-                                    dry_run: bool) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    current_ids = {
-        str(obj.get("id") or "")
+                                    dry_run: bool,
+                                    updated: Optional[set] = None,
+                                    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    current_by_id = {
+        str(obj.get("id") or ""): obj
         for obj in manifest.get("objects") or []
         if str(obj.get("id") or "")
     }
+    current_ids = set(current_by_id)
     selected_ids = {str(item) for item in selected or set() if str(item)}
+    updated_ids = {str(item) for item in updated or set() if str(item)}
     removed = []
     skipped = []
     removed_ids = set()
     for obj in record.get("objects") or []:
         obj_id = str(obj.get("object_id") or "")
-        if not obj_id or obj_id in current_ids or obj_id not in selected_ids:
+        current = current_by_id.get(obj_id) or {}
+        current_fqn = str(current.get("fqn") or current.get("name") or "")
+        superseded_flow = (
+            obj.get("kind") == "flow"
+            and current.get("type") == "flow"
+            and obj_id in updated_ids
+            and str(obj.get("fqn") or "") != current_fqn
+        )
+        removed_from_manifest = obj_id not in current_ids
+        if (not obj_id or obj_id not in selected_ids
+                or not (removed_from_manifest or superseded_flow)):
             continue
         if _record_is_locally_modified(obj, user_id, conversation_id, scope) and not force:
             skipped.append({"id": obj_id, "reason": "local_modified"})
             continue
         if dry_run:
             removed.append({"id": obj_id, **obj})
-            removed_ids.add(obj_id)
+            if removed_from_manifest:
+                removed_ids.add(obj_id)
             continue
         try:
             if _uninstall_object(obj, user_id, conversation_id, scope, force):
                 removed.append({"id": obj_id, **obj})
-                removed_ids.add(obj_id)
+                if removed_from_manifest:
+                    removed_ids.add(obj_id)
             else:
                 skipped.append({"id": obj_id, "reason": "not_found_or_modified"})
         except Exception as exc:

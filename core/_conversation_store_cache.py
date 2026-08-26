@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shutil
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -472,15 +473,24 @@ class _CsCacheMixin:
     def _ensure_loaded(self):
         if self._loaded:
             return
-        with self._lock:  # class-level lock (also used for singleton)
+        with self._load_lock:
             if self._loaded:
                 return
-            # Hold the lock across the scan so concurrent callers (boot-time
-            # cleanup_orphan_claude_sessions) wait for the cache to be fully
-            # populated. Previously we set _loaded=True BEFORE the scan,
-            # which let those callers observe a half-empty cache and treat
-            # live convs as orphans (safety net caught it, but it logged
-            # a "cache race" warning for every live conv).
+            waiter = self._load_started
+            if not waiter:
+                self._load_started = True
+                self._load_owner_ident = threading.get_ident()
+                self._load_complete.clear()
+        if waiter:
+            self._load_complete.wait()
+            if not self._loaded:
+                return self._ensure_loaded()
+            return
+        try:
+            self._store_dir.mkdir(parents=True, exist_ok=True)
+            # Publish the index only after the complete scan. Concurrent
+            # callers wait on the instance event rather than the class-level
+            # singleton lock, which may be re-entered by startup helpers.
             count = 0
             for user_dir in self._store_dir.iterdir():
                 if not user_dir.is_dir():
@@ -497,8 +507,14 @@ class _CsCacheMixin:
                     self._load_cache_metadata(cid, uid)
                     count += 1
             self._loaded = True
-        if count:
-            logger.info(f"ConversationStore: loaded {count} conversations from disk")
+            if count:
+                logger.info(
+                    f"ConversationStore: loaded {count} conversations from disk")
+        finally:
+            with self._load_lock:
+                self._load_started = False
+                self._load_owner_ident = None
+                self._load_complete.set()
 
     def _reconcile_list_cache_from_disk(self, user_id: str = "") -> None:
         """Ensure list_conversations includes conversation dirs created on disk.

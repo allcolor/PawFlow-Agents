@@ -88,10 +88,13 @@ class ComfyUIVideoService(BaseVideoGenerationService):
         self.client.require_operation("generate")
 
     def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
-                            agent_name: str = "", **_: object):
+                            agent_name: str = "", relay_id: str = "",
+                            relay_local=None,
+                            **_: object):
         self.client.set_runtime_context(
             user_id=user_id, conversation_id=conversation_id,
-            agent_name=agent_name)
+            agent_name=agent_name, relay_id=relay_id,
+            relay_local=relay_local)
 
     def _create_connection(self):
         return {"ready": True, "system_stats": self.client.ping()}

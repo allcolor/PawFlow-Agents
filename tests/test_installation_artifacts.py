@@ -1289,11 +1289,10 @@ def test_pawflow_installer_flow_template_exists():
     redirect = flow["tasks"]["redirect_to_install"]["parameters"]
     assert redirect["status_code"] == 302
     assert redirect["headers"]["Location"] == "/install"
-    assert {
-        "from": "http_in",
-        "to": "redirect_to_install",
-        "type": "GET:/",
-    } in flow["relations"]
+    assert ("http_in", "redirect_to_install", "GET:/") in {
+        (rel["from"], rel["to"], rel["type"])
+        for rel in flow["relations"]
+    }
     route_relationships = {
         route.get("relationship") or f"{route.get('method', 'GET').upper()}:{route.get('pattern', '/')}"
         for route in routes

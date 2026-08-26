@@ -19,6 +19,17 @@ from core.pfp_package._pp_mod5 import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
+def _record_object_requires(record: Dict[str, Any], obj: Dict[str, Any]) -> None:
+    requires = []
+    for item in obj.get("requires") or []:
+        ref = item if isinstance(item, str) else item.get("object", "")
+        ref = str(ref or "").strip()
+        if ref and ref not in requires:
+            requires.append(ref)
+    if requires:
+        record["requires"] = requires
+
+
 def _missing_selected_repository_type(
         row: Dict[str, Any], package: Dict[str, Any], selected: set,
         user_id: str, conversation_id: str, scope: str) -> str:
@@ -171,6 +182,7 @@ def install_pfp(path: str, *, user_id: str, conversation_id: str = "",
             record = _install_object(
                 row["object"], package, user_id, conversation_id, scope, force,
                 replace, object_secret_bindings, agent_name=agent_name)
+            _record_object_requires(record, row["object"])
             records.append(record)
             installed.append({"id": obj_id, **record})
         except Exception as exc:
@@ -287,6 +299,7 @@ def dev_load_pfp(source_dir: str, *, user_id: str, conversation_id: str = "",
             record = _install_object(
                 row["object"], package, user_id, conversation_id, scope, force,
                 replace, object_secret_bindings, agent_name=agent_name)
+            _record_object_requires(record, row["object"])
             record["dev"] = True
             records.append(record)
             installed.append({"id": obj_id, **record})
@@ -391,8 +404,14 @@ def update_pfp(path: str, *, user_id: str, conversation_id: str = "",
             record, allowed, update_secret_bindings),
     )
     result["updated"] = result.pop("installed", [])
+    updated_ids = {
+        str(item.get("id") or "")
+        for item in result["updated"]
+        if str(item.get("id") or "")
+    }
     removed, removal_skips = _remove_obsolete_update_objects(
-        record, manifest, user_id, conversation_id, scope, allowed, force, dry_run)
+        record, manifest, user_id, conversation_id, scope, allowed, force,
+        dry_run, updated_ids)
     if removed:
         result["removed"] = removed
     else:

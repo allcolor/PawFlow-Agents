@@ -109,6 +109,7 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
         self._tasks: Dict[str, Task] = {}
         self._task_retry_counts: Dict[str, int] = {}
         self._discarded_flowfile_errors: List[Dict[str, str]] = []
+        self._failure_checkpoints: List[Dict[str, Any]] = []
 
         self._pool: Optional[ThreadPoolExecutor] = None
         self._interactive_pool: Optional[ThreadPoolExecutor] = None
@@ -166,7 +167,7 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
             self._task_states.register_task(task_id, task_type)
             self._task_retry_counts[task_id] = 0
             self._max_instances[task_id] = getattr(task, '_max_instances', 1)
-            self._inject_runtime_context(task)
+            self._inject_runtime_context(task, task_id=task_id)
             if hasattr(task, 'set_scheduler_wake'):
                 task.set_scheduler_wake(self._wake_scheduler)
             # Inject controller services into task
@@ -212,7 +213,7 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
         }
         self._connections.build_from_flow(flow_dict)
 
-    def _inject_runtime_context(self, task: Task):
+    def _inject_runtime_context(self, task: Task, *, task_id: str = ""):
         """Attach deployment runtime context to runtime-aware tasks."""
         user_id = str(self._runtime_context.get("user_id") or "")
         conversation_id = str(self._runtime_context.get("conversation_id") or "")
@@ -232,6 +233,7 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
         workflow_context = self._runtime_context.get("workflow_run_context")
         if workflow_context is not None and hasattr(
                 task, "set_workflow_run_context"):
+            task._workflow_task_id = str(task_id or "")
             task.set_workflow_run_context(
                 workflow_context,
                 event_callback=self._runtime_context.get(

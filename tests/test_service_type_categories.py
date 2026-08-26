@@ -32,6 +32,9 @@ def test_service_category_prefers_declared_category():
 
 
 def test_service_category_maps_legacy_service_type():
+    from services.ffmpeg_media_service import FFmpegMediaService
+
+    assert _service_category("ffmpegMedia", FFmpegMediaService) == "media"
     assert _service_category("rcloneFilesystem", _LegacyService) == "filesystem"
     assert _service_category("supertonicTTS", SupertonicTTSService) == "audio"
     assert _service_category("openaiCompatibleImageGeneration", _LegacyService) == "image"

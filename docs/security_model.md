@@ -183,9 +183,9 @@ A `.pfp` is signed with an ed25519 key whose public half is embedded in the mani
 
 ### Workflow agents
 
-Workflow agents are disabled unless the server sets
-`PAWFLOW_WORKFLOW_AGENTS_ENABLED=1`; request data cannot enable the runtime.
-Bindings pin an exact flow version, resolved scope and digest plus immutable
+Workflow agents are a permanent runtime kind; request data cannot alter runtime
+kind validation or bypass workflow safety contracts. Bindings pin an exact flow
+version, resolved scope and digest plus immutable
 service and authorization snapshots. Every task's declared effects are
 intersected with the flow contract, conversation permission mode, authenticated
 authority revision, and current resource targets before execution. Recovery
@@ -197,6 +197,14 @@ unbounded cycles, arbitrary scripts/sources, nested agents, undeclared ports,
 unreachable terminals, open-world effects, and mismatched package capability
 metadata. Inbox messages are leased rather than destructively drained, and only
 turn IDs named by the validated terminal can be acknowledged.
+
+When a bounded workflow task uses a CLI provider whose native MCP surface is
+broader than the task's declared tool definitions, the server applies an
+ephemeral conversation scope before tool approval and execution. Scoped tool
+listing and schema discovery reveal only the allowlist, lazy wrapper calls are
+unwrapped and checked, and argument confinement is applied server-side. Missing
+or malformed wrapper targets fail closed, and the scope is removed after the
+model turn.
 
 Inspector and operations APIs are conversation-scoped and return redacted
 projections: no requests, inbox payloads, prompts, source bodies, credentials,

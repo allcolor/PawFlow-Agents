@@ -1,0 +1,32 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "pawflow.website-creator",
+  "version": "1.0.0",
+  "category": "Development",
+  "description": "Installable desktop-first Website Creator Workflow Agent with public-URL safety, durable mapping approval, scoped static-site generation and repeated visual review.",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": ""
+  },
+  "origin": {
+    "source": "packages/pawflow.website-creator.pfpdir"
+  },
+  "objects": [
+    {
+      "id": "flow:website-creator",
+      "type": "flow",
+      "name": "pawflow.agents.website-creator:1.0.0",
+      "fqn": "pawflow.agents.website-creator:1.0.0",
+      "path": "content/flows/website-creator.json"
+    },
+    {
+      "id": "agent:website-creator",
+      "type": "agent",
+      "name": "website-creator",
+      "path": "content/agents/website-creator.json",
+      "requires": [
+        "flow:website-creator"
+      ]
+    }
+  ]
+}

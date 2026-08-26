@@ -439,7 +439,10 @@ def test_runtime_update_rebuild_failure_is_a_500_not_a_stale_preview(
             "gen": {"type": "log", "parameters": {"message": "gen"}},
             "save": {"type": "log", "parameters": {"message": "save"}},
         },
-        "relations": [{"from": "gen", "to": "save", "type": "success"}],
+        "relations": [{
+            "relation_id": "rel_gen_save",
+            "from": "gen", "to": "save", "type": "success",
+        }],
     }
     monkeypatch.setattr(actions, "_prepare_runtime_update",
                         lambda inst, fqn: (definition, definition, object()))

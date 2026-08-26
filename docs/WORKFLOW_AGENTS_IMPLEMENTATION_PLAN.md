@@ -21,11 +21,10 @@ commit. The bootstrap-only tasks live under `tasks/ai/workflow`; the
 `pawflow.agents.demo:1.0.0` first-party flow exercises two deterministic
 stages and a deterministic fake-LLM stage. Reserved run attributes are
 reasserted by the executor at every task boundary.
-The server capability is read only from
-`PAWFLOW_WORKFLOW_AGENTS_ENABLED` with strict boolean parsing. When disabled,
-all create/update/start paths reject workflow. When enabled, only the explicit
-WP3 bootstrap catalog and `queue` preemption execute; other tasks and policies
-fail closed. The existing three runtimes retain their previous direct paths.
+Workflow is a permanent runtime kind with no server rollout flag. Only the
+explicit workflow-safe catalog and supported preemption policies execute; other
+tasks and policies fail closed. The existing three runtimes retain their
+previous direct paths.
 
 Date: 2026-08-23
 
@@ -52,11 +51,11 @@ This is additive. Existing general-purpose LLM agents keep runtime_kind equal to
 
 ### 1.1 Additive compatibility boundary
 
-Workflow agents are an opt-in runtime capability. Merely installing a release that contains the new code must not route an existing `llm`, `external_mcp`, or `external_agui` instance through a new execution path.
+Workflow agents are a distinct runtime capability. Merely installing a release that contains the code does not route an existing `llm`, `external_mcp`, or `external_agui` instance through a new execution path.
 
-The first implementation therefore uses an explicit `workflow_agents_enabled` server capability and a narrow dispatch branch after the canonical conversation agent has been resolved:
+The implementation uses a narrow dispatch branch after the canonical conversation agent has been resolved:
 
-- when the capability is disabled, `runtime_kind: workflow` cannot be created, imported, bound, or started;
+- `runtime_kind: workflow` is validated, created, imported, bound, and started through the workflow-specific contracts;
 - when the resolved runtime kind is not `workflow`, the currently shipped runtime entry point, acknowledgement, queue, preemption, finalization, and error behavior remain the execution path;
 - no existing conversation or agent is rewritten merely because the capability is installed;
 - new response and SSE fields are optional additions; existing field meanings and event ordering do not change;
@@ -341,7 +340,6 @@ Resolved runtime configuration remains stored in conv_agents. For a workflow ins
       "project_root": "."
     },
     "limits": {
-      "max_duration_seconds": 900,
       "max_llm_calls": 24,
       "max_flowfiles": 200,
       "max_fanout": 16,
@@ -357,6 +355,8 @@ Rules:
 - workflow is required only for runtime_kind equal to workflow.
 - flow_fqn must include an exact version.
 - flow_scope is resolved and stored when the instance is created or upgraded.
+- max_duration_seconds is optional. Its absence means no implicit wall-clock
+  deadline; only a positive explicitly configured value bounds the run.
 - the binding is validated against the requesting user and conversation.
 - workflow parameters are validated against the flow's agent_contract schema.
 - services referenced by parameters are resolved at run start and snapshotted.
@@ -2028,8 +2028,8 @@ The feature is complete only when all statements are true.
 15. Existing llm, external_mcp, and external_agui agents pass their full regression suites.
 16. The runtime inspector makes every workflow stage, preempt, cost, failure, and recovery understandable without exposing secrets.
 17. All implementation documentation and tests listed above have landed.
-18. With `workflow_agents_enabled` disabled, no existing runtime, queue, transcript, approval, client event, or UI configuration path changes behavior.
-19. Enabling workflow agents does not migrate existing PendingQueue data; inbox activation is a separately validated operation with no dual-writer state.
+18. Adding or using workflow agents does not change an existing runtime, queue, transcript, approval, client event, or UI configuration path.
+19. Workflow availability does not migrate existing PendingQueue data; inbox migration is a separately validated operation with no dual-writer state.
 
 ## 31. Recommended first delivery slice
 
@@ -2054,6 +2054,11 @@ WorkflowProposal/FlowRun composition, and Web/PawCode/VS Code UiSurface
 rehydration. The remaining release decision is operational: full green
 validation, authenticated Web plus non-HTTP canaries, and staged activation.
 Legacy removal remains deferred until those gates and the compatibility release.
+
+The Web run inspector renders the current stage and numeric progress before the
+runtime DAG. Its DAG supports bounded wheel or button zoom, pointer drag pan, and
+an explicit reset control. The selected viewport is preserved across live
+snapshot refreshes so the 2.5-second active-run poll cannot interrupt inspection.
 
 ## 32. Final product example
 

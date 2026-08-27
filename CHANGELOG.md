@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.247] — 2026-08-27
+
 ### Added
 
 - Added optional conversation-scoped Linked Services overrides for automatic
@@ -13,6 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   content-review roles. Existing PawFlow parameters and defaults remain
   authoritative when no override is configured, and no service is installed or
   linked automatically.
+
+### Fixed
+
+- Relay binding changes now defer CLI workspace-mount invalidation until active
+  turns exit, while dead interactive sessions are still detected during the
+  post-Stop drain so Active Agents cannot remain stuck.
 
 ## [1.0.0-beta.246] — 2026-08-27
 

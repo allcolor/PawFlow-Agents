@@ -392,34 +392,7 @@ async function _renderResourcesData(data) {
       liveHtml += _sectionFooter();
     }
 
-    // Summarizer binding/effective service for this conversation.
-    {
-      var smCollapsed = _isSectionCollapsed('_summarizer');
-      var smArrow = smCollapsed ? '\u25B6' : '\u25BC';
-      var smDisplay = smCollapsed ? 'none' : 'block';
-      liveHtml += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
-        + '<span style="cursor:pointer;color:var(--pf-resource-heading, var(--pf-accent));font-weight:600;user-select:none;" onclick="_toggleSection(\'_summarizer\')">'
-        + '<span id="res-arrow-_summarizer">' + smArrow + '</span> ' + escapeHtml(t('summarizer')) + '</span>'
-        + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="_showSummarizerLinkDialog()" title="' + escapeHtml(t('linkSummarizer')) + '">+</span>'
-        + '</div><div id="res-section-_summarizer" style="display:' + smDisplay + ';">';
-      var _sm = data.summarizer || {};
-      var _smEffective = _sm.effective || null;
-      var _smExplicit = !!_sm.explicit;
-      if (_smEffective) {
-        var _smColor = _smExplicit ? 'var(--pf-success)' : 'var(--pf-muted)';
-        var _smMode = _smExplicit ? t('explicitSummarizer') : t('autoSummarizer');
-        var _smLlm = _smEffective.llm_service ? ' \u2192 ' + escapeHtml(_smEffective.llm_service) : '';
-        liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="_showSummarizerMenu(event,' + (_smExplicit ? 'true' : 'false') + ');return false;">'
-          + _scopeBadge(_smEffective.scope)
-          + '<span style="color:' + _smColor + ';font-size:12px;flex:1;">' + escapeHtml(_smEffective.service_id) + _smLlm + '</span>'
-          + '<span style="font-size:9px;color:' + _smColor + ';background:color-mix(in srgb, ' + _smColor + ' 14%, var(--pf-panel));padding:1px 4px;border-radius:3px;">' + escapeHtml(_smMode) + '</span>'
-          + (_smExplicit ? '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('unlink')) + '" onclick="_unlinkSummarizer()">&times;</span>' : '')
-          + '</div>';
-      } else {
-        liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noSummarizerEffective')) + '</div>';
-      }
-      liveHtml += _sectionFooter();
-    }
+    liveHtml += _renderLinkedServicesSection(data);
 
     // Policy gate bound to this conversation / agent (docs/POLICY_GATING.md).
     {

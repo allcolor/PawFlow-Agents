@@ -288,6 +288,11 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
         # Summarizer binding/effective service for this conversation.
         if conv_id:
             try:
+                from core.linked_service_bindings import summary as _linked_summary
+                result["linked_services"] = _linked_summary(user_id, conv_id)
+            except Exception:
+                result["linked_services"] = {"roles": []}
+            try:
                 from core.summarizer_bindings import summary as _summarizer_summary
                 result["summarizer"] = _summarizer_summary(user_id, conv_id)
             except Exception:

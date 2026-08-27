@@ -70,7 +70,8 @@ def _handle_agentres_k4(self, action, body, store, user_id, flowfile):
         # live in conv_agents — edited via update_agent_conv_config.
         if rtype == "agent":
             data = {k: v for k, v in data.items()
-                    if k in ("prompt", "description", "parameters", "runtime_defaults")}
+                    if k in ("prompt", "description", "parameters",
+                             "runtime_defaults", "automation_roles")}
             from core.workflow_agent_resources import validate_agent_definition_data
             validate_agent_definition_data(data)
         from core.resource_store import ResourceStore
@@ -149,7 +150,8 @@ def _handle_agentres_k4(self, action, body, store, user_id, flowfile):
             return [flowfile]
         if rtype == "agent":
             data = {k: v for k, v in data.items()
-                    if k in ("prompt", "description", "parameters", "runtime_defaults")}
+                    if k in ("prompt", "description", "parameters",
+                             "runtime_defaults", "automation_roles")}
             from core.workflow_agent_resources import validate_agent_definition_data
             validate_agent_definition_data(data)
         from core.resource_store import ResourceStore

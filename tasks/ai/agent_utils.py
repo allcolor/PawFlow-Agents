@@ -268,14 +268,19 @@ class AgentUtilsMixin(_AgentMediaMixin, _AgentMsgProcMixin):
         """
         svc_id = self._resolve_service_param("title_llm_service", user_id,
                                              conversation_id)
-        if not svc_id:
+        if svc_id:
+            logger.debug(f"[title_llm] resolved to '{svc_id}'")
+            client, svc = self._resolve_llm_service(svc_id, user_id)
+            if svc and hasattr(svc, 'complete'):
+                return svc, svc_id
+            if client:
+                return client, svc_id
             return None, ""
-        logger.debug(f"[title_llm] resolved to '{svc_id}'")
-        client, svc = self._resolve_llm_service(svc_id, user_id)
-        if svc and hasattr(svc, 'complete'):
-            return svc, svc_id
-        if client:
-            return client, svc_id
+        from core.linked_service_bindings import resolve_llm_override
+        override, _definition, override_id, _explicit = resolve_llm_override(
+            "conversation_title", user_id, conversation_id)
+        if override is not None:
+            return override, override_id
         return None, ""
 
     # ── Media service discovery (generic for image/video) ───────────

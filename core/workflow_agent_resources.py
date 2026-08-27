@@ -63,6 +63,13 @@ def validate_agent_definition_data(data: dict[str, Any]) -> dict[str, Any]:
 
         parsed = AgentDefinitionRuntimeDefaults.from_dict(defaults)
         validate_agent_runtime_kind(parsed.kind)
+    automation_roles = data.get("automation_roles")
+    if automation_roles is not None:
+        if (not isinstance(automation_roles, list)
+                or not all(isinstance(role, str) and role.strip()
+                           for role in automation_roles)
+                or len(set(automation_roles)) != len(automation_roles)):
+            raise ValueError("automation_roles must be a unique list of names")
     return data
 
 

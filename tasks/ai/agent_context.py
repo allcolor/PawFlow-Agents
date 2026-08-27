@@ -68,6 +68,43 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
                         _PACPhase1Mixin, _PACPhase2Mixin, _PACPhase3Mixin):
     """Context preparation + user content building."""
 
+    def _title_service_id(self, user_id: str, conversation_id: str) -> str:
+        """Resolve the PawFlow title parameter, then an optional binding."""
+        configured = self._resolve_service_param(
+            "title_llm_service", user_id, conversation_id)
+        if configured:
+            return configured
+        try:
+            from core.linked_service_bindings import resolve_service_override
+            service, definition, _explicit = resolve_service_override(
+                "conversation_title", user_id, conversation_id)
+            if service is not None:
+                return str(getattr(definition, "service_id", "") or "")
+        except Exception:
+            logger.debug("conversation title override resolution failed",
+                         exc_info=True)
+        return ""
+
+    def _attachment_ocr_service_id(
+            self, user_id: str, conversation_id: str) -> str:
+        """Resolve the historical OCR configuration, then an optional binding."""
+        configured = str(
+            self.config.get("attachment_ocr_llm_service")
+            or os.getenv("PAWFLOW_MARKITDOWN_OCR_LLM_SERVICE", "")
+            or "").strip()
+        if configured:
+            return configured
+        try:
+            from core.linked_service_bindings import resolve_service_override
+            override, definition, _explicit = resolve_service_override(
+                "attachment_ocr", user_id, conversation_id)
+            if override is not None:
+                return str(getattr(definition, "service_id", "") or "")
+        except Exception:
+            logger.debug("Attachment OCR override resolution failed",
+                         exc_info=True)
+        return ""
+
     def _pac_cfg(self, st, key, default):
         """Agent overrides service, service overrides default.
         None or empty string = not set. 0 IS a valid override."""
@@ -168,8 +205,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
                 getattr(st.client, "route_plan", None) or st.route_plan),
             "_llm_route_attempt": st.route_attempt,
             "_llm_route_failures": st.route_failures,
-            "title_llm_service": self._resolve_service_param(
-                "title_llm_service", st.user_id, st.conversation_id),
+            "title_llm_service": self._title_service_id(
+                st.user_id, st.conversation_id),
             "resolved_svc": st.resolved_svc,
             "max_budget_usd": st._max_budget,
             "summarizer": self._get_summarizer_client(st.user_id, conversation_id=st.conversation_id),  # (client, max_ctx, svc_id)
@@ -436,10 +473,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
             return ""
         llm_client = None
         llm_model = ""
-        ocr_service = str(
-            self.config.get("attachment_ocr_llm_service")
-            or os.getenv("PAWFLOW_MARKITDOWN_OCR_LLM_SERVICE", "")
-            or "").strip()
+        ocr_service = self._attachment_ocr_service_id(
+            user_id, conversation_id)
         if ocr_service:
             llm_client, llm_model = self._markitdown_llm_adapter(
                 ocr_service, user_id, conversation_id)

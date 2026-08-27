@@ -142,7 +142,12 @@ class ProjectMaintenanceScheduler:
 
     @staticmethod
     def _resolve_wiki_service_id(user_id: str, conversation_id: str) -> str:
-        """Resolve the exact LLM service selected by the effective summarizer."""
+        """Resolve a wiki override, then the historical summarizer LLM."""
+        from core.linked_service_bindings import resolve_llm_override
+        client, _definition, service_id, _explicit = resolve_llm_override(
+            "project_wiki", user_id, conversation_id)
+        if client is not None:
+            return service_id
         from core.summarizer_bindings import resolve_service
         summarizer, _definition, _explicit = resolve_service(
             user_id, conversation_id)
@@ -169,25 +174,38 @@ class ProjectMaintenanceScheduler:
         if get_default(
                 job.conversation_id, agent=job.agent_name) != job.relay_id:
             return {"status": "skipped", "reason": "relay binding changed"}
-        service_id = self._resolve_wiki_service_id(
-            job.user_id, job.conversation_id)
-        if not service_id:
-            return {"status": "skipped", "reason": "missing summarizer LLM"}
-
         from core.workflow_agent_contracts import WorkflowInstanceConfig
-        from core.workflow_agent_resources import bind_agent_workflow
-        binding = WorkflowInstanceConfig.from_dict(bind_agent_workflow({
-            "flow_fqn": _WIKI_FLOW_FQN,
-            "preempt_policy": "checkpoint",
-            "parameters": {
+        from core.linked_service_bindings import resolve_agent_override
+        target_agent, target_config, _explicit = resolve_agent_override(
+            "project_wiki", job.user_id, job.conversation_id)
+        if target_agent:
+            workflow = dict(target_config.get("workflow") or {})
+            parameters = dict(workflow.get("parameters") or {})
+            parameters.update({
                 "project_root": job.root,
-                "extractor_llm": service_id,
-                "writer_llm": service_id,
-                "batch_files": 8,
-                "max_files": 10000,
                 "write_mode": write_mode,
-            },
-        }, job.user_id, job.conversation_id))
+            })
+            workflow["parameters"] = parameters
+            binding = WorkflowInstanceConfig.from_dict(workflow)
+        else:
+            service_id = self._resolve_wiki_service_id(
+                job.user_id, job.conversation_id)
+            if not service_id:
+                return {
+                    "status": "skipped", "reason": "missing summarizer LLM"}
+            from core.workflow_agent_resources import bind_agent_workflow
+            binding = WorkflowInstanceConfig.from_dict(bind_agent_workflow({
+                "flow_fqn": _WIKI_FLOW_FQN,
+                "preempt_policy": "checkpoint",
+                "parameters": {
+                    "project_root": job.root,
+                    "extractor_llm": service_id,
+                    "writer_llm": service_id,
+                    "batch_files": 8,
+                    "max_files": 10000,
+                    "write_mode": write_mode,
+                },
+            }, job.user_id, job.conversation_id))
         from core.workflow_agent_runtime import (
             WorkflowAgentRuntime,
             prepare_workflow_turn,
@@ -195,7 +213,7 @@ class ProjectMaintenanceScheduler:
         runtime = WorkflowAgentRuntime.instance()
         request = prepare_workflow_turn(
             conversation_id=job.conversation_id,
-            agent_name=job.agent_name,
+            agent_name=target_agent or job.agent_name,
             user_id=job.user_id,
             message="Refresh the project wiki from pending relay changes.",
             attachments=[],
@@ -250,18 +268,25 @@ class ProjectMaintenanceScheduler:
         wiki_result = wiki.scan_from_relay(
             job.service, job.root, local=False,
             initial_paths=self._graph_seed_paths(graph))
-        if self._workflow_cutover_enabled():
+        from core.linked_service_bindings import resolve_agent_override
+        wiki_agent, _config, _explicit = resolve_agent_override(
+            "project_wiki", job.user_id, job.conversation_id)
+        if self._workflow_cutover_enabled() or wiki_agent:
             update_result = self._submit_wiki_workflow(job)
         else:
-            from core.summarizer_bindings import resolve_service
-            summarizer, _definition, _explicit = resolve_service(
-                job.user_id, job.conversation_id)
-            llm_client = None
-            if summarizer is not None and hasattr(
-                    summarizer, "resolve_llm_service"):
-                llm_client, _context_size, _service_id = (
-                    summarizer.resolve_llm_service(
-                        job.user_id, job.conversation_id))
+            from core.linked_service_bindings import resolve_llm_override
+            llm_client, _definition, _service_id, _explicit = (
+                resolve_llm_override(
+                    "project_wiki", job.user_id, job.conversation_id))
+            if llm_client is None:
+                from core.summarizer_bindings import resolve_service
+                summarizer, _definition, _explicit = resolve_service(
+                    job.user_id, job.conversation_id)
+                if summarizer is not None and hasattr(
+                        summarizer, "resolve_llm_service"):
+                    llm_client, _context_size, _service_id = (
+                        summarizer.resolve_llm_service(
+                            job.user_id, job.conversation_id))
             update_result = wiki.auto_update(
                 job.service, llm_client, local=False)
         logger.info(

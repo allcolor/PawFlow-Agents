@@ -93,9 +93,13 @@ def propose_skill_draft_from_summary(
     if not user_id or not summary:
         return "skipped"
     try:
-        from core.summarizer_bindings import resolve_llm_client
-        llm_client, _context_size, _service_id = resolve_llm_client(
-            user_id, conversation_id)
+        from core.linked_service_bindings import resolve_llm_override
+        llm_client, _definition, _service_id, _explicit = resolve_llm_override(
+            "skill_learning", user_id, conversation_id)
+        if llm_client is None:
+            from core.summarizer_bindings import resolve_llm_client
+            llm_client, _context_size, _service_id = resolve_llm_client(
+                user_id, conversation_id)
         if llm_client is None:
             return "skipped"
         outcome, draft = _propose_with_llm(

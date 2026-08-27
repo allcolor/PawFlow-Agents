@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def _resolve_embedding_llm_service(user_id: str = "",
                                    conversation_id: str = ""):
-    """Resolve the optional embedding_llm_service parameter."""
+    """Resolve the historical parameter, then an optional role binding."""
     try:
         from core.expression import resolve_value
         svc_id = resolve_value(
@@ -22,21 +22,29 @@ def _resolve_embedding_llm_service(user_id: str = "",
             conversation_id=conversation_id) or ""
     except Exception:
         svc_id = ""
-    if not svc_id or str(svc_id).startswith("${"):
-        return None, ""
-    try:
-        from core.service_registry import ServiceRegistry
-        svc = ServiceRegistry.get_instance().resolve(
-            str(svc_id), user_id=user_id, conv_id=conversation_id)
-    except Exception:
-        logger.debug("embedding_llm_service resolution failed", exc_info=True)
+    if svc_id and not str(svc_id).startswith("${"):
+        try:
+            from core.service_registry import ServiceRegistry
+            svc = ServiceRegistry.get_instance().resolve(
+                str(svc_id), user_id=user_id, conv_id=conversation_id)
+        except Exception:
+            logger.debug("embedding_llm_service resolution failed", exc_info=True)
+            return None, str(svc_id)
+        if svc and hasattr(svc, "embed"):
+            return svc, str(svc_id)
+        logger.warning(
+            "embedding_llm_service '%s' is not an embedding-capable LLM service; "
+            "falling back to local embeddings", svc_id)
         return None, str(svc_id)
-    if svc and hasattr(svc, "embed"):
-        return svc, str(svc_id)
-    logger.warning(
-        "embedding_llm_service '%s' is not an embedding-capable LLM service; "
-        "falling back to local embeddings", svc_id)
-    return None, str(svc_id)
+    try:
+        from core.linked_service_bindings import resolve_service_override
+        override, definition, _explicit = resolve_service_override(
+            "memory_embeddings", user_id, conversation_id)
+        if override is not None and hasattr(override, "embed"):
+            return override, str(getattr(definition, "service_id", "") or "")
+    except Exception:
+        logger.debug("memory_embeddings override resolution failed", exc_info=True)
+    return None, ""
 
 
 def build_memory_embed_fn(user_id: str = "", conversation_id: str = ""):

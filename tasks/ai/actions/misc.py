@@ -605,6 +605,65 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
         }, ensure_ascii=False).encode())
         return [flowfile]
 
+    if action == "linked_services_list":
+        conv_id = str(body.get("conversation_id") or "")
+        if not conv_id:
+            flowfile.set_content(json.dumps(
+                {"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        from core.linked_service_bindings import summary
+        flowfile.set_content(json.dumps(
+            summary(user_id, conv_id), ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "linked_service_link":
+        conv_id = str(body.get("conversation_id") or "")
+        role = str(body.get("role") or "")
+        kind = str(body.get("kind") or "")
+        if not conv_id or not role or not kind:
+            flowfile.set_content(json.dumps({
+                "error": "Missing conversation_id, role, or kind",
+            }).encode())
+            return [flowfile]
+        binding = {"kind": kind}
+        if kind == "service":
+            binding.update({
+                "scope": str(body.get("scope") or ""),
+                "service_id": str(body.get("service_id") or ""),
+            })
+        elif kind == "agent":
+            binding["instance_name"] = str(body.get("instance_name") or "")
+        from core.linked_service_bindings import set_binding, summary
+        try:
+            set_binding(role, conv_id, binding, user_id=user_id)
+        except ValueError as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+            return [flowfile]
+        flowfile.set_content(json.dumps({
+            "ok": True, "linked_services": summary(user_id, conv_id),
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "linked_service_unlink":
+        conv_id = str(body.get("conversation_id") or "")
+        role = str(body.get("role") or "")
+        if not conv_id or not role:
+            flowfile.set_content(json.dumps({
+                "error": "Missing conversation_id or role",
+            }).encode())
+            return [flowfile]
+        from core.linked_service_bindings import clear_binding, summary
+        try:
+            removed = clear_binding(role, conv_id)
+        except ValueError as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+            return [flowfile]
+        flowfile.set_content(json.dumps({
+            "ok": True, "removed": removed,
+            "linked_services": summary(user_id, conv_id),
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
     if action == "summarizer_list_available":
         conv_id = body.get("conversation_id", "")
         from core.summarizer_bindings import summary

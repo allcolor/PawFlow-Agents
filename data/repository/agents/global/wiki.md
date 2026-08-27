@@ -3,6 +3,8 @@ created_at: 1787573031.0
 description: Intent-gated, source-backed Wiki Agent powered by a durable first-party workflow.
 updated_at: 1787573031.0
 parameters: {}
+automation_roles:
+  - project_wiki
 runtime_defaults:
   kind: workflow
   workflow:

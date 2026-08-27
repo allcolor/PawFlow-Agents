@@ -237,7 +237,7 @@ function _targetOwnerValue(selectId) {
 // browser reload restores exactly what was open or closed.
 const _RESOURCE_TREE_STATE_KEY = 'pawflow.resource_tree.collapsed.v1';
 const _ALL_SECTIONS = [
-  'agent','_running','_flow','_svc','_relay','_remote_fs','_summarizer','_gating','_param','_secret',
+  'agent','_running','_flow','_svc','_relay','_remote_fs','_linked_services','_gating','_param','_secret',
   '_pfp','_agent_repo','skill','prompt','theme','voice','task_def','_mcp_repo','_tool','_flow_repo'
 ];
 const _collapsedSections = {};
@@ -280,7 +280,7 @@ function _toggleSection(id) {
   if (arrow) arrow.textContent = isOpening ? '\u25BC' : '\u25B6';
   if (isOpening && _lastResourcesData) _renderResourcesData(_lastResourcesData);
   // Opening a repository or runtime section refreshes from disk after the cached render.
-  if (isOpening && (id.endsWith('_repo') || id === '_svc' || id === '_relay' || id === '_remote_fs' || id === '_summarizer' || id === '_flow' || id === '_pfp')) loadResources();
+  if (isOpening && (id.endsWith('_repo') || id === '_svc' || id === '_relay' || id === '_remote_fs' || id === '_linked_services' || id === '_flow' || id === '_pfp')) loadResources();
 }
 
 

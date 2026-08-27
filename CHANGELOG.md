@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Added optional conversation-scoped Linked Services overrides for automatic
+  summary, wiki, memory, embeddings, attachment OCR, skill learning, title, and
+  content-review roles. Existing PawFlow parameters and defaults remain
+  authoritative when no override is configured, and no service is installed or
+  linked automatically.
+
 ## [1.0.0-beta.246] — 2026-08-27
 
 ### Added

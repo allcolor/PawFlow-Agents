@@ -164,6 +164,65 @@ def test_wiki_workflow_submission_requires_active_authority(monkeypatch):
     assert result == {"status": "skipped", "reason": "missing authorization"}
 
 
+def test_linked_wiki_agent_uses_its_own_workflow_without_summarizer(monkeypatch):
+    scheduler = ProjectMaintenanceScheduler()
+    authorization = SimpleNamespace(
+        root_turn_id="web:root",
+        to_dict=lambda: {
+            "context_id": "1a9834d2-59bb-4df9-931c-9418e250c904",
+            "revision": 2,
+            "root_turn_id": "web:root",
+        },
+    )
+    monkeypatch.setattr(
+        "core.authorization_context.active_authority_ref",
+        lambda *_args: authorization)
+    monkeypatch.setattr(
+        "core.relay_bindings.get_default",
+        lambda *_args, **_kwargs: "relay-a")
+    monkeypatch.setattr(
+        "core.linked_service_bindings.resolve_agent_override",
+        lambda *_args: ("Wiki", {"workflow": {
+            "flow_fqn": "pawflow.agents.wiki:1.0.0",
+            "input_port": "agent_request",
+            "terminal_port": "agent_terminal",
+            "preempt_policy": "checkpoint",
+            "allowed_effects": ["resource.read", "resource.write"],
+            "parameters": {
+                "project_root": ".",
+                "extractor_llm": "WikiWriter",
+                "writer_llm": "WikiWriter",
+            },
+        }}, True))
+    resolve_service = MagicMock(
+        side_effect=AssertionError("linked agent must not require a summarizer"))
+    monkeypatch.setattr(scheduler, "_resolve_wiki_service_id", resolve_service)
+    prepared = object()
+    prepare = MagicMock(return_value=prepared)
+    monkeypatch.setattr(
+        "core.workflow_agent_runtime.prepare_workflow_turn", prepare)
+    runtime = MagicMock()
+    runtime.submit_bound.return_value = {
+        "status": "accepted", "queued": False, "run_id": "wr_wiki"}
+    monkeypatch.setattr(
+        "core.workflow_agent_runtime.WorkflowAgentRuntime.instance",
+        classmethod(lambda cls: runtime))
+
+    result = scheduler._submit_wiki_workflow(_MaintenanceJob(
+        user_id="alice", relay_id="relay-a", service=MagicMock(),
+        conversation_id="conv-a", agent_name="assistant", root="src"),
+        write_mode="shadow")
+
+    assert result["run_id"] == "wr_wiki"
+    resolve_service.assert_not_called()
+    assert prepare.call_args.kwargs["agent_name"] == "Wiki"
+    bound = runtime.submit_bound.call_args.args[1]
+    assert bound.flow_fqn == "pawflow.agents.wiki:1.0.0"
+    assert bound.parameters["writer_llm"] == "WikiWriter"
+    assert bound.parameters["project_root"] == "src"
+    assert bound.parameters["write_mode"] == "shadow"
+
+
 def test_worker_cutover_submits_workflow_without_legacy_auto_update(
         monkeypatch):
     monkeypatch.setenv("PAWFLOW_WIKI_WORKFLOW_CUTOVER", "1")

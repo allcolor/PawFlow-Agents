@@ -392,6 +392,11 @@ def _llm_review(payload: Dict[str, Any], *, user_id: str,
 
 def _resolve_review_llm(user_id: str, conversation_id: str):
     try:
+        from core.linked_service_bindings import resolve_llm_override
+        service, definition, service_id, _explicit = resolve_llm_override(
+            "content_review", user_id, conversation_id)
+        if service is not None:
+            return service, definition, service_id
         from core.summarizer_bindings import resolve_service
         summarizer, sdef, _explicit = resolve_service(user_id, conversation_id)
         if summarizer is None or not hasattr(summarizer, "resolve_llm_service"):

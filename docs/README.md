@@ -32,6 +32,7 @@
 | [Agent Tool Catalog](tool_catalog.md) | Agent-facing tools grouped by purpose |
 | [Agent Tool Selection](TOOL_SELECTION.md) | Decision guide for overlapping tool families: files, delegation, work orchestration, continuations, and state |
 | [Services Catalog](services.md) | Service types: LLM, relay, media, messaging, auth, storage |
+| [Linked Services](LINKED_SERVICES.md) | Optional conversation overrides for automatic summary, wiki, memory, OCR, embeddings, learning, title, and review roles |
 | [PawFlow Packages](PFP_PACKAGES.md) | Signed `.pfp` package format, install plan, export/build workflow, and security model |
 | [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md) | Build and test package tools/services locally with `dev-load`, media artifacts, and runtime SDK patterns |
 | [PFP Publisher Guide](PFP_PUBLISHER_GUIDE.md) | Registry publishing, release versioning, SHA pinning, and key rotation |

@@ -89,9 +89,13 @@ def auto_extract_memories(
                 conversation_id, exc)
 
     try:
-        from core.summarizer_bindings import resolve_llm_client
-        llm_client, _context_size, _service_id = resolve_llm_client(
-            user_id, conversation_id)
+        from core.linked_service_bindings import resolve_llm_override
+        llm_client, _definition, _service_id, _explicit = resolve_llm_override(
+            "auto_memory", user_id, conversation_id)
+        if llm_client is None:
+            from core.summarizer_bindings import resolve_llm_client
+            llm_client, _context_size, _service_id = resolve_llm_client(
+                user_id, conversation_id)
     except Exception as exc:
         logger.debug(
             "[auto-extract] summarizer resolution failed for %s: %s",

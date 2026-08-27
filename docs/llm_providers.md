@@ -632,7 +632,7 @@ Operational notes:
 |---|---|---|
 | Tool calls | Native PawFlow tool/function calling | Provider CLI plus PawFlow bridge/MCP where applicable |
 | Conversation state | PawFlow builds the context | Provider CLI may keep and resume its own session |
-| Preemption | Queued or provider-specific | Provider-specific; Claude interactive and Antigravity interactive can inject/control live tmux sessions, Codex app-server uses `turn/steer`, Gemini CLI uses kill/resume where needed |
+| Preemption | Queued or provider-specific | Provider-specific; Claude interactive and Antigravity interactive can inject/control live tmux sessions, Codex app-server uses `turn/steer`, Gemini CLI uses kill/resume where needed. A dead interactive container/tmux terminates the active turn even during post-Stop draining, so status indicators cannot remain stuck. |
 | Containerization | Optional | Recommended for isolation and reproducibility |
 | Context window | API/model metadata or service config | CLI-reported window or mandatory service `max_context_size` |
 
@@ -653,7 +653,7 @@ pawflow start --workspace-mount off|ro|rw
 
 If the flag is omitted, `PAWFLOW_CLI_WORKSPACE_MOUNT` is used. The default is `rw`.
 
-When enabled, new Claude Code, Codex, and Gemini provider containers mount the default relay workspace at `/workspace`. All linked relays with a local `host_root` are also mounted under `/relay/<relay-id>`. Read-only mode appends Docker `:ro`; read-write mode allows provider-native tools to write through the fallback mount. Changing relay bindings invalidates affected live CLI sessions so the next session receives fresh mounts.
+When enabled, new Claude Code, Codex, and Gemini provider containers mount the default relay workspace at `/workspace`. All linked relays with a local `host_root` are also mounted under `/relay/<relay-id>`. Read-only mode appends Docker `:ro`; read-write mode allows provider-native tools to write through the fallback mount. Changing relay bindings invalidates affected live CLI sessions so the next session receives fresh mounts. If an affected agent turn is active, PawFlow defers the invalidation until that worker exits; linking, unlinking, or changing the default relay must never kill its live tmux or strand Active Agents status.
 
 ## Default Models
 

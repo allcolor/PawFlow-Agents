@@ -77,15 +77,18 @@ def test_probe_errors_never_kill_a_live_turn(monkeypatch):
     assert coord._liveness_dead_probes == 0
 
 
-def test_probe_is_disarmed_after_stop(monkeypatch):
-    # Post-Stop the drain is already bounded; the probe must not race it.
+def test_dead_session_still_fails_during_post_stop_pending_drain(monkeypatch):
+    # A response may remain marked as owed after Stop for up to 90 seconds.
+    # A dead tmux is definitive and must not leave Active Agents visible for
+    # that whole cap.
     monkeypatch.setattr(cci_turn, "_LIVENESS_PROBE_IDLE_SECONDS", 0.0)
     calls = []
     coord = _coord([], lambda: calls.append(1) or False)
     coord._stop_seen = True
     coord._probe_liveness(0.0)
-    coord._probe_liveness(0.0)
-    assert not calls
+    with pytest.raises(RuntimeError, match="died mid-turn"):
+        coord._probe_liveness(0.0)
+    assert len(calls) == 2
 
 
 def test_probe_waits_for_the_idle_window(monkeypatch):

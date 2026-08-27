@@ -285,12 +285,14 @@ class _CCITurnCoordinator:
     def _probe_liveness(self, started_at: float) -> None:
         """Fail the turn when the interactive session died mid-turn.
 
-        Called only on empty polls. Not armed post-Stop (that drain is
-        already bounded) and throttled to one probe per idle window; a
-        probe that ERRORS is not evidence of death (a slow docker daemon
-        must not kill a live turn), only two consecutive dead probes are.
+        Called only on empty polls and throttled to one probe per idle window.
+        It remains armed post-Stop: that drain can wait up to the pending
+        response cap, but a dead container/tmux is definitive and must release
+        Active Agents immediately instead of displaying a ghost for the cap.
+        A probe that ERRORS is not evidence of death (a slow docker daemon must
+        not kill a live turn), only two consecutive dead probes are.
         """
-        if self.liveness_callback is None or self._stop_seen:
+        if self.liveness_callback is None:
             return
         now = time.time()
         idle_since = self._last_event_at or started_at

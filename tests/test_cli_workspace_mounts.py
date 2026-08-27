@@ -350,6 +350,99 @@ def test_relay_binding_changes_invalidate_cli_sessions_when_mount_enabled(monkey
     assert store.invalidated_agents == ["assistant"]
 
 
+def test_relay_binding_change_defers_invalidation_while_turn_is_active(monkeypatch):
+    from core import relay_bindings
+
+    store = _FakeStore()
+    monkeypatch.setenv("PAWFLOW_CLI_WORKSPACE_MOUNT", "ro")
+    monkeypatch.setattr(relay_bindings, "_get_store", lambda: store)
+    monkeypatch.setattr(
+        relay_bindings, "_has_active_cli_turn",
+        lambda _cid, _agent="", *, exclude_owner_id="":
+            not bool(exclude_owner_id))
+    relay_bindings._pending_cli_invalidations.clear()
+
+    assert relay_bindings.link_relay("conv1", "relay1") is True
+    assert store.invalidated_all == 0
+    assert ("conv1", "") in relay_bindings._pending_cli_invalidations
+
+    assert relay_bindings.flush_deferred_cli_mount_invalidations(
+        "conv1", "assistant", active_owner_id="owner-1") == 1
+    assert store.invalidated_all == 1
+    assert not relay_bindings._pending_cli_invalidations
+
+
+def test_deferred_conversation_invalidation_waits_for_sibling_turn(monkeypatch):
+    from core import relay_bindings
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    store = _FakeStore()
+    monkeypatch.setenv("PAWFLOW_CLI_WORKSPACE_MOUNT", "ro")
+    monkeypatch.setattr(relay_bindings, "_get_store", lambda: store)
+    monkeypatch.setattr(AgentLoopTask, "_active_turns", {
+        "conv1:assistant": {
+            "conversation_id": "conv1", "agent_name": "assistant",
+            "owner_id": "owner-1",
+        },
+        "conv1:reviewer": {
+            "conversation_id": "conv1", "agent_name": "reviewer",
+            "owner_id": "owner-2",
+        },
+    })
+    relay_bindings._pending_cli_invalidations.clear()
+
+    assert relay_bindings.link_relay("conv1", "relay1") is True
+    assert relay_bindings.flush_deferred_cli_mount_invalidations(
+        "conv1", "assistant", active_owner_id="owner-1") == 0
+    assert store.invalidated_all == 0
+
+    AgentLoopTask._active_turns.pop("conv1:assistant")
+    assert relay_bindings.flush_deferred_cli_mount_invalidations(
+        "conv1", "reviewer", active_owner_id="owner-2") == 1
+    assert store.invalidated_all == 1
+    assert not relay_bindings._pending_cli_invalidations
+
+
+def test_active_cleanup_flushes_mount_invalidation_before_removing_marker(
+        monkeypatch):
+    import threading
+    from tasks.ai.agent_loop import AgentLoopTask
+    import core.relay_bindings as relay_bindings
+
+    task = object.__new__(AgentLoopTask)
+    owner = "owner-1"
+    key = "conv1:assistant"
+    monkeypatch.setattr(task, "_active_conversations", {"conv1": 1})
+    monkeypatch.setattr(task, "_user_active_conversations", {"conv1"})
+    monkeypatch.setattr(task, "_active_thoughts", set())
+    monkeypatch.setattr(task, "_active_lock", threading.Lock())
+    monkeypatch.setattr(task, "_active_contexts_lock", threading.Lock())
+    monkeypatch.setattr(task, "_active_contexts", {})
+    monkeypatch.setattr(task, "_active_claude_client", {})
+    monkeypatch.setattr(task, "_active_turns", {
+        key: {"conversation_id": "conv1", "agent_name": "assistant",
+              "owner_id": owner},
+    })
+    seen = []
+
+    def flush(cid, agent="", *, active_owner_id=""):
+        seen.append((cid, agent, active_owner_id, key in task._active_turns))
+        return 1
+
+    monkeypatch.setattr(
+        relay_bindings, "flush_deferred_cli_mount_invalidations", flush)
+    ctx = {
+        "active_agent_name": "assistant",
+        "_active_turn_key": key,
+        "_active_turn_owner_id": owner,
+    }
+
+    task._decrement_active("conv1", ctx)
+
+    assert seen == [("conv1", "assistant", owner, True)]
+    assert key not in task._active_turns
+
+
 def test_interactive_cc_pool_mounts_skill_dirs():
     # The persistent interactive CC container must bind-mount skill scope
     # dirs so SKILL.md assets resolve, like the batch claude-code pool.

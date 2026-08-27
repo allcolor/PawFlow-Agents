@@ -470,6 +470,22 @@ class _AgentMediaMixin:
         """
         if ctx and ctx.get("_active_cleanup_done"):
             return
+        _agent_n = ctx.get("active_agent_name", "") if ctx else ""
+        # A relay binding may change while this turn is running. Its CLI
+        # workspace invalidation is deliberately deferred so linking a relay
+        # cannot kill the live tmux. Flush while this worker's active marker is
+        # still installed: concurrent messages remain queued until the old
+        # session has been retired, while sibling/newer owners stay protected.
+        try:
+            from core.relay_bindings import (
+                flush_deferred_cli_mount_invalidations)
+            flush_deferred_cli_mount_invalidations(
+                conversation_id, _agent_n,
+                active_owner_id=str(
+                    (ctx or {}).get("_active_turn_owner_id") or ""))
+        except Exception:
+            logger.debug("deferred CLI mount invalidation flush failed",
+                         exc_info=True)
         with self._active_lock:
             rc = self._active_conversations.get(conversation_id, 1) - 1
             if rc <= 0:
@@ -483,7 +499,6 @@ class _AgentMediaMixin:
                 if _tk:
                     self._active_thoughts.discard(_tk)
         # Clean up provider-agnostic active turn + live client references.
-        _agent_n = ctx.get("active_agent_name", "") if ctx else ""
         _cc_key = f"{conversation_id}:{_agent_n}" if _agent_n else conversation_id
         _turn_key = (ctx or {}).get("_active_turn_key") or _cc_key
         with self._active_contexts_lock:

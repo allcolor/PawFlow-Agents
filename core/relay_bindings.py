@@ -18,12 +18,15 @@ Resolution order for get_default/get_linked:
 """
 
 import logging
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 _EXTRA_KEY = "relay_bindings"
 _CONV = "*"  # conv-wide scope key
+_pending_cli_invalidations: set[tuple[str, str]] = set()
+_pending_cli_invalidations_lock = threading.Lock()
 
 
 def _stored_id(values, requested: str) -> str:
@@ -42,12 +45,8 @@ def _get_store():
     return ConversationStore.instance()
 
 
-def _invalidate_cli_after_mount_change(cid: str, agent: str = "") -> None:
-    """Invalidate CLI sessions whose workspace mounts may have changed."""
+def _perform_cli_mount_invalidation(cid: str, agent: str = "") -> None:
     try:
-        from core.cli_workspace_mounts import cli_workspace_mount_enabled
-        if not cli_workspace_mount_enabled():
-            return
         store = _get_store()
         if agent:
             store.invalidate_claude_session_for_agent(cid, agent)
@@ -55,6 +54,105 @@ def _invalidate_cli_after_mount_change(cid: str, agent: str = "") -> None:
             store.invalidate_claude_sessions(cid)
     except Exception:
         logger.debug("CLI workspace mount invalidation failed", exc_info=True)
+
+
+def _has_active_cli_turn(cid: str, agent: str = "", *,
+                         exclude_owner_id: str = "") -> bool:
+    """Whether a live agent turn can still be using mounts from this binding."""
+    try:
+        from tasks.ai.agent_loop import AgentLoopTask
+        with AgentLoopTask._active_contexts_lock:
+            turns = list(AgentLoopTask._active_turns.values())
+    except Exception:
+        logger.debug("Could not inspect active turns for relay invalidation",
+                     exc_info=True)
+        return False
+
+    wanted_agent = (agent or "").strip().casefold()
+    for turn in turns:
+        if not isinstance(turn, dict):
+            continue
+        if (exclude_owner_id
+                and str(turn.get("owner_id") or "") == exclude_owner_id):
+            continue
+        turn_cid = str(turn.get("conversation_id") or "")
+        if turn_cid != cid and not turn_cid.startswith(cid + "::"):
+            continue
+        if (wanted_agent
+                and str(turn.get("agent_name") or "").strip().casefold()
+                != wanted_agent):
+            continue
+        return True
+    return False
+
+
+def _invalidate_cli_after_mount_change(cid: str, agent: str = "") -> None:
+    """Invalidate changed CLI mounts without terminating an active turn."""
+    try:
+        from core.cli_workspace_mounts import cli_workspace_mount_enabled
+        if not cli_workspace_mount_enabled():
+            return
+        if _has_active_cli_turn(cid, agent):
+            with _pending_cli_invalidations_lock:
+                _pending_cli_invalidations.add((cid, agent))
+            logger.info(
+                "Deferred CLI workspace mount invalidation for %s%s until "
+                "the active turn exits",
+                cid[:8], f"/{agent}" if agent else "")
+            return
+        _perform_cli_mount_invalidation(cid, agent)
+    except Exception:
+        logger.debug("CLI workspace mount invalidation failed", exc_info=True)
+
+
+def flush_deferred_cli_mount_invalidations(
+        conversation_id: str, agent: str = "", *,
+        active_owner_id: str = "") -> int:
+    """Apply mount invalidations made safe by one worker's imminent exit.
+
+    The caller invokes this before removing its active-turn marker. Excluding
+    that exact owner keeps new messages queued behind the marker while the old
+    CLI session is invalidated, but still protects any sibling/newer worker.
+    """
+    ending_agent = (agent or "").strip().casefold()
+    with _pending_cli_invalidations_lock:
+        pending = sorted(_pending_cli_invalidations,
+                         key=lambda item: (bool(item[1]), item[0], item[1]))
+
+    claimed: list[tuple[str, str]] = []
+    for pending_cid, pending_agent in pending:
+        if (conversation_id != pending_cid
+                and not conversation_id.startswith(pending_cid + "::")):
+            continue
+        if (pending_agent
+                and pending_agent.strip().casefold() != ending_agent):
+            continue
+        if _has_active_cli_turn(
+                pending_cid, pending_agent,
+                exclude_owner_id=active_owner_id):
+            continue
+        with _pending_cli_invalidations_lock:
+            if (pending_cid, pending_agent) not in _pending_cli_invalidations:
+                continue
+            if pending_agent:
+                _pending_cli_invalidations.discard(
+                    (pending_cid, pending_agent))
+            else:
+                _pending_cli_invalidations.difference_update({
+                    item for item in _pending_cli_invalidations
+                    if item[0] == pending_cid
+                })
+        claimed.append((pending_cid, pending_agent))
+        if not pending_agent:
+            pending = [item for item in pending if item[0] != pending_cid]
+
+    for pending_cid, pending_agent in claimed:
+        logger.info(
+            "Applying deferred CLI workspace mount invalidation for %s%s",
+            pending_cid[:8],
+            f"/{pending_agent}" if pending_agent else "")
+        _perform_cli_mount_invalidation(pending_cid, pending_agent)
+    return len(claimed)
 
 
 def get_bindings(cid: str) -> Dict[str, Any]:

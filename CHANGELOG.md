@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.246] — 2026-08-27
+
+### Added
+
+- Added first-party Website Creator and Media Studio Workflow Agents with
+  packaged resources and flows, durable project state, media-capability
+  discovery, ComfyUI and FFmpeg execution, and live run inspection.
+- Completed the Workflow Agent runtime with durable turn coordination,
+  resumable execution, source-backed resources, scoped tool access, operational
+  controls, and reusable workflow tasks for agent, group, and media workloads.
+
+### Changed
+
+- Agent, workflow, reviewer, advisor, confirmation, media-generation, and
+  synchronization limits now default to unlimited. Only explicit positive
+  values impose execution deadlines or iteration caps; success, provider
+  failure, cancellation, or an explicit Stop otherwise ends the work.
+- Shipped flows, packages, localized authoring forms, and runtime documentation
+  now expose the same zero-or-omitted unlimited contract consistently.
+
+### Fixed
+
+- Reviewer handoffs now use stable interaction identities and resume the
+  intended final-review route without idempotency collisions or hidden
+  phase/pass ceilings.
+- AG-UI keeps a bounded connection setup while allowing unlimited streaming
+  reads by default, satisfying transport safety without terminating long agent
+  runs.
+
+### Security
+
+- Workflow tool execution, confirmations, checkpoints, and resource bindings
+  preserve run, turn, actor, and authorization provenance across recovery,
+  cancellation, and preemption boundaries.
+
 ## [1.0.0-beta.245] — 2026-08-25
 
 ### Added

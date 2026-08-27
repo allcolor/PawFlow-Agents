@@ -45,7 +45,11 @@ python scripts/build-pawcode-installer.py
 
 The build writes artifacts under `dist/pawcode-installers/`. Every platform gets a portable archive with the `pawcode` binary and install scripts. On Linux, the builder also creates a `.deb` when `dpkg-deb` is available. On macOS, it creates a `.pkg` when `pkgbuild` is available. On Windows, it creates an NSIS setup executable when `makensis` is available; otherwise the generated zip still contains `install.ps1`.
 
-The standalone binary keeps PawCode's existing behavior: it stores sessions under `~/.pawflow`, honors `PAWFLOW_SERVER`, supports `pawcode auth login`, and can run stream-JSON mode. It does not bundle or manage `pawflow-relay`.
+The builder copies PawFlow's distribution metadata into the executable so
+`pawcode --version` reports the release version. The standalone binary keeps
+PawCode's existing behavior: it stores sessions under `~/.pawflow`, honors
+`PAWFLOW_SERVER`, supports `pawcode auth login`, and can run stream-JSON mode.
+It does not bundle or manage `pawflow-relay`.
 
 ## What PawCode Adds
 

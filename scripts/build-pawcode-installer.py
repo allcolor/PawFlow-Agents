@@ -122,6 +122,8 @@ def build_binary(python: str, version: str) -> Path:
         "--onefile",
         "--name",
         "pawcode",
+        "--copy-metadata",
+        "pawflow",
         "--distpath",
         str(bin_dir),
         "--workpath",

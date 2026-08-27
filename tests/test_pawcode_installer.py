@@ -1,10 +1,19 @@
 """Tests for PawCode standalone installer build metadata."""
 
 from pathlib import Path
+import importlib.util
 import py_compile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_pawcode_builder():
+    path = ROOT / "scripts" / "build-pawcode-installer.py"
+    spec = importlib.util.spec_from_file_location("pawcode_installer_builder", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_pawcode_installer_scripts_are_declared():
@@ -49,6 +58,35 @@ def test_pawcode_installer_scripts_compile():
     py_compile.compile(str(ROOT / "scripts" / "pawcode-bin-entry.py"), doraise=True)
     py_compile.compile(str(ROOT / "scripts" / "build-pawcode-installer.py"), doraise=True)
     py_compile.compile(str(ROOT / "scripts" / "build-relay-cli-installer.py"), doraise=True)
+
+
+def test_pawcode_binary_copies_distribution_metadata(monkeypatch, tmp_path):
+    builder = _load_pawcode_builder()
+    builder.DIST_ROOT = tmp_path / "dist"
+    builder.BUILD_ROOT = tmp_path / "build"
+    builder.ENTRY = tmp_path / "pawcode-bin-entry.py"
+    builder.ENTRY.write_text("pass\n", encoding="utf-8")
+    commands = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        binary = (
+            builder.DIST_ROOT
+            / f"pawcode-1.2.3-{builder.platform_tag()}"
+            / "bin"
+            / builder.executable_name()
+        )
+        binary.write_bytes(b"binary")
+
+    monkeypatch.setattr(builder, "ensure_pyinstaller", lambda _python: None)
+    monkeypatch.setattr(builder, "_module_available", lambda _python, _module: False)
+    monkeypatch.setattr(builder, "_run", fake_run)
+
+    builder.build_binary("python", "1.2.3")
+
+    command = commands[0]
+    metadata_flag = command.index("--copy-metadata")
+    assert command[metadata_flag + 1] == "pawflow"
 
 
 def test_release_assets_workflow_publishes_all_installers():

@@ -464,6 +464,7 @@ function showAgentMenu(e, name, scope, autoconv, runtimeKind) {
   item('\u2699 ' + t('configureConversationMenu'), () => _showAgentConvConfigDialog(name));
   if (runtimeKind === 'workflow') {
     item('\u{1F4CA} ' + t('workflowRunsMenu'), () => showWorkflowRunInspector(name));
+    item('\u{1F5C2} ' + t('workflowKanbanMenu'), () => showWorkflowKanban(name));
   }
   item('\u2699 ' + t('toolsMcpOverrideMenu'), () => _showToolMcpFilterDialog(name, 'agent'));
   item('\u25B6 ' + t('select'), () => {

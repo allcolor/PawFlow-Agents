@@ -639,6 +639,9 @@ class WorkflowRunEvent(VersionedContract):
     event_type: Literal[
         "accepted", "started", "stage_started", "progress", "usage", "stage_completed",
         "checkpoint", "terminal", "error", "cancelled", "force_stopped",
+        "kanban_comment", "kanban_assignment", "kanban_command_requested",
+        "kanban_command_succeeded", "kanban_command_rejected",
+        "kanban_attachment_added", "kanban_attachment_removed", "kanban_review",
     ]
     timestamp: str
     data: dict[str, Any] = Field(default_factory=dict)

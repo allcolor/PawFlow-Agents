@@ -1,0 +1,283 @@
+.exec-dialog.workflow-kanban-dialog {
+  /* This dialog must beat the generic exec modal and operator theme rules. */
+  width: calc(100vw - 28px) !important;
+  max-width: none !important;
+  height: min(900px, calc(100vh - 28px));
+  max-height: none;
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.workflow-kanban-dialog-head,
+.workflow-kanban-toolbar,
+.workflow-kanban-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-kanban-dialog-head h3,
+.workflow-kanban-drawer-head h4 {
+  margin: 0;
+}
+
+.workflow-kanban-dialog-head button,
+.workflow-kanban-drawer-head button {
+  border: 0;
+  background: none;
+  color: var(--pf-muted);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.workflow-kanban-host {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+
+.workflow-kanban-loading,
+.workflow-kanban-error {
+  padding: 24px;
+  color: var(--pf-muted);
+}
+
+.workflow-kanban-error {
+  color: var(--pf-danger);
+}
+
+.workflow-kanban-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 8px 4px 10px;
+  background: var(--pf-bg);
+  border-bottom: 1px solid var(--pf-border);
+  flex-wrap: wrap;
+}
+
+.workflow-kanban-toolbar > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.workflow-kanban-toolbar > div span,
+.workflow-kanban-toolbar label span {
+  color: var(--pf-muted);
+  font-size: 11px;
+}
+
+.workflow-kanban-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workflow-kanban-toolbar input,
+.workflow-kanban-toolbar select {
+  max-width: 190px;
+  min-width: 0;
+}
+
+.workflow-kanban-toolbar .workflow-kanban-check {
+  flex-direction: row;
+}
+
+.workflow-kanban-board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(230px, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 12px 2px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+}
+
+.workflow-kanban-lane {
+  min-width: 0;
+  max-height: calc(100vh - 190px);
+  overflow-y: auto;
+  border: 1px solid var(--pf-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--pf-sidebar) 82%, var(--pf-bg));
+  scroll-snap-align: start;
+}
+
+.workflow-kanban-lane > header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--pf-border);
+  background: var(--pf-sidebar);
+}
+
+.workflow-kanban-lane > header h4 {
+  margin: 0;
+  font-size: 12px;
+}
+
+.workflow-kanban-lane > header span {
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--pf-bg);
+  text-align: center;
+  font-size: 10px;
+}
+
+.workflow-kanban-lane-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+.workflow-kanban-card {
+  border: 1px solid var(--pf-border);
+  border-radius: 7px;
+  background: var(--pf-bg);
+  box-shadow: 0 1px 4px color-mix(in srgb, #000 18%, transparent);
+  overflow: hidden;
+}
+
+.workflow-kanban-card[draggable="true"] {
+  cursor: grab;
+}
+
+.workflow-kanban-card.related {
+  border-color: var(--pf-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--pf-accent) 35%, transparent);
+}
+
+.workflow-kanban-card-open {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 9px;
+  border: 0;
+  background: none;
+  color: var(--pf-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workflow-kanban-card-open strong {
+  overflow-wrap: anywhere;
+}
+
+.workflow-kanban-status {
+  font-size: 10px;
+  color: var(--pf-muted);
+  text-transform: uppercase;
+}
+
+.workflow-kanban-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  padding: 0 9px 7px;
+  color: var(--pf-muted);
+  font-size: 10px;
+}
+
+.workflow-kanban-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 9px 9px;
+}
+
+.workflow-kanban-badge {
+  display: inline-flex;
+  padding: 2px 5px;
+  border: 1px solid var(--pf-border);
+  border-radius: 999px;
+  background: var(--pf-sidebar);
+  color: var(--pf-text);
+  font-size: 9px;
+}
+
+.workflow-kanban-empty {
+  margin: 0;
+  padding: 10px;
+  color: var(--pf-muted);
+  font-size: 11px;
+}
+
+.workflow-kanban-load-more {
+  display: block;
+  margin: 4px auto 14px;
+}
+
+.workflow-kanban-drawer {
+  position: fixed;
+  z-index: 10010;
+  top: max(14px, 5vh);
+  right: max(14px, 3vw);
+  width: min(440px, calc(100vw - 28px));
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid var(--pf-border);
+  border-radius: 10px;
+  background: var(--pf-bg);
+  color: var(--pf-text);
+  box-shadow: 0 16px 50px color-mix(in srgb, #000 45%, transparent);
+}
+
+.workflow-kanban-drawer-head > div {
+  min-width: 0;
+}
+
+.workflow-kanban-drawer-head h4 {
+  overflow-wrap: anywhere;
+}
+
+.workflow-kanban-drawer-head span {
+  color: var(--pf-muted);
+  font-size: 11px;
+}
+
+.workflow-kanban-summary {
+  display: grid;
+  grid-template-columns: minmax(100px, .35fr) minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 14px 0;
+  font-size: 11px;
+}
+
+.workflow-kanban-summary dt {
+  color: var(--pf-muted);
+  font-weight: 700;
+}
+
+.workflow-kanban-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.workflow-kanban-relations {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 8px 0 12px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--pf-sidebar);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}

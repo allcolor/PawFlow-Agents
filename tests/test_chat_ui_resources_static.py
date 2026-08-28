@@ -195,6 +195,16 @@ def test_skill_list_uses_real_newlines_and_symbols():
     assert "lines.join('\\n')" in js
 
 
+def test_message_metadata_uses_visible_chevron_icons():
+    css = Path("tasks/io/chat_ui/css/40_delegates.css").read_text(
+        encoding="utf-8")
+
+    assert r"\u25B8" not in css
+    assert r"\u25BE" not in css
+    assert "content: '▸ '" in css
+    assert "content: '▾ '" in css
+
+
 def test_skill_creator_can_assign_after_create():
     js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 

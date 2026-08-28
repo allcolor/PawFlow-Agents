@@ -46,6 +46,42 @@ def test_workflow_agent_labels_exist_in_every_locale():
         "workflowRunZoomIn", "workflowRunZoomOut", "workflowRunResetView",
         "workflowRunCurrentStage",
         "workflowRunExecution", "workflowRunNoExecution",
+        "workflowKanbanMenu", "workflowKanbanViews", "workflowKanbanGraph",
+        "workflowKanbanTimeline", "workflowKanbanKanban",
+        "workflowKanbanTitle", "workflowKanbanRuns", "workflowKanbanTasks",
+        "workflowKanbanBackRuns", "workflowKanbanPageSize",
+        "workflowKanbanLaneQueued", "workflowKanbanLaneRunning",
+        "workflowKanbanLaneWaiting", "workflowKanbanLaneAttention",
+        "workflowKanbanLaneFailed", "workflowKanbanLaneDone",
+        "workflowKanbanLaneNotStarted", "workflowKanbanLaneReady",
+        "workflowKanbanLaneBlocked", "workflowKanbanLaneUnknown",
+        "workflowKanbanParents", "workflowKanbanChildren",
+        "workflowKanbanOwner", "workflowKanbanComments",
+        "workflowKanbanRelations", "workflowKanbanUnassigned",
+        "workflowKanbanEvidence", "workflowKanbanDetails",
+        "workflowKanbanOpenTasks", "workflowKanbanOpenGraph",
+        "workflowKanbanOpenInteraction", "workflowKanbanCancel",
+        "workflowKanbanForceStop", "workflowKanbanMoveAction",
+        "workflowKanbanApply", "workflowKanbanAssign",
+        "workflowKanbanAddComment", "workflowKanbanComment",
+        "workflowKanbanNoComments", "workflowKanbanEmptyLane",
+        "workflowKanbanLoadMore", "workflowKanbanPlanRejected",
+        "workflowKanbanConfirmAction", "workflowKanbanUpdated",
+        "workflowKanbanAttachments", "workflowKanbanNoAttachments",
+        "workflowKanbanAddAttachment", "workflowKanbanAttach",
+        "workflowKanbanReviews", "workflowKanbanNoReviews",
+        "workflowKanbanReviewDecision", "workflowKanbanReviewApproved",
+        "workflowKanbanReviewChanges", "workflowKanbanReviewReopen",
+        "workflowKanbanReviewComment", "workflowKanbanReviewSubmit",
+        "workflowKanbanGeneration", "workflowKanbanGenerationState",
+        "workflowKanbanGenerationStale", "workflowKanbanGenerationCurrent",
+        "workflowKanbanWorker", "workflowKanbanWorkerLive",
+        "workflowKanbanWorkerNone", "workflowKanbanCreateProposal",
+        "workflowKanbanUnsupportedTransitions", "workflowKanbanProject",
+        "workflowKanbanFilter", "workflowKanbanAllProjects",
+        "workflowKanbanHideDone", "workflowKanbanSavedView",
+        "workflowKanbanSaveView", "workflowKanbanSavedViewName",
+        "workflowKanbanProposalPrompt", "workflowKanbanProposalRequest",
     }
     for locale in ("en", "fr", "es"):
         data = json.loads((ROOT / "i18n" / f"{locale}.json").read_text(
@@ -161,6 +197,71 @@ def test_workflow_run_inspector_is_accessible_redacted_and_recovery_aware():
     assert "showWorkflowRunInspector(name)" in menus
     assert "_pfpJsArg(aRuntime)" in renderer
     assert '"workflow_run_inspector.js"' in serve
+
+
+def test_workflow_kanban_is_projection_first_accessible_live_and_mobile():
+    board = (ROOT / "workflow_kanban.js").read_text(encoding="utf-8")
+    inspector = (ROOT / "workflow_run_inspector.js").read_text(encoding="utf-8")
+    menus = (ROOT / "resources_menus.js").read_text(encoding="utf-8")
+    sse = (ROOT / "sse_handlers_a.js").read_text(encoding="utf-8")
+    css = "".join(
+        (ROOT / "css" / name).read_text(encoding="utf-8")
+        for name in (
+            "52_workflow_kanban.css",
+            "53_workflow_kanban_detail.css",
+        )
+    )
+    serve = Path("tasks/io/serve_chat_ui.py").read_text(encoding="utf-8")
+
+    assert "workflow_kanban_snapshot" in board
+    assert "workflow_kanban_comment" in board
+    assert "workflow_kanban_assign" in board
+    assert "workflow_kanban_plan_command" in board
+    assert "workflow_kanban_execute_command" in board
+    assert "workflow_kanban_attach" in board
+    assert "workflow_kanban_review" in board
+    assert board.index("workflow_kanban_plan_command") < board.index(
+        "workflow_kanban_execute_command"
+    )
+    assert "set_status" not in board
+    assert "escapeHtml(comment.body || '')" in board
+    assert 'role="list"' in board and 'role="listitem"' in board
+    assert "data-kanban-target" in board and "data-kanban-apply" in board
+    assert "addEventListener('dragstart'" in board
+    assert "addEventListener('drop'" in board
+    assert "plan.requires_confirmation" in board
+    assert "idempotency_key: _workflowKanbanUuid()" in board
+    assert "expected_generation" in board
+    assert "uploadFileToStore" in board
+    assert "localStorage.setItem(_workflowKanbanViewsKey" in board
+    assert "cmdPlan('/plan ' + request" in board
+    assert "workflowKanbanUnsupportedTransitions" in board
+    assert "blocking_parents" in Path("core/workflow_kanban.py").read_text(encoding="utf-8")
+    assert "pawflow:workflow-kanban-updated" in board
+    assert "refreshPending" in board
+    assert "workflow.kanban.updated" in sse
+    assert "new CustomEvent('pawflow:workflow-kanban-updated'" in sse
+    assert 'data-run-view="graph"' in inspector
+    assert 'data-run-view="timeline"' in inspector
+    assert 'data-run-view="kanban"' in inspector
+    assert "mountWorkflowKanban" in inspector
+    assert "data.actor_user_id || data.assigned_by_user_id" in inspector
+    assert "data-flow-task" in inspector and 'tabindex="0"' in inspector
+    assert "showWorkflowKanban(name)" in menus
+    assert '"workflow_kanban.js"' in serve
+    assert '"52_workflow_kanban.css"' in serve
+    assert '"53_workflow_kanban_detail.css"' in serve
+    assert ".exec-dialog.workflow-kanban-dialog" in css
+    assert "width: calc(100vw - 28px) !important" in css
+    assert "max-width: none !important" in css
+    assert "grid-auto-columns: minmax(230px, 1fr)" in css
+    assert "width: calc(100vw - 12px) !important" in css
+    assert "box-sizing: border-box" in css
+    assert "position: sticky" in css
+    assert "overflow-x: auto" in css
+    assert "@media (max-width: 760px)" in css
+    assert "grid-auto-flow: column" in css
+    assert "prefers-reduced-motion" in css
 
 
 def test_workflow_progress_drives_active_agents_and_typing_immediately():

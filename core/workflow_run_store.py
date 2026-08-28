@@ -807,6 +807,9 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                     and int(active["generation"]) >= row["run_generation"]):
                 return False
             connection.execute(
+                "DELETE FROM workflow_llm_reservations WHERE run_id=?",
+                (run_id,))
+            connection.execute(
                 """INSERT INTO workflow_active_runs VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT(conversation_id, agent_key) DO UPDATE SET
                        run_id=excluded.run_id,
@@ -867,20 +870,26 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
         return tuple(self._row(row) for row in rows)
 
     def list_runs(self, conversation_id: str, agent_name: str = "",
-                  limit: int = 50) -> tuple[dict[str, Any], ...]:
+                  limit: int = 50, offset: int = 0
+                  ) -> tuple[dict[str, Any], ...]:
         """List newest durable runs for one authorized conversation."""
         conversation_id = _required(conversation_id, "conversation_id")
-        count = max(1, min(200, int(limit)))
+        count = int(limit)
+        position = int(offset)
+        if count < 1:
+            raise ValueError("limit must be positive")
+        if position < 0:
+            raise ValueError("offset must be non-negative")
         values: list[Any] = [conversation_id]
         where = "conversation_id=?"
         if str(agent_name or "").strip():
             where += " AND agent_key=?"
             values.append(_agent(agent_name))
-        values.append(count)
+        values.extend((count, position))
         with self._lock, self._connect() as connection:
             rows = connection.execute(
                 f"SELECT * FROM workflow_runs WHERE {where} "  # nosec B608 - fixed clauses only
-                "ORDER BY created_at DESC LIMIT ?", values).fetchall()
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?", values).fetchall()
         return tuple(self._row(row) for row in rows)
 
     def append_event(self, run_id: str, event_type: str,
@@ -910,6 +919,63 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
                 """UPDATE workflow_runs SET last_event_sequence=?, updated_at=?
                    WHERE run_id=?""", (sequence, now, run_id))
         return event
+
+    def append_event_once(
+            self, run_id: str, event_type: str, data: dict[str, Any],
+            *, idempotency_key: str) -> tuple[dict[str, Any], bool]:
+        """Append one idempotent run event without creating a board-side store.
+
+        The existing immutable event journal remains the source of truth.  The
+        transaction serializes lookup and insertion, so concurrent retries of
+        the same UI command observe the original event.
+        """
+
+        run_id = _required(run_id, "run_id")
+        event_type = _required(event_type, "event_type")
+        key = _required(idempotency_key, "idempotency_key")
+        payload = dict(data)
+        payload["idempotency_key"] = key
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT last_event_sequence FROM workflow_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("workflow run does not exist")
+            existing_rows = connection.execute(
+                "SELECT event_json FROM workflow_run_events "
+                "WHERE run_id=? AND event_type=? ORDER BY sequence",
+                (run_id, event_type),
+            ).fetchall()
+            for existing_row in existing_rows:
+                existing = json.loads(existing_row["event_json"])
+                existing_data = existing.get("data")
+                if (isinstance(existing_data, dict)
+                        and existing_data.get("idempotency_key") == key):
+                    if existing_data != payload:
+                        raise ValueError(
+                            "idempotency key already identifies a different event")
+                    return existing, False
+            sequence = int(row["last_event_sequence"]) + 1
+            event = {
+                "event_id": str(uuid.uuid4()), "run_id": run_id,
+                "sequence": sequence, "event_type": event_type,
+                "timestamp": _utc(now), "data": payload,
+            }
+            connection.execute(
+                """INSERT INTO workflow_run_events
+                   (run_id, sequence, event_id, event_type, event_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (run_id, sequence, event["event_id"], event_type,
+                 _json(event), now),
+            )
+            connection.execute(
+                "UPDATE workflow_runs SET last_event_sequence=?, updated_at=? "
+                "WHERE run_id=?", (sequence, now, run_id),
+            )
+        return event, True
 
     def list_events(self, run_id: str) -> tuple[dict[str, Any], ...]:
         with self._lock, self._connect() as connection:

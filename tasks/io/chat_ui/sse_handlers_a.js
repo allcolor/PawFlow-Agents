@@ -186,6 +186,14 @@ function _sseWireA() {
     }));
   });
 
+  eventSource.addEventListener('workflow.kanban.updated', (e) => {
+    lastSSEActivity = Date.now();
+    const data = e.data ? JSON.parse(e.data) : {};
+    window.dispatchEvent(new CustomEvent('pawflow:workflow-kanban-updated', {
+      detail: data,
+    }));
+  });
+
   eventSource.addEventListener('agui_activity', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data || '{}');

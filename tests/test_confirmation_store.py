@@ -443,6 +443,23 @@ def test_park_wait_is_idempotent_for_the_same_flowfile_and_task(store):
     assert len(store.list_waits(status="waiting")) == 1
 
 
+def test_list_waits_for_instances_is_exact_and_not_a_global_page(store):
+    first = store.park_wait(
+        signal_id="interaction:req_1", instance_id="workflow:wr-1",
+        task_id="left", flowfile=FlowFile(process_id="process-1"),
+    )
+    second = store.park_wait(
+        signal_id="interaction:req_2", instance_id="workflow:wr-2",
+        task_id="right", flowfile=FlowFile(process_id="process-2"),
+    )
+
+    rows = store.list_waits_for_instances(["workflow:wr-2"])
+
+    assert [row["wait_id"] for row in rows] == [second]
+    assert first not in {row["wait_id"] for row in rows}
+    assert store.list_waits_for_instances([]) == []
+
+
 def test_interaction_resolution_stamps_normalized_route_attributes(store):
     store.notify_signal("interaction:req_1", {
         "status": "answered", "answer": ["red", "blue"]})

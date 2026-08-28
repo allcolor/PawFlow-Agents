@@ -60,13 +60,48 @@ _EVENT_KEYS = {
         "task_id", "phase", "iteration", "tool_call_id", "tool_name",
         "content", "outcome",
     },
+    "kanban_comment": {
+        "comment_id", "task_id", "author_label", "body", "created_at",
+    },
+    "kanban_assignment": {
+        "assignment_id", "task_id", "assignee", "assigned_by_user_id",
+        "created_at",
+    },
+    "kanban_attachment_added": {
+        "attachment_id", "task_id", "file_id", "label", "added_by_user_id",
+        "created_at",
+    },
+    "kanban_attachment_removed": {
+        "attachment_id", "task_id", "removed_by_user_id", "created_at",
+    },
+    "kanban_review": {
+        "review_id", "task_id", "decision", "reviewer_user_id", "comment",
+        "created_at",
+    },
+    "kanban_command_requested": {
+        "command_id", "command", "result_code", "source_lane", "target_lane",
+        "task_id", "actor_user_id", "created_at",
+    },
+    "kanban_command_succeeded": {
+        "command_id", "command", "result_code", "source_lane", "target_lane",
+        "task_id", "actor_user_id", "created_at",
+    },
+    "kanban_command_rejected": {
+        "command_id", "command", "result_code", "source_lane", "target_lane",
+        "task_id", "actor_user_id", "created_at",
+    },
 }
 _EVENT_TEXT_KEYS = {
     "reason", "label", "stage", "service_id", "task_id", "task_type",
     "group_run_id", "group_name", "member_id", "disposition", "stop_reason",
     "run_id", "turn_id", "tool_call_id", "tool_name", "phase", "code",
     "message", "error_id", "outcome",
-    "role", "model",
+    "role", "model", "comment_id", "author_label", "created_at",
+    "assignment_id", "assignee", "command_id", "command", "result_code",
+    "source_lane", "target_lane", "actor_user_id",
+    "assigned_by_user_id", "attachment_id", "file_id", "label",
+    "added_by_user_id", "removed_by_user_id", "review_id", "decision",
+    "reviewer_user_id", "comment",
 }
 _EVENT_NUMERIC_KEYS = {
     "recovery_count", "attempt", "authorization_revision", "member_count",
@@ -136,6 +171,25 @@ def _citations(value: Any) -> list[dict[str, str]]:
     return result
 
 
+def _artifacts(value: Any) -> list[dict[str, str]]:
+    raw = value if isinstance(value, dict) else {}
+    artifacts = raw.get("artifacts")
+    if not isinstance(artifacts, (list, tuple)):
+        return []
+    result = []
+    for item in artifacts[:100]:
+        if not isinstance(item, dict):
+            continue
+        row = {
+            key: _safe_text(item.get(key), 500)
+            for key in ("kind", "id", "label")
+            if item.get(key) not in (None, "")
+        }
+        if row:
+            result.append(row)
+    return result
+
+
 def _event_projection(event: dict[str, Any]) -> dict[str, Any]:
     event_type = str(event.get("event_type") or "")
     raw = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -174,6 +228,8 @@ def _event_projection(event: dict[str, Any]) -> dict[str, Any]:
                 max_items=64 if key == "structured_content" else 32,
                 max_depth=6,
             )
+        elif key in {"body", "comment"}:
+            value = _safe_text(value, 4000)
         elif key in _EVENT_TEXT_KEYS:
             value = _safe_text(value, 160 if key != "reason" else 240)
         elif key in _EVENT_NUMERIC_KEYS:
@@ -222,6 +278,7 @@ def workflow_run_summary(
         "invocation_mode": str(run.get("invocation_mode") or ""),
         "permission_mode": str(run.get("permission_mode") or ""),
         "usage": _usage(run.get("usage")),
+        "artifacts": _artifacts(run.get("staged_result")),
         "claimed_count": len(run.get("claimed_ids") or []),
         "terminal_commit": {
             "message_committed": bool(run.get("message_committed")),

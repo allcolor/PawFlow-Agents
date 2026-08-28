@@ -1,0 +1,231 @@
+.workflow-kanban-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.workflow-kanban-detail-actions .danger {
+  color: var(--pf-danger);
+  border-color: var(--pf-danger);
+}
+
+.workflow-kanban-move,
+.workflow-kanban-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: end;
+  margin: 12px 0;
+}
+
+.workflow-kanban-move > span {
+  grid-column: 1 / -1;
+  color: var(--pf-muted);
+  font-size: 11px;
+}
+
+.workflow-kanban-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--pf-muted);
+  font-size: 11px;
+}
+
+.workflow-kanban-form input,
+.workflow-kanban-form textarea,
+.workflow-kanban-form select,
+.workflow-kanban-move select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.workflow-kanban-disabled-reason {
+  margin: 8px 0 14px;
+  color: var(--pf-muted);
+  font-size: 10px;
+}
+
+.workflow-kanban-form textarea {
+  min-height: 78px;
+  resize: vertical;
+}
+
+.workflow-kanban-drawer section h5 {
+  margin: 18px 0 7px;
+}
+
+.workflow-kanban-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-kanban-attachments,
+.workflow-kanban-reviews {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-kanban-attachments li,
+.workflow-kanban-reviews li {
+  padding: 8px;
+  border: 1px solid var(--pf-border);
+  border-radius: 6px;
+  background: var(--pf-sidebar);
+  overflow-wrap: anywhere;
+}
+
+.workflow-kanban-attachments li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.workflow-kanban-attachments span,
+.workflow-kanban-reviews time {
+  color: var(--pf-muted);
+  font-size: 10px;
+}
+
+.workflow-kanban-reviews li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-kanban-reviews p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  font-size: 11px;
+}
+
+.workflow-kanban-diagnostics {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--pf-sidebar);
+}
+
+.workflow-kanban-comments li {
+  padding: 8px;
+  border: 1px solid var(--pf-border);
+  border-radius: 6px;
+  background: var(--pf-sidebar);
+}
+
+.workflow-kanban-comments li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.workflow-kanban-comments time {
+  color: var(--pf-muted);
+}
+
+.workflow-kanban-comments p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.workflow-kanban-card:focus-visible,
+.workflow-kanban-card-open:focus-visible,
+.workflow-kanban-host button:focus-visible,
+.workflow-kanban-host select:focus-visible,
+.workflow-kanban-host input:focus-visible,
+.workflow-kanban-host textarea:focus-visible {
+  outline: 2px solid var(--pf-accent);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+@media (max-width: 760px) {
+  .exec-dialog.workflow-kanban-dialog {
+    width: calc(100vw - 12px) !important;
+    height: calc(100dvh - 12px);
+  }
+
+  .workflow-kanban-toolbar {
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .workflow-kanban-toolbar label,
+  .workflow-kanban-toolbar button,
+  .workflow-kanban-toolbar input,
+  .workflow-kanban-toolbar select {
+    max-width: 100%;
+  }
+
+  .workflow-kanban-board {
+    display: block;
+    overflow-x: visible;
+    padding: 8px 0;
+  }
+
+  .workflow-kanban-lane {
+    max-height: none;
+    margin-bottom: 10px;
+    overflow: visible;
+  }
+
+  .workflow-kanban-lane-cards {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(230px, 86vw);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: x proximity;
+  }
+
+  .workflow-kanban-card {
+    scroll-snap-align: start;
+  }
+
+  .workflow-kanban-drawer {
+    inset: 6px;
+    width: auto;
+    max-height: calc(100dvh - 12px);
+    box-sizing: border-box;
+  }
+
+  .workflow-kanban-move,
+  .workflow-kanban-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-kanban-card,
+  .workflow-kanban-drawer,
+  .workflow-kanban-host * {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}

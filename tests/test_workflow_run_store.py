@@ -2,8 +2,8 @@ import json
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -336,6 +336,40 @@ def test_recoverable_runs_and_step_cache_survive_restart(store):
                 "started", "progress"]
 
 
+def test_recovery_releases_only_orphaned_llm_reservations(store):
+    context = _create_running(store, max_llm_calls=0)
+    assert store.begin_llm_step(
+        context.run_id, "writer", "input-hash") is None
+    with pytest.raises(RuntimeError, match="already in progress"):
+        store.begin_llm_step(context.run_id, "writer", "input-hash")
+
+    reopened = WorkflowRunStore(store.database_path)
+    assert reopened.reacquire(context.run_id, 60)
+    assert reopened.begin_llm_step(
+        context.run_id, "writer", "input-hash") is None
+
+
+def test_run_event_idempotency_returns_original_and_rejects_payload_drift(store):
+    context = _create_running(store)
+    key = str(uuid.uuid4())
+
+    first, created = store.append_event_once(
+        context.run_id, "kanban_command_requested",
+        {"command": "cancel"}, idempotency_key=key)
+    duplicate, duplicate_created = store.append_event_once(
+        context.run_id, "kanban_command_requested",
+        {"command": "cancel"}, idempotency_key=key)
+
+    assert created is True
+    assert duplicate_created is False
+    assert duplicate == first
+    assert len(store.list_events(context.run_id)) == 1
+    with pytest.raises(ValueError, match="different event"):
+        store.append_event_once(
+            context.run_id, "kanban_command_requested",
+            {"command": "force_stop"}, idempotency_key=key)
+
+
 def test_retryable_failure_keeps_exact_checkpoint_and_retries_once(store):
     context = _create_running(store)
     checkpoint = FlowFile(content=b"before task", attributes={"stage": "ready"})
@@ -425,6 +459,40 @@ def test_retryable_failure_projection_and_action_use_explicit_retry(
     assert json.loads(flowfile.get_content())["recovery"]["status"] == "retrying"
     runtime.retry.assert_called_once_with(context.run_id)
     runtime.recover.assert_not_called()
+
+
+def test_workflow_run_action_preserves_requested_page_size(monkeypatch):
+    from tasks.ai.actions._agentres_k8 import _handle_agentres_k8
+
+    captured = {}
+
+    def list_runs(conversation_id, agent_name, limit, **_kwargs):
+        captured.update({
+            "conversation_id": conversation_id,
+            "agent_name": agent_name,
+            "limit": limit,
+        })
+        return []
+
+    runtime = MagicMock()
+    runtime.live_run_ids.return_value = ()
+    monkeypatch.setattr(
+        "core.workflow_agent_runtime.WorkflowAgentRuntime.instance",
+        classmethod(lambda cls: runtime))
+    monkeypatch.setattr(
+        "core.workflow_run_store.WorkflowRunStore.instance",
+        classmethod(lambda cls: MagicMock()))
+    monkeypatch.setattr(
+        "core.workflow_run_inspector.list_workflow_runs", list_runs)
+
+    flowfile = FlowFile()
+    _handle_agentres_k8(
+        None, "list_workflow_runs",
+        {"conversation_id": "c1", "agent_name": "Demo", "limit": 350},
+        None, "alice", flowfile)
+
+    assert captured == {
+        "conversation_id": "c1", "agent_name": "Demo", "limit": 350}
 
 
 def test_runtime_retry_restores_checkpoint_and_starts_one_worker(
@@ -740,6 +808,265 @@ def test_workflow_run_snapshot_returns_list_and_selected_detail_once(monkeypatch
         "c1", "Demo", 25, store=run_store, live_run_ids={"wr-1"})
     inspected.assert_called_once_with(
         "wr-1", store=run_store, live_run_ids={"wr-1"})
+
+
+def test_workflow_kanban_actions_scope_actor_task_and_event_identity(store, monkeypatch):
+    from core.workflow_agent_resources import ResolvedAgentWorkflow
+    from tasks.ai.actions._agentres_k8 import _handle_agentres_k8
+
+    context = _create_running(store)
+    monkeypatch.setattr(
+        "core.workflow_run_store.WorkflowRunStore.instance", classmethod(lambda cls: store)
+    )
+    runtime = MagicMock()
+    runtime.live_run_ids.return_value = {context.run_id}
+    monkeypatch.setattr(
+        "core.workflow_agent_runtime.WorkflowAgentRuntime.instance",
+        classmethod(lambda cls: runtime),
+    )
+    files = MagicMock()
+    files.get_metadata_required.return_value = {
+        "filename": "evidence.txt", "content_type": "text/plain", "size": 12,
+    }
+    monkeypatch.setattr(
+        "core.file_store.FileStore.instance", classmethod(lambda cls: files)
+    )
+    resolved = ResolvedAgentWorkflow(
+        definition={
+            "tasks": {"work": {"type": "agentLoop", "label": "Work"}},
+            "relations": [],
+        },
+        ref=context.flow_ref,
+    )
+    monkeypatch.setattr(
+        "core.workflow_agent_resources.resolve_exact_agent_workflow",
+        lambda *_args, **_kwargs: resolved,
+    )
+
+    comment_key = str(uuid.uuid4())
+    comment_body = {
+        "conversation_id": "c1",
+        "run_id": context.run_id,
+        "task_id": "work",
+        "body": "api_key=secret needs review",
+        "expected_generation": context.run_generation,
+        "idempotency_key": comment_key,
+        "author_user_id": "mallory",
+        "author_label": "Mallory",
+    }
+    flowfile = FlowFile()
+    _handle_agentres_k8(
+        None,
+        "workflow_kanban_comment",
+        comment_body,
+        None,
+        "alice",
+        flowfile,
+    )
+    response = json.loads(flowfile.get_content())
+
+    assert response["ok"] is True
+    event = response["event"]
+    uuid.UUID(event["event_id"])
+    datetime.fromisoformat(event["timestamp"])
+    uuid.UUID(event["data"]["comment_id"])
+    datetime.fromisoformat(event["data"]["created_at"])
+    assert event["data"]["author_user_id"] == "alice"
+    assert event["data"]["author_label"] == "alice"
+    assert "secret" not in event["data"]["body"]
+
+    duplicate = FlowFile()
+    _handle_agentres_k8(
+        None, "workflow_kanban_comment", comment_body, None, "alice", duplicate
+    )
+    duplicate_payload = json.loads(duplicate.get_content())
+    assert duplicate_payload["duplicate"] is True
+    assert duplicate_payload["event"]["event_id"] == event["event_id"]
+
+    assigned = FlowFile()
+    _handle_agentres_k8(
+        None,
+        "workflow_kanban_assign",
+        {
+            "conversation_id": "c1",
+            "run_id": context.run_id,
+            "task_id": "work",
+            "assignee": "Ops",
+            "expected_generation": context.run_generation,
+            "idempotency_key": str(uuid.uuid4()),
+            "assigned_by_user_id": "mallory",
+        },
+        None,
+        "alice",
+        assigned,
+    )
+    assignment = json.loads(assigned.get_content())["event"]
+    uuid.UUID(assignment["data"]["assignment_id"])
+    datetime.fromisoformat(assignment["data"]["created_at"])
+    assert assignment["data"]["assignee"] == "Ops"
+    assert assignment["data"]["assigned_by_user_id"] == "alice"
+
+    attached = FlowFile()
+    _handle_agentres_k8(
+        None,
+        "workflow_kanban_attach",
+        {
+            "conversation_id": "c1",
+            "run_id": context.run_id,
+            "task_id": "work",
+            "file_id": "owned-file",
+            "expected_generation": context.run_generation,
+            "idempotency_key": str(uuid.uuid4()),
+        },
+        None,
+        "alice",
+        attached,
+    )
+    attachment = json.loads(attached.get_content())["event"]
+    assert attachment["event_type"] == "kanban_attachment_added"
+    assert attachment["data"]["file_id"] == "owned-file"
+    files.get_metadata_required.assert_called_once_with(
+        "owned-file", user_id="alice", conversation_id="c1"
+    )
+
+    for decision in ("approved", "reopened"):
+        reviewed = FlowFile()
+        _handle_agentres_k8(
+            None,
+            "workflow_kanban_review",
+            {
+                "conversation_id": "c1",
+                "run_id": context.run_id,
+                "task_id": "work",
+                "decision": decision,
+                "comment": "reviewed",
+                "expected_generation": context.run_generation,
+                "idempotency_key": str(uuid.uuid4()),
+            },
+            None,
+            "alice",
+            reviewed,
+        )
+        assert json.loads(reviewed.get_content())["event"]["data"]["decision"] == decision
+
+    stale = FlowFile()
+    _handle_agentres_k8(
+        None,
+        "workflow_kanban_assign",
+        {
+            "conversation_id": "c1",
+            "run_id": context.run_id,
+            "task_id": "work",
+            "assignee": "Ops",
+            "expected_generation": context.run_generation + 1,
+            "idempotency_key": str(uuid.uuid4()),
+        },
+        None,
+        "alice",
+        stale,
+    )
+    assert stale.get_attribute("http.response.status") == "409"
+    assert json.loads(stale.get_content())["code"] == "stale_generation"
+
+    unknown = FlowFile()
+    _handle_agentres_k8(
+        None,
+        "workflow_kanban_assign",
+        {
+            "conversation_id": "c1",
+            "run_id": context.run_id,
+            "task_id": "missing",
+            "assignee": "Ops",
+            "expected_generation": context.run_generation,
+            "idempotency_key": str(uuid.uuid4()),
+        },
+        None,
+        "alice",
+        unknown,
+    )
+    assert unknown.get_attribute("http.response.status") == "404"
+
+    cross_conversation = FlowFile()
+    _handle_agentres_k8(
+        None,
+        "workflow_kanban_comment",
+        {
+            "conversation_id": "other",
+            "run_id": context.run_id,
+            "body": "not allowed",
+        },
+        None,
+        "alice",
+        cross_conversation,
+    )
+    assert cross_conversation.get_attribute("http.response.status") == "404"
+
+
+def test_workflow_kanban_command_executes_once_and_returns_original_result(
+        store, monkeypatch):
+    from core.workflow_agent_resources import ResolvedAgentWorkflow
+    from tasks.ai.actions._agentres_k8 import _handle_agentres_k8
+
+    context = _create_running(store)
+    monkeypatch.setattr(
+        "core.workflow_run_store.WorkflowRunStore.instance",
+        classmethod(lambda cls: store))
+    runtime = MagicMock()
+    runtime.live_run_ids.return_value = {context.run_id}
+    runtime.cancel_run.return_value = True
+    monkeypatch.setattr(
+        "core.workflow_agent_runtime.WorkflowAgentRuntime.instance",
+        classmethod(lambda cls: runtime))
+    interactions = MagicMock()
+    interactions.list_waits_for_instances.return_value = []
+    monkeypatch.setattr(
+        "core.confirmation_store.ConfirmationStore.instance",
+        classmethod(lambda cls: interactions))
+    resolved = ResolvedAgentWorkflow(definition={
+        "tasks": {"work": {"type": "agentLoop"}}, "relations": [],
+    }, ref=context.flow_ref)
+    monkeypatch.setattr(
+        "core.workflow_agent_resources.resolve_exact_agent_workflow",
+        lambda *_args, **_kwargs: resolved)
+    command_id = str(uuid.uuid4())
+    body = {
+        "conversation_id": "c1", "run_id": context.run_id,
+        "target_lane": "done", "idempotency_key": command_id,
+        "expected_generation": context.run_generation,
+    }
+
+    first = FlowFile()
+    _handle_agentres_k8(
+        None, "workflow_kanban_execute_command", body,
+        None, "alice", first)
+    second = FlowFile()
+    _handle_agentres_k8(
+        None, "workflow_kanban_execute_command", body,
+        None, "alice", second)
+
+    first_result = json.loads(first.get_content())
+    duplicate_result = json.loads(second.get_content())
+    assert first_result["ok"] is True
+    assert duplicate_result["ok"] is True
+    assert duplicate_result["duplicate"] is True
+    assert duplicate_result["result"] == first_result["result"]
+    runtime.cancel_run.assert_called_once_with(
+        context.run_id, "kanban_cancel", force=False)
+    events = store.list_events(context.run_id)
+    assert [event["event_type"] for event in events] == [
+        "kanban_command_requested", "kanban_command_succeeded"]
+    assert all(event["data"]["command_id"] == command_id for event in events)
+
+
+def test_workflow_kanban_snapshot_requires_conversation_id():
+    from tasks.ai.actions._agentres_k8 import _handle_agentres_k8
+
+    flowfile = FlowFile()
+    _handle_agentres_k8(
+        None, "workflow_kanban_snapshot", {}, None, "alice", flowfile)
+
+    assert flowfile.get_attribute("http.response.status") == "400"
+    assert json.loads(flowfile.get_content())["error"] == "Missing conversation_id"
 
 
 def test_workflow_operations_reports_scoped_metrics_and_alerts(

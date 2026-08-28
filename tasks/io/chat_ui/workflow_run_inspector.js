@@ -84,6 +84,8 @@ function _workflowRunMessageValueHtml(data) {
 
 function _workflowRunStageHtml(event) {
   const data = event.data || {};
+  const auditActor = data.actor_user_id || data.assigned_by_user_id;
+  const audit = [data.command, data.result_code, auditActor].filter(Boolean).join(' \u00b7 ');
   const label = data.label
     || (event.event_type === 'agent_message' && data.role
       ? data.role + (data.model ? ' \u00b7 ' + data.model : '') : '')
@@ -99,6 +101,9 @@ function _workflowRunStageHtml(event) {
     + '#' + escapeHtml(String(event.sequence || 0)) + '</span></div>'
     + (detail ? '<div style="color:var(--pf-muted);font-size:11px;margin-top:2px;">' + escapeHtml(detail) + '</div>' : '')
     + (data.reason ? '<div style="color:var(--pf-warning,#d29922);font-size:11px;margin-top:2px;">' + escapeHtml(data.reason) + '</div>' : '')
+    + (data.body ? '<div style="color:var(--pf-text);font-size:11px;margin-top:5px;white-space:pre-wrap;">' + escapeHtml(data.body) + '</div>' : '')
+    + (data.assignee ? '<div style="color:var(--pf-text);font-size:11px;margin-top:3px;">' + escapeHtml(t('workflowKanbanOwner')) + ': ' + escapeHtml(data.assignee) + '</div>' : '')
+    + (audit ? '<div style="color:var(--pf-muted);font-size:10px;margin-top:3px;">' + escapeHtml(audit) + '</div>' : '')
     + _workflowRunGroupMetaHtml(data)
     + (data.arguments ? '<div style="color:var(--pf-text);font-size:10px;margin:5px 0 0;padding:6px;background:var(--pf-bg);border-radius:4px;">'
       + _workflowRunStructuredValueHtml(data.arguments) + '</div>' : '')
@@ -173,7 +178,8 @@ function _workflowFlowHtml(run) {
     const label = String(task.label || task.id);
     const shortLabel = label.length > 30 ? label.slice(0, 29) + '\u2026' : label;
     return '<g data-flow-task="' + _pfpAttr(task.id) + '" data-flow-status="'
-      + _pfpAttr(status) + '" transform="translate(' + task.x + ' ' + task.y + ')">'
+      + _pfpAttr(status) + '" tabindex="0" transform="translate('
+      + task.x + ' ' + task.y + ')">'
       + '<title>' + escapeHtml(label + ' \u2014 ' + status) + '</title>'
       + '<rect width="' + task.width + '" height="' + task.height
       + '" rx="8" fill="' + fill + '" stroke="' + stroke
@@ -270,7 +276,8 @@ function _bindWorkflowFlowControls(root) {
   });
 }
 
-function _workflowRunDetailHtml(run) {
+function _workflowRunDetailHtml(run, viewMode) {
+  viewMode = viewMode || 'timeline';
   const flow = run.flow || {};
   const events = run.events || [];
   const terminal = run.terminal_commit || {};
@@ -345,15 +352,15 @@ function _workflowRunDetailHtml(run) {
     + (latestReturn ? '<div style="font-size:11px;margin-top:8px;">'
       + _workflowRunMessageValueHtml(latestReturn)
       + '</div>' : '') + '</div>'
-    + '<section data-workflow-run-execution style="margin-top:12px;border:1px solid var(--pf-border);border-radius:7px;padding:9px;background:var(--pf-bg);">'
+    + (viewMode === 'timeline' ? '<section data-workflow-run-execution style="margin-top:12px;border:1px solid var(--pf-border);border-radius:7px;padding:9px;background:var(--pf-bg);">'
     + '<strong style="font-size:12px;">' + escapeHtml(t('workflowRunExecution')) + '</strong>'
-    + '<div data-workflow-run-execution-scroll style="max-height:360px;overflow:auto;margin-top:6px;">' + execution + '</div></section>'
-    + _workflowFlowHtml(run)
+    + '<div data-workflow-run-execution-scroll style="max-height:360px;overflow:auto;margin-top:6px;">' + execution + '</div></section>' : '')
+    + (viewMode === 'graph' ? _workflowFlowHtml(run) : '')
     + (run.failure_reason ? '<div style="margin-top:8px;color:var(--pf-danger);"><strong>' + escapeHtml(t('workflowRunFailure')) + ':</strong> ' + escapeHtml(run.failure_reason) + '</div>' : '')
     + (error && error.message ? '<div style="margin-top:8px;color:var(--pf-danger);"><strong>'
       + escapeHtml(error.code || t('workflowRunFailure')) + ':</strong> ' + escapeHtml(error.message)
       + (error.task_id ? ' \u00b7 ' + escapeHtml(error.task_id) : '') + '</div>' : '')
-    + '<details data-workflow-run-metadata style="margin-top:12px;border-top:1px solid var(--pf-border);padding-top:8px;">'
+    + (viewMode === 'timeline' ? '<details data-workflow-run-metadata style="margin-top:12px;border-top:1px solid var(--pf-border);padding-top:8px;">'
     + '<summary style="cursor:pointer;color:var(--pf-muted);font-size:11px;">'
     + escapeHtml(t('workflowRunFlow')) + ' \u00b7 ' + escapeHtml(t('workflowRunStages')) + '</summary>'
     + '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;font-size:11px;margin-top:9px;">'
@@ -366,12 +373,18 @@ function _workflowRunDetailHtml(run) {
     + escapeHtml(t('workflowRunMessageCommit')) + ': ' + (terminal.message_committed ? '\u2713' : '\u2014') + ' \u00b7 '
     + escapeHtml(t('workflowRunInboxAck')) + ': ' + (terminal.inbox_acknowledged ? '\u2713' : '\u2014') + ' \u00b7 '
     + escapeHtml(t('workflowRunEventDelivery')) + ': ' + (terminal.outbox_enqueued ? '\u2713' : '\u2014') + '</div></div>'
-    + '<div style="margin-top:10px;"><strong style="font-size:11px;">' + escapeHtml(t('workflowRunStages')) + '</strong>' + stages + '</div></details>';
+    + '<div style="margin-top:10px;"><strong style="font-size:11px;">' + escapeHtml(t('workflowRunStages')) + '</strong>' + stages + '</div></details>' : '');
 }
 
-async function showWorkflowRunInspector(agentName) {
+async function showWorkflowRunInspector(agentName, options) {
   if (!conversationId) { addMsg('error', t('noConv')); return; }
-  document.getElementById('workflowRunInspectorOverlay')?.remove();
+  options = options || {};
+  const initialView = ['graph', 'timeline', 'kanban'].includes(options.view)
+    ? options.view : 'timeline';
+  const existing = document.getElementById('workflowRunInspectorOverlay');
+  if (existing && typeof existing._workflowRunClose === 'function') {
+    existing._workflowRunClose();
+  } else if (existing) existing.remove();
   const overlay = document.createElement('div');
   overlay.id = 'workflowRunInspectorOverlay';
   overlay.className = 'exec-overlay';
@@ -380,30 +393,59 @@ async function showWorkflowRunInspector(agentName) {
     + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">'
     + '<h3 id="' + titleId + '" style="margin:0;">' + escapeHtml(t('workflowRunsTitle', { agent: agentName })) + '</h3>'
     + '<button type="button" data-close aria-label="' + _pfpAttr(t('close')) + '" style="background:none;border:none;color:var(--pf-muted);font-size:18px;cursor:pointer;">&times;</button></div>'
+    + '<div data-run-view-switch role="tablist" aria-label="' + _pfpAttr(t('workflowKanbanViews')) + '" style="display:flex;gap:5px;margin:0 0 10px;">'
+    + '<button type="button" role="tab" data-run-view="graph">' + escapeHtml(t('workflowKanbanGraph')) + '</button>'
+    + '<button type="button" role="tab" data-run-view="timeline">' + escapeHtml(t('workflowKanbanTimeline')) + '</button>'
+    + '<button type="button" role="tab" data-run-view="kanban">' + escapeHtml(t('workflowKanbanKanban')) + '</button></div>'
     + '<div data-run-content aria-live="polite">' + escapeHtml(t('loading')) + '</div></div>';
   document.body.appendChild(overlay);
   const dialog = overlay.querySelector('[role="dialog"]');
   const content = overlay.querySelector('[data-run-content]');
   let closed = false;
   let refreshTimer = null;
-  let selectedRunId = '';
-  let followLatest = true;
+  let selectedRunId = String(options.runId || '');
+  let followLatest = !selectedRunId;
+  let viewMode = initialView;
+  let focusTaskId = String(options.taskId || '');
   let refreshing = false;
   let refreshPending = false;
   let lastRuns = [];
   let renderedRunId = '';
+  let lastRunDetail = null;
+  let kanbanController = null;
   const close = function() {
     closed = true;
     if (refreshTimer) clearTimeout(refreshTimer);
+    if (kanbanController) kanbanController.destroy();
     overlay.remove();
     document.removeEventListener('keydown', onKey);
     document.removeEventListener('visibilitychange', onVisibilityChange);
     window.removeEventListener('pawflow:workflow-progress', onWorkflowProgress);
+    window.removeEventListener('pawflow:workflow-kanban-updated', onKanbanUpdated);
   };
+  overlay._workflowRunClose = close;
   const onKey = function(event) { if (event.key === 'Escape') close(); };
   overlay.querySelector('[data-close]').onclick = close;
   document.addEventListener('keydown', onKey);
   dialog.focus();
+
+  function updateViewButtons() {
+    overlay.querySelectorAll('[data-run-view]').forEach(function(button) {
+      const selected = button.dataset.runView === viewMode;
+      button.setAttribute('aria-selected', selected ? 'true' : 'false');
+      button.classList.toggle('active', selected);
+    });
+  }
+
+  overlay.querySelectorAll('[data-run-view]').forEach(function(button) {
+    button.onclick = function() {
+      viewMode = button.dataset.runView;
+      updateViewButtons();
+      renderedRunId = '';
+      if (lastRunDetail) renderDetail(lastRunDetail);
+    };
+  });
+  updateViewButtons();
 
   function renderRunList(runs) {
     const list = content.querySelector('[data-run-list]');
@@ -434,7 +476,34 @@ async function showWorkflowRunInspector(agentName) {
 
   function renderDetail(run) {
     if (!run || closed || run.run_id !== selectedRunId) return;
+    lastRunDetail = run;
     const detail = content.querySelector('[data-run-detail]');
+    const controls = content.querySelector('[data-run-controls]');
+    if (viewMode === 'kanban') {
+      controls.innerHTML = '';
+      if (kanbanController && renderedRunId === run.run_id) return;
+      if (kanbanController) kanbanController.destroy();
+      detail.innerHTML = '<div data-workflow-kanban-embedded></div>';
+      kanbanController = mountWorkflowKanban(
+        detail.querySelector('[data-workflow-kanban-embedded]'),
+        agentName,
+        run.run_id,
+        { openGraph: function(openRunId, taskId) {
+          selectedRunId = openRunId;
+          focusTaskId = taskId;
+          viewMode = 'graph';
+          renderedRunId = '';
+          updateViewButtons();
+          refresh().catch(function(error) { addMsg('error', error.message); });
+        } },
+      );
+      renderedRunId = run.run_id;
+      return;
+    }
+    if (kanbanController) {
+      kanbanController.destroy();
+      kanbanController = null;
+    }
     const previousSvg = renderedRunId === run.run_id
       ? detail.querySelector('[data-workflow-flow-svg]') : null;
     const previousViewBox = previousSvg ? previousSvg.getAttribute('viewBox') : '';
@@ -447,7 +516,7 @@ async function showWorkflowRunInspector(agentName) {
     const followExecution = !previousExecution
       || previousExecution.scrollHeight - previousExecution.scrollTop
         - previousExecution.clientHeight < 40;
-    detail.innerHTML = _workflowRunDetailHtml(run);
+    detail.innerHTML = _workflowRunDetailHtml(run, viewMode);
     const nextSvg = detail.querySelector('[data-workflow-flow-svg]');
     if (nextSvg && previousViewBox) nextSvg.setAttribute('viewBox', previousViewBox);
     const nextMetadata = detail.querySelector('[data-workflow-run-metadata]');
@@ -458,8 +527,17 @@ async function showWorkflowRunInspector(agentName) {
         ? nextExecution.scrollHeight : previousExecutionTop;
     }
     _bindWorkflowFlowControls(detail);
+    if (viewMode === 'graph' && focusTaskId) {
+      const target = Array.from(detail.querySelectorAll('[data-flow-task]')).find(
+        function(node) { return node.dataset.flowTask === focusTaskId; },
+      );
+      if (target) {
+        target.querySelector('rect')?.setAttribute('stroke-width', '5');
+        target.focus();
+        focusTaskId = '';
+      }
+    }
     renderedRunId = run.run_id;
-    const controls = content.querySelector('[data-run-controls]');
     controls.innerHTML = (run.safe_retry
       ? '<button type="button" data-retry style="background:var(--pf-warning,#d29922);color:var(--pf-bg);border:none;padding:7px 12px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('workflowRunRetry')) + '</button>'
       : '') + (run.can_delete
@@ -527,6 +605,14 @@ async function showWorkflowRunInspector(agentName) {
     scheduleRefresh(0);
   }
 
+  function onKanbanUpdated(event) {
+    const data = (event && event.detail) || {};
+    if (data.conversation_id && data.conversation_id !== conversationId) return;
+    if (data.run_id && selectedRunId && data.run_id !== selectedRunId
+        && !followLatest) return;
+    scheduleRefresh(0);
+  }
+
   function onVisibilityChange() {
     if (document.visibilityState !== 'hidden') scheduleRefresh(0);
   }
@@ -553,7 +639,8 @@ async function showWorkflowRunInspector(agentName) {
         content.innerHTML = '<div style="display:grid;grid-template-columns:minmax(220px,0.8fr) minmax(300px,1.4fr);gap:12px;">'
           + '<div data-run-list role="list"></div><div><div data-run-controls style="display:flex;justify-content:flex-end;margin-bottom:6px;"></div><div data-run-detail></div></div></div>';
       }
-      if (followLatest || !runs.some(function(run) { return run.run_id === selectedRunId; })) {
+      if (followLatest || (!runs.some(function(run) { return run.run_id === selectedRunId; })
+          && !(data.run && data.run.run_id === selectedRunId))) {
         selectedRunId = runs[0].run_id;
         followLatest = true;
       }
@@ -572,6 +659,7 @@ async function showWorkflowRunInspector(agentName) {
   }
 
   window.addEventListener('pawflow:workflow-progress', onWorkflowProgress);
+  window.addEventListener('pawflow:workflow-kanban-updated', onKanbanUpdated);
   document.addEventListener('visibilitychange', onVisibilityChange);
   await refresh();
 }

@@ -108,6 +108,13 @@ _ACTION_ROLES = {
     "list_workflow_runs": "read",
     "inspect_workflow_run": "read",
     "workflow_operations": "read",
+    "workflow_kanban_snapshot": "read",
+    "workflow_kanban_comment": "write",
+    "workflow_kanban_assign": "write",
+    "workflow_kanban_attach": "write",
+    "workflow_kanban_review": "write",
+    "workflow_kanban_plan_command": "read",
+    "workflow_kanban_execute_command": "write",
     "retry_workflow_run": "write",
     "delete_workflow_run": "write",
     # _agentres_k6 — publication delegates the owner's tool authority, so all

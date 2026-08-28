@@ -78,7 +78,7 @@ _JS_MODULES = [
     "resources.js", "resources_pfp.js", "resources_flow_templates.js",
     "resources_linked_services.js", "resources_render.js", "service_tunnels.js",
     "resources_mcp_publish.js", "resources_a2a.js",
-    "workflow_run_inspector.js", "resources_menus.js",
+    "workflow_kanban.js", "workflow_run_inspector.js", "resources_menus.js",
     "resources_flow_dialogs.js",
     "resources_resource_dialogs.js", "resources_create_dialogs.js",
     # schema_form.js = the single schema-driven form renderer (services, Flow
@@ -114,6 +114,8 @@ _CSS_MODULES: Tuple[str, ...] = (
     "30_mobile.css",          # narrow-viewport overrides
     "40_delegates.css",       # delegate blocks, cancel, ask_parent
     "50_composer.css",        # composer drawer, cognitive panel chrome
+    "52_workflow_kanban.css", # derived WorkflowRun/task operational board
+    "53_workflow_kanban_detail.css", # board details, a11y, responsive
     "55_appearance.css",      # user zoom, background media, atmosphere dialog
     "58_modern_ui.css",       # search, composer shortcuts, code and memory cards
     "60_openspace.css",       # OpenSpace 3D view

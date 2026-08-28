@@ -350,6 +350,8 @@ class UserInteractionStore:
                     ON durable_waits(signal_id, status);
                 CREATE INDEX IF NOT EXISTS idx_wait_status
                     ON durable_waits(status, expires_at);
+                CREATE INDEX IF NOT EXISTS idx_wait_instance
+                    ON durable_waits(instance_id, status, created_at);
 
                 CREATE TABLE IF NOT EXISTS durable_signal_values (
                     signal_id TEXT PRIMARY KEY,
@@ -904,6 +906,31 @@ class UserInteractionStore:
         params.append(max(1, min(int(limit or 200), 1000)))
         with self._lock, self._connect() as connection:
             return [dict(r) for r in connection.execute(query, params).fetchall()]
+
+    def list_waits_for_instances(
+            self, instance_ids: Any, status: str = "waiting"
+    ) -> list[dict[str, Any]]:
+        """Return every wait for exact runtime instances without a global cap."""
+
+        values = tuple(dict.fromkeys(
+            str(value or "").strip() for value in (instance_ids or ())
+            if str(value or "").strip()
+        ))
+        if not values:
+            return []
+        marks = ",".join("?" for _ in values)
+        query = (
+            "SELECT wait_id, signal_id, instance_id, task_id, created_at, "
+            "expires_at, status, kind FROM durable_waits "
+            f"WHERE instance_id IN ({marks})"  # nosec B608 - placeholders only
+        )
+        params: list[Any] = list(values)
+        if status and status != "all":
+            query += " AND status=?"
+            params.append(str(status))
+        query += " ORDER BY created_at DESC"
+        with self._lock, self._connect() as connection:
+            return [dict(row) for row in connection.execute(query, params).fetchall()]
 
     def has_pending_waits(self, instance_id: str) -> bool:
         """Return whether an instance owns an undelivered continuation."""

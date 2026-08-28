@@ -1,0 +1,62 @@
+{
+  "name": "pawflow-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native desktop client for PawFlow webchat",
+  "homepage": "https://github.com/allcolor/PawFlow-Agents",
+  "author": {
+    "name": "AllColor",
+    "email": "contact@allcolor.ai"
+  },
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/profile_store.js && node --check src/auth.js && node --check src/pkce.js && node --check src/tab_manager.js && node --check src/url_policy.js && node --check scripts/package-portable.js",
+    "test": "node --test test/*.test.js",
+    "package:portable": "node scripts/package-portable.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux",
+    "dist:mac": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "org.allcolor.pawflow.desktop",
+    "productName": "PawFlow Desktop",
+    "directories": {
+      "output": "../dist/pawflow-desktop-installers"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "README.md"
+    ],
+    "protocols": [
+      {
+        "name": "PawFlow",
+        "schemes": ["pawflow"]
+      }
+    ],
+    "win": {
+      "target": ["nsis", "zip"],
+      "artifactName": "PawFlow-Desktop-${version}-win.${ext}"
+    },
+    "nsis": {
+      "artifactName": "PawFlow Desktop Setup ${version}.${ext}"
+    },
+    "linux": {
+      "target": ["AppImage", "deb", "tar.gz"],
+      "category": "Network",
+      "maintainer": "AllColor <contact@allcolor.ai>",
+      "artifactName": "PawFlow-Desktop-${version}-linux-${arch}.${ext}"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.productivity",
+      "artifactName": "PawFlow-Desktop-${version}-mac-${arch}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^41.4.0",
+    "electron-builder": "^26.0.12"
+  }
+}

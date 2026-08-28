@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+  >
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PawFlow Desktop</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header id="chrome" class="chrome">
+    <button id="serversButton" class="ghost" type="button">Serveurs</button>
+    <div id="profileTitle" class="profile-title">PawFlow Desktop</div>
+    <nav id="tabs" class="tabs" aria-label="Conversations"></nav>
+    <button id="addTabButton" class="icon hidden" type="button" title="Nouvelle conversation">+</button>
+    <button id="backButton" class="icon hidden" type="button" title="Retour">←</button>
+    <button id="forwardButton" class="icon hidden" type="button" title="Avancer">→</button>
+    <button id="reloadButton" class="icon hidden" type="button" title="Recharger">↻</button>
+  </header>
+  <main id="screen" class="screen" aria-live="polite"></main>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="renderer.js"></script>
+</body>
+</html>

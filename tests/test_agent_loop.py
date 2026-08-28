@@ -30,6 +30,8 @@ from core.tool_registry import (
     discover_mcp_tools,
 )
 from core import FlowFile, TaskFactory
+from core.conversation_event_bus import ConversationEventBus
+from core.usage_ledger import UsageLedger
 from tasks.ai.agent_loop import AgentLoopTask
 
 
@@ -686,7 +688,7 @@ class TestAgentLoopTask(unittest.TestCase):
 
     @patch.object(LLMClient, 'complete')
     def test_tool_call_loop(self, mock_complete):
-        """Agent calls a tool, gets result, then produces final answer."""
+        """Each LLM call is recorded before the outer agent turn finishes."""
         # First call: LLM requests tool call
         tool_call = LLMToolCall(id="call_1", name="execute_script", arguments={"code": "2+2"})
         first_response = LLMResponse(
@@ -705,15 +707,42 @@ class TestAgentLoopTask(unittest.TestCase):
             tokens_out=10,
             finish_reason="stop",
         )
-        mock_complete.side_effect = [first_response, second_response]
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = UsageLedger(path=str(Path(tmp) / "usage.db"))
 
-        task = AgentLoopTask({
-            "api_key": "test-key",
-            "provider": "openai",
-        })
-        ff = FlowFile(content=b"What is 2+2?")
-        ff.set_attribute("http.auth.principal", "testuser")
-        results = task.execute(ff)
+            def complete(*_args, **_kwargs):
+                if mock_complete.call_count == 2:
+                    # The first provider response must already be durable while
+                    # the tool-use turn is still running.
+                    assert ledger.summary(user_id="testuser")["calls"] == 1
+                    return second_response
+                return first_response
+
+            mock_complete.side_effect = complete
+            task = AgentLoopTask({
+                "api_key": "test-key",
+                "provider": "openai",
+            })
+            ff = FlowFile(content=b"What is 2+2?")
+            ff.set_attribute("http.auth.principal", "testuser")
+            bus = ConversationEventBus.instance()
+            with patch.object(UsageLedger, "instance", return_value=ledger), \
+                    patch.object(bus, "publish_event",
+                                 wraps=bus.publish_event) as publish:
+                results = task.execute(ff)
+
+            rows = ledger.export_rows(user_id="testuser")
+            assert len(rows) == 2
+            assert {(row["tokens_in"], row["tokens_out"])
+                    for row in rows} == {(20, 15), (30, 10)}
+            assert {row["provider"] for row in rows} == {"openai"}
+            usage_updates = [
+                call for call in publish.call_args_list
+                if len(call.args) >= 2 and call.args[1] == "usage.updated"]
+            assert len(usage_updates) == 2
+            assert usage_updates[-1].args[2]["total_tokens_in"] == 50
+            assert usage_updates[-1].args[2]["total_tokens_out"] == 25
+            ledger._conn.close()
 
         assert len(results) == 1
         assert results[0].get_content() == b"The result is 4."
@@ -746,13 +775,18 @@ class TestAgentLoopTask(unittest.TestCase):
         mock_complete.side_effect = [tool_response, tool_response, tool_response,
                                      synthesis_response]
 
-        task = AgentLoopTask({
-            "api_key": "test-key",
-            "max_iterations": 3,
-        })
-        ff = FlowFile(content=b"loop forever")
-        ff.set_attribute("http.auth.principal", "testuser")
-        results = task.execute(ff)
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = UsageLedger(path=str(Path(tmp) / "usage.db"))
+            task = AgentLoopTask({
+                "api_key": "test-key",
+                "max_iterations": 3,
+            })
+            ff = FlowFile(content=b"loop forever")
+            ff.set_attribute("http.auth.principal", "testuser")
+            with patch.object(UsageLedger, "instance", return_value=ledger):
+                results = task.execute(ff)
+            assert ledger.summary(user_id="testuser")["calls"] == 4
+            ledger._conn.close()
 
         assert results[0].get_attribute("agent.iterations") == "3"
         assert mock_complete.call_count == 4  # 3 iterations + 1 synthesis

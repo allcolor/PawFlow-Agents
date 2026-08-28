@@ -2,7 +2,7 @@
 // Header badge shows the conversation's cumulative cost from the server
 // usage ledger (task sub-conversations included). Hydrated on conversation
 // open via the `usage_conversation` action, refreshed live by the
-// `usage.updated` SSE event published after each turn. Clicking the badge
+// `usage.updated` SSE event published after each LLM call. Clicking the badge
 // opens a breakdown panel (totals, by agent/channel/model, recent turns).
 
 window._usageCost = window._usageCost || {

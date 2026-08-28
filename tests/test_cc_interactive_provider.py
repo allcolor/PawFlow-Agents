@@ -1484,6 +1484,10 @@ def test_interactive_interrupt_before_callbacks_are_initialized():
 
     assert captured["turn_callback"] is None
     assert captured["block_callback"] is None
+    assert st.total_tokens_in == 1
+    assert st.total_tokens_out == 2
+    assert st.total_cache_read == 3
+    assert st.total_cache_write == 4
 
 
 def test_cci_interrupt_no_session_is_noop_not_error():

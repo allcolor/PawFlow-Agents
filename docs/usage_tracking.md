@@ -35,7 +35,7 @@ Channels attribute where the tokens went:
 
 | Channel | Source |
 |---|---|
-| `chat` | normal conversation turn |
+| `chat` | successful LLM call in a normal conversation turn |
 | `task` | autonomous task iteration (`::task::` sub-conversation) |
 | `subagent` | `delegate` / `flash_delegate` sub-agent run |
 | `aggregator_advisor` | `llmAggregator` advisor call |
@@ -115,9 +115,12 @@ self-service limit a user could raise on themselves).
 
 ## Live conversation cost gauge
 
-After every turn the server publishes a `usage.updated` SSE event on the
+After every completed LLM call the server writes its own ledger event and
+publishes a `usage.updated` SSE event on the
 conversation (task sub-conversations publish to their parent) with the
-turn's cost/tokens and the conversation totals. The webchat header shows a
+current outer turn's cumulative cost/tokens and the conversation totals. This
+keeps long-running tool-use turns live instead of deferring all accounting
+until the final answer. The webchat header shows a
 cost badge (`usage_cost.js`) hydrated from `usage_conversation` on
 conversation open and refreshed live from `usage.updated`; clicking it
 opens a breakdown panel (totals, by agent/channel/model, recent turns).

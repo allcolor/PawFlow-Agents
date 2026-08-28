@@ -8,7 +8,8 @@ from core.llm_client import LLMClient, LLMMessage
 from tasks.ai._alc_base import (  # noqa: F401
     _ALCState, _ALC_BREAK, _ALC_CONTINUE, _strip_context_ack,
     _preempt_rescue_requires_retrigger, _apply_bg_results, _svc_rates,
-    _usage_cost_usd, _check_budget, _CONTEXT_ACK_PATTERNS)
+    _record_response_usage, _usage_cost_usd, _check_budget,
+    _CONTEXT_ACK_PATTERNS)
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,8 @@ class _ALCSetupMixin:
         st.total_tokens_out = 0
         st.total_cache_read = 0
         st.total_cache_write = 0
+        # Mutable holder shared by per-call usage writes and AgentResult.
+        st._turn_cost_ref = [0.0]
         st.tools_called: List[str] = []
         st.iteration = 0
         st.final_model = ""

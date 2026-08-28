@@ -4,15 +4,15 @@ import time
 from typing import Dict
 
 from core.llm_client import (
-    LLMMessage,
+    LLMMessage, LLMResponse,
 )
 from tasks.ai.agent_emitter import AgentEmitter, AgentResult
 from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
 
 from tasks.ai._alc_base import (  # noqa: F401
     _ALCState, _ALC_BREAK, _ALC_CONTINUE, _strip_context_ack, _preempt_rescue_requires_retrigger,
-    _apply_bg_results, _svc_rates, _svc_subscription, _usage_cost_usd,
-    _check_budget, _CONTEXT_ACK_PATTERNS)
+    _apply_bg_results, _svc_rates, _svc_subscription, _record_response_usage,
+    _usage_cost_usd, _check_budget, _CONTEXT_ACK_PATTERNS)
 from tasks.ai._alc_closures1 import _ALCClosures1Mixin
 from tasks.ai._alc_closures2 import _ALCClosures2Mixin
 from tasks.ai._alc_setup import _ALCSetupMixin
@@ -340,15 +340,11 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     tools_called=st.tools_called, conversation_id=st.conversation_id)
                 st.new_messages.extend(st.messages[st._pre:])
                 st.response_content = st.content
-                st.total_tokens_in += st.ti
-                st.total_tokens_out += st.to
+                _record_response_usage(st, LLMResponse(
+                    content=st.content, tokens_in=st.ti, tokens_out=st.to,
+                    model=st.fm))
                 if st.fm:
                     st.final_model = st.fm
-
-            # Mutable holder so the _make_result closure can observe the
-            # turn cost written after track() below, without redeclaring the
-            # closure after the call.
-            st._turn_cost_ref = [0.0]
 
             def _make_result(reason=""):
                 _result_reason = reason or st.finish_reason
@@ -431,79 +427,12 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     return st.result
                 st.response_content = st._processed
 
-                # One ledger event per turn: tokens + cost frozen at the
-                # service rates in effect now (core/usage_ledger.py).
                 try:
-                    from core.usage_ledger import UsageLedger
-                    st._ci, st._co, st._ccr, st._ccw = _svc_rates(st.ctx)
-                    st._route_plan = getattr(st.client, "route_plan", None)
-                    st._physical_ref = getattr(st.client, "active_service_ref", None)
-                    st._turn_cost_ref[0] = UsageLedger.instance().record(
-                        user_id=st.user_id or "system",
-                        channel=("task" if "::task::" in st.conversation_id
-                                 else "chat"),
-                        conversation_id=st.conversation_id,
-                        agent_name=st.ctx.get("active_agent_name", "") or "",
-                        llm_service=st.ctx.get("active_llm_service", ""),
-                        model=st.final_model or st._client_model,
-                        tokens_in=st.total_tokens_in,
-                        tokens_out=st.total_tokens_out,
-                        cache_read=st.total_cache_read,
-                        cache_write=st.total_cache_write,
-                        cost_per_1m_input=st._ci, cost_per_1m_output=st._co,
-                        cost_per_1m_cache_read=st._ccr,
-                        cost_per_1m_cache_write=st._ccw,
-                        subscription=_svc_subscription(st.ctx),
-                        physical_llm_service=(
-                            st._physical_ref.service_id if st._physical_ref
-                            else st.ctx.get("active_llm_service", "")),
-                        logical_service_scope=(
-                            st._route_plan.router.scope if st._route_plan else ""),
-                        logical_service_scope_id=(
-                            st._route_plan.router.scope_id if st._route_plan else ""),
-                        physical_service_scope=(
-                            st._physical_ref.scope if st._physical_ref else ""),
-                        physical_service_scope_id=(
-                            st._physical_ref.scope_id if st._physical_ref else ""),
-                        route_plan_id=(
-                            st._route_plan.plan_id if st._route_plan else ""),
-                        route_attempt_id=getattr(
-                            st.client, "route_attempt_id", "") or "",
-                        route_attempt_index=getattr(
-                            st.client, "route_attempt_index", -1),
-                    )
                     if hasattr(st.client, "finalize_route"):
                         st.client.finalize_route(True)
-                    st._turn_cost_ref[0] += float(
-                        st.ctx.get("_additional_usage_cost_usd", 0) or 0)
-                    # Live cost gauge: one SSE event per turn with the
-                    # turn's cost and the conversation total (tasks and
-                    # sub-conversations included). Task sub-convs publish
-                    # to the parent conv — that's where the SSE client is.
-                    from core.service_registry import _parent_conversation_id
-                    from core.conversation_event_bus import \
-                        ConversationEventBus
-                    _gauge_cid = (_parent_conversation_id(st.conversation_id)
-                                  or st.conversation_id)
-                    _conv_totals = UsageLedger.instance().summary(
-                        conversation_prefix=_gauge_cid)
-                    ConversationEventBus.get_instance().publish_event(
-                        _gauge_cid, "usage.updated", {
-                            "conversation_id": _gauge_cid,
-                            "agent_name":
-                                st.ctx.get("active_agent_name", "") or "",
-                            "turn_cost_usd": st._turn_cost_ref[0],
-                            "turn_tokens_in": st.total_tokens_in,
-                            "turn_tokens_out": st.total_tokens_out,
-                            "total_usd": _conv_totals["cost_usd"],
-                            "total_virtual_usd":
-                                _conv_totals["virtual_cost_usd"],
-                            "total_tokens_in": _conv_totals["tokens_in"],
-                            "total_tokens_out": _conv_totals["tokens_out"],
-                        })
-                except Exception as _cost_err:
-                    logger.debug("[agent:%s] usage tracking error: %s",
-                                 st.conversation_id[:8], _cost_err)
+                except Exception as _route_err:
+                    logger.debug("[agent:%s] route finalization error: %s",
+                                 st.conversation_id[:8], _route_err)
 
                 self._cleanup_tool_result_files(
                     conversation_id=st.conversation_id,

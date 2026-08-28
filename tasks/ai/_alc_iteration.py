@@ -9,7 +9,8 @@ from core.llm_client import (
 from tasks.ai._alc_base import (  # noqa: F401
     _ALCState, _ALC_BREAK, _ALC_CONTINUE, _strip_context_ack,
     _preempt_rescue_requires_retrigger, _apply_bg_results, _svc_rates,
-    _usage_cost_usd, _check_budget, _CONTEXT_ACK_PATTERNS)
+    _record_response_usage, _usage_cost_usd, _check_budget,
+    _CONTEXT_ACK_PATTERNS)
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +332,8 @@ class _ALCIterationMixin:
 
         st._cli_block_callback = lambda event_type, payload: self._alc_cli_block_callback(st, event_type, payload)
 
-        st._llm_call = lambda msgs, ps=st.poll_silent: self._alc_llm_call(st, msgs, ps)
+        st._llm_call = lambda msgs, ps=st.poll_silent: _record_response_usage(
+            st, self._alc_llm_call(st, msgs, ps))
 
         # Claude-code with existing session: send only the latest
         # user message (session has full context via --resume)
@@ -361,17 +363,6 @@ class _ALCIterationMixin:
                     st.ctx["_claude_has_session"] = True
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
-        st.total_tokens_in += st.response.tokens_in
-        st.total_tokens_out += st.response.tokens_out
-        st.total_cache_read += getattr(st.response, 'cache_read_tokens', 0)
-        st.total_cache_write += getattr(st.response, 'cache_creation_tokens', 0)
-        st._aggregation_usage = (st.response.raw or {}).get(
-            "_pawflow_aggregation", {})
-        st.ctx["_additional_usage_cost_usd"] = (
-            float(st.ctx.get("_additional_usage_cost_usd", 0) or 0)
-            + float(st._aggregation_usage.get(
-                "advisor_cost_usd_delta", 0) or 0)
-        )
         st.final_model = st.response.model
         st.finish_reason = st.response.finish_reason
 

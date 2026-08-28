@@ -11,7 +11,8 @@ from tasks.ai.agent_exceptions import _InterruptComplete
 
 from tasks.ai._alc_base import (  # noqa: F401
     _strip_context_ack, _preempt_rescue_requires_retrigger, _apply_bg_results,
-    _svc_rates, _usage_cost_usd, _check_budget, _CONTEXT_ACK_PATTERNS)
+    _svc_rates, _record_response_usage, _usage_cost_usd, _check_budget,
+    _CONTEXT_ACK_PATTERNS)
 
 logger = logging.getLogger(__name__)
 
@@ -306,10 +307,7 @@ class _ALCClosures2Mixin:
                 st._append(_irpt_msg)
                 _irpt_mid = getattr(_irpt_msg, 'msg_id', '')
             st.response_content = _irpt_resp.content
-            st.total_tokens_in += _irpt_resp.tokens_in
-            st.total_tokens_out += _irpt_resp.tokens_out
-            st.total_cache_read += getattr(_irpt_resp, 'cache_read_tokens', 0)
-            st.total_cache_write += getattr(_irpt_resp, 'cache_creation_tokens', 0)
+            _record_response_usage(st, _irpt_resp)
             st.final_model = _irpt_resp.model
             # Refresh the context gauge from the provider's
             # reported usage for the interrupted CCI turn.
@@ -364,10 +362,7 @@ class _ALCClosures2Mixin:
             source=st._agent_source(),
             conversation_id=st.conversation_id))
         st.response_content = _irpt_resp.content
-        st.total_tokens_in += _irpt_resp.tokens_in
-        st.total_tokens_out += _irpt_resp.tokens_out
-        st.total_cache_read += getattr(_irpt_resp, 'cache_read_tokens', 0)
-        st.total_cache_write += getattr(_irpt_resp, 'cache_creation_tokens', 0)
+        _record_response_usage(st, _irpt_resp)
         st.final_model = _irpt_resp.model
         raise _InterruptComplete()
 

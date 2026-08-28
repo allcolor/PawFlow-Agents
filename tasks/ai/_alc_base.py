@@ -101,6 +101,110 @@ def _svc_rates(ctx):
     return cost_in, cost_out, cost_cache_read, cost_cache_write
 
 
+def _record_response_usage(st, response):
+    """Record one completed provider call and refresh the live usage gauge.
+
+    The outer agent turn may contain many LLM calls separated by tool calls.
+    Recording here keeps the ledger live during long-running turns and matches
+    its one-event-per-LLM-call contract.  States built by narrow unit tests may
+    omit ``_turn_cost_ref``; they still receive token accumulation but do not
+    touch the process-wide ledger.
+    """
+    tokens_in = int(getattr(response, "tokens_in", 0) or 0)
+    tokens_out = int(getattr(response, "tokens_out", 0) or 0)
+    cache_read = int(getattr(response, "cache_read_tokens", 0) or 0)
+    cache_write = int(getattr(response, "cache_creation_tokens", 0) or 0)
+
+    st.total_tokens_in += tokens_in
+    st.total_tokens_out += tokens_out
+    st.total_cache_read += cache_read
+    st.total_cache_write += cache_write
+
+    raw = getattr(response, "raw", None)
+    raw = raw if isinstance(raw, dict) else {}
+    aggregation_usage = raw.get("_pawflow_aggregation", {}) or {}
+    aggregation_usage = (
+        aggregation_usage if isinstance(aggregation_usage, dict) else {})
+    st._aggregation_usage = aggregation_usage
+    advisor_cost_delta = float(
+        aggregation_usage.get("advisor_cost_usd_delta", 0) or 0)
+    st.ctx["_additional_usage_cost_usd"] = (
+        float(st.ctx.get("_additional_usage_cost_usd", 0) or 0)
+        + advisor_cost_delta
+    )
+
+    turn_cost_ref = getattr(st, "_turn_cost_ref", None)
+    if turn_cost_ref is None:
+        return response
+
+    try:
+        from core.usage_ledger import UsageLedger
+
+        ci, co, ccr, ccw = _svc_rates(st.ctx)
+        route_plan = getattr(st.client, "route_plan", None)
+        physical_ref = getattr(st.client, "active_service_ref", None)
+        call_cost = UsageLedger.instance().record(
+            user_id=st.user_id or "system",
+            channel=("task" if "::task::" in st.conversation_id else "chat"),
+            conversation_id=st.conversation_id,
+            agent_name=st.ctx.get("active_agent_name", "") or "",
+            llm_service=st.ctx.get("active_llm_service", ""),
+            model=(getattr(response, "model", "") or st._client_model),
+            provider=getattr(st, "_client_provider", "") or "",
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cache_read=cache_read,
+            cache_write=cache_write,
+            cost_per_1m_input=ci,
+            cost_per_1m_output=co,
+            cost_per_1m_cache_read=ccr,
+            cost_per_1m_cache_write=ccw,
+            subscription=_svc_subscription(st.ctx),
+            physical_llm_service=(
+                physical_ref.service_id if physical_ref
+                else st.ctx.get("active_llm_service", "")),
+            logical_service_scope=(
+                route_plan.router.scope if route_plan else ""),
+            logical_service_scope_id=(
+                route_plan.router.scope_id if route_plan else ""),
+            physical_service_scope=(
+                physical_ref.scope if physical_ref else ""),
+            physical_service_scope_id=(
+                physical_ref.scope_id if physical_ref else ""),
+            route_plan_id=(route_plan.plan_id if route_plan else ""),
+            route_attempt_id=getattr(
+                st.client, "route_attempt_id", "") or "",
+            route_attempt_index=getattr(
+                st.client, "route_attempt_index", -1),
+        )
+        turn_cost_ref[0] += call_cost + advisor_cost_delta
+
+        from core.service_registry import _parent_conversation_id
+        from core.conversation_event_bus import ConversationEventBus
+
+        gauge_cid = (_parent_conversation_id(st.conversation_id)
+                     or st.conversation_id)
+        totals = UsageLedger.instance().summary(
+            conversation_prefix=gauge_cid)
+        ConversationEventBus.instance().publish_event(
+            gauge_cid, "usage.updated", {
+                "conversation_id": gauge_cid,
+                "agent_name": st.ctx.get("active_agent_name", "") or "",
+                "turn_cost_usd": turn_cost_ref[0],
+                "turn_tokens_in": st.total_tokens_in,
+                "turn_tokens_out": st.total_tokens_out,
+                "total_usd": totals["cost_usd"],
+                "total_virtual_usd": totals["virtual_cost_usd"],
+                "total_tokens_in": totals["tokens_in"],
+                "total_tokens_out": totals["tokens_out"],
+            })
+    except Exception as exc:
+        logger.debug(
+            "[agent:%s] usage tracking error: %s",
+            st.conversation_id[:8], exc)
+    return response
+
+
 def _usage_cost_usd(ctx, total_in, total_out,
                     total_cache_read=0, total_cache_write=0):
     """Return REAL cost using the same cache-aware rates as the ledger.

@@ -351,7 +351,10 @@ back to another LLM when the summarizer binding is unavailable.
 
 Context preparation and successful relay mutations schedule the same coalesced
 background worker as the Project Graph. The worker scans source hashes, selects
-one bounded batch of changed high-signal files, and makes one ephemeral LLM call.
+one batch of at most eight changed high-signal files, and makes one ephemeral LLM
+call. This default keeps large pending manifests below reverse-proxy request
+limits; an explicit `batch_files=0` remains available to trusted internal callers
+that intentionally want an unbounded snapshot.
 The source scanner is encoded into the relay command and executed in memory; it
 does not create a helper file in the project or on the server-local root.
 Wiki scans and updates run **only** on the relay container surface:

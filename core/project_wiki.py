@@ -25,7 +25,7 @@ import core.paths as _paths
 logger = logging.getLogger(__name__)
 
 _MANIFEST_VERSION = 1
-_DEFAULT_BATCH_FILES = 0
+_DEFAULT_BATCH_FILES = 8
 
 _SCAN_SCRIPT = r'''
 import hashlib

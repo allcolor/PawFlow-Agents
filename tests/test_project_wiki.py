@@ -129,6 +129,24 @@ def test_zero_batch_selects_all_sources_and_fetches_full_content(wiki):
     assert all(len(item["text"]) > 100_000 for item in prepared["files"])
 
 
+def test_default_batch_bounds_automatic_wiki_payloads(wiki):
+    initial = {"README.md": _source("overview")}
+    changed = {
+        "README.md": _source("overview"),
+        **{f"src/file_{number:02d}.py": _source(str(number), 2)
+           for number in range(25)},
+    }
+    relay = _Relay([initial, changed])
+    wiki.scan_from_relay(relay)
+    wiki.acknowledge(["README.md"])
+    wiki.scan_from_relay(relay)
+
+    selection = wiki.select_update_batch()
+
+    assert selection["pending_count"] == 25
+    assert len(selection["entries"]) == 8
+
+
 def test_changed_source_makes_page_stale_until_replaced(wiki):
     first = {"README.md": _source("old")}
     second = {"README.md": _source("new", 2)}

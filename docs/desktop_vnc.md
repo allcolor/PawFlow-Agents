@@ -32,13 +32,15 @@ The browser opens a noVNC session connected through PawFlow's VNC proxy. For a
 remote relay, the proxy carries VNC WebSocket frames over the relay's existing
 outbound authenticated connection; the PawFlow server never needs direct TCP
 reachability to the relay host or its dynamic noVNC port.
-The noVNC HTTP assets and framed Opus desktop audio use that same outbound
-connection. For a remote local-screen session, PawFlow reads the UI assets from
-the relay runtime's bundled noVNC tree and sends them through the relay; the host
-helper only runs the VNC server and WebSocket bridge. Windows therefore does not
-need a separate noVNC installation. Server-managed desktops remain on their
-direct Docker host/port path; the relay tunnel is selected only for remote relay
-sessions.
+The server Docker image serves its packaged noVNC HTTP assets directly with a
+private browser cache; only VNC WebSocket frames and framed Opus desktop audio
+use the relay's outbound connection. If a non-Docker server installation has no
+local noVNC tree, PawFlow falls back to the relay or backend asset path. For a
+remote local-screen session, that fallback reads the relay runtime's bundled
+noVNC tree; the host helper only runs the VNC server and WebSocket bridge.
+Windows therefore does not need a separate noVNC installation. Server-managed
+desktops remain on their direct Docker host/port path; the relay tunnel is
+selected only for remote relay sessions.
 The HTTP proxy normalizes response-header names case-insensitively so
 websockify's `Content-type` value is preserved as the single canonical
 `Content-Type`; HTML and JavaScript assets therefore render instead of being
@@ -113,12 +115,12 @@ the host address already advertised by `PAWFLOW_HOST_HELPER`; containerized
 desktops continue to use the worker's loopback interface.
 The proxy checks session auth before either transport is opened.
 
-The proxied noVNC page also injects a small PawFlow bridge for native desktop ergonomics. Browser clipboard reads and writes are connected to noVNC clipboard events so ordinary OS copy/paste shortcuts work in the remote desktop without a separate PawFlow clipboard panel. Docker virtual desktops start `autocutsel` when available to keep X11 `CLIPBOARD` and `PRIMARY` selections synchronized with desktop applications. The same bridge handles repeated keydown events for repeatable keys such as Backspace so holding the key behaves like a local desktop session.
+The proxied noVNC page also injects a small PawFlow bridge for native desktop ergonomics. Browser clipboard reads and writes are connected to noVNC clipboard events so ordinary OS copy/paste shortcuts work in the remote desktop without a separate PawFlow clipboard panel. Docker virtual desktops start `autocutsel` when available to keep X11 `CLIPBOARD` and `PRIMARY` selections synchronized with desktop applications. The same bridge handles repeated keydown events for repeatable keys such as Backspace so holding the key behaves like a local desktop session. Chromium's benign ResizeObserver loop notifications are intercepted before noVNC's fatal error handler, preventing a permanent red status overlay while the live desktop continues normally.
 
 Related implementation:
 
 - `services/vnc_proxy.py`
-- `static/novnc/`
+- Debian's `novnc` package (`/usr/share/novnc`)
 - `/desktop` slash command
 - `core/handlers/screen.py`
 - `core/handlers/_screen_guard.py`

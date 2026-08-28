@@ -2862,15 +2862,19 @@ def test_interactive_pool_idle_measured_from_observed_proxy_events(monkeypatch):
     assert pool._activity_at(state) == 99990
 
 
-def test_cci_provider_brackets_every_turn_as_in_flight():
-    """Both turn paths must mark the session busy for their whole duration."""
+def test_interactive_providers_bracket_every_turn_as_in_flight():
+    """Every native TUI turn stays busy for its whole duration."""
     import inspect
 
     from core.llm_providers.claude_code_interactive import (
         LLMClaudeCodeInteractiveMixin)
+    from core.llm_providers.codex_interactive import (
+        LLMCodexInteractiveMixin)
 
     for fn in (LLMClaudeCodeInteractiveMixin._stream_claude_code_interactive,
-               LLMClaudeCodeInteractiveMixin.interrupt_claude_code_interactive):
+               LLMClaudeCodeInteractiveMixin.interrupt_claude_code_interactive,
+               LLMCodexInteractiveMixin._stream_codex_interactive,
+               LLMCodexInteractiveMixin.interrupt_codex_interactive):
         src = inspect.getsource(fn)
         assert "pool.begin_turn(state)" in src, fn.__name__
         assert "pool.end_turn(state)" in src, fn.__name__
@@ -3196,6 +3200,7 @@ def test_cc_interactive_timing_env_is_documented():
     from pathlib import Path
 
     doc = Path("docs/CLAUDE_CODE_INTERACTIVE.md").read_text(encoding="utf-8")
+    normalized_doc = " ".join(doc.split())
 
     for name in (
         "PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_SECONDS",
@@ -3203,11 +3208,12 @@ def test_cc_interactive_timing_env_is_documented():
         "PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS",
         "PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS",
         "PAWFLOW_CCI_IDLE_TTL_SECONDS",
+        "PAWFLOW_CODEX_INTERACTIVE_IDLE_TTL_SECONDS",
     ):
         assert name in doc
     assert "seconds variable wins" in doc
     assert "can only extend an already-enabled TTL" in doc
-    assert "There is\n  no default" in doc
+    assert "unset, or `0`, means containers are never evicted" in normalized_doc
 
 
 def test_cc_interactive_event_route_bypasses_gateway_but_stays_private(monkeypatch):
@@ -3842,9 +3848,16 @@ def test_cci_terminal_viewer_attaches_tmux_as_pool_uid_not_hardcoded():
     # the viewer can never resize the agent's pinned tmux window (the resize
     # SIGWINCH corrupted in-flight CCI captures). See the pool's window-size
     # manual pinning.
-    assert "user_spec = pool._user_spec()" in block
+    assert "user_spec = current_pool._user_spec()" in block
     assert "CodexInteractivePool.instance()" in block
     assert block.count('"--user", user_spec') == 1
+    # A compaction replaces the provider container. Each browser reconnect must
+    # resolve the pool's current state instead of replaying the old name.
+    assert "def _find_live_session():" in block
+    assert "def _current_attach_command():" in block
+    assert "current_state.name" in block
+    assert "server_pipe_command_factory=_current_attach_command" in block
+    assert "server_pipe_command=cmd" not in block
     # The viewer must NOT resize the shared pawflow window.
     assert 'resize-window", "-t", "pawflow"' not in block
     assert "server_pipe_resize_command=None" in block

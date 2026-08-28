@@ -311,7 +311,7 @@ def test_terminal_and_desktop_mode_picker_accepts_server_local_relays():
     commands_js = Path(
         "tasks/io/chat_ui/terminal_commands.js").read_text(encoding="utf-8")
 
-    assert "server_local_exec: det.server_local_exec || false" in terminal_js
+    assert "server_local_exec: relay.server_local_exec || false" in terminal_js
     assert "function _relaySupportsLocal" in terminal_js
     assert "relay.allow_local || relay.server_local_exec" in terminal_js
     assert commands_js.count("_relaySupportsLocal(") >= 2

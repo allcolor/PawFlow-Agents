@@ -157,7 +157,8 @@ def test_ephemeral_stream_is_destroyed_when_prompt_send_fails(monkeypatch):
         return state
     pool = SimpleNamespace(
         ensure_started=ensure_started,
-        touch=lambda _state: None,
+        begin_turn=lambda _state: None,
+        end_turn=lambda _state: None,
         send_text=lambda _state, _prompt: False,
         destroy_ephemeral=lambda item: destroyed.append(item),
     )
@@ -191,8 +192,20 @@ def test_codex_provider_releases_request_lease_when_coordinator_raises(
         monkeypatch):
     client = LLMClient("codex-interactive")
     state = _state(("user", "conv", "assistant", ""))
+    lifecycle = []
+
+    def begin_turn(item):
+        lifecycle.append(("begin", item))
+        item.in_flight += 1
+
+    def end_turn(item):
+        lifecycle.append(("end", item))
+        item.in_flight -= 1
+
     pool = SimpleNamespace(
         ensure_started=lambda *_args, **_kwargs: state,
+        begin_turn=begin_turn,
+        end_turn=end_turn,
         touch=lambda _state: None,
         send_text=lambda _state, _prompt: True,
         send_interrupt=lambda _state, _text: True,
@@ -208,6 +221,7 @@ def test_codex_provider_releases_request_lease_when_coordinator_raises(
             pass
 
         def run(self, _abort=None):
+            assert state.in_flight == 1
             raise RuntimeError("callback failed")
 
     monkeypatch.setattr(
@@ -233,6 +247,11 @@ def test_codex_provider_releases_request_lease_when_coordinator_raises(
             agent_name="assistant")
 
     assert released == [(state.session_token, 11), (state.session_token, 11)]
+    assert lifecycle == [
+        ("begin", state), ("end", state),
+        ("begin", state), ("end", state),
+    ]
+    assert state.in_flight == 0
 
 
 def test_codex_provider_kills_native_session_when_compaction_hook_fires(
@@ -243,6 +262,8 @@ def test_codex_provider_kills_native_session_when_compaction_hook_fires(
     released = []
     pool = SimpleNamespace(
         ensure_started=lambda *_args, **_kwargs: state,
+        begin_turn=lambda _state: None,
+        end_turn=lambda _state: None,
         touch=lambda _state: None,
         send_text=lambda _state, _prompt: True,
         send_interrupt=lambda _state, _text: True,

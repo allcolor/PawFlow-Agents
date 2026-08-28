@@ -314,6 +314,7 @@ def test_vnc_http_proxy_serves_novnc_static_locally(cap_db, tmp_path, monkeypatc
 
     assert req.completed == (200, {
         "Content-Type": "text/css",
+        "Cache-Control": "private, max-age=3600",
         "Cross-Origin-Resource-Policy": "same-origin",
         "Cross-Origin-Opener-Policy": "same-origin",
         "Cross-Origin-Embedder-Policy": "require-corp",
@@ -358,6 +359,32 @@ def test_terminal_registers_server_pipe_command(cap_db):
     assert sess["server_pipe_command"] == ["docker", "exec", "python3"]
 
     unregister_terminal("term-server")
+
+
+def test_terminal_resolves_server_pipe_factory_for_each_connection(cap_db):
+    from services import terminal_proxy as tp
+
+    target = {"name": "provider-old"}
+
+    def command_factory():
+        return ["docker", "exec", target["name"], "tmux"]
+
+    token = tp.register_terminal(
+        "term-dynamic", "__server__", relay_service=None,
+        owner_user_id="alice",
+        server_pipe_command_factory=command_factory)
+    try:
+        sess = tp.get_terminal("term-dynamic")
+        assert token
+        assert sess["server_pipe_command_factory"] is command_factory
+        assert tp._resolve_server_pipe_command(sess) == [
+            "docker", "exec", "provider-old", "tmux"]
+
+        target["name"] = "provider-new"
+        assert tp._resolve_server_pipe_command(sess) == [
+            "docker", "exec", "provider-new", "tmux"]
+    finally:
+        tp.unregister_terminal("term-dynamic")
 
 
 def test_port_forward_remove_requires_forward_id(cap_db):

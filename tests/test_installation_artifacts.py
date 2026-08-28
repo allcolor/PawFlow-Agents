@@ -76,6 +76,12 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert '"--port", "19990"' not in src
     assert "EXPOSE 9090" not in src
 
+
+def test_server_image_bundles_novnc_static_assets():
+    src = Path("Dockerfile").read_text(encoding="utf-8")
+
+    assert "tini novnc" in src
+
     entrypoint = Path("docker/server-entrypoint.sh").read_text(encoding="utf-8")
     assert "seed_missing_tree /app/default-data/repository /app/data/repository" in entrypoint
     assert "sync_managed_repository_defaults" in entrypoint

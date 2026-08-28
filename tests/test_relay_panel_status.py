@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 from core import FlowFile
 from tasks.ai.actions.agent_resource import _handle_agent_resource
+from tasks.ai.actions.misc import _handle_misc
 
 
 class _StubStore:
@@ -159,6 +160,31 @@ def test_user_scoped_relay_reports_connected(monkeypatch):
     data = _list_resources(monkeypatch, reg, "convB12345678")
     det = data["relay_bindings"]["details"]["MyWorkspace"]
     assert det["connected"] is True
+
+
+def test_lightweight_relay_catalog_marks_conversation_links(monkeypatch):
+    import core.relay_bindings as rb
+    import core.service_registry as sr
+
+    conv = "convB12345678"
+    reg = _FakeRegistry("MyWorkspace", "user", "alice")
+    monkeypatch.setattr(rb, "get_bindings", lambda cid: {
+        "linked": {"assistant": [reg._relay_id]},
+        "default": {},
+    })
+    monkeypatch.setattr(sr.ServiceRegistry, "get_instance",
+                        classmethod(lambda cls: reg))
+    ff = FlowFile(b"")
+
+    out = _handle_misc(
+        None, "relay_list_available", {"conversation_id": conv},
+        None, "alice", ff)
+
+    assert out == [ff]
+    relay = json.loads(ff.content.decode("utf-8"))["relays"][0]
+    assert relay["relay_id"] == "MyWorkspace"
+    assert relay["connected"] is True
+    assert relay["linked"] is True
 
 
 def test_unknown_relay_reports_disconnected(monkeypatch):

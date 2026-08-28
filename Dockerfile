@@ -23,7 +23,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # System deps. openssl is required for bootstrap TLS. Playwright/Scrapling
 # need browser dependencies and Chromium inside the server image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash build-essential ca-certificates curl git openssl ffmpeg procps gosu tini \
+    bash build-essential ca-certificates curl git openssl ffmpeg procps gosu tini novnc \
     && rm -rf /var/lib/apt/lists/*
 
 # Docker CLI used through the mounted host socket. The installer-update helper

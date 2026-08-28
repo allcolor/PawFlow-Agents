@@ -170,16 +170,21 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
                 # provider field. A service id normally makes this unique.
                 pools = [InteractiveClaudeCodePool.instance(),
                          CodexInteractivePool.instance()]
-            pool = None
-            state = None
-            for candidate in pools:
-                found = candidate.find_session(
-                    user_id, conversation_id, agent_name,
-                    service_id=service_id)
-                if found and (state is None
-                              or found.last_used > state.last_used):
-                    pool = candidate
-                    state = found
+
+            def _find_live_session():
+                current_pool = None
+                current_state = None
+                for candidate in pools:
+                    found = candidate.find_session(
+                        user_id, conversation_id, agent_name,
+                        service_id=service_id)
+                    if found and (current_state is None
+                                  or found.last_used > current_state.last_used):
+                        current_pool = candidate
+                        current_state = found
+                return current_pool, current_state
+
+            pool, state = _find_live_session()
             # The terminal viewer must attach tmux as the SAME uid the pool
             # used to start the session (PAWFLOW_RUN_UID, not a hardcoded
             # 1000) — otherwise tmux looks in /tmp/tmux-<other-uid>/ and
@@ -189,8 +194,6 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
                     "error": f"No live interactive tmux session for agent '{agent_name}'"
                 }).encode())
                 return [flowfile]
-            user_spec = pool._user_spec()
-
             terminal_kind = (
                 "codexi" if isinstance(pool, CodexInteractivePool) else "cci")
             session_id = f"{terminal_kind}_term_{uuid.uuid4().hex[:12]}"
@@ -277,20 +280,27 @@ finally:
     except Exception:
         pass
 '''
-            cmd = docker_cmd() + [
-                "exec", "-i", "--user", user_spec,
-                "-e", f"PAWFLOW_TERM_COLS={cols}",
-                "-e", f"PAWFLOW_TERM_ROWS={rows}",
-                "-e", "TERM=xterm-256color",
-                state.name,
-                "python3", "-c", bridge_script,
-            ]
+            def _current_attach_command():
+                current_pool, current_state = _find_live_session()
+                if not current_state:
+                    raise RuntimeError(
+                        f"No live interactive tmux session for agent '{agent_name}'")
+                user_spec = current_pool._user_spec()
+                return docker_cmd() + [
+                    "exec", "-i", "--user", user_spec,
+                    "-e", f"PAWFLOW_TERM_COLS={cols}",
+                    "-e", f"PAWFLOW_TERM_ROWS={rows}",
+                    "-e", "TERM=xterm-256color",
+                    current_state.name,
+                    "python3", "-c", bridge_script,
+                ]
+
             _term_token = register_terminal(
                 session_id, "__server__", relay_service=None,
                 owner_user_id=user_id,
                 conversation_id=conversation_id,
                 login_session_id=flowfile.get_attribute("auth.session_id") or "",
-                server_pipe_command=cmd,
+                server_pipe_command_factory=_current_attach_command,
                 # NO resize propagation. The pawflow window is pinned to a
                 # fixed size with window-size manual (see
                 # claude_code_interactive_pool._start_claude_tmux), so the

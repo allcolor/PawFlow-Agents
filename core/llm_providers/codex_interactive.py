@@ -222,8 +222,8 @@ class LLMCodexInteractiveMixin:
             self, model or "", user_id, pool_conversation_id, agent_name,
             before_launch=None if ephemeral else (
                 lambda: self._cli_require_cold_context("codex-interactive")))
+        pool.begin_turn(state)
         try:
-            pool.touch(state)
             # Case 2, told by the pool -- see the CCI provider for the reasoning.
             if not ephemeral and getattr(state, "initial_context_loaded", False):
                 self._cli_require_delta_context("codex-interactive")
@@ -297,6 +297,7 @@ class LLMCodexInteractiveMixin:
             response.model = response.model or model or self.default_model
             return response
         finally:
+            pool.end_turn(state)
             if ephemeral:
                 pool.destroy_ephemeral(state)
 
@@ -315,44 +316,50 @@ class LLMCodexInteractiveMixin:
         if not state:
             return LLMResponse(content="", model=model or self.default_model)
         pool = CodexInteractivePool.instance()
-        pool.touch(state)
-        _, _, event_service = get_or_create_cc_interactive_event_service()
-        consumer_epoch = event_service.claim_consumer(state.session_token)
-        event_service.drain_session(state.session_token)
-        if not pool.send_interrupt(state, text):
-            # Same as the send path: no coordinator will poll this claim.
-            event_service.release_consumer(state.session_token, consumer_epoch)
-            detail = getattr(state, "last_error", "") or "unknown tmux error"
-            raise LLMClientError(
-                "Failed to interrupt Codex interactive tmux session: "
-                f"{detail}")
+        pool.begin_turn(state)
         try:
-            coord = _CodexInteractiveTurnCoordinator(
-                event_service, state.session_token, callback=callback,
-                thinking_callback=thinking_callback,
-                block_callback=block_callback, turn_callback=turn_callback,
-                touch_callback=lambda: pool.touch(state),
-                emitted_tool_use_ids=state.emitted_tool_use_ids,
-                emitted_tool_result_ids=state.emitted_tool_result_ids,
-                consumer_epoch=consumer_epoch,
-                liveness_callback=lambda: pool.session_is_live(state.name),
-                context_tokens_callback=lambda tokens: (
-                    self.record_codex_live_context(
-                        state, conversation_id, agent_name, tokens,
-                        user_id=user_id, event_cid=conversation_id)))
-            response = coord.run(getattr(self, "_abort", None))
-        except CCCompactDetected:
-            pool.kill_session(
-                user_id, conversation_id, agent_name,
-                getattr(state, "service_id", "") or "")
-            raise
+            _, _, event_service = get_or_create_cc_interactive_event_service()
+            consumer_epoch = event_service.claim_consumer(state.session_token)
+            event_service.drain_session(state.session_token)
+            if not pool.send_interrupt(state, text):
+                # Same as the send path: no coordinator will poll this claim.
+                event_service.release_consumer(
+                    state.session_token, consumer_epoch)
+                detail = (
+                    getattr(state, "last_error", "") or "unknown tmux error")
+                raise LLMClientError(
+                    "Failed to interrupt Codex interactive tmux session: "
+                    f"{detail}")
+            try:
+                coord = _CodexInteractiveTurnCoordinator(
+                    event_service, state.session_token, callback=callback,
+                    thinking_callback=thinking_callback,
+                    block_callback=block_callback, turn_callback=turn_callback,
+                    touch_callback=lambda: pool.touch(state),
+                    emitted_tool_use_ids=state.emitted_tool_use_ids,
+                    emitted_tool_result_ids=state.emitted_tool_result_ids,
+                    consumer_epoch=consumer_epoch,
+                    liveness_callback=lambda: pool.session_is_live(state.name),
+                    context_tokens_callback=lambda tokens: (
+                        self.record_codex_live_context(
+                            state, conversation_id, agent_name, tokens,
+                            user_id=user_id, event_cid=conversation_id)))
+                response = coord.run(getattr(self, "_abort", None))
+            except CCCompactDetected:
+                pool.kill_session(
+                    user_id, conversation_id, agent_name,
+                    getattr(state, "service_id", "") or "")
+                raise
+            finally:
+                event_service.release_consumer(
+                    state.session_token, consumer_epoch)
+            self.record_codex_context_window(
+                pool, state, conversation_id, agent_name,
+                coord.observed_context_tokens)
+            response.model = response.model or model or self.default_model
+            return response
         finally:
-            event_service.release_consumer(state.session_token, consumer_epoch)
-        self.record_codex_context_window(
-            pool, state, conversation_id, agent_name,
-            coord.observed_context_tokens)
-        response.model = response.model or model or self.default_model
-        return response
+            pool.end_turn(state)
 
     def _codex_interactive_session_state(
             self, *, user_id: str = "", conversation_id: str = "",

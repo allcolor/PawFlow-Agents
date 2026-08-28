@@ -126,6 +126,11 @@ class _PACPhase2Mixin:
         st._context_diverged = False
         st._uses_pawflow_initial = False
         st._cold_cli_initial_source = ""
+        # Delta is a property of the live CLI session, not of where this turn's
+        # messages came from.  Mark it before choosing the stored/preloaded
+        # source so queued retriggers rebuilt with force_delta keep the marker.
+        if st._cli_has_session:
+            self._mark_context_as_delta(st)
         if st.preloaded_messages is not None:
             # Caller provided messages (e.g. poller task sub-conversation)
             try:
@@ -156,10 +161,6 @@ class _PACPhase2Mixin:
                 st.messages = []
                 st.base_message_count = 0
                 st._context_diverged = True  # skip compact
-                # The session can still die before the provider acquires it;
-                # this is how the provider says so instead of launching with
-                # a delta. See _mark_context_as_delta.
-                self._mark_context_as_delta(st)
                 logger.info(
                     f"[context:{st.conversation_id[:8]}] CLI session active — skipping context load")
             else:

@@ -90,6 +90,23 @@ def get_terminal(session_id: str):
         return _sessions.get(session_id)
 
 
+def _resolve_server_pipe_command(sess: dict) -> list:
+    """Resolve the subprocess command for one browser connection.
+
+    Persistent tmux viewers may outlive their provider container. A factory
+    lets those viewers attach to the pool's current container after a compact
+    or interruption instead of replaying a command that names the old one.
+    """
+    factory = sess.get("server_pipe_command_factory")
+    if factory is not None:
+        if not callable(factory):
+            raise TypeError("server_pipe_command_factory must be callable")
+        command = factory()
+    else:
+        command = sess.get("server_pipe_command")
+    return list(command or [])
+
+
 def _clear_terminal_connection(session_id: str, browser_sock,
                                server_pipe_process=None) -> None:
     """Clear only the viewer generation owned by this handler.
@@ -183,7 +200,8 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
         if session_id in _sessions:
             _sessions[session_id]["browser_sock"] = client_sock
 
-    if sess.get("server_pipe_command"):
+    if (sess.get("server_pipe_command")
+            or sess.get("server_pipe_command_factory")):
         logger.info("Terminal proxy: session %s connected (server pipe mode)", session_id)
         _server_pipe_ws_loop(client_sock, session_id, sess)
         return
@@ -250,8 +268,16 @@ def _server_pipe_ws_loop(client_sock, session_id: str, sess: dict):
     Linux-side PTY bridge inside the provider container. The PawFlow server only
     handles ordinary pipes, so this stays portable on Windows.
     """
-    cmd = sess.get("server_pipe_command") or []
+    try:
+        cmd = _resolve_server_pipe_command(sess)
+    except Exception as exc:
+        logger.info("Terminal proxy target unavailable for session %s: %s",
+                    session_id, exc)
+        _clear_terminal_connection(session_id, client_sock)
+        _ws_close(client_sock, 4003, "Terminal target unavailable")
+        return
     if not cmd:
+        _clear_terminal_connection(session_id, client_sock)
         _ws_close(client_sock, 4003, "Missing server terminal command")
         return
 

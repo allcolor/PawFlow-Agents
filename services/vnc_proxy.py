@@ -517,12 +517,35 @@ _MIME_TYPES = {
     ".ttf": "font/ttf",
     ".json": "application/json",
 }
+_NOVNC_CACHE_CONTROL = "private, max-age=3600"
 
 
 _PAWFLOW_NOVNC_CLIENT_SCRIPT = b"""
 <script>
 (function() {
   'use strict';
+  function isResizeObserverLoopError(event) {
+    const message = String(
+      (event && event.message)
+      || (event && event.error && event.error.message)
+      || ''
+    );
+    return message === 'ResizeObserver loop limit exceeded'
+      || message === 'ResizeObserver loop completed with undelivered notifications.';
+  }
+
+  function ignoreResizeObserverLoopError(event) {
+    if (!isResizeObserverLoopError(event)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  // Chromium reports deferred ResizeObserver work through window.error even
+  // though noVNC keeps rendering normally. Register before the deferred
+  // app/ui.js module so its fatal-status handler never turns that benign
+  // browser notification into a permanent red overlay.
+  window.addEventListener('error', ignoreResizeObserverLoopError, true);
+
   const repeatKeysyms = {
     Backspace: 0xff08,
     Tab: 0xff09,
@@ -641,12 +664,15 @@ def _serve_novnc_local(pending_req, sub_path: str) -> bool:
                 ext = os.path.splitext(full_path)[1].lower()
                 content_type = _MIME_TYPES.get(ext, "application/octet-stream")
                 body = _patch_novnc_static_body(safe_path, body)
+                if getattr(pending_req, "method", "GET") == "HEAD":
+                    body = b""
                 pending_req.complete(200, {
-                "Content-Type": content_type,
-                "Cross-Origin-Resource-Policy": "same-origin",
-                "Cross-Origin-Opener-Policy": "same-origin",
-                "Cross-Origin-Embedder-Policy": "require-corp",
-            }, body)
+                    "Content-Type": content_type,
+                    "Cache-Control": _NOVNC_CACHE_CONTROL,
+                    "Cross-Origin-Resource-Policy": "same-origin",
+                    "Cross-Origin-Opener-Policy": "same-origin",
+                    "Cross-Origin-Embedder-Policy": "require-corp",
+                }, body)
                 return True
             except Exception:
                 return False
@@ -672,6 +698,7 @@ def _serve_novnc_from_relay(pending_req, relay_service,
         pending_req.complete(200, {
             "Content-Type": result.get(
                 "content_type", "application/octet-stream"),
+            "Cache-Control": _NOVNC_CACHE_CONTROL,
             "Cross-Origin-Resource-Policy": "same-origin",
             "Cross-Origin-Opener-Policy": "same-origin",
             "Cross-Origin-Embedder-Policy": "require-corp",
@@ -800,10 +827,11 @@ def _vnc_http_relay_proxy(pending_req, session_id: str, session: dict,
         ), "application/octet-stream")
         response_headers = {
             key: value for key, value in response_headers.items()
-            if key.lower() != "content-type"
+            if key.lower() not in {"content-type", "cache-control"}
         }
         response_headers["Content-Type"] = content_type
         response_headers.update({
+            "Cache-Control": _NOVNC_CACHE_CONTROL,
             "Cross-Origin-Resource-Policy": "same-origin",
             "Cross-Origin-Opener-Policy": "same-origin",
             "Cross-Origin-Embedder-Policy": "require-corp",
@@ -851,6 +879,14 @@ def vnc_http_proxy(pending_req):
                              b'{"error": "Unknown VNC session"}')
         return
 
+    # noVNC is application UI, not session state.  The server image bundles a
+    # complete noVNC distribution, so serve it before
+    # opening a relay stream.  The relay/backend paths remain fallbacks for
+    # non-Docker installations that do not have a local noVNC tree.
+    if (_is_novnc_static_path(sub_path)
+            and _serve_novnc_local(pending_req, sub_path)):
+        return
+
     if session and session.get("relay_service") is not None:
         _vnc_http_relay_proxy(pending_req, session_id, session, sub_path)
         return
@@ -870,6 +906,7 @@ def vnc_http_proxy(pending_req):
                     body = _patch_novnc_static_body(sub_path, body)
                     pending_req.complete(200, {
                         "Content-Type": content_type,
+                        "Cache-Control": _NOVNC_CACHE_CONTROL,
                         "Cross-Origin-Resource-Policy": "same-origin",
                         "Cross-Origin-Opener-Policy": "same-origin",
                         "Cross-Origin-Embedder-Policy": "require-corp",

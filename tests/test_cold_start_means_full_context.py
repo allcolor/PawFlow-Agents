@@ -81,6 +81,35 @@ def test_the_context_phase_marks_the_context_and_not_the_service():
     assert getattr(st.client, "_pawflow_context_is_delta", False) is False
 
 
+def test_preloaded_live_cli_context_is_marked_before_message_source_branch():
+    """A queued retrigger rebuilt with force_delta still uses preloaded input.
+
+    The live-session marker must be established before that branch; otherwise
+    the provider sees a cold context, requests the same rebuild a second time,
+    and the loop's anti-spin guard surfaces DeltaContextRequired to the user.
+    """
+    from tasks.ai._agentctx_p2 import _PACPhase2Mixin
+
+    class _MarkerObserved(Exception):
+        pass
+
+    class _Phase(_PACPhase2Mixin):
+        def _mark_context_as_delta(self, st):
+            super()._mark_context_as_delta(st)
+            raise _MarkerObserved
+
+    st = SimpleNamespace(
+        resolved_svc=SimpleNamespace(config={}),
+        _cli_has_session=True,
+        preloaded_messages=[{"role": "user", "content": "queued"}],
+    )
+
+    with pytest.raises(_MarkerObserved):
+        _Phase()._pac_p2(st)
+
+    assert st._context_is_delta is True
+
+
 def test_the_marker_survives_clone_for_call():
     """The loop clones the client after the context phase (`_alc_setup`), and
     clone_for_call copies an explicit whitelist. Anything left off that list

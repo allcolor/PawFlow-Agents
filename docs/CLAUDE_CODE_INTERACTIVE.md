@@ -401,18 +401,24 @@ Timing controls are read once when the provider modules are imported:
   sequence `Escape`, `Escape`, paste, 200ms, `Enter`, 200ms, `Enter`.
   Codex submission verification is observation-only and never appends another
   key after this sequence.
-- `PAWFLOW_CCI_IDLE_TTL_SECONDS` controls idle container eviction. **There is
-  no default**: unset, or `0`, means containers are never evicted for being
-  idle. Reaping a live agent is destructive, so it must be asked for
-  explicitly rather than inherited from a silent fallback. A service request
-  `timeout` of `0` means "no timeout" and disables eviction outright; a
-  positive one can only extend an already-enabled TTL, never enable or
-  shorten one.
+- `PAWFLOW_CCI_IDLE_TTL_SECONDS` controls Claude Code idle container eviction;
+  `PAWFLOW_CODEX_INTERACTIVE_IDLE_TTL_SECONDS` controls the equivalent Codex
+  Interactive pool. **There is no default**: unset, or `0`, means containers
+  are never evicted for being idle. Reaping a live agent is destructive, so it
+  must be asked for explicitly rather than inherited from a silent fallback. A
+  service request `timeout` of `0` means "no timeout" and disables eviction
+  outright; a positive one can only extend an already-enabled TTL, never enable
+  or shorten one.
 - Eviction only ever considers a session that is doing nothing. A turn in
-  flight is never evicted, and idleness is measured from the last event the
-  MITM proxy observed — not from PawFlow's own turn bookkeeping, which stays
-  frozen while Claude Code resumes on its own (a backgrounded task reporting
-  back, a queued message) outside any streaming worker.
+  flight is never evicted: both normal and interrupt paths in both providers
+  bracket the whole turn with the shared pool's `begin_turn` / `end_turn`
+  contract. Idleness is measured from the last event the MITM proxy observed —
+  not from PawFlow's own turn bookkeeping, which stays frozen while a CLI
+  resumes on its own (a backgrounded task reporting back, a queued message)
+  outside any streaming worker.
+- A live CLI session always makes the rebuilt context a resume delta, including
+  queued retriggers whose exact user payload is supplied through preloaded
+  messages. Message origin never changes the cold-versus-delta marker.
 
 The provider assembles responses from those events:
 
@@ -696,10 +702,14 @@ container is) and the listing normalises that to the LLM provider name callers
 dispatch on.
 
 The browser terminal is only a detachable tmux viewer; it does not own the
-provider session. If its `tmux attach-session` process exits while the warm tmux
-still exists, the xterm client retries the same registered attachment up to
-three times. Closing the tab disables retries. Exhausting the bound still shows
-`Process terminated`, so a genuinely dead container or tmux is not hidden.
+provider session. A compact or interruption may legitimately replace the
+provider container while the logical turn continues. The registered viewer
+therefore keeps its capability identity but resolves the pool's current
+container and rebuilds `docker exec` on every WebSocket connection. The xterm
+client retries up to twelve times with a delay capped at two seconds, covering
+the cold-start gap without looping forever. Closing the tab disables retries.
+Exhausting the bound still shows `Process terminated`, so a genuinely dead
+container or tmux is not hidden.
 Likewise, `Active Agents` represents current work rather than a warm session:
 cleanup removes markers from the same or any older generation and preserves
 only a strictly newer turn marker.

@@ -184,6 +184,50 @@ def test_remote_vnc_assets_use_relay_runtime_http(cap_db, monkeypatch):
     assert relay.http_fetch_calls == []
 
 
+def test_pawflow_novnc_bridge_ignores_benign_resize_observer_errors():
+    marker = b'<script type="module" crossorigin="anonymous" src="app/ui.js"></script>'
+    patched = vnc_proxy._patch_novnc_static_body(
+        "vnc.html", b"<html>" + marker + b"</html>")
+
+    assert b"ResizeObserver loop limit exceeded" in patched
+    assert (
+        b"ResizeObserver loop completed with undelivered notifications."
+        in patched
+    )
+    assert b"if (!isResizeObserverLoopError(event)) return;" in patched
+    assert b"event.stopImmediatePropagation();" in patched
+    assert (
+        b"window.addEventListener('error', ignoreResizeObserverLoopError, true);"
+        in patched
+    )
+
+
+def test_remote_vnc_assets_prefer_server_local_static(
+        cap_db, tmp_path, monkeypatch):
+    base = tmp_path / "novnc"
+    (base / "app" / "styles").mkdir(parents=True)
+    (base / "app" / "styles" / "base.css").write_text(
+        "body{color:green}", encoding="utf-8")
+    relay = _HttpRelay(b"body{color:red}")
+    token = vnc_proxy.register_session(
+        "desktop-remote", 6080,
+        owner_user_id="alice",
+        relay_service=relay,
+        relay_id="relay-1")
+    monkeypatch.setattr(vnc_proxy, "_NOVNC_LOCAL_DIRS", [str(base)])
+
+    request = _HttpRequest(
+        "desktop-remote", token, "app/styles/base.css")
+    vnc_proxy.vnc_http_proxy(request)
+
+    assert request.completed[0] == 200
+    assert request.completed[1]["Cache-Control"] == "private, max-age=3600"
+    assert request.completed[2] == b"body{color:green}"
+    assert relay.calls == []
+    assert relay.http_proxy_calls == []
+    assert relay.http_fetch_calls == []
+
+
 def test_remote_local_screen_assets_use_host_helper_http(cap_db, monkeypatch):
     relay = _HttpRelay(b"body{}")
     token = vnc_proxy.register_session(

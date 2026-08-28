@@ -263,7 +263,7 @@ function _initXterm(container, sessionId, token, sizing) {
   const fixedRows = Math.max(0, Number(sizing && sizing.fixedRows) || 0);
   const fixedSize = fixedCols && fixedRows ? { cols: fixedCols, rows: fixedRows } : null;
   const reconnectOnExit = !!(sizing && sizing.reconnectOnExit);
-  const maxReconnects = reconnectOnExit ? 3 : 0;
+  const maxReconnects = reconnectOnExit ? 12 : 0;
   const termOptions = {
     cursorBlink: true,
     fontSize: 13,
@@ -310,11 +310,12 @@ function _initXterm(container, sessionId, token, sizing) {
     container._terminalReconnectPending = true;
     if (stableTimer) clearTimeout(stableTimer);
     try { connection.close(); } catch (_) {}
+    const reconnectDelayMs = Math.min(2000, 250 * reconnectCount);
     setTimeout(() => {
       if (container._terminalManualClose) return;
       container._terminalReconnectPending = false;
       connectTerminal();
-    }, 250 * reconnectCount);
+    }, reconnectDelayMs);
     return true;
   }
 

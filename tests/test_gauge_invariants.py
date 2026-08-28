@@ -958,6 +958,8 @@ def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
     assert "reconnectOnExit: true" in terminal_cmds_src
     assert "function scheduleReconnect(connection)" in terminal_src
     assert "reconnectCount >= maxReconnects" in terminal_src
+    assert "reconnectOnExit ? 12 : 0" in terminal_src
+    assert "Math.min(2000, 250 * reconnectCount)" in terminal_src
     assert "container._terminalManualClose" in terminal_src
     assert '("mouse", "on")' in service_flow_src
     assert '("history-limit", "50000")' in service_flow_src

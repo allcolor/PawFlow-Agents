@@ -46,6 +46,7 @@ dependencies = [
     # HTTP
     "requests>=2.31.0",
     "httpx>=0.25.0",
+    "keyring>=24.0",
     # Authentication
     "pyjwt>=2.8.0",
     "cryptography>=41.0.0",
@@ -128,6 +129,7 @@ realtime-livekit = [
 
 [project.scripts]
 pawflow = "cli:main"
+pawflow-install = "pawflow_installer.frontends.cli:main"
 pawflow-relay = "pawflow_relay.manager_cli:main"
 pawflow-mcp = "pawflow_relay.mcp_stdio:main"
 pawcode = "pawflow_cli.app:main"
@@ -194,6 +196,7 @@ ignore_missing_imports = true
 include = [
     "core*", "engine*", "tasks*", "services*", "tools*",
     "pawflow_relay*", "pawflow_cli*", "pawflow_livekit_worker*",
+    "pawflow_installer*",
 ]
 exclude = ["tests*"]
 

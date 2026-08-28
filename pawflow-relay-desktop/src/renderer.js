@@ -81,8 +81,8 @@ function renderTree() {
       type: 'server',
       name: server.name,
       label: server.name,
-      meta: server.session_token ? 'logged in' : 'login needed',
-      ok: Boolean(server.session_token),
+      meta: server.logged_in ? 'logged in' : 'login needed',
+      ok: Boolean(server.logged_in),
     }));
   }
 
@@ -194,7 +194,7 @@ function renderServerPanel(server) {
       <div class="form-grid">
         <label>Name<input name="name" value="${escapeAttr(server?.name || '')}" ${nameReadonly} required /></label>
         <label>URL<input name="url" value="${escapeAttr(server?.url || '')}" placeholder="https://pawflow.example:9090" required /></label>
-        <label class="wide">Gateway key<input name="gatewayKey" type="password" value="${escapeAttr(server?.gateway_key || '')}" placeholder="optional" /></label>
+        <label class="wide">Gateway key<input name="gatewayKey" type="password" value="" placeholder="${server?.has_gateway_key ? 'stored in OS vault; leave blank to keep' : 'optional'}" /></label>
       </div>
       ${serverInfo(server)}
       <div class="actions">
@@ -214,7 +214,7 @@ function renderServerPanel(server) {
 
 function serverInfo(server) {
   if (!server) return '';
-  const status = server.session_token ? `Logged in as ${escapeHtml(server.username || '-')}` : 'Not logged in';
+  const status = server.logged_in ? `Logged in as ${escapeHtml(server.username || '-')}` : 'Not logged in';
   const workspaceCount = state.workspaces.filter(w => w.server === server.name).length;
   return `
     <div class="info-list">

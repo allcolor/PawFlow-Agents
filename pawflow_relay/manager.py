@@ -19,6 +19,7 @@ import re
 import signal
 
 from pawflow_relay.utils import api_call, generate_relay_id
+from pawflow_relay import credential_store
 
 
 _SERVERS_FILE = "servers.json"
@@ -186,6 +187,42 @@ def _save_json(filename: str, data: Dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def _load_server_records() -> Dict[str, Any]:
+    """Load metadata and migrate any legacy plaintext secrets to the OS vault."""
+    records = _load_json(_SERVERS_FILE)
+    changed = False
+    for name, record in records.items():
+        for field in credential_store.SECRET_FIELDS:
+            value = str(record.pop(field, "") or "")
+            if value:
+                credential_store.set(relay_home(), name, field, value)
+                changed = True
+    if changed:
+        _save_json(_SERVERS_FILE, records)
+    return records
+
+
+def _server_with_credentials(record: Dict[str, Any]) -> Dict[str, Any]:
+    profile = dict(record)
+    profile.update(credential_store.load(relay_home(), str(record.get("name") or "")))
+    return profile
+
+
+def _public_server(record: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        secrets = credential_store.load(
+            relay_home(), str(record.get("name") or ""))
+    except credential_store.CredentialStoreUnavailable:
+        secrets = {}
+    public = {
+        key: value for key, value in record.items()
+        if key not in credential_store.SECRET_FIELDS
+    }
+    public["has_gateway_key"] = bool(secrets.get("gateway_key"))
+    public["logged_in"] = bool(secrets.get("session_token"))
+    return public
+
+
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-._")
     return slug or "relay"
@@ -195,9 +232,6 @@ def _slug(value: str) -> str:
 class ServerProfile:
     name: str
     url: str
-    gateway_key: str = ""
-    gateway_cookie: str = ""
-    session_token: str = ""
     username: str = ""
     created_at: str = ""
     updated_at: str = ""
@@ -226,14 +260,14 @@ class WorkspaceShare:
 
 
 def list_servers() -> List[Dict[str, Any]]:
-    return list(_load_json(_SERVERS_FILE).values())
+    return [_public_server(record) for record in _load_server_records().values()]
 
 
 def get_server(name: str) -> Dict[str, Any]:
-    servers = _load_json(_SERVERS_FILE)
+    servers = _load_server_records()
     if name not in servers:
         raise ValueError(f"Unknown relay server '{name}'")
-    return servers[name]
+    return _server_with_credentials(servers[name])
 
 
 def add_server(name: str, url: str, gateway_key: str = "") -> Dict[str, Any]:
@@ -241,49 +275,51 @@ def add_server(name: str, url: str, gateway_key: str = "") -> Dict[str, Any]:
         raise ValueError("Server name is required")
     if not url:
         raise ValueError("Server URL is required")
-    servers = _load_json(_SERVERS_FILE)
+    servers = _load_server_records()
     now = _now()
     previous = servers.get(name, {})
+    if gateway_key:
+        credential_store.set(relay_home(), name, "gateway_key", gateway_key)
     profile = ServerProfile(
         name=name,
         url=url.rstrip("/"),
-        gateway_key=gateway_key or previous.get("gateway_key", ""),
-        gateway_cookie=previous.get("gateway_cookie", ""),
-        session_token=previous.get("session_token", ""),
         username=previous.get("username", ""),
         created_at=previous.get("created_at", now),
         updated_at=now,
     ).to_dict()
+    for field in credential_store.SECRET_FIELDS:
+        profile.pop(field, None)
     servers[name] = profile
     _save_json(_SERVERS_FILE, servers)
-    return profile
+    return _public_server(profile)
 
 
 def update_server_auth(name: str, *, gateway_cookie: str = "",
                        session_token: str = "", username: str = "") -> Dict[str, Any]:
-    servers = _load_json(_SERVERS_FILE)
+    servers = _load_server_records()
     if name not in servers:
         raise ValueError(f"Unknown relay server '{name}'")
     profile = dict(servers[name])
     if gateway_cookie:
-        profile["gateway_cookie"] = gateway_cookie
+        credential_store.set(relay_home(), name, "gateway_cookie", gateway_cookie)
     if session_token:
-        profile["session_token"] = session_token
+        credential_store.set(relay_home(), name, "session_token", session_token)
     if username:
         profile["username"] = username
     profile["updated_at"] = _now()
     servers[name] = profile
     _save_json(_SERVERS_FILE, servers)
-    return profile
+    return _public_server(profile)
 
 
 def delete_server(name: str) -> Dict[str, Any]:
     """Delete a server profile and all workspace shares attached to it."""
-    servers = _load_json(_SERVERS_FILE)
+    servers = _load_server_records()
     if name not in servers:
         raise ValueError(f"Unknown relay server '{name}'")
     removed = servers.pop(name)
     _save_json(_SERVERS_FILE, servers)
+    credential_store.delete(relay_home(), name)
 
     workspaces = _load_json(_WORKSPACES_FILE)
     removed_workspaces = [
@@ -298,6 +334,32 @@ def delete_server(name: str) -> Dict[str, Any]:
 
 def list_workspaces() -> List[Dict[str, Any]]:
     return list(_load_json(_WORKSPACES_FILE).values())
+
+
+def verify_workspace_connected(name: str) -> Dict[str, Any]:
+    """Return server-observed connectivity without exposing stored credentials."""
+    share = get_workspace(name)
+    server = get_server(share["server"])
+    relay_id = share.get("relay_id") or generate_relay_id(
+        server.get("username") or "client", share["path"])
+    if not server.get("session_token"):
+        raise ValueError(
+            f"Server '{share['server']}' is not logged in. Run: "
+            f"pawflow-relay server login {share['server']}")
+    data = api_call(
+        server["url"],
+        "POST",
+        "/api/ui",
+        body={"action": "relay_list_available"},
+        session_token=server.get("session_token", ""),
+        gateway_cookie=server.get("gateway_cookie", ""),
+        gateway_key=server.get("gateway_key", ""),
+    )
+    connected = any(
+        item.get("relay_id") == relay_id and item.get("connected")
+        for item in (data.get("relays") or [])
+    )
+    return {"workspace": name, "relay_id": relay_id, "connected": connected}
 
 
 def get_workspace(name: str) -> Dict[str, Any]:

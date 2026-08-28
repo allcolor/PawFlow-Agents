@@ -6,9 +6,32 @@ from pathlib import Path
 import pytest
 
 from pawflow_relay import manager
+from pawflow_relay import credential_store
 from pawflow_relay.manager_cli import main as relay_cli_main
 from pawflow_relay.thread import RelayThread, _host_abs_path, _relay_tools_dir
 from pawflow_relay.utils import api_call
+
+
+class _MemoryCredentialBackend:
+    priority = 1
+
+    def __init__(self):
+        self.values = {}
+
+    def get_password(self, service, username):
+        return self.values.get((service, username))
+
+    def set_password(self, service, username, password):
+        self.values[(service, username)] = password
+
+    def delete_password(self, service, username):
+        self.values.pop((service, username), None)
+
+
+@pytest.fixture(autouse=True)
+def _secure_relay_credentials(monkeypatch):
+    monkeypatch.setattr(
+        credential_store, "_backend_override", _MemoryCredentialBackend())
 
 
 def test_relay_manager_stores_servers_and_workspaces(monkeypatch, tmp_path):
@@ -20,7 +43,12 @@ def test_relay_manager_stores_servers_and_workspaces(monkeypatch, tmp_path):
         "prod", "https://pawflow.example:9090/", gateway_key="RoyBatty")
     assert server["name"] == "prod"
     assert server["url"] == "https://pawflow.example:9090"
-    assert server["gateway_key"] == "RoyBatty"
+    assert server["has_gateway_key"] is True
+    assert "gateway_key" not in server
+    stored = json.loads(
+        (tmp_path / "relay-home" / "servers.json").read_text(encoding="utf-8"))
+    assert "RoyBatty" not in json.dumps(stored)
+    assert manager.get_server("prod")["gateway_key"] == "RoyBatty"
 
     share = manager.add_workspace(
         "repo", "prod", str(workspace), mode="ro", docker_image="relay:python")
@@ -78,6 +106,57 @@ def test_relay_manager_cli_json_contract(monkeypatch, tmp_path, capsys):
     assert '"allow_exec": false' in lines[1]
     assert '"servers"' in lines[2]
     assert '"workspaces"' in lines[2]
+
+
+def test_relay_manager_migrates_plaintext_secrets_to_os_vault(monkeypatch, tmp_path):
+    relay_home = tmp_path / "relay-home"
+    relay_home.mkdir()
+    monkeypatch.setenv("PAWFLOW_RELAY_HOME", str(relay_home))
+    (relay_home / "servers.json").write_text(json.dumps({
+        "legacy": {
+            "name": "legacy",
+            "url": "https://pawflow.example",
+            "gateway_key": "gateway-secret",
+            "gateway_cookie": "cookie-secret",
+            "session_token": "session-secret",
+            "username": "quentin",
+        }
+    }), encoding="utf-8")
+
+    hydrated = manager.get_server("legacy")
+
+    assert hydrated["gateway_key"] == "gateway-secret"
+    assert hydrated["session_token"] == "session-secret"
+    persisted = (relay_home / "servers.json").read_text(encoding="utf-8")
+    assert "gateway-secret" not in persisted
+    assert "cookie-secret" not in persisted
+    assert "session-secret" not in persisted
+    public = manager.list_servers()[0]
+    assert public["has_gateway_key"] is True
+    assert public["logged_in"] is True
+    assert "session_token" not in public
+
+
+def test_relay_manager_verify_requires_server_observed_connection(
+        monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAWFLOW_RELAY_HOME", str(tmp_path / "relay-home"))
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    manager.add_server("prod", "https://pawflow.example")
+    manager.update_server_auth(
+        "prod", session_token="session", username="quentin")
+    share = manager.add_workspace("repo", "prod", str(workspace))
+    monkeypatch.setattr(manager, "api_call", lambda *args, **kwargs: {
+        "relays": [{"relay_id": share["relay_id"], "connected": True}]
+    })
+
+    assert relay_cli_main(["--json", "verify", "repo"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result == {
+        "workspace": "repo",
+        "relay_id": share["relay_id"],
+        "connected": True,
+    }
 
 
 def test_relay_manager_workspace_permission_flags(monkeypatch, tmp_path):

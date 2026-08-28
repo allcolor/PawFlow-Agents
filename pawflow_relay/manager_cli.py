@@ -16,13 +16,14 @@ from pawflow_relay.manager import (
     start_workspace,
     stop_workspace_runtime,
     update_server_auth,
+    verify_workspace_connected,
 )
 from pawflow_relay.register import acquire_gateway_cookie
 
 
 def _print_server(profile: dict) -> None:
-    auth = "logged-in" if profile.get("session_token") else "not-logged-in"
-    gateway = "gateway" if profile.get("gateway_key") else "no-gateway"
+    auth = "logged-in" if profile.get("logged_in") else "not-logged-in"
+    gateway = "gateway" if profile.get("has_gateway_key") else "no-gateway"
     user = profile.get("username") or "-"
     print(f"{profile['name']}\t{profile['url']}\t{auth}\t{gateway}\tuser={user}")
 
@@ -127,6 +128,9 @@ def build_parser() -> argparse.ArgumentParser:
                             "conversation auto-unlock while this relay is connected")
 
     sub.add_parser("status", help="Show local relay client configuration status")
+    verify = sub.add_parser(
+        "verify", help="Verify server-observed connectivity for a workspace relay")
+    verify.add_argument("workspace")
     cleanup = sub.add_parser("cleanup", help="Cleanup a configured workspace relay runtime")
     cleanup.add_argument("workspace")
 
@@ -254,6 +258,10 @@ def main(argv=None) -> int:
 
         if args.command == "status":
             _print_result(args, {"servers": list_servers(), "workspaces": list_workspaces()})
+            return 0
+
+        if args.command == "verify":
+            _print_result(args, verify_workspace_connected(args.workspace))
             return 0
 
         if args.command == "cleanup":

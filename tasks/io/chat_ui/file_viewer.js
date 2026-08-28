@@ -112,7 +112,7 @@ function fetchFsFile(service, fpath) {
     });
 }
 
-function openFileViewer(filenameOrUrl) {
+function openFileViewer(filenameOrUrl, displayName) {
   let viewer = document.getElementById('fileViewer');
   if (!viewer) {
     viewer = document.createElement('div');
@@ -140,11 +140,11 @@ function openFileViewer(filenameOrUrl) {
   if (filenameOrUrl.startsWith('/files/')) {
     // Already a /files/<id>/<name> path — make absolute
     url = location.origin + filenameOrUrl;
-  } else if (!filenameOrUrl.startsWith('http')) {
+  } else if (!filenameOrUrl.startsWith('http') && !filenameOrUrl.startsWith('blob:')) {
     // Bare filename — search in conversation files
     url = API.replace(/\/[^\/]*$/, '') + '/files/' + encodeURIComponent(filenameOrUrl);
   }
-  const fname = filenameOrUrl.split('/').pop();
+  const fname = displayName || filenameOrUrl.split('/').pop();
   const ext = fname.split('.').pop().toLowerCase();
   nameEl.textContent = fname;
   dlEl.download = fname;

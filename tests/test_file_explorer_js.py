@@ -48,6 +48,20 @@ def test_file_explorer_streams_uploads_and_keeps_mobile_toolbar_visible():
     assert ".fe-panel{width:100%;max-width:none;height:100dvh;" in mobile
 
 
+def test_file_explorer_preview_uses_relay_read_and_blob_viewer():
+    explorer = Path("tasks/io/chat_ui/file_explorer.js").read_text(encoding="utf-8")
+    viewer = Path("tasks/io/chat_ui/file_viewer.js").read_text(encoding="utf-8")
+    preview = explorer[
+        explorer.index("function _fePreview(name)") : explorer.index("\nfunction _feSearch")
+    ]
+
+    assert "action$('fs_read_file'" in preview
+    assert "openFileViewer(URL.createObjectURL(blob),name)" in preview
+    assert "'/fs/'" not in preview
+    assert "function openFileViewer(filenameOrUrl, displayName)" in viewer
+    assert "!filenameOrUrl.startsWith('blob:')" in viewer
+
+
 @pytest.mark.skipif(shutil.which("node") is None,
                     reason="node is not available to run the JS suite")
 def test_file_explorer_is_valid_javascript():

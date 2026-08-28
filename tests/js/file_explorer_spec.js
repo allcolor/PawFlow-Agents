@@ -26,7 +26,7 @@ function assert(cond, msg) {
 
 function env() {
   const opened = [];
-  let reads = 0;
+  const calls = [];
   const pane = {
     className: '',
     innerHTML: '',
@@ -40,30 +40,37 @@ function env() {
     _feFmtSz: value => String(value),
     t: key => key,
     atob: value => value,
+    Blob,
+    Uint8Array,
+    URL: { createObjectURL() { return 'blob:relay-preview'; } },
     document: {
       createElement() { return pane; },
       body: { appendChild() {} },
     },
-    action$() {
-      reads++;
-      return { subscribe() {} };
+    action$(action, payload) {
+      calls.push({ action, payload });
+      return { subscribe(callback) {
+        callback({ content: 'file body', encoding: 'utf-8' });
+      } };
     },
-    openFileViewer(url) { opened.push(url); },
+    openFileViewer(url, name) { opened.push({ url, name }); },
   };
   vm.createContext(ctx);
   vm.runInContext(previewSource, ctx, { filename: 'file_explorer_preview.js' });
-  return { ctx, opened, reads: () => reads };
+  return { ctx, opened, calls };
 }
 
 for (const filename of ['clip.mp4', 'document.pdf', 'notes.txt', 'archive.bin']) {
-  test(filename + ' preview delegates to the shared viewer', () => {
+  test(filename + ' preview reads through the relay and delegates to the shared viewer', () => {
     const e = env();
     e.ctx._fePreview(filename);
+    assert(e.calls.length === 1, 'filesystem was not read exactly once');
+    assert(e.calls[0].action === 'fs_read_file', 'wrong action: ' + e.calls[0].action);
+    assert(e.calls[0].payload.service === 'relay one', 'wrong relay service');
+    assert(e.calls[0].payload.path === 'media folder/' + filename, 'wrong file path');
     assert(e.opened.length === 1, 'viewer was not opened');
-    assert(
-      e.opened[0] === '/fs/relay%20one/media%20folder/' + encodeURIComponent(filename),
-      'wrong viewer URL: ' + e.opened[0]);
-    assert(e.reads() === 0, 'preview must not read file content through fs_read_file');
+    assert(e.opened[0].url === 'blob:relay-preview', 'wrong viewer URL');
+    assert(e.opened[0].name === filename, 'viewer lost the file name');
   });
 }
 

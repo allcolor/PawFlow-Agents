@@ -350,9 +350,15 @@ function _feZipDir(name){
 }
 
 function _fePreview(name){
-  const httpUrl='/fs/'+encodeURIComponent(_fe.svc)+'/'
-    +_fePath(name).replace(/\\/g,'/').split('/').map(encodeURIComponent).join('/');
-  openFileViewer(httpUrl);
+  action$('fs_read_file',{service:_fe.svc,path:_fePath(name)}).subscribe(d => {
+    if(d.error){alert(t('errorMessage', { error: d.error }));return;}
+    let blob;
+    if(d.encoding==='base64'){
+      const bin=atob(d.content);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+      blob=new Blob([arr]);
+    } else {blob=new Blob([d.content],{type:'text/plain;charset=utf-8'});}
+    openFileViewer(URL.createObjectURL(blob),name);
+  });
 }
 
 function _feSearch(q){

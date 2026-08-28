@@ -6,6 +6,7 @@ Task ExecuteFlow - Execute a subflow and pass FlowFiles through it.
 
 from typing import Dict, Any, List
 from core import FlowFile, TaskError, TaskFactory
+from core.agent_contracts import CapabilityEffect, IdempotencyClass
 from core.base_task import BaseTask
 from engine import FlowParser
 from engine.continuous_executor import ContinuousFlowExecutor
@@ -30,6 +31,10 @@ class ExecuteFlowTask(BaseTask):
     NAME = "Execute Flow"
     DESCRIPTION = "Execute a JSON flow and pass FlowFiles through it"
     ICON = "flow"
+    AGENT_WORKFLOW_SAFE = True
+    EFFECTS = (CapabilityEffect.WORKFLOW_EXECUTE,)
+    IDEMPOTENCY = IdempotencyClass.KEYED_EFFECT
+    AUTHORIZATION_TARGET_KIND = "workflow.runtime"
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -38,6 +43,8 @@ class ExecuteFlowTask(BaseTask):
         self.parameter_mapping = self.config.get('parameter_mapping', {})
         self.port_mapping = self.config.get('port_mapping', {})
         self._runtime_context: Dict[str, str] = {}
+        self._workflow_runtime: Dict[str, Any] = {}
+        self._flow_runtime: Dict[str, Any] = {}
 
     def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
                             scope: str = "", agent_name: str = "") -> None:
@@ -47,6 +54,39 @@ class ExecuteFlowTask(BaseTask):
             "scope": scope or "",
             "agent_name": agent_name or "",
         }
+
+    def set_workflow_run_context(self, context, **kwargs: Any) -> None:
+        self._workflow_runtime = {
+            "workflow_run_context": context,
+            "workflow_event_callback": kwargs.get("event_callback"),
+            "workflow_terminal_callback": kwargs.get("terminal_callback"),
+            "workflow_inbox_store": kwargs.get("inbox_store"),
+            "workflow_run_store": kwargs.get("run_store"),
+            "workflow_cancel_event": kwargs.get("cancel_event"),
+            "workflow_preempt_policy": kwargs.get("preempt_policy"),
+            "workflow_visible_through_sequence": kwargs.get(
+                "visible_through_sequence"),
+            "workflow_allowed_effects": kwargs.get("allowed_effects"),
+            "workflow_allowed_relay_ids": kwargs.get("allowed_relay_ids"),
+            "workflow_resource_roots": kwargs.get("resource_roots"),
+        }
+
+    def set_flow_run_context(self, context, *, store=None, coordinator=None) -> None:
+        self._flow_runtime = {
+            "flow_run_context": context,
+            "flow_run_store": store,
+            "flow_run_coordinator": coordinator,
+        }
+
+    def set_workflow_authority_bounds(
+        self, *, allowed_effects=None, allowed_relay_ids=None,
+        resource_roots=None,
+    ) -> None:
+        self._workflow_runtime.update({
+            "workflow_allowed_effects": allowed_effects,
+            "workflow_allowed_relay_ids": allowed_relay_ids,
+            "workflow_resource_roots": resource_roots,
+        })
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """Execute the subflow with the FlowFile as input."""
@@ -88,11 +128,20 @@ class ExecuteFlowTask(BaseTask):
             child_ctx = self._build_child_parameter_context(flow)
             child_params = child_ctx._params if child_ctx else {}
 
+            runtime_context = dict(self._runtime_context)
+            runtime_context.update({
+                key: value for key, value in self._workflow_runtime.items()
+                if value is not None
+            })
+            runtime_context.update({
+                key: value for key, value in self._flow_runtime.items()
+                if value is not None
+            })
             result = ContinuousFlowExecutor.run_batch(
                 flow,
                 input_flowfiles=[flowfile],
                 parameters=child_params if child_params else None,
-                runtime_context=self._runtime_context or None,
+                runtime_context=runtime_context or None,
                 entry_task_id=input_port_id or None,
                 suppress_one_shot_roots=True,
             )

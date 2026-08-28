@@ -7,6 +7,10 @@ import logging
 from typing import Any, Callable
 
 from core import FlowFile
+from core.flow_run_authorization import (
+    FlowExecutionAuthority,
+    FlowRunTaskAuthorizationContext,
+)
 from core.flow_run_store import FLOW_RUN_TERMINALS, FlowRunStore
 
 logger = logging.getLogger(__name__)
@@ -35,16 +39,29 @@ class FlowRunCoordinator:
             "flow_ref": copy.deepcopy(run["flow_ref"]),
             "authorization_ref": copy.deepcopy(run["authorization_ref"]),
         }
+        authority = FlowExecutionAuthority.from_dict(
+            run.get("execution_authority"))
+        workflow_context = FlowRunTaskAuthorizationContext.from_run(run)
+        relay_snapshot = dict(authority.service_snapshot.get("relay") or {})
         executor._runtime_context.update({
             "user_id": run["user_id"],
             "conversation_id": run["conversation_id"],
+            "scope": "conversation",
+            "agent_name": authority.agent_name,
+            "workflow_run_context": workflow_context,
+            "workflow_allowed_effects": tuple(
+                effect.value for effect in authority.allowed_effects),
+            "workflow_allowed_relay_ids": tuple(
+                relay_snapshot.get("candidates") or ()),
+            "workflow_resource_roots": tuple(
+                authority.service_snapshot.get("resource_roots") or ()),
             "flow_run_context": context,
             "flow_run_store": self.store,
             "flow_run_coordinator": self,
         })
         executor._instance_id = run["deployment_instance_id"]
-        for task in executor._tasks.values():
-            executor._inject_runtime_context(task)
+        for task_id, task in executor._tasks.items():
+            executor._inject_runtime_context(task, task_id=task_id)
         from core.executor_registry import ExecutorRegistry
         ExecutorRegistry.get_instance().register(run["deployment_instance_id"], executor)
         executor.start()
@@ -149,6 +166,8 @@ class FlowRunCoordinator:
             conversation_id=original["conversation_id"],
             flow_ref=exact_ref,
             authorization_ref=authorization_ref,
+            execution_authority=copy.deepcopy(
+                original["execution_authority"]),
             input_snapshot=copy.deepcopy(original["input"]),
             parameters=copy.deepcopy(original["parameters"]),
             proposal_id=original.get("proposal_id") or "",

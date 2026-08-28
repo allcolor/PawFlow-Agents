@@ -536,7 +536,17 @@ def test_live_flow_run_write_fences_active_migration(tmp_path, monkeypatch):
             "content_digest": "b" * 64,
             "source_id": "repository:conversation:legacy.plan:1.0.0",
         },
-        authorization_ref={"root_turn_id": "turn-1"},
+        authorization_ref={
+            "context_id": "6b3a346a-7ffd-4ae1-b9bf-949d0c90f284",
+            "revision": 1,
+            "root_turn_id": "turn-1",
+        },
+        execution_authority={
+            "agent_name": "assistant",
+            "permission_mode": "default",
+            "allowed_effects": ["resource.write"],
+            "service_snapshot": {"bindings": {}, "services": {}},
+        },
         input_snapshot={"content": "", "attributes": {}},
         parameters={},
     )

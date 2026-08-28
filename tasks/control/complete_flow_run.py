@@ -6,7 +6,7 @@ import json
 from typing import Any, ClassVar
 
 from core import FlowFile, TaskError, TaskFactory
-from core.agent_contracts import IdempotencyClass
+from core.agent_contracts import CapabilityEffect, IdempotencyClass
 from core.base_task import BaseTask
 
 
@@ -19,7 +19,10 @@ class CompleteFlowRunTask(BaseTask):
     DESCRIPTION = "Commit the sole terminal result of a durable one-shot flow run"
     ICON = "check-circle"
     RELATIONSHIPS: ClassVar = ["completed", "failure"]
+    AGENT_WORKFLOW_SAFE = True
+    EFFECTS = (CapabilityEffect.RESOURCE_WRITE,)
     IDEMPOTENCY = IdempotencyClass.KEYED_EFFECT
+    AUTHORIZATION_TARGET_KIND = "workflow.runtime"
 
     def set_flow_run_context(self, context, *, store=None, coordinator=None) -> None:
         self._flow_run_context = context

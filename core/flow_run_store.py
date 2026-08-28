@@ -102,6 +102,7 @@ class FlowRunStore:
                     proposal_id TEXT,
                     parent_invocation_json TEXT,
                     authorization_ref_json TEXT NOT NULL,
+                    execution_authority_json TEXT,
                     input_json TEXT NOT NULL,
                     parameters_json TEXT NOT NULL,
                     replay_of TEXT,
@@ -139,6 +140,9 @@ class FlowRunStore:
             if "checkpoint_json" not in columns:
                 connection.execute(
                     "ALTER TABLE flow_runs ADD COLUMN checkpoint_json TEXT")
+            if "execution_authority_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE flow_runs ADD COLUMN execution_authority_json TEXT")
 
     @staticmethod
     def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -149,6 +153,7 @@ class FlowRunStore:
             ("flow_ref_json", "flow_ref"),
             ("parent_invocation_json", "parent_invocation"),
             ("authorization_ref_json", "authorization_ref"),
+            ("execution_authority_json", "execution_authority"),
             ("input_json", "input"),
             ("parameters_json", "parameters"),
             ("terminal_json", "terminal"),
@@ -161,7 +166,8 @@ class FlowRunStore:
 
     def create(
         self, *, user_id: str, conversation_id: str, flow_ref: dict[str, Any],
-        authorization_ref: dict[str, Any], input_snapshot: dict[str, Any],
+        authorization_ref: dict[str, Any], execution_authority: dict[str, Any],
+        input_snapshot: dict[str, Any],
         parameters: dict[str, Any], proposal_id: str = "",
         parent_invocation: dict[str, Any] | None = None,
         replay_of: str = "", run_id: str = "", instance_id: str = "",
@@ -169,8 +175,10 @@ class FlowRunStore:
         ref = ResourceRef.from_dict(flow_ref)
         if ref.resource_type != "flow":
             raise ValueError("flow_ref must identify an exact flow")
-        if not isinstance(authorization_ref, dict) or not authorization_ref:
-            raise ValueError("authorization_ref is required")
+        from core.agent_contracts import AuthorizationRefContract
+        from core.flow_run_authorization import FlowExecutionAuthority
+        authorization = AuthorizationRefContract.from_dict(authorization_ref)
+        authority = FlowExecutionAuthority.from_dict(execution_authority)
         if not isinstance(input_snapshot, dict) or not isinstance(parameters, dict):
             raise TypeError("input_snapshot and parameters must be objects")
         user_id = _required(user_id, "user_id")
@@ -190,17 +198,19 @@ class FlowRunStore:
                 INSERT INTO flow_runs (
                     run_id, user_id, conversation_id, generation,
                     flow_ref_json, deployment_instance_id, proposal_id,
-                    parent_invocation_json, authorization_ref_json, input_json,
+                    parent_invocation_json, authorization_ref_json,
+                    execution_authority_json, input_json,
                     parameters_json, replay_of, status, terminal_json,
                     terminal_event_id, error, recovery_count, created_at,
                     updated_at, terminal_at, import_metadata_json,
                     checkpoint_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (run_id, user_id, conversation_id, generation,
                  _json(ref.to_dict()), instance_id, proposal_id or None,
                  _json(parent_invocation) if parent_invocation else None,
-                 _json(authorization_ref), _json(input_snapshot), _json(parameters),
+                 _json(authorization.to_dict()), _json(authority.to_dict()),
+                 _json(input_snapshot), _json(parameters),
                  replay_of or None, "created", None, None, None, 0, now, now,
                  None, None, None),
             )
@@ -262,19 +272,20 @@ class FlowRunStore:
                 INSERT INTO flow_runs (
                     run_id, user_id, conversation_id, generation,
                     flow_ref_json, deployment_instance_id, proposal_id,
-                    parent_invocation_json, authorization_ref_json, input_json,
+                    parent_invocation_json, authorization_ref_json,
+                    execution_authority_json, input_json,
                     parameters_json, replay_of, status, terminal_json,
                     terminal_event_id, error, recovery_count, created_at,
                     updated_at, terminal_at, import_metadata_json,
                     checkpoint_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     run_id, user_id, conversation_id, generation,
                     _json(ref.to_dict()), f"flowrun__legacy__{run_id}",
                     proposal_id, None,
                     _json({"kind": "legacy_plan_import"}),
-                    _json({}), _json({}), None, status, _json(terminal),
+                    None, _json({}), _json({}), None, status, _json(terminal),
                     None, str(terminal.get("error") or "") or None, 0,
                     float(created_at), float(terminal_at), float(terminal_at),
                     _json(import_metadata), None,
@@ -347,18 +358,19 @@ class FlowRunStore:
                 INSERT INTO flow_runs (
                     run_id, user_id, conversation_id, generation,
                     flow_ref_json, deployment_instance_id, proposal_id,
-                    parent_invocation_json, authorization_ref_json, input_json,
+                    parent_invocation_json, authorization_ref_json,
+                    execution_authority_json, input_json,
                     parameters_json, replay_of, status, terminal_json,
                     terminal_event_id, error, recovery_count, created_at,
                     updated_at, terminal_at, import_metadata_json,
                     checkpoint_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     run_id, user_id, conversation_id, generation,
                     _json(ref.to_dict()), f"flowrun__legacy__{run_id}",
                     proposal_id, None, _json(authorization_ref),
-                    _json(input_snapshot), _json(parameters), None, status,
+                    None, _json(input_snapshot), _json(parameters), None, status,
                     None, None, None, 0, created_at, created_at, None,
                     _json(import_metadata), _json(checkpoint),
                 ),
@@ -426,18 +438,19 @@ class FlowRunStore:
                 INSERT INTO flow_runs (
                     run_id, user_id, conversation_id, generation,
                     flow_ref_json, deployment_instance_id, proposal_id,
-                    parent_invocation_json, authorization_ref_json, input_json,
+                    parent_invocation_json, authorization_ref_json,
+                    execution_authority_json, input_json,
                     parameters_json, replay_of, status, terminal_json,
                     terminal_event_id, error, recovery_count, created_at,
                     updated_at, terminal_at, import_metadata_json,
                     checkpoint_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     run_id, user_id, conversation_id, generation,
                     _json(ref.to_dict()), f"flowrun__legacy__{run_id}",
                     proposal_id, None, _json(authorization_ref),
-                    _json(input_snapshot), _json(parameters), None, "created",
+                    None, _json(input_snapshot), _json(parameters), None, "created",
                     None, None, None, 0, created_at, created_at, None,
                     _json(import_metadata), None,
                 ),

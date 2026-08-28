@@ -87,8 +87,15 @@ user handoff to an exact draft revision plus SHA-256 digest; saving a newer draf
 invalidates acceptance but does not transfer the turn until **Send to planner**.
 Approval revalidates and publishes that exact revision as an immutable
 conversation-scoped flow, snapshots fresh authenticated authority, and starts one
-uniquely identified `durable_one_shot` run. `completeFlowRun` commits the sole
-typed terminal into a durable outbox. Delivery projects only coarse run state
+uniquely identified `durable_one_shot` run. Before publication, every root,
+inline-group, and referenced-subflow task must declare workflow-safe capability
+metadata. The accepted FlowRun persists the resulting effect ceiling together
+with secret-free revisions of every visible service. The coordinator reconstructs
+that typed authority for each start or recovery, authorizes every task attempt,
+and propagates the same bounds plus the distinct FlowRun terminal context through
+`executeFlow`; a headless `ask` decision fails closed. Replay keeps the frozen
+execution ceiling while requiring a fresh user authorization reference.
+`completeFlowRun` commits the sole typed terminal into a durable outbox. Delivery projects only coarse run state
 back into the proposal and portable UI surface, then acknowledges the event;
 task progress remains authoritative in the executor and run record. Missing
 proposal rows leave events pending for repair. Start failures become durable

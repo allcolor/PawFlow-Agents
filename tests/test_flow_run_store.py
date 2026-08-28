@@ -24,10 +24,28 @@ def _ref():
     }
 
 
+def _authorization_ref(root_turn_id="turn-1"):
+    return {
+        "context_id": "6b3a346a-7ffd-4ae1-b9bf-949d0c90f284",
+        "revision": 1,
+        "root_turn_id": root_turn_id,
+    }
+
+
+def _execution_authority():
+    return {
+        "agent_name": "assistant",
+        "permission_mode": "default",
+        "allowed_effects": ["resource.write"],
+        "service_snapshot": {"bindings": {}, "services": {}},
+    }
+
+
 def _create(store):
     return store.create(
         user_id="alice", conversation_id="conversation-1",
-        flow_ref=_ref(), authorization_ref={"root_turn_id": "turn-1"},
+        flow_ref=_ref(), authorization_ref=_authorization_ref(),
+        execution_authority=_execution_authority(),
         input_snapshot={"content": "hello", "attributes": {"x": "1"}},
         parameters={"mode": "safe"}, proposal_id="proposal-1",
     )
@@ -114,12 +132,13 @@ def test_flow_run_replay_has_new_identity_and_current_authorization(tmp_path):
     original = _create(store)
     store.transition(original["run_id"], "failed", "fixture terminal")
     replay = FlowRunCoordinator(store).replay(
-        original["run_id"], authorization_ref={"root_turn_id": "turn-2"})
+        original["run_id"], authorization_ref=_authorization_ref("turn-2"))
     assert replay["run_id"] != original["run_id"]
     assert replay["deployment_instance_id"] != original["deployment_instance_id"]
     assert replay["generation"] == 2
     assert replay["replay_of"] == original["run_id"]
-    assert replay["authorization_ref"] == {"root_turn_id": "turn-2"}
+    assert replay["authorization_ref"] == _authorization_ref("turn-2")
+    assert replay["execution_authority"] == original["execution_authority"]
     assert replay["input"] == original["input"]
 
 
@@ -186,6 +205,90 @@ def test_durable_one_shot_definition_requires_exactly_one_terminal():
         item["code"] for item in FlowDefinitionValidator.validate(normal)["problems"]}
 
 
+def test_flow_execution_authority_recurses_into_groups_and_subflows(tmp_path):
+    import json
+    from types import SimpleNamespace
+
+    from core.flow_run_authorization import build_flow_execution_authority
+
+    register_all_tasks()
+    child_path = tmp_path / "child.json"
+    child_path.write_text(json.dumps({
+        "tasks": {
+            "notify": {"type": "notifyUser", "parameters": {"message": "done"}},
+        },
+        "services": {}, "groups": {}, "relations": [],
+        "entries": ["notify"], "exits": ["notify"],
+    }), encoding="utf-8")
+    definition = {
+        "tasks": {
+            "done": {"type": "completeFlowRun", "parameters": {}},
+        },
+        "services": {},
+        "groups": {
+            "inline": {
+                "tasks": {
+                    "input": {"type": "inputPort", "parameters": {}},
+                },
+                "groups": {},
+            },
+            "child": {"flow_ref": {"path": str(child_path)}},
+        },
+        "relations": [], "entries": ["done"], "exits": ["done"],
+    }
+
+    authority = build_flow_execution_authority(
+        definition,
+        user_id="alice",
+        conversation_id="conversation-1",
+        agent_name="assistant",
+        registry=SimpleNamespace(resolve_all=lambda **_kwargs: {}),
+        relay_ids=(),
+    )
+
+    assert set(authority.allowed_effects) == {
+        "resource.read",
+        "resource.write",
+        "messaging.send",
+        "workflow.execute",
+    }
+
+
+def test_flow_run_headless_authorization_ask_fails_closed(monkeypatch):
+    from types import SimpleNamespace
+
+    from core.flow_run_authorization import FlowRunTaskAuthorizationContext
+    from core.workflow_task_safety import (
+        WorkflowTaskSafetyError,
+        authorize_workflow_task,
+    )
+
+    context = FlowRunTaskAuthorizationContext.from_run({
+        "run_id": "fr_test",
+        "user_id": "alice",
+        "conversation_id": "conversation-1",
+        "authorization_ref": _authorization_ref(),
+        "execution_authority": _execution_authority(),
+    })
+    monkeypatch.setattr(
+        "core.authorization_context.active_authority_ref",
+        lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "core.tool_authorization.authorize_tool_call",
+        lambda **_kwargs: SimpleNamespace(
+            decision="ask", reason="confirmation required"))
+
+    with pytest.raises(WorkflowTaskSafetyError, match="authorization ask"):
+        authorize_workflow_task(
+            CompleteFlowRunTask({}), "done", FlowFile(),
+            {
+                "workflow_run_context": context,
+                "workflow_allowed_effects": ("resource.write",),
+            },
+            1,
+        )
+
+
 def test_attach_executor_injects_unique_run_context(monkeypatch, tmp_path):
     store = FlowRunStore(tmp_path / "runs.sqlite3")
     run = _create(store)
@@ -198,7 +301,18 @@ def test_attach_executor_injects_unique_run_context(monkeypatch, tmp_path):
         "core.executor_registry.ExecutorRegistry.get_instance",
         classmethod(lambda cls: registry))
     FlowRunCoordinator(store).attach_and_start(run["run_id"], executor)
-    assert executor._runtime_context["flow_run_context"]["run_id"] == run["run_id"]
+    runtime = executor._runtime_context
+    assert runtime["flow_run_context"]["run_id"] == run["run_id"]
+    workflow = runtime["workflow_run_context"]
+    assert workflow.run_id == run["run_id"]
+    assert workflow.user_id == "alice"
+    assert workflow.conversation_id == "conversation-1"
+    assert workflow.agent_name == "assistant"
+    assert workflow.permission_mode == "default"
+    assert workflow.authorization_ref.root_turn_id == "turn-1"
+    assert runtime["workflow_allowed_effects"] == ("resource.write",)
+    assert runtime["workflow_allowed_relay_ids"] == ()
+    assert runtime["workflow_resource_roots"] == ()
     assert executor._instance_id == run["deployment_instance_id"]
     executor.inject.assert_called_once()
     assert store.get(run["run_id"])["status"] == "running"

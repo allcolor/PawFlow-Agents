@@ -15,6 +15,7 @@ from core.workflow_proposal_surfaces import (
     current_workflow_proposal_surface,
     workflow_proposal_run_surface,
 )
+from core.workflow_task_safety import WorkflowTaskSafetyError
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +304,15 @@ def _handle_workflow_proposals(
             ):
                 raise ProposalConflict(
                     "accepted draft revision or digest changed before approval")
+            from core.flow_run_authorization import (
+                build_flow_execution_authority,
+            )
+            execution_authority = build_flow_execution_authority(
+                draft["definition"],
+                user_id=user_id,
+                conversation_id=conversation_id,
+                agent_name=str(proposal["created_by"]),
+            )
             if len(draft["definition"].get("entries") or []) != 1:
                 raise ValueError("durable_one_shot approval requires exactly one entry")
             published = authoring.publish(
@@ -329,6 +339,7 @@ def _handle_workflow_proposals(
                 user_id=user_id, conversation_id=conversation_id,
                 flow_ref=flow_ref.to_dict(),
                 authorization_ref=authorization_ref,
+                execution_authority=execution_authority.to_dict(),
                 input_snapshot={
                     "content": str(body.get("input") or ""),
                     "attributes": dict(body.get("attributes") or {}),
@@ -444,6 +455,8 @@ def _handle_workflow_proposals(
         return _reply({"error": "Draft not found"}, "404")
     except KeyError as exc:
         return _reply({"error": str(exc.args[0] if exc.args else exc)}, "404")
+    except WorkflowTaskSafetyError as exc:
+        return _reply({"error": str(exc)}, "400")
     except ValueError as exc:
         return _reply({"error": str(exc)}, "400")
     except Exception as exc:

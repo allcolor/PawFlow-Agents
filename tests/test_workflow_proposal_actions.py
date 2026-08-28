@@ -8,6 +8,7 @@ from core.authorization_context import AuthorizationContextStore
 from core.deployment_registry import DeploymentRegistry
 from core.flow_authoring import FlowAuthoringService
 from core.flow_run_store import FlowRunStore
+from core.service_registry import ServiceRegistry
 from core.workflow_proposal_store import WorkflowProposalStore
 from tasks import register_all_tasks
 from tasks.ai.actions.workflow_proposals import _handle_workflow_proposals
@@ -30,12 +31,14 @@ def isolated(tmp_path, monkeypatch):
     AuthorizationContextStore._instance = None
     DeploymentRegistry.reset()
     FlowRunStore.reset()
+    ServiceRegistry.reset()
     WorkflowProposalStore.reset()
     yield events
     FlowAuthoringService.reset()
     AuthorizationContextStore._instance = None
     DeploymentRegistry.reset()
     FlowRunStore.reset()
+    ServiceRegistry.reset()
     WorkflowProposalStore.reset()
 
 
@@ -226,7 +229,58 @@ def test_approve_publishes_exact_revision_and_starts_one_authorized_run(
     authority = data["run"]["authorization_ref"]
     assert AuthorizationContextStore.instance().snapshot(
         "alice", "conv", authority["context_id"], authority["revision"])
+    execution_authority = data["run"]["execution_authority"]
+    assert execution_authority == {
+        "agent_name": "assistant",
+        "permission_mode": "default",
+        "allowed_effects": ["resource.write"],
+        "service_snapshot": {"bindings": {}, "services": {}},
+    }
     assert len(FlowRunStore.instance().list("conv")) == 1
+
+
+def test_approval_rejects_undeclared_task_before_creating_run(monkeypatch):
+    from core import TaskFactory
+    from core.base_task import BaseTask
+
+    class UnsafeTask(BaseTask):
+        TYPE = "testUndeclaredWorkflowTask"
+
+        def execute(self, flowfile):
+            return [flowfile]
+
+    TaskFactory.register(UnsafeTask)
+    draft = FlowAuthoringService.instance().new_from_definition(
+        "plans", "unsafe_release", "1.0.0", "conv", "alice", {
+            "name": "Unsafe release",
+            "execution_mode": "durable_one_shot",
+            "run_contract": {"mode": "durable_one_shot"},
+            "tasks": {
+                "unsafe": {"type": UnsafeTask.TYPE, "parameters": {}},
+                "done": {"type": "completeFlowRun", "parameters": {}},
+            },
+            "services": {}, "groups": {},
+            "relations": [{"from": "unsafe", "to": "done", "type": "success"}],
+            "entries": ["unsafe"], "exits": ["done"],
+        }, conv_id="conv")
+    proposal = _call("workflow_proposal_create", {
+        "conversation_id": "conv", "draft_id": draft["draft_id"],
+        "title": "Unsafe release", "planner_id": "assistant",
+    })[0]["proposal"]
+    accepted = _call("workflow_proposal_accept", {
+        "conversation_id": "conv", "proposal_id": proposal["proposal_id"],
+        "state_revision": proposal["state_revision"],
+    })[0]["proposal"]
+    _stub_run_start(monkeypatch)
+
+    data, status = _call("workflow_proposal_approve", {
+        "conversation_id": "conv", "proposal_id": accepted["proposal_id"],
+        "state_revision": accepted["state_revision"],
+    })
+
+    assert status == "400"
+    assert "not workflow-safe" in data["error"]
+    assert FlowRunStore.instance().list("conv") == []
 
 
 def test_terminal_outbox_projects_once_and_replay_gets_new_identity(

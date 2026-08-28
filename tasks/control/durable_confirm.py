@@ -335,6 +335,27 @@ class NotifyUserTask(BaseTask):
         "event is buffered for replay, and failure on delivery errors.")
     ICON = "bell"
     RELATIONSHIPS: ClassVar = ["sent", "queued", "failure"]
+    AGENT_WORKFLOW_SAFE = True
+    EFFECTS = (
+        CapabilityEffect.RESOURCE_WRITE,
+        CapabilityEffect.MESSAGING_SEND,
+    )
+    IDEMPOTENCY = IdempotencyClass.KEYED_EFFECT
+    AUTHORIZATION_TARGET_KIND = "conversation.notification"
+
+    def set_workflow_run_context(self, context, **_kwargs):
+        self._workflow_run_context = context
+
+    def workflow_authorization_target(self, _flowfile: FlowFile) -> Dict[str, Any]:
+        context = getattr(self, "_workflow_run_context", None)
+        if context is None:
+            return {}
+        return {
+            "user_id": context.user_id,
+            "conversation_id": context.conversation_id,
+            "scope": "conversation",
+            "scope_id": context.conversation_id,
+        }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         from core.conversation_event_bus import ConversationEventBus

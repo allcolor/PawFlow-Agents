@@ -251,6 +251,15 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
                 visible_through_sequence=self._runtime_context.get(
                     "workflow_visible_through_sequence"),
             )
+            if hasattr(task, "set_workflow_authority_bounds"):
+                task.set_workflow_authority_bounds(
+                    allowed_effects=self._runtime_context.get(
+                        "workflow_allowed_effects"),
+                    allowed_relay_ids=self._runtime_context.get(
+                        "workflow_allowed_relay_ids"),
+                    resource_roots=self._runtime_context.get(
+                        "workflow_resource_roots"),
+                )
 
         flow_run_context = self._runtime_context.get("flow_run_context")
         if flow_run_context is not None and hasattr(task, "set_flow_run_context"):

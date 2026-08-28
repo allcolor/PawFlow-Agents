@@ -2222,6 +2222,21 @@ def test_execute_flow_propagates_runtime_context_to_subflow(tmp_path, monkeypatc
     task.set_runtime_context(
         user_id="alice", conversation_id="conv1",
         scope="conversation", agent_name="agentA")
+    workflow_context = SimpleNamespace(run_id="wr-1")
+    task.set_workflow_run_context(
+        workflow_context,
+        run_store="run-store",
+        cancel_event="cancel-event",
+        allowed_effects=("resource.read", "workflow.execute"),
+        allowed_relay_ids=("MyWorkspace",),
+        resource_roots=("/workspace",),
+    )
+    flow_run_context = {"run_id": "fr-1"}
+    task.set_flow_run_context(
+        flow_run_context,
+        store="flow-run-store",
+        coordinator="flow-run-coordinator",
+    )
     captured = {}
 
     def _fake_run_batch(flow, input_flowfiles=None, parameters=None,
@@ -2240,6 +2255,16 @@ def test_execute_flow_propagates_runtime_context_to_subflow(tmp_path, monkeypatc
         "conversation_id": "conv1",
         "scope": "conversation",
         "agent_name": "agentA",
+        "workflow_run_context": workflow_context,
+        "workflow_run_store": "run-store",
+        "workflow_cancel_event": "cancel-event",
+        "workflow_allowed_effects": (
+            "resource.read", "workflow.execute"),
+        "workflow_allowed_relay_ids": ("MyWorkspace",),
+        "workflow_resource_roots": ("/workspace",),
+        "flow_run_context": flow_run_context,
+        "flow_run_store": "flow-run-store",
+        "flow_run_coordinator": "flow-run-coordinator",
     }
 
 
@@ -2254,11 +2279,20 @@ def test_executor_injects_runtime_context_into_execute_flow_task(tmp_path):
     flow = Flow({"id": "parent", "name": "Parent", "relations": []})
     flow.add_task("exec", task)
 
+    workflow_context = object()
+    flow_run_context = {"run_id": "fr-1"}
     ContinuousFlowExecutor(flow, runtime_context={
         "user_id": "alice",
         "conversation_id": "conv1",
         "scope": "conversation",
         "agent_name": "agentA",
+        "workflow_run_context": workflow_context,
+        "workflow_allowed_effects": ("resource.read",),
+        "workflow_allowed_relay_ids": ("MyWorkspace",),
+        "workflow_resource_roots": ("/workspace",),
+        "flow_run_context": flow_run_context,
+        "flow_run_store": "flow-run-store",
+        "flow_run_coordinator": "flow-run-coordinator",
     })
 
     assert task._runtime_context == {
@@ -2266,6 +2300,24 @@ def test_executor_injects_runtime_context_into_execute_flow_task(tmp_path):
         "conversation_id": "conv1",
         "scope": "conversation",
         "agent_name": "agentA",
+    }
+    assert task._workflow_runtime == {
+        "workflow_run_context": workflow_context,
+        "workflow_event_callback": None,
+        "workflow_terminal_callback": None,
+        "workflow_inbox_store": None,
+        "workflow_run_store": None,
+        "workflow_cancel_event": None,
+        "workflow_preempt_policy": None,
+        "workflow_visible_through_sequence": None,
+        "workflow_allowed_effects": ("resource.read",),
+        "workflow_allowed_relay_ids": ("MyWorkspace",),
+        "workflow_resource_roots": ("/workspace",),
+    }
+    assert task._flow_runtime == {
+        "flow_run_context": flow_run_context,
+        "flow_run_store": "flow-run-store",
+        "flow_run_coordinator": "flow-run-coordinator",
     }
 
 

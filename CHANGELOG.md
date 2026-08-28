@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.249] — 2026-08-28
+
+### Added
+
+- Added a persistent tiled conversation workspace with layouts from one to six
+  surfaces, stable Webchat/OpenSpace/tool mounts, task and agent projections,
+  focused-agent composer routing, targeted insertion, and maximize/restore.
+
+### Changed
+
+- Claude Code and Codex Interactive turns now share explicit active-turn
+  lifetime tracking, while persistent terminal viewers re-resolve replacement
+  containers and retry across bounded cold-start gaps.
+- The server image now packages and privately caches noVNC assets while
+  preserving relay/backend fallbacks for non-Docker deployments.
+
+### Fixed
+
+- Tiled tmux surfaces retain fixed scrollback, workspace surfaces honor the
+  configured atmosphere transparency, and unmaximize restores the exact
+  previous layout.
+- Benign Chromium ResizeObserver loop notifications no longer leave a fatal red
+  noVNC overlay over a desktop that is still rendering.
+- Live Codex Interactive sessions always rebuild queued or preloaded retriggers
+  as deltas instead of leaking a second cold-context request to the agent loop.
+- Automatic Project Wiki updates now select at most eight changed files per
+  batch by default, keeping large pending manifests below reverse-proxy request
+  limits while preserving explicit unbounded internal requests.
+
 ## [1.0.0-beta.248] — 2026-08-28
 
 ### Added

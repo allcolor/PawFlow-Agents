@@ -47,8 +47,8 @@
 .msg-meta { margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06);
             font-size: 11px; color: #6c6c8a; cursor: pointer; user-select: none; line-height: 1.6; }
 .msg-meta:hover { color: #8888aa; }
-.msg-meta .meta-summary::before { content: '\u25B8 '; font-size: 9px; }
-.msg-meta.expanded .meta-summary::before { content: '\u25BE '; }
+.msg-meta .meta-summary::before { content: '▸ '; font-size: 9px; }
+.msg-meta.expanded .meta-summary::before { content: '▾ '; }
 .msg-meta .meta-details { display: none; margin-top: 2px; color: #555570; font-size: 10px; }
 .msg-meta.expanded .meta-details { display: block; }
 .msg.btw { align-self: flex-start; background: #0d1b2a; color: #c0c0d0; font-size: 13px;

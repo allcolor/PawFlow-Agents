@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.248] — 2026-08-28
+
+### Added
+
+- Added an operational Workflow Kanban with durable command journaling,
+  projections, comments, reviews, attachments, live run updates, localized UI,
+  and resilient run controls.
+- Added a native PawFlow desktop client with packaged web chat, portable build
+  support, and its own validated desktop runtime.
+- Added a resumable universal CLI/GUI installer for local and SSH targets,
+  including preflight and reachability checks, relay credential storage,
+  desktop relay integration, portable platform archives, and release assets.
+
+### Changed
+
+- LLM usage and cost accounting is now recorded after every provider call so
+  live totals remain accurate across multi-call agent turns.
+- Documented the proposed named execution/deployment profiles and refreshed the
+  full PawFlow-versus-Hermes comparison against the current implementation.
+
+### Fixed
+
+- Relay-backed file previews now preserve the correct remote file reference
+  across the chat UI preview path.
+- Message metadata disclosure icons now render as intended instead of exposing
+  literal or malformed chevron content.
+- Universal installer builds exclude optional Pydantic and Rich developer
+  integrations, preventing unrelated scientific and CUDA stacks from entering
+  the standalone executable.
+
+### Security
+
+- Flow execution now persists an authoritative run snapshot and enforces it
+  recursively across bridges, replay, migration, and nested tool execution so
+  stale or mismatched authority fails closed.
+
 ## [1.0.0-beta.247] — 2026-08-27
 
 ### Added

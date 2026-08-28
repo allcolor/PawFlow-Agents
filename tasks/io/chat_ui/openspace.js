@@ -83,14 +83,17 @@ let _osUserCount = 0;
 // which msg_ids are already reflected (seeded or received live).
 let _osSeedConvId = null;
 const _osSeededIds = new Set();
-// Projection wall: the live simplified transcript is reparented into a
-// DOM element that is perspective-mapped onto a big screen in the scene.
+// Projection wall: a read-only projection of the canonical transcript is
+// perspective-mapped onto a big screen in the scene. The real #messages stays
+// in the Webchat surface so both surfaces can be visible in a tiled workspace.
 const OSV_SCREEN_W = 960, OSV_SCREEN_H = 540;
 const OSV_SCREEN_Z = -9;
 const OSV_SCREEN_OCCLUSION_EPSILON = 0.01;
 let _osScreenEl = null;
 let _osScreenCorners = null;
-let _osScreenHome = null;   // where #messages goes back on deactivation
+let _osProjectedMessages = null;
+let _osProjectionObserver = null;
+let _osProjectionRaf = 0;
 let _osScreenOcclusionRect = null;
 // Blackboard: chalk roster of the active agents, projected like the wall
 // screen. Batteries above heads mirror window._contextUsage.

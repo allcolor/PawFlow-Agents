@@ -496,6 +496,7 @@ function _getOrCreateSubBlock(delegateTcId, taskId, dstAgent, llmService, messag
   // when classifying a sub_agent_trace from the store and skips it if a
   // live SSE block for the same sub-agent task already exists).
   if (subEl && taskId) subEl.dataset.delegateTaskId = taskId;
+  if (subEl && dstAgent) subEl.dataset.agentName = dstAgent;
   const block = { el: subEl, content: subContent, summary: subSummary, agent: dstAgent, taskId };
   _delegateSubBlocks[taskId] = block;
   group.subBlocks[taskId] = block;

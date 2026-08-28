@@ -22,7 +22,7 @@ HEADER_OPEN = '<div class="header" id="headerBar">'
 
 
 def test_appearance_and_language_are_compact_controls_in_the_header():
-    header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
+    header = _between(HEADER_OPEN, '<!-- Chat workspace -->')
     header_lead = header[:header.index('id="actionMenuWrap"')]
     dock = _between('<div class="action-menu-wrap action-dock"', '<!-- /action dock -->')
 
@@ -78,7 +78,7 @@ def test_appearance_and_language_are_compact_controls_in_the_header():
 
 
 def test_appearance_and_language_reuse_dock_tooltips_and_hover_zoom():
-    header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
+    header = _between(HEADER_OPEN, '<!-- Chat workspace -->')
     header_controls = header[:header.index('id="actionMenuWrap"')]
 
     for control_id in ("languageSelectControl",):
@@ -98,7 +98,7 @@ def test_appearance_and_language_reuse_dock_tooltips_and_hover_zoom():
 
 
 def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
-    header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
+    header = _between(HEADER_OPEN, '<!-- Chat workspace -->')
     dock = _between('<div class="action-menu-wrap action-dock"', '<!-- /action dock -->')
     i18n_js = Path("tasks/io/chat_ui/i18n.js").read_text(encoding="utf-8")
     state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
@@ -145,7 +145,7 @@ def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
 
 
 def test_header_account_actions_reuse_dock_tooltip_and_hover_zoom():
-    header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
+    header = _between(HEADER_OPEN, '<!-- Chat workspace -->')
     header_controls = header[:header.index('id="actionMenuWrap"')]
 
     for element_id in ("linkAccountBtn", "logoutBtn"):
@@ -252,7 +252,7 @@ def test_language_selector_renders_catalog_flags():
 
 
 def test_view_audio_and_permissions_live_in_left_prompt_panel_but_dictation_does_not():
-    header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
+    header = _between(HEADER_OPEN, '<!-- Chat workspace -->')
     controls = _between(
         '<div class="prompt-controls-panel"', '<div class="composer-action-mount"'
     )
@@ -276,7 +276,7 @@ def test_view_audio_and_permissions_live_in_left_prompt_panel_but_dictation_does
     assert "if (permissionControl) permissionControl.style.display" in state_js
 
     assert 'id="speechInputBtn"' not in controls
-    composer = _between('<div class="input-row composer-shell"', '</div><!-- /tab-content chat -->')
+    composer = _between('<div class="input-row composer-shell"', '</div><!-- /main -->')
     assert 'id="speechInputBtn"' in composer
     assert 'id="grabBtn"' in composer
 
@@ -286,7 +286,7 @@ def test_view_audio_and_permissions_live_in_left_prompt_panel_but_dictation_does
 
 
 def test_composer_context_row_orders_controls_and_action_dock():
-    input_area = _between('<div class="input-area">', '</div><!-- /tab-content chat -->')
+    input_area = _between('<div class="input-area">', '</div><!-- /main -->')
     context_row = _between(
         '<div class="composer-context-row">', '<div class="input-row composer-shell">'
     )
@@ -402,7 +402,7 @@ def test_conversation_control_buttons_are_thin_and_share_dock_motion():
 
 
 def test_attachment_thumbnails_stack_before_send_and_expand_past_three():
-    input_row = _between('<div class="input-row composer-shell">', '</div>\n</div>\n</div><!-- /tab-content chat -->')
+    input_row = _between('<div class="input-row composer-shell">', '</div>\n</div>\n</div><!-- /main -->')
 
     assert input_row.index('id="attachPreview"') < input_row.index('id="input"')
     assert input_row.index('id="input"') < input_row.index('id="sendBtn"')
@@ -414,7 +414,7 @@ def test_attachment_thumbnails_stack_before_send_and_expand_past_three():
 
 
 def test_unified_composer_owns_prompt_actions_but_not_conversation_controls():
-    input_row = _between('<div class="input-row composer-shell">', '</div>\n</div>\n</div><!-- /tab-content chat -->')
+    input_row = _between('<div class="input-row composer-shell">', '</div>\n</div>\n</div><!-- /main -->')
     before_prompt = input_row[:input_row.index('id="input"')]
 
     assert 'id="promptsBtn"' not in input_row
@@ -444,7 +444,9 @@ def test_realtime_voice_and_refresh_remain_in_conversation_controls():
     assert 'id="grabBtn"' not in controls
 
 
-def test_task_dock_stays_fixed_while_action_dock_joins_composer():
+def test_task_bar_and_workspace_toolbar_replace_the_fixed_task_drawer():
     assert ".action-dock-menu { display: flex; position: static;" in TEMPLATE_HTML
-    assert ".task-tab-dock { position: fixed;" in TEMPLATE_HTML
+    assert ".tab-bar { width: 42px;" in TEMPLATE_HTML
+    assert ".workspace-toolbar {" in TEMPLATE_HTML
+    assert ".task-tab-dock" not in TEMPLATE_HTML
     assert ".action-dock { position: relative;" in TEMPLATE_HTML

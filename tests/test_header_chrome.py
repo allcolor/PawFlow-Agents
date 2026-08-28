@@ -122,7 +122,7 @@ def test_every_native_title_is_adopted_by_the_shared_css_tooltip():
     # The portal lives at body level: inside the header it went display:none
     # with it, killing every tooltip while the header was folded.
     header = TEMPLATE[TEMPLATE.index('<div class="header" id="headerBar">'):
-                      TEMPLATE.index("<!-- Chat tab content -->")]
+                      TEMPLATE.index("<!-- Chat workspace -->")]
     assert 'id="pfCssTooltip"' not in header
     assert 'id="pfCssTooltip"' in TEMPLATE
 

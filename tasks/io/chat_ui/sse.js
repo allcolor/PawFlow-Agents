@@ -214,6 +214,25 @@ _startSSEWatchdog();
 // buffered events into the chat renderer.
 var _lastServerStartTime = null;
 var _lastRestartReconnectAt = 0;
+var _serverAssetVersionCheckInFlight = false;
+function _reloadIfServerAssetsChanged() {
+  const currentVersion = String(window.PAWFLOW_ASSET_VERSION || '').trim();
+  if (!currentVersion || _serverAssetVersionCheckInFlight
+      || typeof fetch !== 'function') return;
+  _serverAssetVersionCheckInFlight = true;
+  fetch(window.location.href, { cache: 'no-store', credentials: 'same-origin' })
+    .then(resp => resp.ok ? resp.text() : '')
+    .then(html => {
+      const match = html.match(/window\.PAWFLOW_ASSET_VERSION="([0-9a-f]{8})"/);
+      const nextVersion = match ? match[1] : '';
+      if (nextVersion && nextVersion !== currentVersion) {
+        window.location.reload();
+      }
+    })
+    .catch(() => {})
+    .finally(() => { _serverAssetVersionCheckInFlight = false; });
+}
+
 function _checkServerRestart(data) {
   // Only reconnect on an explicit server bounce (start_time changed).
   // The earlier "readyState !== OPEN → reconnect" heuristic ran every
@@ -233,6 +252,7 @@ function _checkServerRestart(data) {
   _lastRestartReconnectAt = now;
   console.warn('[SSE] server restart detected (start_time ' + prev
     + ' → ' + data.server_start_time + ') — reconnecting SSE');
+  _reloadIfServerAssetsChanged();
   if (typeof _reconnectUIActionSSE === 'function') {
     try { _reconnectUIActionSSE(); } catch (_) {}
   }

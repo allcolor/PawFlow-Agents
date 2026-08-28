@@ -1,0 +1,36 @@
+<div class="workspace-shell" id="workspaceShell" data-layout="1">
+  <div class="workspace-toolbar" id="workspaceToolbar">
+    <span class="workspace-target-hint" id="workspaceTargetHint" hidden></span>
+    <label class="workspace-layout-control" for="workspaceLayoutSelect">
+      <span data-i18n="workspaceLayout">Workspace</span>
+      <select id="workspaceLayoutSelect" onchange="workspaceSetLayout(this.value)"
+              title="Workspace layout" data-i18n-title="workspaceLayoutTitle">
+        <option value="1" data-i18n="workspaceSingle">Single</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+      </select>
+    </label>
+  </div>
+  <div class="workspace-scroller" id="workspaceScroller">
+    <div class="workspace-board" id="workspaceBoard">
+      <div class="tab-content active workspace-surface" id="tabContentChat" data-tab="chat"
+           data-surface-type="webchat" data-surface-label="Webchat">
+        <div class="workspace-surface-body">
+{% include "chat/panels.html" %}
+{% include "chat/messages.html" %}
+        </div>
+      </div><!-- /webchat surface -->
+      <div class="tab-content" id="tabContentOpenspace" data-tab="openspace"
+           data-surface-type="openspace" data-surface-label="OpenSpace">
+        <div class="workspace-surface-body">
+          <div class="openspace-wrap" id="openspaceWrap" style="display:none">
+            <div class="osv-overlay" id="openspaceOverlay"></div>
+          </div>
+        </div>
+      </div><!-- /openspace surface -->
+    </div>
+  </div>
+</div><!-- /workspace -->

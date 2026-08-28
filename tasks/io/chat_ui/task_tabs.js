@@ -1,152 +1,327 @@
-// ── Task Tabs: right-side sliding panel showing only one task's messages ──
-// A task runs in its own sub-conversation (core/task_lifecycle.py) and every
-// message carries source.task_id (see core/_conversation_store_ctxio.py).
-// addMsg() tags the rendered element with dataset.taskId whenever that's
-// present (messages_render.js), and _getTaskBlock() does the same for the
-// inline collapsible group (sse_state.js). This module never re-fetches or
-// re-renders messages: it clones the already-rendered top-level nodes that
-// carry a matching data-task-id into a dedicated panel, so it stays in sync
-// with whatever the main feed already knows how to draw.
+// Filtered Webchat workspace surfaces.
 //
-// Plans do NOT get the same treatment yet: a plan step's instruction is
-// tagged with source.plan_id, but the agent's response and its tool calls
-// are not (tasks/ai/actions/plans.py sends the instruction as a plain user
-// message, and core/llm_providers/_cc_stream*.py does not propagate
-// plan_id the way it propagates task_id). A "Plan tab" opened the same way
-// would show the instruction and nothing else, so it isn't wired here.
-
-var _taskTabRegistry = {};    // taskId -> { agentName }
-var _openTaskTabOrder = [];   // taskId[], dock display order
-var _activeTaskTabId = null;
+// The canonical #messages tree remains the only render target for history and
+// SSE. Filtered views are read-only projections maintained by one observer, so
+// opening several agent/task tiles never creates another connection or changes
+// message reconciliation.
+var _taskTabRegistry = {};    // tabId -> filter descriptor
+var _openTaskTabOrder = [];   // tabId[], creation order
+var _activeTaskTabId = null;  // active filtered tab id
 var _taskTabObserverStarted = false;
+var _taskTabObserver = null;
+var _taskTabRenderRaf = 0;
 
-/** Open (or focus) the sliding tab for a task. Called from the Active
- *  Agents panel and from the inline task-block header. */
-function openTaskTab(taskId, agentName) {
-  if (!taskId) return;
-  if (!_taskTabRegistry[taskId]) _taskTabRegistry[taskId] = { agentName: agentName || '' };
-  else if (agentName) _taskTabRegistry[taskId].agentName = agentName;
-  if (_openTaskTabOrder.indexOf(taskId) === -1) _openTaskTabOrder.push(taskId);
-  _startTaskTabObserver();
-  switchTaskTab(taskId);
+function _filteredViewToken(value) {
+  return encodeURIComponent(String(value || ''))
+    .replace(/%/g, '_')
+    .replace(/[^a-zA-Z0-9_.-]/g, '_')
+    .substring(0, 180);
 }
 
-/** Close one tab. If it was the active one, slide the panel shut. */
-function closeTaskTab(taskId) {
-  const idx = _openTaskTabOrder.indexOf(taskId);
-  if (idx !== -1) _openTaskTabOrder.splice(idx, 1);
-  delete _taskTabRegistry[taskId];
-  if (_activeTaskTabId === taskId) {
-    _activeTaskTabId = _openTaskTabOrder.length
-      ? _openTaskTabOrder[_openTaskTabOrder.length - 1] : null;
-    if (_activeTaskTabId) {
-      _renderTaskTabPanel(_activeTaskTabId);
-    } else {
-      const panel = document.getElementById('taskTabPanel');
-      if (panel) panel.classList.remove('open');
-    }
-  }
-  _renderTaskTabDock();
+function _filteredViewTabId(agentName, taskId) {
+  return taskId
+    ? 'filter-task-' + _filteredViewToken(taskId)
+    : 'filter-agent-' + _filteredViewToken(String(agentName || '').toLowerCase());
 }
 
-function closeActiveTaskTab() {
-  if (_activeTaskTabId) closeTaskTab(_activeTaskTabId);
+function _filteredViewLabel(agentName, taskId) {
+  const display = agentName ? displayAgentName(agentName) : t('agent');
+  if (taskId) return display + ' / ' + taskId;
+  return display;
 }
 
-/** Switch the single sliding panel to show a different (already-open) tab. */
-function switchTaskTab(taskId) {
-  if (!_taskTabRegistry[taskId]) return;
-  _activeTaskTabId = taskId;
-  _renderTaskTabDock();
-  _renderTaskTabPanel(taskId);
-  const panel = document.getElementById('taskTabPanel');
-  if (panel) panel.classList.add('open');
+function _filteredViewEscape(value) {
+  return window.CSS && CSS.escape ? CSS.escape(String(value || ''))
+    : String(value || '').replace(/"/g, '\\"');
 }
 
-function _renderTaskTabDock() {
-  const dock = document.getElementById('taskTabDock');
-  if (!dock) return;
-  dock.innerHTML = '';
-  _openTaskTabOrder.forEach(function(taskId) {
-    const info = _taskTabRegistry[taskId] || {};
-    const btn = document.createElement('button');
-    btn.className = 'task-tab-dock-btn' + (taskId === _activeTaskTabId ? ' active' : '');
-    btn.title = (info.agentName ? displayAgentName(info.agentName) + ' — ' : '') + taskId;
-    btn.type = 'button';
-    btn.onclick = function() { switchTaskTab(taskId); };
-    btn.innerHTML = '📋';
-    const closeBtn = document.createElement('span');
-    closeBtn.className = 'task-tab-close';
-    closeBtn.title = t('closeTaskTabTitle');
-    closeBtn.textContent = '×';
-    closeBtn.onclick = function(e) { e.stopPropagation(); closeTaskTab(taskId); };
-    btn.appendChild(closeBtn);
-    dock.appendChild(btn);
+function _filteredViewStripIds(root) {
+  if (!root) return root;
+  if (root.id) root.removeAttribute('id');
+  root.querySelectorAll('[id]').forEach(function(node) { node.removeAttribute('id'); });
+  root.querySelectorAll(
+    '.delegate-cancel-btn, .btn-stop, .task-tab-open-btn, .msg-actions'
+  ).forEach(function(node) { node.remove(); });
+  return root;
+}
+
+function _filteredViewTaskMatch(node, taskId) {
+  if (!node || !node.dataset) return false;
+  if (node.dataset.taskId === taskId || node.dataset.delegateTaskId === taskId) return true;
+  const safe = _filteredViewEscape(taskId);
+  return !!node.querySelector(
+    '[data-task-id="' + safe + '"], [data-delegate-task-id="' + safe + '"]'
+  );
+}
+
+function _filteredViewAgentMatch(node, agentName) {
+  if (!node || !node.dataset) return false;
+  const wanted = String(agentName || '').toLowerCase();
+  const direct = String(
+    node.dataset.agentName || node.dataset.agent || node.dataset.targetAgent || ''
+  ).toLowerCase();
+  if (direct === wanted) return true;
+  return Array.from(node.querySelectorAll(
+    '[data-agent-name], [data-agent], [data-target-agent]'
+  )).some(function(child) {
+    const value = String(
+      child.dataset.agentName || child.dataset.agent || child.dataset.targetAgent || ''
+    ).toLowerCase();
+    return value === wanted;
   });
 }
 
-function _renderTaskTabPanel(taskId) {
-  const titleEl = document.getElementById('taskTabPanelTitle');
-  const body = document.getElementById('taskTabPanelBody');
-  if (!body) return;
-  const info = _taskTabRegistry[taskId] || {};
-  if (titleEl) {
-    titleEl.textContent = t('taskTabPanelTitle', { id: taskId })
-      + (info.agentName ? ' · ' + displayAgentName(info.agentName) : '');
+function _filteredViewPrune(clone, info) {
+  if (info.taskId) {
+    clone.querySelectorAll('[data-delegate-task-id]').forEach(function(node) {
+      if (node.dataset.delegateTaskId !== info.taskId) node.remove();
+    });
+    clone.querySelectorAll('[data-task-id]').forEach(function(node) {
+      if (node.dataset.taskId !== info.taskId
+          && !node.querySelector('[data-task-id="' + _filteredViewEscape(info.taskId) + '"]')) {
+        node.remove();
+      }
+    });
+  } else if (info.agentName) {
+    const wanted = String(info.agentName).toLowerCase();
+    clone.querySelectorAll(
+      '[data-agent-name], [data-agent], [data-target-agent]'
+    ).forEach(function(node) {
+      const value = String(
+        node.dataset.agentName || node.dataset.agent || node.dataset.targetAgent || ''
+      ).toLowerCase();
+      if (value && value !== wanted
+          && !node.querySelector(
+            '[data-agent-name="' + _filteredViewEscape(info.agentName) + '"], '
+            + '[data-target-agent="' + _filteredViewEscape(info.agentName) + '"]'
+          )) {
+        node.remove();
+      }
+    });
   }
+  return clone;
+}
+
+function _filteredViewClone(node, info) {
+  const matches = info.taskId
+    ? _filteredViewTaskMatch(node, info.taskId)
+    : _filteredViewAgentMatch(node, info.agentName);
+  if (!matches) return null;
+  const clone = _filteredViewStripIds(node.cloneNode(true));
+  return _filteredViewPrune(clone, info);
+}
+
+function _renderFilteredView(tabId) {
+  const info = _taskTabRegistry[tabId];
+  if (!info || !info.body) return;
+  const source = document.getElementById('messages');
+  if (!source) return;
+
+  const body = info.body;
   const wasAtBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
   body.innerHTML = '';
-  const container = document.getElementById('messages');
-  if (!container) return;
-  const safeId = window.CSS && CSS.escape ? CSS.escape(taskId) : taskId.replace(/"/g, '\\"');
-  // Direct children only: _getTaskBlock() wraps a whole task's messages in
-  // one <details data-task-id>, individual messages carry the same
-  // data-task-id when grouping is off. Either way the top-level match is
-  // the complete, non-duplicated set.
-  const nodes = container.querySelectorAll(':scope > [data-task-id="' + safeId + '"]');
-  if (!nodes.length) {
-    const empty = document.createElement('div');
-    empty.className = 'task-tab-empty';
-    empty.textContent = t('taskTabEmpty');
-    body.appendChild(empty);
-    return;
-  }
-  nodes.forEach(function(node) {
-    const clone = node.cloneNode(true);
-    // Clones are read-only snapshots; strip ids so they don't collide with
-    // the live originals still in #messages (findToolCallElement etc. must
-    // keep resolving to the real nodes, not these display-only copies).
-    if (clone.id) clone.removeAttribute('id');
-    clone.querySelectorAll('[id]').forEach(function(n) { n.removeAttribute('id'); });
-    body.appendChild(clone);
+  Array.from(source.children).forEach(function(node) {
+    const clone = _filteredViewClone(node, info);
+    if (clone) body.appendChild(clone);
   });
+
+  if (!body.children.length) {
+    const empty = document.createElement('div');
+    empty.className = 'workspace-filter-empty';
+    empty.textContent = t('workspaceFilterEmpty');
+    body.appendChild(empty);
+  }
   if (wasAtBottom) body.scrollTop = body.scrollHeight;
 }
 
-// Live updates: rather than hooking every SSE handler that can touch a
-// task's messages, observe #messages once and re-render the open panel
-// whenever it changes. Cheap: only runs while at least one tab is open,
-// and only re-clones the currently visible tab.
-function _startTaskTabObserver() {
-  if (_taskTabObserverStarted) return;
-  const container = document.getElementById('messages');
-  if (!container || typeof MutationObserver === 'undefined') return;
-  _taskTabObserverStarted = true;
-  const observer = new MutationObserver(function() {
-    if (_activeTaskTabId) _renderTaskTabPanel(_activeTaskTabId);
-  });
-  observer.observe(container, { childList: true, subtree: true, characterData: true });
+function _renderAllFilteredViews() {
+  _taskTabRenderRaf = 0;
+  Object.keys(_taskTabRegistry).forEach(_renderFilteredView);
 }
 
-// Reset on conversation switch/reload (called from conversations.js
-// alongside window._sseClearLiveBlocks) — stale clones would otherwise
-// keep showing a previous conversation's task messages.
+function _queueFilteredViewRender() {
+  if (_taskTabRenderRaf) return;
+  _taskTabRenderRaf = requestAnimationFrame(_renderAllFilteredViews);
+}
+
+function _startTaskTabObserver() {
+  if (_taskTabObserverStarted) return;
+  const source = document.getElementById('messages');
+  if (!source || typeof MutationObserver === 'undefined') return;
+  _taskTabObserverStarted = true;
+  _taskTabObserver = new MutationObserver(_queueFilteredViewRender);
+  _taskTabObserver.observe(source, {
+    childList: true, subtree: true, characterData: true, attributes: true,
+  });
+}
+
+function _stopTaskTabObserverIfIdle() {
+  if (Object.keys(_taskTabRegistry).length) return;
+  if (_taskTabObserver) _taskTabObserver.disconnect();
+  _taskTabObserver = null;
+  _taskTabObserverStarted = false;
+  if (_taskTabRenderRaf) cancelAnimationFrame(_taskTabRenderRaf);
+  _taskTabRenderRaf = 0;
+}
+
+function filteredViewRoute(tabId) {
+  return _taskTabRegistry[String(tabId || '')] || null;
+}
+
+function activeFilteredViewRoute() {
+  const tabId = typeof workspaceSelectedTab === 'function'
+    ? workspaceSelectedTab() : _activeTaskTabId;
+  return filteredViewRoute(tabId);
+}
+
+function activeFilteredViewTargetAgent() {
+  const route = activeFilteredViewRoute();
+  return route && route.agentName ? route.agentName : '';
+}
+
+function activateFilteredView(tabId) {
+  const route = filteredViewRoute(tabId);
+  if (!route) return Promise.resolve(false);
+  _activeTaskTabId = tabId;
+  if (!route.agentName || typeof cmdAgentSelect !== 'function') {
+    return Promise.resolve(false);
+  }
+  const current = typeof selectedAgent !== 'undefined' ? selectedAgent : '';
+  if (String(current).toLowerCase() === String(route.agentName).toLowerCase()) {
+    return Promise.resolve(true);
+  }
+  return Promise.resolve(cmdAgentSelect(route.agentName)).catch(function(error) {
+    console.error('filtered webchat: agent selection failed', error);
+    return false;
+  });
+}
+
+function openAgentView(agentName, taskId) {
+  agentName = String(agentName || '');
+  taskId = String(taskId || '');
+  if (!agentName && !taskId) return null;
+
+  const tabId = _filteredViewTabId(agentName, taskId);
+  const existing = _taskTabRegistry[tabId];
+  if (existing) {
+    _activeTaskTabId = tabId;
+    if (typeof switchTab === 'function') switchTab(tabId);
+    else if (typeof workspaceFocusSurface === 'function') workspaceFocusSurface(tabId);
+    return tabId;
+  }
+
+  const label = _filteredViewLabel(agentName, taskId);
+  const panel = document.createElement('div');
+  panel.className = 'tab-content workspace-filter-surface';
+  panel.id = 'tabContent_' + tabId;
+  panel.dataset.tab = tabId;
+  panel.dataset.filterAgent = agentName;
+  panel.dataset.filterTaskId = taskId;
+
+  const body = document.createElement('div');
+  body.className = 'messages workspace-filter-messages';
+  body.setAttribute('aria-label', label);
+  panel.appendChild(body);
+
+  _taskTabRegistry[tabId] = {
+    tabId: tabId,
+    agentName: agentName,
+    taskId: taskId,
+    body: body,
+    panel: panel,
+  };
+  _openTaskTabOrder.push(tabId);
+  _activeTaskTabId = tabId;
+
+  const close = function() { closeFilteredView(tabId); };
+  if (typeof workspaceRegisterSurface === 'function') {
+    workspaceRegisterSurface(panel, {
+      tabId: tabId,
+      type: 'webchat-filter',
+      title: label,
+      icon: 'F',
+      close: close,
+      closable: true,
+    });
+    workspaceEnsureTabButton(tabId, {
+      title: label,
+      icon: 'F',
+      closable: true,
+    });
+  } else {
+    document.querySelector('.main').appendChild(panel);
+  }
+
+  _startTaskTabObserver();
+  _renderFilteredView(tabId);
+  if (typeof switchTab === 'function') switchTab(tabId);
+  return tabId;
+}
+
+/** Open a filtered Webchat for one task. Kept as the public entry point used
+ * by active-agent rows and inline task/delegate headers. */
+function openTaskTab(taskId, agentName) {
+  return openAgentView(agentName || '', taskId || '');
+}
+
+function closeFilteredView(tabId) {
+  const info = _taskTabRegistry[tabId];
+  if (!info) return;
+  const wasSelected = typeof workspaceSelectedTab === 'function'
+    ? workspaceSelectedTab() === tabId : _activeTaskTabId === tabId;
+  delete _taskTabRegistry[tabId];
+  const index = _openTaskTabOrder.indexOf(tabId);
+  if (index !== -1) _openTaskTabOrder.splice(index, 1);
+  if (_activeTaskTabId === tabId) {
+    _activeTaskTabId = _openTaskTabOrder.length
+      ? _openTaskTabOrder[_openTaskTabOrder.length - 1] : null;
+  }
+  if (typeof workspaceRemoveTabButton === 'function') workspaceRemoveTabButton(tabId);
+  if (typeof workspaceUnregisterSurface === 'function') workspaceUnregisterSurface(tabId);
+  if (info.panel) info.panel.remove();
+  _stopTaskTabObserverIfIdle();
+
+  const next = _activeTaskTabId || 'chat';
+  if (wasSelected && typeof switchTab === 'function') switchTab(next);
+}
+
+function closeTaskTab(taskId) {
+  const tabId = Object.keys(_taskTabRegistry).find(function(candidate) {
+    return _taskTabRegistry[candidate].taskId === taskId;
+  });
+  if (tabId) closeFilteredView(tabId);
+}
+
+function closeActiveTaskTab() {
+  if (_activeTaskTabId) closeFilteredView(_activeTaskTabId);
+}
+
+function switchTaskTab(taskId) {
+  const tabId = _taskTabRegistry[taskId] ? taskId
+    : Object.keys(_taskTabRegistry).find(function(candidate) {
+      return _taskTabRegistry[candidate].taskId === taskId;
+    });
+  if (!tabId) return;
+  _activeTaskTabId = tabId;
+  if (typeof switchTab === 'function') switchTab(tabId);
+  else if (typeof workspaceFocusSurface === 'function') workspaceFocusSurface(tabId);
+}
+
+// Conversation changes clear projections rather than leaving a filtered tile
+// populated with rows from the previous canonical transcript.
 window._taskTabsReset = function() {
+  const selectedTab = typeof workspaceSelectedTab === 'function'
+    ? workspaceSelectedTab() : _activeTaskTabId;
+  const selectedWasFiltered = !!_taskTabRegistry[selectedTab];
+  Object.keys(_taskTabRegistry).forEach(function(tabId) {
+    const info = _taskTabRegistry[tabId];
+    if (typeof workspaceRemoveTabButton === 'function') workspaceRemoveTabButton(tabId);
+    if (typeof workspaceUnregisterSurface === 'function') workspaceUnregisterSurface(tabId);
+    if (info.panel) info.panel.remove();
+  });
   _taskTabRegistry = {};
   _openTaskTabOrder = [];
   _activeTaskTabId = null;
-  const dock = document.getElementById('taskTabDock');
-  if (dock) dock.innerHTML = '';
-  const panel = document.getElementById('taskTabPanel');
-  if (panel) panel.classList.remove('open');
+  _stopTaskTabObserverIfIdle();
+  if (selectedWasFiltered && typeof switchTab === 'function') switchTab('chat');
 };

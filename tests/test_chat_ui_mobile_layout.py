@@ -39,16 +39,16 @@ def test_full_height_elements_use_dvh_so_the_header_stays_on_screen():
         assert rule.index("height: 100vh") < rule.index("height: 100dvh")
 
 
-def test_mobile_sidebar_toggle_stays_above_the_open_drawer():
+def test_mobile_taskbar_persists_and_sidebar_toggle_stays_above_the_open_drawer():
     """Regression: on mobile the sidebar becomes a fixed overlay (z-index 150).
-    The toggle kept its desktop z-index (100) and stayed pinned at the left
-    edge, so the open drawer covered it and the menu could never be closed
-    again. The toggle must sit above the drawer and move outside its right
-    edge while the drawer is open."""
+    The task rail stays visible while the drawer is closed. The toggle sits
+    on its outer edge, then both move outside the fixed drawer while it is
+    open so the menu can always be closed."""
     mobile = _mobile_block()
     assert ".sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;" in mobile
-    assert ".sidebar-toggle { left: 0 !important; z-index: 200; }" in mobile
-    assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 260px;" in mobile
+    assert ".sidebar-toggle { left: 35px !important; z-index: 200; }" in mobile
+    assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 0;" in mobile
+    assert "body:has(.sidebar:not(.collapsed)) .tab-bar { left: 260px; }" in mobile
     assert (
         "body:has(.sidebar:not(.collapsed)) .sidebar-toggle"
         " { left: 295px !important; }" in mobile

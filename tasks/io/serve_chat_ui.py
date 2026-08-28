@@ -51,6 +51,9 @@ _JS_MODULES = [
     # #messages scroll listeners).
     "messages.js", "messages_render.js", "messages_tools.js", "messages_markdown.js",
     "turn_view.js",
+    # The workspace owns persistent chat/tool surfaces and must exist before
+    # OpenSpace and task projections register themselves in it.
+    "workspace.js",
     # OpenSpace is split by responsibility (all files stay <=800 lines).
     # The files share classic-script globals; order is therefore significant.
     # three.js itself remains a lazy dynamic import from the core module.
@@ -125,6 +128,7 @@ _CSS_MODULES: Tuple[str, ...] = (
     "80_dialogs.css",         # exec approval + generic dialogs
     "85_terminal_files.css",  # terminal output, file explorer
     "90_tabs.css",            # tab bar, tab panels, desktop/audio tabs
+    "92_workspace.css",       # single/tiled central workspace surfaces
     "95_action_dock.css",     # action menu + conversation dock
     "99_theme_bridge.css",    # --pf-* variable bridge (must stay last)
 )

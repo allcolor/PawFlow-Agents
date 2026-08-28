@@ -38,18 +38,13 @@
   /* The desktop dock owns a z-index of 200. Lower it only while the mobile
      drawer is open so it cannot paint over the resource menu. */
   body:has(.sidebar:not(.collapsed)) .action-dock { z-index: 140; }
-  /* sidebar-toggle's left is also set inline by _syncToggleBtn() (state.js)
-     to '260px' when the sidebar is open, assuming it pushes .main over.
-     On mobile the sidebar overlays instead (fixed, z-index 150), so the
-     toggle must stay above the drawer (z-index 200) and, while the drawer
-     is open, sit just outside its right edge -- otherwise the open menu
-     covers the only button that closes it and the menu cannot be closed. */
-  .sidebar-toggle { left: 0 !important; z-index: 200; }
-  /* The tab rail overlays too, glued to the drawer's right edge — in flow it
-     would sit underneath the fixed drawer and simply disappear. The grip
-     moves past both (260px drawer + ~43px rail). */
-  .tab-bar { position: fixed; top: 0; bottom: 0; left: 260px; z-index: 150;
+  /* The task rail remains the mobile workspace launcher while the sidebar is
+     closed. Its grip sits on the rail's outer edge, then both move past the
+     260px overlay drawer while that drawer is open. */
+  .sidebar-toggle { left: 35px !important; z-index: 200; }
+  .tab-bar { position: fixed; top: 0; bottom: 0; left: 0; z-index: 150;
              box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
+  body:has(.sidebar:not(.collapsed)) .tab-bar { left: 260px; }
   body:has(.sidebar:not(.collapsed)) .sidebar-toggle { left: 295px !important; }
   /* Desktop sizes assume a ~1400px-wide window read at arm's length; the same
      11-12px on a phone is unreadable. Bump the type scale (roughly +1-2px per

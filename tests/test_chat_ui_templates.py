@@ -150,9 +150,9 @@ def test_skeleton_only_includes_and_partials_stay_small():
     assert len(includes) >= 12
     for name in includes:
         assert (TEMPLATES_DIR / name).is_file(), name
-    # Only the component-contract stylesheet and the tab content wrapper live
-    # in the skeleton itself; the wrapper's children are the includes.
-    assert _ids(skeleton) == ["component-contract-css", "tabContentChat"]
+    # Only the component-contract stylesheet lives in the skeleton itself;
+    # the workspace partial owns every conversation-stage wrapper.
+    assert _ids(skeleton) == ["component-contract-css"]
     for path in TEMPLATES_DIR.rglob("*.html"):
         rel = path.relative_to(TEMPLATES_DIR).as_posix()
         if rel == "chat.html":
@@ -170,7 +170,7 @@ def test_environment_is_strict_and_autoescaping():
     # An include keeps its final newline: the composer's closing tags stay on
     # their own lines exactly as in the monolithic page.
     assert _env.keep_trailing_newline is True
-    assert '  </div>\n</div>\n</div><!-- /tab-content chat -->' in rendered_chat_html()
+    assert '  </div>\n</div>\n</div><!-- /main -->' in rendered_chat_html()
 
 
 # ── PFP ui.v1 template fragments (docs/CHAT_UI_TEMPLATES.md) ───────────────

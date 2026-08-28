@@ -4,6 +4,32 @@
 let _activeTab = 'chat';
 let _terminalCounter = 0;
 
+function _scrollTerminalLayoutViewport(viewport, event) {
+  if (!viewport || !event) return false;
+  const horizontal = !!event.shiftKey
+    || Math.abs(Number(event.deltaX) || 0) > Math.abs(Number(event.deltaY) || 0);
+  const delta = horizontal
+    ? (Number(event.deltaX) || Number(event.deltaY) || 0)
+    : (Number(event.deltaY) || 0);
+  const position = horizontal ? viewport.scrollLeft : viewport.scrollTop;
+  const maximum = horizontal
+    ? Math.max(0, viewport.scrollWidth - viewport.clientWidth)
+    : Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+  if (!delta || (delta < 0 && position <= 0) || (delta > 0 && position >= maximum)) {
+    return false;
+  }
+  if (horizontal) viewport.scrollLeft = Math.max(0, Math.min(maximum, position + delta));
+  else viewport.scrollTop = Math.max(0, Math.min(maximum, position + delta));
+  event.preventDefault();
+  event.stopPropagation();
+  return true;
+}
+
+function _tabIsSelected(tabId) {
+  return _activeTab === tabId
+    || (typeof workspaceSelectedTab === 'function' && workspaceSelectedTab() === tabId);
+}
+
 /** Switch to a tab by id. */
 function switchTab(tabId) {
   var _prevTab = _activeTab;
@@ -12,10 +38,17 @@ function switchTab(tabId) {
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tabId);
   });
-  // Update content panels
-  document.querySelectorAll('.tab-content').forEach(panel => {
-    panel.classList.toggle('active', panel.dataset.tab === tabId);
-  });
+  // The workspace keeps every surface mounted. In single mode it exposes only
+  // the selected one; in tiled mode it selects and scrolls to the requested
+  // tile without hiding its neighbours.
+  if (typeof workspaceFocusSurface === 'function') {
+    workspaceFocusSurface(tabId);
+  } else {
+    document.querySelectorAll('.tab-content').forEach(panel => {
+      panel.classList.toggle('active', panel.dataset.tab === tabId);
+    });
+  }
+  if (typeof activateFilteredView === 'function') activateFilteredView(tabId);
   // Focus terminal if switching to one
   if (tabId.startsWith('term-')) {
     const container = document.querySelector(`#tabContent_${tabId} .xterm-container`);
@@ -64,13 +97,31 @@ function addTerminalTab(sessionId, relayId) {
   panel.dataset.relayId = relayId;
   panel.style.cssText = 'background:#0f0f23;';
 
-  // Terminal fills entire panel
+  // A fixed-size tmux can be larger than its tile. The outer viewport pans
+  // that layout while xterm keeps its own independent tmux scrollback.
+  const termViewport = document.createElement('div');
+  termViewport.className = 'terminal-layout-viewport';
+  termViewport.addEventListener('wheel', function(event) {
+    _scrollTerminalLayoutViewport(termViewport, event);
+  }, { capture: true, passive: false });
+
   const termContainer = document.createElement('div');
   termContainer.className = 'xterm-container';
-  termContainer.style.cssText = 'flex:1 1 auto;min-width:0;min-height:0;width:100%;height:100%;overflow:hidden;padding:4px;';
-  panel.appendChild(termContainer);
+  termContainer.style.cssText = 'flex:0 0 auto;min-width:100%;min-height:100%;width:100%;height:100%;overflow:hidden;padding:4px;box-sizing:border-box;';
+  termViewport.appendChild(termContainer);
+  panel.appendChild(termViewport);
 
-  document.querySelector('.main').appendChild(panel);
+  if (typeof workspaceRegisterSurface === 'function') {
+    workspaceRegisterSurface(panel, {
+      tabId: tabId,
+      type: 'terminal',
+      title: t('terminalTabTitle', { n: _terminalCounter }),
+      close: function() { closeTerminalTab(tabId); },
+      closable: true,
+    });
+  } else {
+    document.querySelector('.main').appendChild(panel);
+  }
 
   // Switch to the new tab
   switchTab(tabId);
@@ -79,6 +130,7 @@ function addTerminalTab(sessionId, relayId) {
 
 /** Close a terminal tab. */
 function closeTerminalTab(tabId) {
+  const wasSelected = _tabIsSelected(tabId);
   const panel = document.getElementById('tabContent_' + tabId);
   if (panel) {
     const sessionId = panel.dataset.sessionId;
@@ -92,13 +144,14 @@ function closeTerminalTab(tabId) {
     if (sessionId) {
       fireAction('close_terminal', { session_id: sessionId, relay_id: '' });
     }
+    if (typeof workspaceUnregisterSurface === 'function') workspaceUnregisterSurface(tabId);
     panel.remove();
   }
   // Remove tab button
   const btn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
   if (btn) btn.remove();
   // Switch to chat if this was the active tab
-  if (_activeTab === tabId) switchTab('chat');
+  if (wasSelected) switchTab('chat');
 }
 
 /** Add a VSCode tab (one per relay). Returns the tab id. */
@@ -148,7 +201,17 @@ function addVSCodeTab(relayId, iframeSrc) {
   iframe.allow = 'clipboard-read; clipboard-write';
   panel.appendChild(iframe);
 
-  document.querySelector('.main').appendChild(panel);
+  if (typeof workspaceRegisterSurface === 'function') {
+    workspaceRegisterSurface(panel, {
+      tabId: tabId,
+      type: 'vscode',
+      title: t('vsCodeTabTitle', { relay: relayId }),
+      close: function() { closeVSCodeTab(tabId); },
+      closable: true,
+    });
+  } else {
+    document.querySelector('.main').appendChild(panel);
+  }
   switchTab(tabId);
   return tabId;
 }
@@ -156,23 +219,38 @@ function addVSCodeTab(relayId, iframeSrc) {
 /** Close a VSCode tab. */
 function closeVSCodeTab(tabId) {
   if (!tabId) tabId = 'vscode';
+  const wasSelected = _tabIsSelected(tabId);
   const panel = document.getElementById('tabContent_' + tabId);
   if (panel) {
     const relayId = panel.dataset.relayId;
     if (relayId) {
       fireAction('close_code_server', { relay_id: relayId });
     }
+    if (typeof workspaceUnregisterSurface === 'function') workspaceUnregisterSurface(tabId);
     panel.remove();
   }
   const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
-  if (_activeTab === tabId) switchTab('chat');
+  if (wasSelected) switchTab('chat');
 }
 
 /** Add a Desktop tab (one per relay, iframe to noVNC). */
 function addDesktopTab(relayId, iframeSrc) {
   const tabId = 'desktop-' + relayId;
-  if (document.getElementById('tabContent_' + tabId)) {
+  const existingPanel = document.getElementById('tabContent_' + tabId);
+  if (existingPanel) {
+    // open_desktop always returns the current capability URL. Replace the
+    // iframe so a surface survives relay/container recreation instead of
+    // keeping a stale noVNC websocket and its endless loading indicator.
+    const iframe = existingPanel.querySelector('iframe');
+    if (iframe && iframeSrc) {
+      const nextIframe = document.createElement('iframe');
+      nextIframe.src = iframeSrc;
+      nextIframe.style.cssText = iframe.style.cssText
+        || 'flex:1;border:none;width:100%;height:100%;';
+      nextIframe.allow = iframe.allow || 'clipboard-read; clipboard-write';
+      iframe.replaceWith(nextIframe);
+    }
     switchTab(tabId);
     return tabId;
   }
@@ -211,21 +289,35 @@ function addDesktopTab(relayId, iframeSrc) {
   iframe.allow = 'clipboard-read; clipboard-write';
   panel.appendChild(iframe);
 
-  document.querySelector('.main').appendChild(panel);
+  if (typeof workspaceRegisterSurface === 'function') {
+    workspaceRegisterSurface(panel, {
+      tabId: tabId,
+      type: 'desktop',
+      title: t('desktopTabTitle', { relay: relayId }),
+      close: function() { closeDesktopTab(tabId); },
+      closable: true,
+    });
+  } else {
+    document.querySelector('.main').appendChild(panel);
+  }
   switchTab(tabId);
   return tabId;
 }
 
 /** Close a Desktop tab. */
 function closeDesktopTab(tabId) {
+  const wasSelected = _tabIsSelected(tabId);
   // Just close the tab locally — does NOT stop the desktop
   // Use /desktop stop to actually shut down the desktop
   const panel = document.getElementById('tabContent_' + tabId);
-  if (panel) panel.remove();
+  if (panel) {
+    if (typeof workspaceUnregisterSurface === 'function') workspaceUnregisterSurface(tabId);
+    panel.remove();
+  }
   if (typeof audioDisconnect === 'function') audioDisconnect();
   const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
-  if (_activeTab === tabId) switchTab('chat');
+  if (wasSelected) switchTab('chat');
 }
 
 /** Add an Audio-only tab (minimal controls, no VNC). */
@@ -266,22 +358,36 @@ function addAudioTab(relayId, audioSession, audioToken) {
     + '<div class="audio-status">' + t('streamingFromRelay') + '</div>'
     + '</div></div>';
 
-  document.querySelector('.main').appendChild(panel);
+  if (typeof workspaceRegisterSurface === 'function') {
+    workspaceRegisterSurface(panel, {
+      tabId: tabId,
+      type: 'audio',
+      title: t('audioTitleRelay', { relay: relayId }),
+      close: function() { closeAudioTab(tabId); },
+      closable: true,
+    });
+  } else {
+    document.querySelector('.main').appendChild(panel);
+  }
   switchTab(tabId);
   return tabId;
 }
 
 /** Close an Audio-only tab. */
 function closeAudioTab(tabId) {
+  const wasSelected = _tabIsSelected(tabId);
   const panel = document.getElementById('tabContent_' + tabId);
-  if (panel) panel.remove();
+  if (panel) {
+    if (typeof workspaceUnregisterSurface === 'function') workspaceUnregisterSurface(tabId);
+    panel.remove();
+  }
   // Only disconnect audio if no desktop tab is using it
   if (!document.querySelector('[id^="tabContent_desktop-"]')) {
     if (typeof audioDisconnect === 'function') audioDisconnect();
   }
   const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
-  if (_activeTab === tabId) switchTab('chat');
+  if (wasSelected) switchTab('chat');
 }
 
 /** Whether the webchat is hosted by PawFlow's native Android WebView. */
@@ -323,7 +429,17 @@ function addBrowserTab(label, iframeSrc) {
   iframe.allow = 'clipboard-read; clipboard-write';
   panel.appendChild(iframe);
 
-  document.querySelector('.main').appendChild(panel);
+  if (typeof workspaceRegisterSurface === 'function') {
+    workspaceRegisterSurface(panel, {
+      tabId: tabId,
+      type: 'browser',
+      title: label,
+      close: function() { closeBrowserTab(tabId); },
+      closable: true,
+    });
+  } else {
+    document.querySelector('.main').appendChild(panel);
+  }
   switchTab(tabId);
   return tabId;
 }
@@ -367,21 +483,33 @@ function addBlobHtmlTab(label, html) {
   iframe.allow = 'clipboard-read; clipboard-write';
   panel.appendChild(iframe);
 
-  document.querySelector('.main').appendChild(panel);
+  if (typeof workspaceRegisterSurface === 'function') {
+    workspaceRegisterSurface(panel, {
+      tabId: tabId,
+      type: 'browser',
+      title: label,
+      close: function() { closeBrowserTab(tabId); },
+      closable: true,
+    });
+  } else {
+    document.querySelector('.main').appendChild(panel);
+  }
   switchTab(tabId);
   return tabId;
 }
 
 /** Close a browser tab. */
 function closeBrowserTab(tabId) {
+  const wasSelected = _tabIsSelected(tabId);
   const panel = document.getElementById('tabContent_' + tabId);
   if (panel) {
     if (panel.dataset.blobUrl) URL.revokeObjectURL(panel.dataset.blobUrl);
+    if (typeof workspaceUnregisterSurface === 'function') workspaceUnregisterSurface(tabId);
     panel.remove();
   }
   const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
-  if (_activeTab === tabId) switchTab('chat');
+  if (wasSelected) switchTab('chat');
 }
 
 function closeActionMenu() {

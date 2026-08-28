@@ -1,0 +1,219 @@
+/* Conversation workspace: single surface or horizontally extensible tile board. */
+.workspace-shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--pf-bg);
+}
+.workspace-toolbar {
+  min-height: 32px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--pf-border);
+  background: color-mix(in srgb, var(--pf-panel) 94%, transparent);
+}
+.workspace-layout-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--pf-muted);
+  font-size: 11px;
+}
+.workspace-layout-control select {
+  min-width: 72px;
+  padding: 3px 24px 3px 7px;
+  border: 1px solid var(--pf-border);
+  border-radius: 5px;
+  background: var(--pf-sidebar);
+  color: var(--pf-text);
+  font-size: 11px;
+}
+.workspace-target-hint {
+  min-width: 0;
+  max-width: min(340px, 45vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pf-accent-2);
+  font-size: 11px;
+}
+.workspace-scroller {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--pf-border) transparent;
+}
+.workspace-board {
+  width: 100%;
+  min-width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  overflow: visible;
+}
+.workspace-surface {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--pf-bg);
+}
+.workspace-surface-header {
+  display: none;
+  flex: 0 0 31px;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 5px 3px 9px;
+  border-bottom: 1px solid var(--pf-border);
+  background: var(--pf-sidebar);
+  color: var(--pf-text);
+  font-size: 11px;
+  user-select: none;
+}
+.workspace-surface-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.workspace-surface-actions {
+  display: inline-flex;
+  gap: 3px;
+}
+.workspace-surface-actions button {
+  width: 24px;
+  height: 23px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--pf-muted);
+  cursor: pointer;
+}
+.workspace-surface-actions button:hover,
+.workspace-surface-actions button:focus-visible,
+.workspace-target .workspace-target-btn {
+  border-color: var(--pf-accent);
+  background: color-mix(in srgb, var(--pf-accent) 18%, var(--pf-sidebar));
+  color: var(--pf-text);
+}
+.workspace-surface-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.workspace-surface-body > .messages-wrap {
+  flex: 1 1 auto;
+}
+.terminal-layout-viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--pf-border) transparent;
+  background: #0f0f23;
+}
+.workspace-tiled .workspace-scroller {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scroll-behavior: smooth;
+}
+.workspace-tiled .workspace-board {
+  width: max-content;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(var(--workspace-rows), var(--workspace-tile-height));
+  grid-auto-columns: var(--workspace-tile-width);
+  gap: 8px;
+  align-content: start;
+  padding: 0 8px 8px;
+}
+.workspace-tiled .workspace-surface {
+  display: flex !important;
+  width: var(--workspace-tile-width);
+  height: var(--workspace-tile-height);
+  flex-direction: column;
+  border: 1px solid var(--pf-border);
+  border-radius: 7px;
+  scroll-snap-align: start;
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--pf-shadow) 62%, transparent);
+}
+.workspace-tiled .workspace-surface-header {
+  display: flex;
+}
+.workspace-shell.workspace-maximized
+  .workspace-surface.workspace-selected > .workspace-surface-header {
+  display: flex;
+}
+.workspace-tiled .workspace-surface.workspace-selected {
+  border-color: var(--pf-accent);
+  box-shadow: 0 0 0 1px var(--pf-accent),
+              0 4px 16px color-mix(in srgb, var(--pf-shadow) 74%, transparent);
+}
+.workspace-tiled .workspace-surface.workspace-target {
+  border-color: var(--pf-accent-2);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--pf-accent-2) 70%, transparent);
+}
+.workspace-filter-messages {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+.workspace-filter-empty {
+  margin: auto;
+  color: var(--pf-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.workspace-tab-icon {
+  max-width: 30px;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#tabContentOpenspace .openspace-wrap {
+  position: absolute;
+  inset: 0;
+}
+@media (max-width: 700px) {
+  .workspace-toolbar {
+    min-height: 30px;
+    padding-inline: 7px;
+  }
+  .workspace-layout-control > span {
+    display: none;
+  }
+  .workspace-target-hint {
+    max-width: 42vw;
+  }
+  .workspace-tiled .workspace-board {
+    padding-inline: 5px;
+  }
+  .workspace-tiled .workspace-surface {
+    scroll-snap-align: center;
+  }
+}

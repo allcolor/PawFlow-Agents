@@ -517,7 +517,7 @@ function _sseWireA() {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agentName = data.agent_name || 'sub-agent';
-    const aKey = agentKey(agentName);
+    const aKey = activeAgentKey(agentName, data.task_id || '');
     if (activeInteractions[aKey]) {
       activeInteractions[aKey].iteration = data.iteration;
       activeInteractions[aKey].maxIterations = data.max_iterations;

@@ -120,10 +120,7 @@
     "tabBar",
     "tabChat",
     "tabContentChat",
-    "taskTabDock",
-    "taskTabPanel",
-    "taskTabPanelBody",
-    "taskTabPanelTitle",
+    "tabContentOpenspace",
     "todosMenuItem",
     "ttlLabel",
     "ttlSelect",
@@ -140,7 +137,13 @@
     "viewMenu",
     "viewMenuToggle",
     "viewMenuWrap",
-    "voiceModeBtn"
+    "voiceModeBtn",
+    "workspaceBoard",
+    "workspaceLayoutSelect",
+    "workspaceScroller",
+    "workspaceShell",
+    "workspaceTargetHint",
+    "workspaceToolbar"
   ],
   "slots": [
     "action_menu_ext",
@@ -298,6 +301,9 @@
     "viewMode",
     "voiceModeStartTitle",
     "vsCode",
-    "vsCodeDesc"
+    "vsCodeDesc",
+    "workspaceLayout",
+    "workspaceLayoutTitle",
+    "workspaceSingle"
   ]
 }

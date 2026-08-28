@@ -384,15 +384,12 @@ def test_mobile_breakpoints_scroll_header_and_overlay_sidebar():
     # the full-width second row used by the old crowded header.
     assert ".header .actions { margin-left: auto;" in mobile_block
     assert ".sidebar { position: fixed;" in mobile_block
-    # sidebar-toggle's left is set inline by _syncToggleBtn() (state.js) to
-    # '260px' assuming the sidebar pushes .main over -- must be pinned back
-    # with !important now that the sidebar overlays instead on mobile. It must
-    # also stay above the drawer (z-index 200 > sidebar 150) and move outside
-    # the drawer's right edge while it is open, or the open drawer covers the
-    # only button that closes it and the menu can never be closed again.
-    assert ".sidebar-toggle { left: 0 !important; z-index: 200; }" in mobile_block
-    # The tab rail overlays beside the fixed drawer; the grip clears both.
-    assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 260px;" in mobile_block
+    # The persistent task rail occupies the left edge while the drawer is
+    # closed. Its grip stays above that rail and both move past the fixed
+    # sidebar while the drawer is open.
+    assert ".sidebar-toggle { left: 35px !important; z-index: 200; }" in mobile_block
+    assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 0;" in mobile_block
+    assert "body:has(.sidebar:not(.collapsed)) .tab-bar { left: 260px; }" in mobile_block
     assert (
         "body:has(.sidebar:not(.collapsed)) .sidebar-toggle"
         " { left: 295px !important; }" in mobile_block

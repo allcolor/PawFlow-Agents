@@ -26,16 +26,12 @@
 {% include "header/tab_bar.html" %}
 <div class="main">
 {% include "header/header_bar.html" %}
-<!-- Chat tab content -->
-<div class="tab-content active" id="tabContentChat" data-tab="chat">
-{% include "chat/panels.html" %}
-{% include "chat/messages.html" %}
-{% include "chat/task_tabs.html" %}
+<!-- Chat workspace -->
+{% include "chat/workspace.html" %}
 <div class="input-area">
 {% include "composer/controls.html" %}
 {% include "composer/input_row.html" %}
 </div>
-</div><!-- /tab-content chat -->
 </div><!-- /main -->
 {% include "ext/hosts.html" %}
 {{ ext_fragments('body_end')|safe }}{% include "boot/config.html" %}

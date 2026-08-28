@@ -67,6 +67,24 @@ def test_sse_reconnect_paths_never_poll_render_history():
     assert "_forceSSEReconnect(conversationId, { noReplay: true });" in SSE_JS
 
 
+def test_server_restart_reloads_document_only_when_assets_changed():
+    helper = SSE_JS[
+        SSE_JS.index("function _reloadIfServerAssetsChanged"):
+        SSE_JS.index("function _checkServerRestart")]
+    restart = SSE_JS[
+        SSE_JS.index("function _checkServerRestart"):
+        SSE_JS.index("// One-shot session-expiry handler")]
+
+    assert "window.PAWFLOW_ASSET_VERSION" in helper
+    assert "cache: 'no-store'" in helper
+    assert "credentials: 'same-origin'" in helper
+    assert "nextVersion !== currentVersion" in helper
+    assert "window.location.reload()" in helper
+    assert "_serverAssetVersionCheckInFlight" in helper
+    assert "_reloadIfServerAssetsChanged();" in restart
+    assert "window.location.reload()" not in restart
+
+
 def test_user_send_reconnects_stale_sse_without_spoofing_activity():
     assert "_ensureSSEBeforeUserAction" in ATTACHMENTS_JS
     assert "_ensureSSEBeforeUserAction" in CMD_AGENT_JS

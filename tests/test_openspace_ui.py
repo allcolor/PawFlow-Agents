@@ -79,9 +79,9 @@ def test_view_menu_offers_openspace_mode():
     assert 'id="openspaceWrap"' in template
     assert 'id="openspaceOverlay"' in template
     assert 'id="openspaceQuickBtn"' in template
-    # The message list survives underneath: hidden unless projected onto
-    # the openspace wall screen.
-    assert "body.openspace-active .messages:not(.osv-projected) { display: none; }" in template
+    assert 'id="workspaceBoard"' in template
+    # Webchat remains independently visible when OpenSpace occupies another tile.
+    assert "body.openspace-active .messages:not(.osv-projected) { display: none; }" not in template
 
 
 def test_webchat_button_zooms_to_main_screen_before_simplified_view():
@@ -117,9 +117,12 @@ def test_visitor_stays_off_screen_axis_and_screen_blocks_floor_navigation():
 def test_view_mode_plumbing_accepts_openspace():
     conversations = _text("tasks/io/chat_ui/conversations.js")
     assert "['classic', 'simplified', 'openspace']" in conversations
-    assert "openspaceSetActive" in conversations
-    # Openspace rides on simplified rendering underneath (projected onto
-    # the wall screen).
+    assert "workspaceOpenOpenspace" in conversations
+    assert "workspaceOpenWebchat" in conversations
+    assert "openspaceItem.classList.contains('active')" in conversations
+    assert "openspaceIsActive" not in conversations
+    assert "workspaceSelectedTab() === 'openspace'" in conversations
+    # OpenSpace mirrors the canonical simplified transcript without owning it.
     assert "turnViewSetMode(mode === 'openspace' ? 'simplified' : mode)" in conversations
     server = _text("tasks/ai/actions/_conv_core.py")
     assert '"openspace"' in server
@@ -308,10 +311,16 @@ def test_busy_agents_visibly_move():
 
 def test_wall_screen_projects_the_live_simplified_view():
     openspace = _openspace_text()
-    # The picture is the real #messages element, reparented (not copied)
-    # and restored on deactivation.
+    # The wall is a read-only clone kept current by one observer. The canonical
+    # #messages node remains mounted in Webchat for side-by-side tiled use.
     assert "function _osProjectMessages" in openspace
-    assert "_osScreenHome.parent.insertBefore(messages, _osScreenHome.next)" in openspace
+    assert "node.cloneNode(true)" in openspace
+    assert "_osStripProjectionIds" in openspace
+    assert "_osProjectedMessages.className = 'messages osv-projected'" in openspace
+    assert "_osProjectedMessages.setAttribute('aria-hidden', 'true')" in openspace
+    assert "new MutationObserver(_osQueueMessageProjection)" in openspace
+    assert "_osProjectionObserver.disconnect()" in openspace
+    assert "_osScreenHome" not in openspace
     # Perspective mapping uses the same v.project() camera as the bubbles.
     assert "function _osQuadTransform" in openspace
     assert "matrix3d(" in openspace

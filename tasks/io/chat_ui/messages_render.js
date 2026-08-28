@@ -172,6 +172,8 @@ function addMsg(role, text, extra) {
   // only title them "Agent activity".
   const _rowAgentName = (extra && extra.source && extra.source.name) || '';
   if (_rowAgentName) el.dataset.agentName = _rowAgentName;
+  const _rowTargetAgent = (extra && extra.source && extra.source.target_agent) || '';
+  if (_rowTargetAgent) el.dataset.targetAgent = _rowTargetAgent;
   const _rowLlmService = (extra && (extra.llm_service
     || (extra.source && extra.source.llm_service))) || '';
   if (_rowLlmService) el.dataset.llmService = _rowLlmService;
@@ -451,6 +453,11 @@ function addMsg(role, text, extra) {
           + '<span class="delegate-dst">' + escapeHtml(displayAgentName(firstAgent)) + '</span>'
           + svcL + '</summary>'
           + '<div class="delegate-sub-body">' + groupBody.innerHTML + '</div>';
+        if (existingGroup.dataset.delegateTaskId) {
+          firstSubEl.dataset.delegateTaskId = existingGroup.dataset.delegateTaskId;
+          delete existingGroup.dataset.delegateTaskId;
+        }
+        firstSubEl.dataset.agentName = firstAgent;
         groupBody.innerHTML = '';
         groupBody.appendChild(firstSubEl);
         // Update group header to show "Delegate (N agents)"
@@ -466,6 +473,9 @@ function addMsg(role, text, extra) {
       const subEl = document.createElement('details');
       subEl.className = 'delegate-sub-block';
       if (msgId) subEl.dataset.msgid = msgId;
+      if (taskId) subEl.dataset.delegateTaskId = taskId;
+      const subAgent = (extra && extra.source && extra.source.name) || '';
+      if (subAgent) subEl.dataset.agentName = subAgent;
       subEl.innerHTML = subHtml;
       if (groupBody) groupBody.appendChild(subEl);
       const countSpan = existingGroup.querySelector('.delegate-group-count');
@@ -480,6 +490,7 @@ function addMsg(role, text, extra) {
       if (dtcId) el.dataset.delegateGroup = dtcId;
       if (taskId) el.dataset.delegateTaskId = taskId;
       const src = (extra && extra.source) || {};
+      if (src.name) el.dataset.agentName = src.name;
       el.dataset.firstAgent = src.name || 'sub-agent';
       el.dataset.firstSvc = src.llm_service || '';
       el.dataset.parentAgent = src.parent_agent || '';

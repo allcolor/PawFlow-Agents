@@ -27,34 +27,32 @@ function _loadXterm() {
   });
 }
 
-/** Get all connected relays. */
-/** Get relays linked to the current conversation (with details from list_resources cache). */
+/** Get relays linked to the current conversation (with live connection details). */
 function _getRelays() {
   return new Promise((resolve, reject) => {
     action$('list_resources').subscribe({
       next: data => {
-        var rb = data.relay_bindings || { linked: {}, default: {}, details: {} };
+        var rb = data.relay_bindings || { linked: {}, details: {} };
         var linked = rb.linked || {};
         var details = rb.details || {};
-        // Collect unique relay IDs across all scopes
         var seen = {};
         var relays = [];
         Object.keys(linked).forEach(function(scope) {
-          (linked[scope] || []).forEach(function(rid) {
-            if (seen[rid]) return;
-            seen[rid] = true;
-            var det = details[rid] || {};
+          (linked[scope] || []).forEach(function(relayId) {
+            if (seen[relayId]) return;
+            seen[relayId] = true;
+            var relay = details[relayId] || {};
             relays.push({
-              id: rid,
-              connected: det.connected !== false,
-              root: det.root || '',
-              host_root: det.host_root || '',
-              allow_local: det.allow_local || false,
-              server_local_exec: det.server_local_exec || false,
+              id: relayId,
+              connected: relay.connected !== false,
+              root: relay.root || '',
+              host_root: relay.host_root || '',
+              allow_local: relay.allow_local || false,
+              server_local_exec: relay.server_local_exec || false,
             });
           });
         });
-        resolve(relays.filter(r => r.connected));
+        resolve(relays.filter(function(relay) { return relay.connected; }));
       },
       error: e => reject(e),
     });
@@ -236,6 +234,14 @@ function _fitAndNotifyTerminal(container) {
   if (fixedSize) {
     if (container._xterm.cols !== fixedSize.cols || container._xterm.rows !== fixedSize.rows) {
       try { container._xterm.resize(fixedSize.cols, fixedSize.rows); } catch (e) {}
+    }
+    const screen = container.querySelector('.xterm-screen');
+    if (screen) {
+      const rect = screen.getBoundingClientRect();
+      const width = Math.ceil(rect.width + 8);
+      const height = Math.ceil(rect.height + 8);
+      if (width > 8 && container.style.width !== width + 'px') container.style.width = width + 'px';
+      if (height > 8 && container.style.height !== height + 'px') container.style.height = height + 'px';
     }
   } else {
     if (!container._fitAddon) return;

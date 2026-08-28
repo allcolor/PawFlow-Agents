@@ -25,8 +25,12 @@ html[data-pf-atmosphere="on"] body:has(.hdr-pop.open) > .main { z-index: 200; }
 html[data-pf-atmosphere="on"] body,
 html[data-pf-atmosphere="on"] .main,
 html[data-pf-atmosphere="on"] .messages-wrap,
+html[data-pf-atmosphere="on"] .workspace-shell,
+html[data-pf-atmosphere="on"] .workspace-scroller,
+html[data-pf-atmosphere="on"] .workspace-board,
 html[data-pf-atmosphere="on"] .tab-content.active { background: transparent !important; }
 html[data-pf-atmosphere="on"] .input-area { background: transparent !important; }
+html[data-pf-atmosphere="on"] .workspace-surface.tab-content,
 html[data-pf-atmosphere="on"] .sidebar,
 html[data-pf-atmosphere="on"] .tab-bar,
 html[data-pf-atmosphere="on"] .header,
@@ -41,6 +45,12 @@ html[data-pf-atmosphere="on"] .ctx-menu {
   -webkit-backdrop-filter: blur(14px) saturate(120%);
   backdrop-filter: blur(14px) saturate(120%);
 }
+html[data-pf-atmosphere="on"] #tabContentChat.workspace-surface.tab-content {
+  background: transparent !important;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html[data-pf-atmosphere="on"] .workspace-surface-header,
 html[data-pf-atmosphere="on"] .sidebar,
 html[data-pf-atmosphere="on"] .tab-bar {
   background: color-mix(in srgb, var(--pf-sidebar) var(--pf-atmosphere-panel-opacity), transparent) !important;

@@ -245,7 +245,8 @@ function updateViewModeItems(mode) {
 
 function onViewModeSelect(mode) {
   if (!conversationId || !['classic', 'simplified', 'openspace'].includes(mode)) return;
-  const currentOpenspace = typeof openspaceIsActive === 'function' && openspaceIsActive();
+  const openspaceItem = document.getElementById('viewItemOpenspace');
+  const currentOpenspace = !!(openspaceItem && openspaceItem.classList.contains('active'));
   if (typeof turnViewIsSimplified === 'function'
       && !currentOpenspace && mode !== 'openspace'
       && turnViewIsSimplified() === (mode === 'simplified')) { closeViewMenu(); return; }
@@ -261,8 +262,10 @@ function onViewModeSelect(mode) {
       if (typeof turnViewSetMode === 'function') {
         turnViewSetMode(mode === 'openspace' ? 'simplified' : mode);
       }
-      if (typeof openspaceSetActive === 'function') {
-        openspaceSetActive(mode === 'openspace');
+      if (mode === 'openspace' && typeof workspaceOpenOpenspace === 'function') {
+        workspaceOpenOpenspace();
+      } else if (mode !== 'openspace' && typeof workspaceOpenWebchat === 'function') {
+        workspaceOpenWebchat();
       }
       updateViewModeItems(mode); closeViewMenu(); resumeConv(conversationId, true);
     },
@@ -618,15 +621,18 @@ function _renderHistory(data) {
   }
   const viewMode = ['simplified', 'openspace'].includes(data.view_mode)
     ? data.view_mode : 'classic';
-  // Openspace renders on top of the simplified DOM: the simplified
-  // renderers keep producing every durable node underneath (projected
-  // onto the 3D wall screen), so switching back is instant and the 3D
-  // layer never owns conversation state.
+  // OpenSpace owns no conversation state. It is a workspace surface whose wall
+  // screen mirrors the canonical transcript; legacy conversations that stored
+  // `openspace` still use simplified rendering for that canonical source.
   if (typeof turnViewSetMode === 'function') {
     turnViewSetMode(viewMode === 'openspace' ? 'simplified' : viewMode);
   }
-  if (typeof openspaceSetActive === 'function') {
-    openspaceSetActive(viewMode === 'openspace');
+  if (viewMode === 'openspace' && typeof workspaceOpenOpenspace === 'function') {
+    workspaceOpenOpenspace();
+  } else if (typeof workspaceSelectedTab === 'function'
+      && workspaceSelectedTab() === 'openspace'
+      && typeof workspaceOpenWebchat === 'function') {
+    workspaceOpenWebchat();
   }
   updateViewModeItems(viewMode);
   const groupTechnicalMessages = !!data.group_technical_messages;

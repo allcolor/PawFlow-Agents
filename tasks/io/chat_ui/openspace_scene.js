@@ -130,9 +130,34 @@ function _osBuildBigScreen() {
   }
 }
 
-// Reparent the real #messages element onto the screen (and back). A
-// live move, never a copy: expanding blocks, scrolling and streaming
-// all keep working because it is the same DOM the renderers write to.
+function _osStripProjectionIds(root) {
+  if (!root) return root;
+  if (root.id) root.removeAttribute('id');
+  root.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
+  return root;
+}
+
+function _osRefreshMessageProjection() {
+  _osProjectionRaf = 0;
+  const messages = document.getElementById('messages');
+  if (!messages || !_osProjectedMessages) return;
+  const wasAtBottom = _osProjectedMessages.scrollHeight
+    - _osProjectedMessages.scrollTop - _osProjectedMessages.clientHeight < 40;
+  _osProjectedMessages.innerHTML = '';
+  Array.from(messages.children).forEach((node) => {
+    _osProjectedMessages.appendChild(_osStripProjectionIds(node.cloneNode(true)));
+  });
+  if (wasAtBottom) _osProjectedMessages.scrollTop = _osProjectedMessages.scrollHeight;
+}
+
+function _osQueueMessageProjection() {
+  if (_osProjectionRaf) return;
+  _osProjectionRaf = requestAnimationFrame(_osRefreshMessageProjection);
+}
+
+// Mirror the canonical transcript instead of moving it. A single MutationObserver
+// keeps this read-only wall projection current while the Webchat surface remains
+// independently visible and interactive in another tile.
 function _osProjectMessages(on) {
   const messages = document.getElementById('messages');
   if (!messages) return;
@@ -144,16 +169,28 @@ function _osProjectMessages(on) {
       _osScreenEl.className = 'osv-bigscreen';
       overlay.appendChild(_osScreenEl);
     }
-    if (!_osScreenHome) {
-      _osScreenHome = { parent: messages.parentNode, next: messages.nextSibling };
+    if (!_osProjectedMessages) {
+      _osProjectedMessages = document.createElement('div');
+      _osProjectedMessages.className = 'messages osv-projected';
+      _osProjectedMessages.setAttribute('aria-hidden', 'true');
+      _osScreenEl.appendChild(_osProjectedMessages);
     }
-    messages.classList.add('osv-projected');
-    _osScreenEl.appendChild(messages);
-    messages.scrollTop = messages.scrollHeight;
-  } else if (_osScreenHome) {
-    messages.classList.remove('osv-projected');
-    _osScreenHome.parent.insertBefore(messages, _osScreenHome.next);
-    _osScreenHome = null;
+    _osScreenEl.style.display = '';
+    _osRefreshMessageProjection();
+    if (!_osProjectionObserver && typeof MutationObserver !== 'undefined') {
+      _osProjectionObserver = new MutationObserver(_osQueueMessageProjection);
+      _osProjectionObserver.observe(messages, {
+        childList: true, subtree: true, characterData: true, attributes: true,
+      });
+    }
+    _osProjectedMessages.scrollTop = _osProjectedMessages.scrollHeight;
+  } else {
+    if (_osProjectionObserver) {
+      _osProjectionObserver.disconnect();
+      _osProjectionObserver = null;
+    }
+    if (_osProjectionRaf) cancelAnimationFrame(_osProjectionRaf);
+    _osProjectionRaf = 0;
     if (_osScreenEl) _osScreenEl.style.display = 'none';
     _osScreenOcclusionRect = null;
     if (_osScreenOcclusionCanvas) _osScreenOcclusionCanvas.style.display = 'none';

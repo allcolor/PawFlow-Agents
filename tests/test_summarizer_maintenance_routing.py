@@ -4,6 +4,7 @@ import inspect
 from unittest.mock import MagicMock
 
 from core.memory_auto_extract import auto_extract_memories
+from core.post_compaction_learning import process_post_compaction_learning
 from core.skill_loop import propose_skill_draft_from_summary
 from core.summarizer_bindings import resolve_llm_client
 from tasks.ai.actions._conv_core import _handle_conv_core
@@ -29,6 +30,8 @@ def test_maintenance_operations_expose_no_client_override():
         auto_extract_memories).parameters
     assert "llm_client" not in inspect.signature(
         propose_skill_draft_from_summary).parameters
+    assert "llm_client" not in inspect.signature(
+        process_post_compaction_learning).parameters
 
 
 def test_resume_compaction_has_no_main_llm_fallback():

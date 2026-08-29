@@ -473,34 +473,23 @@ class _BgBucketBuildMixin:
                 bucket_target_tokens,
                 _summary_tokens_est / float(bucket_target_tokens))
 
-        # Feed the memory extractor: each bucket summary is a distilled
-        # phase of the conversation — exactly the right granularity for
-        # long-term facts/preferences/decisions. Runs here (bg worker)
-        # so the hot path compact stays fast. Best-effort, failures
-        # never propagate.
+        # Analyze the distilled phase once for both durable memory and skill
+        # learning when those roles share their effective LLM. Explicitly
+        # distinct role bindings retain independent calls. Best-effort.
         try:
-            from core.memory_auto_extract import auto_extract_memories
-            auto_extract_memories(
+            from core.post_compaction_learning import (
+                process_post_compaction_learning,
+            )
+            process_post_compaction_learning(
                 user_id=user_id, summary=summary,
                 agent_name="",
                 embed_fn=_build_embed_fn(user_id=user_id, conversation_id=cid),
                 conversation_id=cid)
         except Exception:
             logger.debug(
-                "[bg-bucket] auto_extract_memories failed for cid=%s "
+                "[bg-bucket] post-compaction learning failed for cid=%s "
                 "bucket seq %d..%d",
                 cid[:8], first_seq, last_seq, exc_info=True)
-        # Skill loop: same distilled summary may contain a reusable
-        # procedure worth proposing as a skill draft. Best-effort.
-        try:
-            from core.skill_loop import propose_skill_draft_from_summary
-            propose_skill_draft_from_summary(
-                user_id=user_id, summary=summary,
-                conversation_id=cid)
-        except Exception:
-            logger.debug(
-                "[bg-bucket] skill draft proposal failed for cid=%s",
-                cid[:8], exc_info=True)
         return True
 
     def _maybe_rollup(self, store: BucketStore, client: Any,
@@ -633,23 +622,18 @@ class _BgBucketBuildMixin:
 
         if result and user_id:
             try:
-                from core.memory_auto_extract import auto_extract_memories
-                auto_extract_memories(
+                from core.post_compaction_learning import (
+                    process_post_compaction_learning,
+                )
+                process_post_compaction_learning(
                     user_id=user_id, summary=result,
                     agent_name="",
                     embed_fn=_build_embed_fn(user_id=user_id, conversation_id=cid),
                     conversation_id=cid)
             except Exception:
-                logger.debug("[bg-bucket] consolidate memory extract failed",
-                              exc_info=True)
-            try:
-                from core.skill_loop import propose_skill_draft_from_summary
-                propose_skill_draft_from_summary(
-                    user_id=user_id, summary=result,
-                    conversation_id=cid)
-            except Exception:
-                logger.debug("[bg-bucket] consolidate skill draft failed",
-                              exc_info=True)
+                logger.debug(
+                    "[bg-bucket] consolidate post-compaction learning failed",
+                    exc_info=True)
         return result
 
     def _publish_progress(self, cid: str, stage: str,

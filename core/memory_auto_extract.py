@@ -74,19 +74,8 @@ def auto_extract_memories(
     often full of transient operational state. Global permanent memories are
     reserved for durable high-value preferences/rules.
     """
-    if not user_id or not summary:
+    if not _memory_extraction_allowed(user_id, summary, conversation_id):
         return 0
-
-    # Temporary (TTL-bearing) conversations never feed long-term memory.
-    if conversation_id:
-        try:
-            from core.conversation_store import ConversationStore
-            if ConversationStore.instance().is_temporary(conversation_id):
-                return 0
-        except Exception as exc:
-            logger.debug(
-                "[auto-extract] is_temporary check failed for %s: %s",
-                conversation_id, exc)
 
     try:
         from core.linked_service_bindings import resolve_llm_override
@@ -104,9 +93,59 @@ def auto_extract_memories(
     if not llm_client:
         return 0
 
+    return _auto_extract_with_client(
+        llm_client, user_id=user_id, summary=summary,
+        agent_name=agent_name, embed_fn=embed_fn,
+        conversation_id=conversation_id)
+
+
+def _memory_extraction_allowed(
+    user_id: str,
+    summary: str,
+    conversation_id: str = "",
+) -> bool:
+    if not user_id or not summary:
+        return False
+
+    # Temporary (TTL-bearing) conversations never feed long-term memory.
+    if conversation_id:
+        try:
+            from core.conversation_store import ConversationStore
+            if ConversationStore.instance().is_temporary(conversation_id):
+                return False
+        except Exception as exc:
+            logger.debug(
+                "[auto-extract] is_temporary check failed for %s: %s",
+                conversation_id, exc)
+    return True
+
+
+def _auto_extract_with_client(
+    llm_client,
+    *,
+    user_id: str,
+    summary: str,
+    agent_name: str = "",
+    embed_fn=None,
+    conversation_id: str = "",
+) -> int:
     facts = _extract_with_llm(
         llm_client, summary, user_id=user_id,
         conversation_id=conversation_id)
+    return _store_extracted_memories(
+        user_id=user_id, facts=facts, agent_name=agent_name,
+        embed_fn=embed_fn, conversation_id=conversation_id)
+
+
+def _store_extracted_memories(
+    *,
+    user_id: str,
+    facts: List[Dict[str, Any]],
+    agent_name: str = "",
+    embed_fn=None,
+    conversation_id: str = "",
+) -> int:
+    """Normalize and store precomputed memory candidates."""
     if not facts:
         return 0
 

@@ -102,7 +102,7 @@ Memories are extracted automatically in two situations:
 
 1. **Periodic auto-save** -- Every ~15 user messages, the system extracts key facts from recent conversation text using the `summarizer_service` LLM. The counter is tracked per-agent via conversation extras (`_auto_save_count:{agent}`).
 
-2. **Post-compaction extraction** -- When a conversation is compacted, the bucket or rollup summary is fed to `auto_extract_memories()`. The operation resolves the effective `summarizer_service` itself and fails closed when that service or its configured LLM is unavailable; callers cannot inject the active agent client. This path is intentionally conservative: it stores at most two durable memories per extraction, rejects ephemeral/current-task state, and asks the LLM for `importance`, `durability`, `scope`, and `ttl_days` metadata. Extracted memories are tagged `["auto-extracted", "compaction"]`.
+2. **Post-compaction extraction** -- When a conversation is compacted, the bucket or rollup summary is fed to `process_post_compaction_learning()`. The operation resolves the `auto_memory` and `skill_learning` roles itself; callers cannot inject the active agent client. When both roles resolve to the same live LLM, one ephemeral JSON call returns independent `memories` and `skill` fields. Distinct explicit role bindings retain one call per service. Each field is validated and persisted separately, so an invalid or failed memory result does not suppress a valid skill draft, and vice versa. Memory extraction remains conservative: it stores at most two durable memories, rejects ephemeral/current-task state, and records `importance`, `durability`, `scope`, and `ttl_days`. Extracted memories are tagged `["auto-extracted", "compaction"]`.
 
 Compaction auto-extract does not write global permanent memories by default. Only durable high/critical user preferences or advice may become global. Project/debug facts are stored in conversation scope with a TTL unless explicitly classified as durable. Existing stale auto-extracted entries can be marked ended with `scripts/memory_gc.py`; ended memories remain in the raw JSON audit trail but are ignored by normal recall and the memory panel.
 
@@ -468,20 +468,22 @@ The `_maybe_auto_save_memories` method runs after each agent response. It checks
 
 ### 7.2 Post-Compaction Extraction
 
-When a conversation is compacted (context window overflow), `_auto_extract_memories` is called with the compaction summary. The extraction uses an LLM prompt asking for 3-5 key facts as JSON:
+When a conversation bucket or rollup is completed, `process_post_compaction_learning()` reads the summary. If automatic memory and skill learning share the same effective LLM, the summary appears once in one prompt and the response has two independently validated fields:
 
 ```json
-[
-  {"text": "User prefers JSON over SQLite for storage", "category": "preferences"},
-  {"text": "Auth middleware rewrite driven by compliance", "category": "facts"}
-]
+{
+  "memories": [
+    {"text": "User prefers JSON over SQLite for storage", "category": "preferences"}
+  ],
+  "skill": null
+}
 ```
 
-If no LLM is available, a heuristic fallback scans for decision/preference indicator words.
+If no maintenance LLM is available, the operation fails closed and stores nothing. When the two roles use distinct explicit bindings, each service retains its own isolated call and output contract.
 
 ### 7.3 Summarizer Service
 
-Both auto-triggers use the `summarizer_service` -- a lightweight LLM configured for extraction tasks. It is resolved via `_get_summarizer_client()` using the user's service configuration.
+Periodic auto-save uses the effective summarizer LLM. Post-compaction learning resolves the optional `auto_memory` and `skill_learning` bindings first and otherwise falls back to that same summarizer. Client identity, not a service-name string, decides whether the post-compaction analyses can be combined safely.
 
 ### 7.4 Skill Draft Proposals
 

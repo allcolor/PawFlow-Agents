@@ -190,23 +190,25 @@ def test_rollup_fires_on_object_count_threshold(fake_builder):
     assert store.object_count <= 2 + 1
 
 
-# ── H. Memory extractor fires on each bucket ───────────────────────
+# ── H. Post-compaction learning fires on each bucket ───────────────
 
 
-def test_memory_extractor_called_per_bucket(fake_builder, monkeypatch):
-    """auto_extract_memories should fire once per bucket build."""
-    calls_to_extract = []
+def test_post_compaction_learning_called_per_bucket(fake_builder, monkeypatch):
+    """Each completed bucket runs one combined learning hook."""
+    calls = []
 
-    def _fake_extract(user_id, summary, agent_name="", llm_client=None, **kwargs):
-        calls_to_extract.append({
+    def _fake_process(user_id, summary, agent_name="", **kwargs):
+        calls.append({
             "user_id": user_id,
             "summary_len": len(summary),
             "agent_name": agent_name,
+            "conversation_id": kwargs.get("conversation_id"),
         })
-        return 0
+        return {"memory_count": 0, "skill_outcome": "rejected"}
 
-    monkeypatch.setattr("core.memory_auto_extract.auto_extract_memories",
-                         _fake_extract)
+    monkeypatch.setattr(
+        "core.post_compaction_learning.process_post_compaction_learning",
+        _fake_process)
 
     # 2 L1 chunks worth + tail reserve, no leftover
     _write_shared(fake_builder._shared_path,
@@ -214,36 +216,12 @@ def test_memory_extractor_called_per_bucket(fake_builder, monkeypatch):
     fn, _ = _wire(fake_builder, summarize_output="detailed summary " * 10)
     fake_builder.build_now_sync("cid", "uid", allow_partial=False)
 
-    # 2 L1 buckets built → 2 extract calls
-    assert len(calls_to_extract) == 2
-    for c in calls_to_extract:
+    # 2 L1 buckets built → 2 combined learning calls
+    assert len(calls) == 2
+    for c in calls:
         assert c["user_id"] == "uid"
         assert c["summary_len"] > 0
-
-
-def test_skill_draft_proposer_called_per_bucket(fake_builder, monkeypatch):
-    """Each completed bucket must run the observable skill proposer."""
-    proposals = []
-
-    def _fake_propose(user_id, summary, conversation_id="", **kwargs):
-        proposals.append({
-            "user_id": user_id,
-            "summary": summary,
-            "conversation_id": conversation_id,
-        })
-        return "rejected"
-
-    monkeypatch.setattr(
-        "core.skill_loop.propose_skill_draft_from_summary", _fake_propose)
-    _write_shared(fake_builder._shared_path,
-                  2 * L1_TRIGGER_MSGS + TAIL_RESERVE)
-    _wire(fake_builder, summarize_output="repeatable release procedure " * 10)
-
-    fake_builder.build_now_sync("cid", "uid", allow_partial=False)
-
-    assert len(proposals) == 2
-    assert all(row["user_id"] == "uid" for row in proposals)
-    assert all(row["conversation_id"] == "cid" for row in proposals)
+        assert c["conversation_id"] == "cid"
 
 
 # ── trace + pyramid header integration ─────────────────────────────

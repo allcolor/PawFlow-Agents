@@ -102,13 +102,48 @@ def propose_skill_draft_from_summary(
                 user_id, conversation_id)
         if llm_client is None:
             return "skipped"
+        return _propose_skill_with_client(
+            llm_client, user_id=user_id, summary=summary,
+            conversation_id=conversation_id)
+    except Exception:
+        logger.warning("[skill-loop] proposal failed outcome=error user=%s cid=%s",
+                       user_id[:8], conversation_id[:8], exc_info=True)
+        return "error"
+
+
+def _propose_skill_with_client(
+    llm_client,
+    *,
+    user_id: str,
+    summary: str,
+    conversation_id: str = "",
+) -> str:
+    try:
         outcome, draft = _propose_with_llm(
             llm_client, summary, user_id, conversation_id)
-        if not draft:
-            logger.info(
-                "[skill-loop] proposal outcome=%s user=%s cid=%s",
-                outcome, user_id[:8], conversation_id[:8])
-            return outcome
+        return _store_skill_draft_analysis(
+            user_id=user_id, outcome=outcome, draft=draft,
+            conversation_id=conversation_id)
+    except Exception:
+        logger.warning("[skill-loop] proposal failed outcome=error user=%s cid=%s",
+                       user_id[:8], conversation_id[:8], exc_info=True)
+        return "error"
+
+
+def _store_skill_draft_analysis(
+    *,
+    user_id: str,
+    outcome: str,
+    draft,
+    conversation_id: str = "",
+) -> str:
+    """Store or promote one precomputed skill analysis result."""
+    if not draft:
+        logger.info(
+            "[skill-loop] proposal outcome=%s user=%s cid=%s",
+            outcome, user_id[:8], conversation_id[:8])
+        return outcome
+    try:
         text = _draft_memory_text(draft)
         existing_draft = _find_draft(user_id, draft["name"])
         if existing_draft is not None:
@@ -200,6 +235,11 @@ def _propose_with_llm(client, summary: str, user_id: str,
     if not match:
         return "invalid", None
     data = json.loads(match.group())
+    return _normalize_skill_analysis(data)
+
+
+def _normalize_skill_analysis(data):
+    """Validate a decoded object containing a nullable ``skill`` field."""
     skill = data.get("skill") if isinstance(data, dict) else None
     if skill is None:
         return "rejected", None

@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 import jsonschema
 
 from core.identifier import identifier_key
-from core.mcp_server_store import MCPServerStore
+from core.mcp_server_store import CLIENT_LEASE_TTL_SECONDS, MCPServerStore
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ _SUPPORTED_PROTOCOLS = {
 }
 _MAX_REQUEST_BYTES = 2_000_000
 _SESSION_TTL_SECONDS = 8 * 3600
+_LEASE_SWEEP_INTERVAL_SECONDS = CLIENT_LEASE_TTL_SECONDS
 
 _sessions: Dict[str, Dict[str, Any]] = {}
 _sessions_lock = threading.RLock()
@@ -195,6 +196,11 @@ def _bearer(headers: Dict[str, str]) -> str:
 
 def _authenticate(req, server_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     store = MCPServerStore.instance()
+    if not getattr(store, "available", True):
+        _json_response(req, 503, {
+            "error": "MCP publication store is unavailable",
+        })
+        return None, None
     connector_key = str((req.path_params or {}).get("connector_key") or "")
     # The cross-authority Origin rejection prevents DNS rebinding, where a
     # hostile page in a browser reaches a private PawFlow through the victim's
@@ -1388,7 +1394,10 @@ def remove_mcp_relay(server: Dict[str, Any]) -> None:
 
 def sweep_expired_mcp_relays() -> int:
     """Remove services and bindings left by crashed MCP CLI processes."""
-    expired = MCPServerStore.instance().expire_stale_clients()
+    store = MCPServerStore.instance()
+    if not getattr(store, "available", True):
+        return 0
+    expired = store.expire_stale_clients()
     for server in expired:
         remove_mcp_relay(server)
     return len(expired)
@@ -1402,10 +1411,16 @@ def _start_lease_sweeper() -> None:
         _lease_sweeper_started = True
 
     def _sweep() -> None:
+        global _lease_sweeper_started
         while True:
-            time.sleep(30)
+            time.sleep(_LEASE_SWEEP_INTERVAL_SECONDS)
             try:
                 sweep_expired_mcp_relays()
+                with _lease_sweeper_lock:
+                    if MCPServerStore.instance().has_client_leases():
+                        continue
+                    _lease_sweeper_started = False
+                    return
             except Exception:
                 logger.warning("Published MCP relay lease sweep failed",
                                exc_info=True)
@@ -1464,6 +1479,7 @@ def handle_relay_connect(req) -> None:
         logger.error("Could not register MCP CLI relay", exc_info=True)
         _json_response(req, 500, {"error": "relay_registration_failed", "message": str(exc)})
         return
+    _start_lease_sweeper()
     proto = _header(req, "X-Forwarded-Proto") or "http"
     scheme = "wss" if proto.lower() == "https" else "ws"
     host = _header(req, "X-Forwarded-Host") or _header(req, "Host") or "localhost"
@@ -1559,7 +1575,11 @@ def register_mcp_routes(listener) -> None:
     except on connector routes, which are gateway-exempt because their URL
     carries the credential.
     """
-    _start_lease_sweeper()
+    store = MCPServerStore.instance()
+    if not getattr(store, "available", True):
+        return
+    if store.has_client_leases():
+        _start_lease_sweeper()
     existing = {row.get("pattern", "") for row in listener.get_routes()}
     routes = [
         ("POST", "/mcp/{server_id}", handle_mcp_post),

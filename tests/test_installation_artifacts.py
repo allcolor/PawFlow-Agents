@@ -77,6 +77,22 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "EXPOSE 9090" not in src
 
 
+def test_server_image_pins_and_guards_the_sqlite_runtime():
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    entrypoint = Path("docker/server-entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "ARG SQLITE_VERSION=3.53.4" in dockerfile
+    assert "ARG SQLITE_AUTOCONF_VERSION=3530400" in dockerfile
+    assert (
+        "ARG SQLITE_SOURCE_SHA3="
+        "454e45f61c6bd75b7420e7190732dea03ce6639c63ada47bbc592f67fc340338"
+    ) in dockerfile
+    assert "check-sqlite-runtime.py archive" in dockerfile
+    assert 'check-sqlite-runtime.py runtime --exact "${SQLITE_VERSION}"' in dockerfile
+    assert "COPY --from=sqlite-builder /usr/local/lib/libsqlite3.so*" in dockerfile
+    assert "check-sqlite-runtime.py runtime --minimum 3.51.3" in entrypoint
+
+
 def test_server_image_bundles_novnc_static_assets():
     src = Path("Dockerfile").read_text(encoding="utf-8")
 

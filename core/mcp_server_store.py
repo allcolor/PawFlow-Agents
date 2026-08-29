@@ -8,20 +8,22 @@ consumed by PawFlow agents.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import core.paths as _paths
 
 
-_CLIENT_LEASE_TTL_SECONDS = 120.0
+CLIENT_LEASE_TTL_SECONDS = 120.0
 _IMAGE_OUTPUTS = frozenset({"native", "describe"})
 # Tool exposure modes for a published conversation:
 #  - 'api':  publish the six meta tools (get_initial_context, use_tool, …).
@@ -42,6 +44,20 @@ _IMAGE_OUTPUTS = frozenset({"native", "describe"})
 from core.tool_exposure import MODES as _MODES  # noqa: E402
 _KEY_KINDS = frozenset({"bearer", "connector"})
 _KEY_PREFIXES = {"bearer": "pfmcp_", "connector": "pfmcc_"}
+_CORRUPTION_MARKERS = (
+    "unsupported file format",
+    "file is not a database",
+    "database disk image is malformed",
+    "malformed database schema",
+    "store file is empty",
+    "quick_check failed",
+)
+
+logger = logging.getLogger(__name__)
+
+
+class MCPStoreUnavailableError(RuntimeError):
+    """Raised when published-MCP state is disabled after a database failure."""
 
 
 class MCPServerStore:
@@ -61,11 +77,76 @@ class MCPServerStore:
     def __init__(self, database_path: Optional[Path] = None) -> None:
         self._database_path_override = Path(database_path) if database_path else None
         self._lock = threading.RLock()
-        self._initialize()
+        self._unavailable_error = ""
+        try:
+            self._initialize()
+        except MCPStoreUnavailableError:
+            # _connection() already preserved and described the database. Keep
+            # the singleton alive so unrelated listeners and flows can start.
+            pass
 
     @property
     def database_path(self) -> Path:
         return self._database_path_override or (_paths.SYSTEM_DIR / "mcp_servers.sqlite3")
+
+    @property
+    def available(self) -> bool:
+        """Return whether MCP publication state is safe to read or write."""
+        return not self._unavailable_error
+
+    @property
+    def unavailable_reason(self) -> str:
+        """Return the SQLite failure that disabled this process-local store."""
+        return self._unavailable_error
+
+    def _artifact_metadata(self) -> str:
+        """Describe the preserved database, WAL and SHM without changing them."""
+        database = self.database_path
+        artifacts = (
+            database,
+            Path(str(database) + "-wal"),
+            Path(str(database) + "-shm"),
+        )
+        result = []
+        for artifact in artifacts:
+            try:
+                stat = artifact.stat()
+                digest = hashlib.sha256()
+                with artifact.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                result.append(
+                    f"path={artifact},size={stat.st_size},"
+                    f"mtime_ns={stat.st_mtime_ns},sha256={digest.hexdigest()}")
+            except FileNotFoundError:
+                result.append(f"path={artifact},missing=true")
+            except OSError as exc:
+                result.append(
+                    f"path={artifact},metadata_error={type(exc).__name__}")
+        return " [" + "] [".join(result) + "]"
+
+    def _mark_unavailable(self, exc: sqlite3.DatabaseError) -> None:
+        """Trip the process-local circuit breaker and emit one forensic alert."""
+        if self._unavailable_error:
+            return
+        self._unavailable_error = f"{type(exc).__name__}: {exc}"
+        lowered = str(exc).lower()
+        corrupt = any(marker in lowered for marker in _CORRUPTION_MARKERS)
+        logger.critical(
+            "MCP store unavailable/corrupt. MCP publication disabled. "
+            "Database preserved at %s. PawFlow core runtime continues without "
+            "MCP publication. reason=%s corrupt_signature=%s artifacts=%s",
+            self.database_path, self._unavailable_error, corrupt,
+            self._artifact_metadata(),
+        )
+
+    @staticmethod
+    def _is_store_failure(exc: sqlite3.DatabaseError) -> bool:
+        """Distinguish storage/open failures from ordinary SQL rejections."""
+        return (
+            type(exc) is sqlite3.DatabaseError
+            or isinstance(exc, (sqlite3.OperationalError, sqlite3.InternalError))
+        )
 
     def _connect(self) -> sqlite3.Connection:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,8 +156,81 @@ class MCPServerStore:
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
+    def _preflight(self) -> None:
+        """Check an existing main file without opening or touching WAL/SHM."""
+        database = self.database_path
+        try:
+            if not database.exists():
+                return
+            if database.stat().st_size == 0:
+                raise sqlite3.DatabaseError("MCP store file is empty")
+        except sqlite3.DatabaseError as exc:
+            self._mark_unavailable(exc)
+            raise MCPStoreUnavailableError(
+                "MCP publication store is unavailable: "
+                f"{self._unavailable_error}") from exc
+        except OSError as exc:
+            sqlite_error = sqlite3.OperationalError(str(exc))
+            self._mark_unavailable(sqlite_error)
+            raise MCPStoreUnavailableError(
+                "MCP publication store is unavailable: "
+                f"{self._unavailable_error}") from exc
+
+        connection: Optional[sqlite3.Connection] = None
+        try:
+            uri = database.resolve().as_uri() + "?mode=ro&immutable=1"
+            connection = sqlite3.connect(uri, uri=True)
+            quick_check = [
+                str(row[0])
+                for row in connection.execute("PRAGMA quick_check").fetchall()
+            ]
+            if quick_check != ["ok"]:
+                raise sqlite3.DatabaseError(
+                    "MCP store quick_check failed: "
+                    + "; ".join(quick_check[:10]))
+        except sqlite3.DatabaseError as exc:
+            if not self._is_store_failure(exc):
+                raise
+            self._mark_unavailable(exc)
+            raise MCPStoreUnavailableError(
+                "MCP publication store is unavailable: "
+                f"{self._unavailable_error}") from exc
+        finally:
+            if connection is not None:
+                connection.close()
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Open one transaction or permanently disable MCP after DB failure."""
+        if not self.available:
+            raise MCPStoreUnavailableError(
+                "MCP publication store is unavailable: "
+                f"{self._unavailable_error}")
+        connection: Optional[sqlite3.Connection] = None
+        try:
+            connection = self._connect()
+            with connection:
+                yield connection
+        except MCPStoreUnavailableError:
+            raise
+        except sqlite3.DatabaseError as exc:
+            if not self._is_store_failure(exc):
+                raise
+            self._mark_unavailable(exc)
+            raise MCPStoreUnavailableError(
+                "MCP publication store is unavailable: "
+                f"{self._unavailable_error}") from exc
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except sqlite3.DatabaseError as exc:
+                    if self._is_store_failure(exc):
+                        self._mark_unavailable(exc)
+
     def _initialize(self) -> None:
-        with self._lock, self._connect() as connection:
+        self._preflight()
+        with self._lock, self._connection() as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS mcp_servers (
@@ -278,7 +432,7 @@ class MCPServerStore:
         heartbeat = float(data.get("client_heartbeat_at") or 0)
         data["client_active"] = bool(
             data.get("active_client_id")
-            and heartbeat > time.time() - _CLIENT_LEASE_TTL_SECONDS)
+            and heartbeat > time.time() - CLIENT_LEASE_TTL_SECONDS)
         data["terminal_ready"] = bool(
             data["client_active"] and data.get("terminal_session_id"))
         return data
@@ -317,7 +471,7 @@ class MCPServerStore:
             names = [item.strip() for item in tool_allowlist]
             allowlist_json = json.dumps(names) if names else ""
         now = time.time()
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             owner_row = connection.execute(
                 """SELECT owner_user_id FROM mcp_servers
                    WHERE conversation_id = ? LIMIT 1""",
@@ -369,7 +523,7 @@ class MCPServerStore:
         return result
 
     def get(self, server_id: str) -> Optional[Dict[str, Any]]:
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             row = connection.execute(
                 "SELECT * FROM mcp_servers WHERE server_id = ?", (server_id,)
             ).fetchone()
@@ -384,7 +538,7 @@ class MCPServerStore:
             query += " AND agent_name = ? COLLATE NOCASE"
             params += (agent_name,)
         query += " ORDER BY created_at, server_id LIMIT 1"
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             row = connection.execute(
                 query, params,
             ).fetchone()
@@ -392,7 +546,7 @@ class MCPServerStore:
 
     def list_for_conversation(
             self, conversation_id: str) -> List[Dict[str, Any]]:
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             rows = connection.execute(
                 """SELECT * FROM mcp_servers WHERE conversation_id = ?
                    ORDER BY created_at, server_id""",
@@ -402,14 +556,19 @@ class MCPServerStore:
 
     def has_servers(self) -> bool:
         """Return whether at least one inbound MCP publication exists."""
-        with self._lock, self._connect() as connection:
-            row = connection.execute(
-                "SELECT 1 FROM mcp_servers LIMIT 1"
-            ).fetchone()
+        if not self.available:
+            return False
+        try:
+            with self._lock, self._connection() as connection:
+                row = connection.execute(
+                    "SELECT 1 FROM mcp_servers LIMIT 1"
+                ).fetchone()
+        except MCPStoreUnavailableError:
+            return False
         return row is not None
 
     def set_enabled(self, server_id: str, enabled: bool) -> bool:
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             cur = connection.execute(
                 "UPDATE mcp_servers SET enabled = ?, updated_at = ? WHERE server_id = ?",
                 (int(bool(enabled)), time.time(), server_id),
@@ -417,7 +576,7 @@ class MCPServerStore:
         return bool(cur.rowcount)
 
     def delete(self, server_id: str) -> bool:
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             cur = connection.execute(
                 "DELETE FROM mcp_servers WHERE server_id = ?", (server_id,)
             )
@@ -436,7 +595,7 @@ class MCPServerStore:
         now = time.time()
         prefix = raw[:14]
         default_label = "CLI key" if kind == "bearer" else "Connector key"
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             connection.execute(
                 """INSERT INTO mcp_api_keys (
                        key_id, server_id, label, prefix, token_hash, created_at,
@@ -462,12 +621,12 @@ class MCPServerStore:
         if not include_revoked:
             query += " AND revoked_at = 0"
         query += " ORDER BY created_at DESC"
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             rows = connection.execute(query, (server_id,)).fetchall()
         return [self._key_row(row) for row in rows]
 
     def revoke_key(self, server_id: str, key_id: str) -> bool:
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             cur = connection.execute(
                 """UPDATE mcp_api_keys SET revoked_at = ?
                    WHERE server_id = ? AND key_id = ? AND revoked_at = 0""",
@@ -477,30 +636,33 @@ class MCPServerStore:
 
     def validate_key(self, server_id: str, raw_token: str,
                      kind: str = "bearer") -> Optional[Dict[str, Any]]:
-        if not raw_token:
+        if not raw_token or not self.available:
             return None
         kind = str(kind or "").strip().lower()
         if kind not in _KEY_KINDS:
             return None
         digest = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-        with self._lock, self._connect() as connection:
-            row = connection.execute(
-                """SELECT k.*, s.enabled AS server_enabled
-                   FROM mcp_api_keys k JOIN mcp_servers s ON s.server_id = k.server_id
-                   WHERE k.server_id = ? AND k.token_hash = ? AND k.revoked_at = 0
-                     AND k.kind = ?""",
-                (server_id, digest, kind),
-            ).fetchone()
-            if not row or not row["server_enabled"]:
-                return None
-            # compare_digest retains a constant-time final comparison even though
-            # SQLite already selected a high-entropy SHA-256 value.
-            if not hmac.compare_digest(str(row["token_hash"]), digest):
-                return None
-            connection.execute(
-                "UPDATE mcp_api_keys SET last_used_at = ? WHERE key_id = ?",
-                (time.time(), row["key_id"]),
-            )
+        try:
+            with self._lock, self._connection() as connection:
+                row = connection.execute(
+                    """SELECT k.*, s.enabled AS server_enabled
+                       FROM mcp_api_keys k JOIN mcp_servers s ON s.server_id = k.server_id
+                       WHERE k.server_id = ? AND k.token_hash = ? AND k.revoked_at = 0
+                         AND k.kind = ?""",
+                    (server_id, digest, kind),
+                ).fetchone()
+                if not row or not row["server_enabled"]:
+                    return None
+                # compare_digest retains a constant-time final comparison even though
+                # SQLite already selected a high-entropy SHA-256 value.
+                if not hmac.compare_digest(str(row["token_hash"]), digest):
+                    return None
+                connection.execute(
+                    "UPDATE mcp_api_keys SET last_used_at = ? WHERE key_id = ?",
+                    (time.time(), row["key_id"]),
+                )
+        except MCPStoreUnavailableError:
+            return None
         return self._key_row(row)
 
     def claim_client(self, server_id: str, client_id: str, client_name: str,
@@ -508,7 +670,7 @@ class MCPServerStore:
         if not client_id:
             raise ValueError("client_id is required")
         now = time.time()
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT * FROM mcp_servers WHERE server_id = ?", (server_id,)
@@ -516,7 +678,7 @@ class MCPServerStore:
             if not row:
                 raise KeyError("MCP server not found")
             current = str(row["active_client_id"] or "")
-            fresh = float(row["client_heartbeat_at"] or 0) > now - _CLIENT_LEASE_TTL_SECONDS
+            fresh = float(row["client_heartbeat_at"] or 0) > now - CLIENT_LEASE_TTL_SECONDS
             if current and current != client_id and fresh:
                 raise RuntimeError("MCP server already has an active CLI instance")
             connection.execute(
@@ -539,7 +701,7 @@ class MCPServerStore:
                      state_path: str = "") -> bool:
         if not session_id or not target:
             raise ValueError("session_id and target are required")
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             cur = connection.execute(
                 """UPDATE mcp_servers
                    SET terminal_session_id = ?, terminal_kind = ?,
@@ -563,13 +725,13 @@ class MCPServerStore:
         if client_id:
             query += " AND active_client_id = ?"
             params += (client_id,)
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             cur = connection.execute(query, params)
         return bool(cur.rowcount)
 
     def get_terminal_registration(self, server_id: str) -> Dict[str, Any]:
         """Return private terminal routing fields for server-side injection."""
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             row = connection.execute(
                 """SELECT active_client_id, active_relay_id,
                           client_heartbeat_at, terminal_session_id,
@@ -581,7 +743,7 @@ class MCPServerStore:
         return dict(row) if row else {}
 
     def heartbeat_client(self, server_id: str, client_id: str) -> bool:
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             cur = connection.execute(
                 """UPDATE mcp_servers SET client_heartbeat_at = ?, updated_at = ?
                    WHERE server_id = ? AND active_client_id = ?""",
@@ -590,7 +752,7 @@ class MCPServerStore:
         return bool(cur.rowcount)
 
     def release_client(self, server_id: str, client_id: str) -> bool:
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connection() as connection:
             cur = connection.execute(
                 """UPDATE mcp_servers SET active_client_id = '', active_client_name = '',
                        active_relay_id = '', client_heartbeat_at = 0,
@@ -602,29 +764,61 @@ class MCPServerStore:
             )
         return bool(cur.rowcount)
 
+    def has_client_leases(self) -> bool:
+        """Return whether any CLI lease still needs heartbeat supervision."""
+        if not self.available:
+            return False
+        try:
+            with self._lock, self._connection() as connection:
+                row = connection.execute(
+                    """SELECT 1 FROM mcp_servers
+                       WHERE active_client_id != '' LIMIT 1"""
+                ).fetchone()
+        except MCPStoreUnavailableError:
+            return False
+        return row is not None
+
     def expire_stale_clients(self) -> List[Dict[str, Any]]:
         """Clear and return CLI leases whose heartbeat TTL has elapsed."""
-        cutoff = time.time() - _CLIENT_LEASE_TTL_SECONDS
-        with self._lock, self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            rows = connection.execute(
-                """SELECT * FROM mcp_servers
-                   WHERE active_client_id != '' AND client_heartbeat_at < ?""",
-                (cutoff,),
-            ).fetchall()
-            if rows:
-                connection.execute(
-                    """UPDATE mcp_servers
-                       SET active_client_id = '', active_client_name = '',
-                           active_relay_id = '', client_heartbeat_at = 0,
-                           terminal_session_id = '', terminal_kind = '',
-                           terminal_target = '', terminal_secret = '',
-                           terminal_state_path = '',
-                           updated_at = ?
+        if not self.available:
+            return []
+        cutoff = time.time() - CLIENT_LEASE_TTL_SECONDS
+        try:
+            with self._lock, self._connection() as connection:
+                rows = connection.execute(
+                    """SELECT * FROM mcp_servers
                        WHERE active_client_id != '' AND client_heartbeat_at < ?""",
-                    (time.time(), cutoff),
-                )
+                    (cutoff,),
+                ).fetchall()
+                if rows:
+                    # The idle path stays read-only. Acquire the write lock only
+                    # after finding an expiration candidate, then re-read under
+                    # that lock so a concurrent heartbeat cannot be cleared.
+                    connection.execute("BEGIN IMMEDIATE")
+                    rows = connection.execute(
+                        """SELECT * FROM mcp_servers
+                           WHERE active_client_id != '' AND client_heartbeat_at < ?""",
+                        (cutoff,),
+                    ).fetchall()
+                if rows:
+                    connection.execute(
+                        """UPDATE mcp_servers
+                           SET active_client_id = '', active_client_name = '',
+                               active_relay_id = '', client_heartbeat_at = 0,
+                               terminal_session_id = '', terminal_kind = '',
+                               terminal_target = '', terminal_secret = '',
+                               terminal_state_path = '',
+                               updated_at = ?
+                           WHERE active_client_id != '' AND client_heartbeat_at < ?""",
+                        (time.time(), cutoff),
+                    )
+        except MCPStoreUnavailableError:
+            return []
         return [self._server_row(row) for row in rows]
 
 
-__all__ = ["MCPServerStore"]
+__all__ = [
+    "CLIENT_LEASE_TTL_SECONDS",
+    "MCPServerStore",
+    "MCPStoreUnavailableError",
+]

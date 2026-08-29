@@ -141,6 +141,8 @@ configure_runtime_user() {
   fi
 }
 
+python3 /app/scripts/check-sqlite-runtime.py runtime --minimum 3.51.3
+
 if [[ "$(id -u)" == "0" ]]; then
   configure_runtime_user
   mkdir -p /app/data /app/config /app/certs /app/logs /app/plugins

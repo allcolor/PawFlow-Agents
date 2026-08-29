@@ -56,6 +56,10 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
 
     from core.mcp_server_store import MCPServerStore
     mcp_store = MCPServerStore.instance()
+    if not getattr(mcp_store, "available", True):
+        return _reply(flowfile, {
+            "error": "MCP publication store is unavailable",
+        }, 503)
     requested_server_id = str(body.get("server_id") or "").strip()
     requested_agent = str(body.get("agent_name") or "").strip()
     servers = mcp_store.list_for_conversation(conversation_id)

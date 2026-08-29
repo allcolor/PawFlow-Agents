@@ -26,6 +26,37 @@ enable or disable an endpoint, or delete it. Each agent publication has its own
 opaque endpoint, keys, tool allowlist, client lease, and terminal registration.
 The conversation and its normal agent/relay controls remain visible and usable.
 
+## Store failure isolation and recovery
+
+Published-server configuration and hashed API keys are stored in
+`data/system/mcp_servers.sqlite3`. PawFlow runs `PRAGMA quick_check` before any
+schema initialization or migration. If SQLite cannot open the database, or the
+check reports corruption, the published-MCP store becomes unavailable for the
+rest of that server process:
+
+- MCP authentication fails closed and publication-management actions return
+  HTTP 503;
+- inbound MCP routes and the CLI-lease sweeper are not started;
+- ordinary HTTP listeners, webchat, non-MCP agents, and unrelated flows
+  continue to restore;
+- the database, `-wal`, and `-shm` files are never deleted, replaced, or
+  recreated automatically.
+
+One CRITICAL log records the database path plus the size, modification time,
+and SHA-256 of every preserved artifact that exists. Repeated listener probes
+and lease sweeps do not retry the failed store or repeat the alert. Stop PawFlow
+before an administrator replaces the file with a separately recovered database
+that passes both `PRAGMA integrity_check` and `PRAGMA foreign_key_check`, then
+restart the server. Never repair or initialize an empty database over the
+preserved evidence.
+
+The local CLI sends a heartbeat every 30 seconds and its lease expires after
+120 seconds. The cleanup sweeper therefore runs at most once per lease TTL,
+starts only while at least one lease exists, and stops again after the last
+lease is released or expires. An idle sweep performs a read probe only;
+`BEGIN IMMEDIATE` is acquired only after an expired lease candidate is found
+and rechecked under the write lock.
+
 Once published, the MCP Repository section shows one status row per published
 agent — *Published as MCP — agent `<name>` (`<n>` keys)*, or a disabled
 variant when that endpoint is switched off. Selecting a row reopens that

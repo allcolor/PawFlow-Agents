@@ -9,7 +9,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 
-from core.mcp_server_store import MCPServerStore
+from core.mcp_server_store import CLIENT_LEASE_TTL_SECONDS, MCPServerStore
 from services import mcp_server_endpoint as endpoint
 
 
@@ -27,6 +27,214 @@ class _Request:
 def _decoded(request):
     status, headers, body = request.completed
     return status, headers, json.loads(body.decode("utf-8")) if body else None
+
+
+def _corrupt_sqlite_schema_format(database: Path) -> bytes:
+    """Overwrite only SQLite's schema-format header field with an invalid value."""
+    content = bytearray(database.read_bytes())
+    assert content[:16] == b"SQLite format 3\x00"
+    content[44:48] = (0x7E6F4E6D).to_bytes(4, "big")
+    database.write_bytes(content)
+    return bytes(content)
+
+
+def test_corrupt_store_is_preserved_and_mcp_fails_closed(tmp_path, caplog):
+    database = tmp_path / "published.sqlite3"
+    healthy = MCPServerStore(database)
+    server = healthy.configure("alice", "conv-1", "agent-a")
+    raw_key, _key = healthy.create_key(server["server_id"], "Codex")
+    corrupted = _corrupt_sqlite_schema_format(database)
+    wal = Path(str(database) + "-wal")
+    shm = Path(str(database) + "-shm")
+    wal_content = b"preserved WAL evidence"
+    shm_content = b"preserved SHM evidence"
+    wal.write_bytes(wal_content)
+    shm.write_bytes(shm_content)
+    digest = hashlib.sha256(corrupted).hexdigest()
+    wal_digest = hashlib.sha256(wal_content).hexdigest()
+    shm_digest = hashlib.sha256(shm_content).hexdigest()
+
+    with caplog.at_level("CRITICAL"):
+        store = MCPServerStore(database)
+        assert store.available is False
+        assert store.has_servers() is False
+        assert store.validate_key(server["server_id"], raw_key) is None
+        assert store.expire_stale_clients() == []
+
+    assert database.read_bytes() == corrupted
+    assert wal.read_bytes() == wal_content
+    assert shm.read_bytes() == shm_content
+    critical = [
+        record.getMessage() for record in caplog.records
+        if record.levelname == "CRITICAL"
+    ]
+    assert len(critical) == 1
+    assert "MCP store unavailable/corrupt" in critical[0]
+    assert "MCP publication disabled" in critical[0]
+    assert f"Database preserved at {database}" in critical[0]
+    assert digest in critical[0]
+    assert wal_digest in critical[0]
+    assert shm_digest in critical[0]
+
+    with pytest.raises(RuntimeError, match="MCP publication store is unavailable"):
+        store.list_for_conversation("conv-1")
+
+
+def test_corrupt_mcp_store_does_not_block_http_listener_restore(
+        tmp_path, monkeypatch):
+    from core.a2a_store import A2AStore
+    from services import http_listener_service as listener_module
+
+    database = tmp_path / "published.sqlite3"
+    MCPServerStore(database).configure("alice", "conv-1", "agent-a")
+    corrupted = _corrupt_sqlite_schema_format(database)
+    store = MCPServerStore(database)
+
+    class EmptyA2AStore:
+        @staticmethod
+        def has_publications():
+            return False
+
+    registered = []
+    monkeypatch.setattr(
+        MCPServerStore, "instance", classmethod(lambda cls: store))
+    monkeypatch.setattr(
+        A2AStore, "instance", classmethod(lambda cls: EmptyA2AStore()))
+    monkeypatch.setattr(
+        endpoint, "register_mcp_routes",
+        lambda listener: registered.append(listener.port))
+    with listener_module._instances_lock:
+        listener_module._instances.clear()
+    try:
+        listener = listener_module.HTTPListenerService({
+            "host": "127.0.0.1", "port": 19773,
+        })
+        assert listener.port == 19773
+        assert registered == []
+        assert database.read_bytes() == corrupted
+    finally:
+        with listener_module._instances_lock:
+            listener_module._instances.clear()
+
+
+def test_empty_existing_store_is_preserved_instead_of_reinitialized(tmp_path):
+    database = tmp_path / "published.sqlite3"
+    database.touch()
+
+    store = MCPServerStore(database)
+
+    assert store.available is False
+    assert store.has_servers() is False
+    assert database.read_bytes() == b""
+
+
+def test_runtime_corruption_trips_store_once_and_stops_lease_sweeps(
+        tmp_path, caplog):
+    database = tmp_path / "published.sqlite3"
+    store = MCPServerStore(database)
+    store.configure("alice", "conv-1", "agent-a")
+    corrupted = _corrupt_sqlite_schema_format(database)
+
+    with caplog.at_level("CRITICAL"):
+        assert store.expire_stale_clients() == []
+        assert store.available is False
+        assert store.expire_stale_clients() == []
+
+    assert database.read_bytes() == corrupted
+    critical = [
+        record for record in caplog.records if record.levelname == "CRITICAL"
+    ]
+    assert len(critical) == 1
+    assert "unsupported file format" in critical[0].getMessage()
+
+
+def test_unavailable_store_disables_routes_and_lease_sweep(monkeypatch):
+    class UnavailableStore:
+        available = False
+
+        @staticmethod
+        def expire_stale_clients():
+            raise AssertionError("an unavailable store must not be queried")
+
+    class Listener:
+        def __init__(self):
+            self.routes = []
+
+        def get_routes(self):
+            return self.routes
+
+        def register_route(self, method, pattern, owner, **kwargs):
+            self.routes.append((method, pattern, owner, kwargs))
+
+    sweeper_starts = []
+    monkeypatch.setattr(
+        MCPServerStore, "instance", classmethod(lambda cls: UnavailableStore()))
+    monkeypatch.setattr(
+        endpoint, "_start_lease_sweeper", lambda: sweeper_starts.append(True))
+
+    listener = Listener()
+    endpoint.register_mcp_routes(listener)
+    assert listener.routes == []
+    assert sweeper_starts == []
+    assert endpoint.sweep_expired_mcp_relays() == 0
+
+
+def test_unavailable_store_returns_503_at_mcp_boundaries(monkeypatch):
+    from tasks.ai.actions import _agentres_k6
+
+    class UnavailableStore:
+        available = False
+
+    class ConversationStore:
+        @staticmethod
+        def resolve_owner(_conversation_id):
+            return "alice"
+
+    class FlowFile:
+        def __init__(self):
+            self.attributes = {}
+
+        def set_content(self, content):
+            self.content = content
+
+        def set_attribute(self, key, value):
+            self.attributes[key] = value
+
+    monkeypatch.setattr(
+        MCPServerStore, "instance", classmethod(lambda cls: UnavailableStore()))
+
+    request = _Request(server_id="srv_test")
+    assert endpoint._authenticate(request, "srv_test") == (None, None)
+    assert _decoded(request)[0] == 503
+
+    flowfile = FlowFile()
+    _agentres_k6._handle_agentres_k6(
+        None, "mcp_server_get", {"conversation_id": "conv-1"},
+        ConversationStore(), "alice", flowfile,
+    )
+    assert flowfile.attributes["http.response.status"] == "503"
+    assert json.loads(flowfile.content) == {
+        "error": "MCP publication store is unavailable",
+    }
+
+
+def test_integrity_error_does_not_disable_healthy_store(tmp_path):
+    store = MCPServerStore(tmp_path / "published.sqlite3")
+    server = store.configure("alice", "conv-1", "agent-a")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        with store._lock, store._connection() as connection:
+            connection.execute(
+                """INSERT INTO mcp_servers (
+                       server_id, owner_user_id, conversation_id, agent_name,
+                       label, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (server["server_id"], "alice", "conv-2", "agent-b",
+                 "duplicate", 1, 1),
+            )
+
+    assert store.available is True
+    assert store.has_servers() is True
 
 
 def test_store_hashes_keys_and_supports_revocation(tmp_path):
@@ -177,6 +385,32 @@ def test_store_enforces_one_fresh_cli_and_expires_stale_lease(tmp_path):
     current = store.get(server_id)
     assert current["active_client_id"] == ""
     assert not current["client_active"]
+
+
+def test_idle_lease_sweep_does_not_take_a_write_lock(tmp_path, monkeypatch):
+    store = MCPServerStore(tmp_path / "published.sqlite3")
+    store.configure("alice", "conv-1", "agent-a")
+    statements = []
+    original_connect = store._connect
+
+    def traced_connect():
+        connection = original_connect()
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(store, "_connect", traced_connect)
+
+    assert store.has_client_leases() is False
+    assert store.expire_stale_clients() == []
+    assert not any(
+        statement.upper().startswith("BEGIN IMMEDIATE")
+        for statement in statements
+    )
+
+
+def test_lease_sweep_interval_matches_the_heartbeat_ttl():
+    assert CLIENT_LEASE_TTL_SECONDS == 120.0
+    assert endpoint._LEASE_SWEEP_INTERVAL_SECONDS == CLIENT_LEASE_TTL_SECONDS
 
 
 def test_store_migrates_existing_publications_to_native_image_output(tmp_path):

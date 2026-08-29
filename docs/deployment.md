@@ -202,6 +202,19 @@ Translation: /workspace/data/claude_sessions/abc/
 | `python:3.12-slim` | ~150MB | Python only |
 | `node:22-slim` | ~200MB | Node.js + npm |
 
+The PawFlow server image does not inherit SQLite implicitly from the floating
+Python base image. It builds SQLite 3.53.4 from the official 2026 autoconf
+archive after verifying SQLite's published SHA3-256, installs the shared
+library, and proves that Python links to that exact version with FTS5 enabled.
+The container entrypoint repeats a minimum-version check on every start and
+refuses to run below SQLite 3.51.3. This floor excludes the WAL-reset bug fixed
+in 3.51.3 while retaining the FTS5 support required by conversation search.
+Source or wheel deployments outside the server image inherit SQLite from their
+Python interpreter. A source checkout can run
+`python scripts/check-sqlite-runtime.py runtime --minimum 3.51.3`; an installed
+wheel should verify `sqlite3.sqlite_version` directly and must report at least
+3.51.3 before PawFlow is started.
+
 Interactive Claude Code and Antigravity containers need a private mount namespace
 for the per-user `/cc_sessions` bind. PawFlow starts those containers as root
 with `SYS_ADMIN` so `unshare` and `mount --bind` are available inside the

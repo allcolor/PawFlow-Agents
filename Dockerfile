@@ -1,4 +1,7 @@
 ARG BUILDX_VERSION=0.36.1
+ARG SQLITE_VERSION=3.53.4
+ARG SQLITE_AUTOCONF_VERSION=3530400
+ARG SQLITE_SOURCE_SHA3=454e45f61c6bd75b7420e7190732dea03ce6639c63ada47bbc592f67fc340338
 
 FROM rust:1.89-bookworm AS search-cli-builder
 
@@ -9,11 +12,38 @@ RUN git clone https://github.com/paperfoot/search-cli.git /src/search-cli \
     && test "$(git rev-parse HEAD)" = "$SEARCH_CLI_COMMIT" \
     && cargo build --release --locked --no-default-features
 
+FROM python:3.12-slim AS sqlite-builder
+
+ARG SQLITE_VERSION
+ARG SQLITE_AUTOCONF_VERSION
+ARG SQLITE_SOURCE_SHA3
+COPY scripts/check-sqlite-runtime.py /usr/local/bin/check-sqlite-runtime.py
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL \
+      "https://www.sqlite.org/2026/sqlite-autoconf-${SQLITE_AUTOCONF_VERSION}.tar.gz" \
+      -o /sqlite.tar.gz \
+    && python /usr/local/bin/check-sqlite-runtime.py archive /sqlite.tar.gz \
+      --sha3 "${SQLITE_SOURCE_SHA3}" \
+    && tar -xzf /sqlite.tar.gz -C / \
+    && cd "/sqlite-autoconf-${SQLITE_AUTOCONF_VERSION}" \
+    && CFLAGS="-O2 -DSQLITE_ENABLE_DBSTAT_VTAB -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_MATH_FUNCTIONS -DSQLITE_ENABLE_RTREE" \
+      ./configure --prefix=/usr/local --disable-static \
+    && make -j"$(nproc)" \
+    && make install \
+    && test "$(/usr/local/bin/sqlite3 --version | cut -d' ' -f1)" = "${SQLITE_VERSION}"
+
 FROM docker/buildx-bin:${BUILDX_VERSION} AS buildx
 
 FROM python:3.12-slim
 
+ARG SQLITE_VERSION
+
 WORKDIR /app
+
+COPY --from=sqlite-builder /usr/local/lib/libsqlite3.so* /usr/local/lib/
+RUN ldconfig
 
 COPY --from=search-cli-builder /src/search-cli/target/release/search /usr/local/bin/search
 COPY --from=search-cli-builder /src/search-cli/LICENSE /usr/share/licenses/search-cli/LICENSE
@@ -78,6 +108,7 @@ RUN python -m playwright install --with-deps chromium \
 
 # App code
 COPY . .
+RUN python scripts/check-sqlite-runtime.py runtime --exact "${SQLITE_VERSION}"
 
 # Defaults that must survive persistent bind mounts over /app/data and
 # /app/config on first Docker boot.

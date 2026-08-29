@@ -74,7 +74,7 @@ def test_website_pages_have_one_heading_and_valid_local_targets(name: str) -> No
     parser = parse_page(name)
 
     assert parser.h1_count == 1
-    assert "site.js?v=a32" in parser.scripts
+    assert "site.js?v=a33" in parser.scripts
 
     references = parser.links + parser.scripts
     if name in PRODUCT_PAGES:
@@ -188,6 +188,19 @@ def test_mobile_story_uses_boundary_aware_zoom_scenes() -> None:
     assert ".mobile-story-active .mobile-story-scene" in css
     assert "overflow-y: auto" in css
     assert "mobile-zoom-in" in css
+
+
+def test_story_navigation_yields_to_help_chat_input_and_scrolling() -> None:
+    script = (SITE / "site.js").read_text(encoding="utf-8")
+
+    assert "function isStoryKeyboardTarget(target)" in script
+    assert script.count("if (isStoryKeyboardTarget(event.target)) return;") == 2
+    assert "if (!enabled || isHelpWidgetTarget(event.target)) return;" in script
+    assert "panel.addEventListener('wheel', (event) =>" in script
+    assert "event.stopPropagation();" in script
+    assert "target.closest('.pf-help-log')" in script
+    assert "textarea.scrollHeight > textarea.clientHeight" in script
+    assert "log.scrollTop += delta;" in script
 
 
 def test_homepage_chapters_form_an_ordered_portal_chain() -> None:

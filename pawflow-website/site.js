@@ -451,6 +451,21 @@ function orderLandingStoryScenes(scenes) {
   return ordered.length === scenes.length ? ordered : scenes;
 }
 
+function isStoryKeyboardTarget(target) {
+  if (!target || typeof target.closest !== 'function') return false;
+  return Boolean(target.closest(
+    'input, textarea, select, button, a[href], summary, '
+    + '[contenteditable]:not([contenteditable="false"]), '
+    + '[role="textbox"], [role="button"], [role="link"]'));
+}
+
+function isHelpWidgetTarget(target) {
+  return Boolean(
+    target
+    && typeof target.closest === 'function'
+    && target.closest('.pf-help-panel'));
+}
+
 // Mobile uses discrete full-screen scenes rather than a decorated document
 // scroll. Long scenes scroll inside their viewport; only a new gesture that
 // starts at a boundary can trigger the next zoom/pan transition.
@@ -556,6 +571,7 @@ function orderLandingStoryScenes(scenes) {
 
   function onKeydown(event) {
     if (!enabled || transitioning || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (isStoryKeyboardTarget(event.target)) return;
     const scene = scenes[current];
     const atTop = scene.scrollTop <= 2;
     const atBottom = scene.scrollTop + scene.clientHeight >= scene.scrollHeight - 2;
@@ -860,7 +876,7 @@ function orderLandingStoryScenes(scenes) {
   }
 
   function onWheel(event) {
-    if (!enabled) return;
+    if (!enabled || isHelpWidgetTarget(event.target)) return;
     event.preventDefault();
     const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
     const direction = Math.sign(delta);
@@ -879,6 +895,7 @@ function orderLandingStoryScenes(scenes) {
 
   function onKeydown(event) {
     if (!enabled || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (isStoryKeyboardTarget(event.target)) return;
     if (['ArrowDown', 'PageDown', ' '].includes(event.key)) {
       event.preventDefault();
       queueWheelStep(1);
@@ -1086,6 +1103,23 @@ document.querySelectorAll('[data-copy]').forEach((button) => {
 
   panel.append(head, log, form);
   document.body.append(launcher, panel);
+
+  panel.addEventListener('wheel', (event) => {
+    event.stopPropagation();
+    const target = event.target;
+    if (!target || typeof target.closest !== 'function') return;
+    if (target.closest('.pf-help-log')) return;
+    const textarea = target.closest('.pf-help-form textarea');
+    if (textarea && textarea.scrollHeight > textarea.clientHeight) return;
+    const delta = event.deltaMode === 1
+      ? event.deltaY * 16
+      : event.deltaMode === 2
+        ? event.deltaY * log.clientHeight
+        : event.deltaY;
+    if (!delta) return;
+    event.preventDefault();
+    log.scrollTop += delta;
+  }, { passive: false });
 
   let busy = false;
   function scrollDown() { log.scrollTop = log.scrollHeight; }

@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.251] — 2026-08-29
+
+### Changed
+
+- Website Creator 1.1.0 now scales full-site builds through explicit crawl,
+  contract, template, asset, and resumable batch stages, with relay-backed
+  browser, HTTP, and archive operations for larger sites.
+- Post-compaction learning now shares one analysis across memory extraction and
+  skill discovery, avoiding duplicate model work while preserving both outputs.
+
+### Fixed
+
+- Automatic Project Wiki updates split oversized changed-source sets into
+  bounded batches so refreshes stay within request limits and retain durable
+  progress.
+- Anthropic-compatible cache-read usage is counted as prompt-cache hits, while
+  OpenAI-compatible DeepSeek responses now read their provider-specific prompt
+  cache hit and miss counters.
+
 ## [1.0.0-beta.250] — 2026-08-29
 
 ### Changed

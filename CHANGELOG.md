@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.250] — 2026-08-29
+
+### Changed
+
+- The server image now builds SQLite 3.53.4 from its SHA3-verified official
+  source archive, proves Python linkage and FTS5 at build time, and enforces
+  SQLite 3.51.3 or newer whenever the container starts.
+- Published-MCP lease cleanup now follows the 120-second lease TTL, starts only
+  while leases exist, and avoids write transactions when an idle probe finds
+  nothing expired.
+
+### Fixed
+
+- A corrupt published-MCP SQLite store now fails closed for MCP authentication
+  and management while unrelated listeners, agents, and flows continue to
+  restore; PawFlow preserves the database, WAL, and shared-memory evidence and
+  emits one actionable critical diagnostic instead of recreating or repeatedly
+  probing the store.
+- The product-site Help Bot keeps keyboard input and wheel scrolling inside its
+  own controls instead of allowing story navigation to consume Space, arrow,
+  page, or scroll interactions.
+
 ## [1.0.0-beta.249] — 2026-08-28
 
 ### Added

@@ -108,6 +108,31 @@ class LLMOpenaiMixin:
         from core.llm_providers.omniroute import parse_response_metadata
         return parse_response_metadata(response_headers, sse_comments)
 
+    @staticmethod
+    def _openai_cache_token_counts(usage: Dict[str, Any]) -> tuple[int, int, int]:
+        """Return input misses, cache hits, and the total prompt token count.
+
+        DeepSeek exposes an explicit top-level hit/miss split. OpenAI exposes
+        only cached tokens nested under prompt_tokens_details, so misses must
+        be derived from the total. Prefer the explicit split when both shapes
+        are present to avoid billing the same prompt tokens twice.
+        """
+        prompt_total = max(0, int(usage.get("prompt_tokens", 0) or 0))
+        has_hit = "prompt_cache_hit_tokens" in usage
+        has_miss = "prompt_cache_miss_tokens" in usage
+        if has_hit or has_miss:
+            cache_hits = max(0, int(usage.get("prompt_cache_hit_tokens", 0) or 0))
+            input_misses = max(0, int(usage.get("prompt_cache_miss_tokens", 0) or 0))
+            if not has_hit:
+                cache_hits = max(0, prompt_total - input_misses)
+            if not has_miss:
+                input_misses = max(0, prompt_total - cache_hits)
+            return input_misses, cache_hits, prompt_total or input_misses + cache_hits
+
+        details = usage.get("prompt_tokens_details") or {}
+        cache_hits = max(0, int(details.get("cached_tokens", 0) or 0))
+        return max(0, prompt_total - cache_hits), cache_hits, prompt_total
+
     def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback,
                         thinking_callback=None, *,
                         call_user_id: str = "",
@@ -405,29 +430,30 @@ class LLMOpenaiMixin:
                     provider=getattr(self, "provider", ""), model=resp_model,
                 )
 
-            # Use real usage from API if available, else estimate
-            input_usage_native = "prompt_tokens" in usage_data
-            tokens_in = usage_data.get("prompt_tokens", 0)
+            # Use real usage from API if available, else estimate.
+            input_usage_native = any(key in usage_data for key in (
+                "prompt_tokens",
+                "prompt_cache_hit_tokens",
+                "prompt_cache_miss_tokens",
+            ))
+            tokens_in, cached_tokens, prompt_tokens_total = (
+                self._openai_cache_token_counts(usage_data))
             tokens_out = usage_data.get("completion_tokens", 0)
             total_tokens = usage_data.get("total_tokens", 0)
-            if not tokens_in:
+            if not tokens_in and not cached_tokens:
                 tokens_in = count_messages_tokens(messages)
+                prompt_tokens_total = tokens_in
             if not tokens_out:
                 tokens_out = len(content) // 4
 
-            # Cache logging (OpenAI returns cached_tokens inside the total
-            # prompt_tokens count). Split billable miss tokens from cache-hit
-            # tokens so cost tracking does not charge both rates for hits.
-            _ptd = usage_data.get("prompt_tokens_details") or {}
-            cached_tokens = _ptd.get("cached_tokens", 0) or 0
-            prompt_tokens_total = tokens_in
-            tokens_in = max(0, prompt_tokens_total - cached_tokens)
+            # Cache logging. The shared parser has already split billable miss
+            # tokens from cache hits for both OpenAI and DeepSeek response shapes.
             if cached_tokens > 0:
                 _hit_pct = (cached_tokens / prompt_tokens_total * 100) if prompt_tokens_total else 0
-                logger.info("OpenAI prompt cache: %d cached of %d prompt tokens (%.0f%% hit)",
+                logger.info("OpenAI-compatible prompt cache: %d cached of %d prompt tokens (%.0f%% hit)",
                             cached_tokens, prompt_tokens_total, _hit_pct)
             elif prompt_tokens_total > 1024:
-                logger.info("OpenAI prompt cache: MISS — %d prompt tokens, 0 cached", prompt_tokens_total)
+                logger.info("OpenAI-compatible prompt cache: MISS — %d prompt tokens, 0 cached", prompt_tokens_total)
 
             return LLMResponse(
                 content=content,
@@ -847,18 +873,17 @@ class LLMOpenaiMixin:
                 f"message={json.dumps(message, default=str)[:500]}, "
                 f"usage={json.dumps(usage, default=str)}")
 
-        # Cache logging. OpenAI includes cached tokens in prompt_tokens, so
-        # split miss/hit counts before cost tracking sees the response.
-        _ptd = usage.get("prompt_tokens_details") or {}
-        cached_tokens = _ptd.get("cached_tokens", 0) or 0
-        _prompt_tokens = usage.get("prompt_tokens", 0)
-        _input_miss_tokens = max(0, _prompt_tokens - cached_tokens)
+        # Split billable misses from cache hits before cost tracking sees the
+        # response. DeepSeek's explicit counters take precedence over the
+        # nested OpenAI-compatible cached-token detail when both are present.
+        _input_miss_tokens, cached_tokens, _prompt_tokens = (
+            self._openai_cache_token_counts(usage))
         if cached_tokens > 0:
             _hit_pct = (cached_tokens / _prompt_tokens * 100) if _prompt_tokens else 0
-            logger.info("OpenAI prompt cache: %d cached of %d prompt tokens (%.0f%% hit)",
+            logger.info("OpenAI-compatible prompt cache: %d cached of %d prompt tokens (%.0f%% hit)",
                         cached_tokens, _prompt_tokens, _hit_pct)
         elif _prompt_tokens > 1024:
-            logger.info("OpenAI prompt cache: MISS — %d prompt tokens, 0 cached", _prompt_tokens)
+            logger.info("OpenAI-compatible prompt cache: MISS — %d prompt tokens, 0 cached", _prompt_tokens)
 
         return LLMResponse(
             content=_content,
@@ -871,7 +896,11 @@ class LLMOpenaiMixin:
             thinking=reasoning,
             raw=data,
             cache_read_tokens=cached_tokens,
-            input_usage_native="prompt_tokens" in usage,
+            input_usage_native=any(key in usage for key in (
+                "prompt_tokens",
+                "prompt_cache_hit_tokens",
+                "prompt_cache_miss_tokens",
+            )),
             provider_metadata=self._openai_provider_metadata(
                 getattr(self, "_last_http_response_headers", ())),
         )

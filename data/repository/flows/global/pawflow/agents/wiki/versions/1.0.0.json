@@ -31,9 +31,9 @@
         "description": "Optional LLM used to review a mechanically valid patch. Select a direct LLM service, or a Summarizer to use its linked LLM. Leave disabled to skip LLM review."
       },
       "batch_files": {
-        "type": "integer", "required": false, "default": 0,
+        "type": "integer", "required": false, "default": 8,
         "label": "Files per batch",
-        "description": "Optional user limit for changed source files grouped into one extraction batch. Use 0 for all changed files."
+        "description": "Maximum changed source files grouped into one extraction batch. Use 0 for the safe default of eight; source byte budgets always apply."
       },
       "max_files": {
         "type": "integer", "required": false, "default": 0,
@@ -128,7 +128,7 @@
     "select_batch": {
       "type": "selectWikiSourceBatch",
       "label": "Select changed batch",
-      "description": "Choose changed sources, enforcing only an optional user batch limit.",
+      "description": "Choose a file- and byte-bounded batch of changed sources.",
       "parameters": {"batch_files": "${batch_files}"}
     },
     "fetch_sources": {

@@ -12,6 +12,7 @@ import jsonschema
 
 from core import FlowFile, TaskFactory
 from core.agent_contracts import CapabilityEffect, IdempotencyClass
+from core.project_wiki import DEFAULT_PROJECT_WIKI_BATCH_FILES
 from core.workflow_agent_contracts import AgentWorkflowResult
 from tasks.ai.workflow.turn_tasks import _WorkflowContextTask
 
@@ -322,14 +323,18 @@ class ScanProjectWikiSourcesTask(_WikiTask):
 class SelectWikiSourceBatchTask(_WikiTask):
     TYPE = "selectWikiSourceBatch"
     NAME = "Select Wiki Source Batch"
-    DESCRIPTION = "Snapshot the oldest dirty sources with an optional user cap."
+    DESCRIPTION = "Snapshot a bounded batch of the oldest ready dirty sources."
     EFFECTS = (CapabilityEffect.RESOURCE_READ,)
     IDEMPOTENCY = IdempotencyClass.PURE
     RELATIONSHIPS: ClassVar = ["success", "no_change", "failure"]
 
     def get_parameter_schema(self) -> dict[str, Any]:
         return {
-            "batch_files": {"type": "integer", "required": False, "default": 0},
+            "batch_files": {
+                "type": "integer", "required": False,
+                "default": DEFAULT_PROJECT_WIKI_BATCH_FILES,
+                "minimum": 0, "maximum": 32,
+            },
         }
 
     @staticmethod
@@ -341,9 +346,10 @@ class SelectWikiSourceBatchTask(_WikiTask):
 
     @staticmethod
     def _batch_limit(state: dict[str, Any], configured: int) -> int:
-        maximum = int(configured or 0)
-        if maximum < 0:
+        configured_limit = int(configured or 0)
+        if configured_limit < 0:
             raise ValueError("batch_files must be non-negative")
+        maximum = configured_limit or DEFAULT_PROJECT_WIKI_BATCH_FILES
         requested = (state.get("wiki_intent") or {}).get("batch_files")
         if not isinstance(requested, int):
             return maximum
@@ -359,10 +365,19 @@ class SelectWikiSourceBatchTask(_WikiTask):
             self._focus_paths(state))
         state["selection"] = selection
         if not selection["entries"]:
-            state["result"] = {
-                "status": "unchanged", "processed": 0,
-                "remaining": 0, "pages": [],
-            }
+            remaining = int(selection.get("pending_count", 0) or 0)
+            if remaining:
+                state["result"] = {
+                    "status": "pending", "processed": 0,
+                    "remaining": remaining, "pages": [],
+                    "blocked": int(selection.get("blocked_count", 0) or 0),
+                    "deferred": int(selection.get("deferred_count", 0) or 0),
+                }
+            else:
+                state["result"] = {
+                    "status": "unchanged", "processed": 0,
+                    "remaining": 0, "pages": [],
+                }
             relationship = "no_change"
         else:
             relationship = "success"
@@ -715,6 +730,13 @@ class FormatWikiWorkReportTask(_WikiTask):
                 raise ValueError("Wiki workflow unsupported result has no response")
         elif status == "unchanged":
             response = "No project wiki changes were pending. No LLM call was made."
+        elif status == "pending":
+            response = (
+                "Project wiki sources remain pending, but no source batch is ready: "
+                f"{int(result.get('blocked', 0) or 0)} blocked and "
+                f"{int(result.get('deferred', 0) or 0)} deferred. "
+                "No LLM call was made."
+            )
         elif status == "superseded":
             sources = ", ".join(result.get("sources") or []) or "selected sources"
             response = (

@@ -25,7 +25,46 @@ import core.paths as _paths
 logger = logging.getLogger(__name__)
 
 _MANIFEST_VERSION = 1
-_DEFAULT_BATCH_FILES = 8
+DEFAULT_PROJECT_WIKI_BATCH_FILES = 8
+MAX_PROJECT_WIKI_BATCH_FILES = 32
+_MAX_SOURCE_BYTES = 48 * 1024
+_MAX_BATCH_SOURCE_BYTES = 128 * 1024
+_MAX_INDEX_BYTES = 24 * 1024
+_MAX_AFFECTED_PAGES_BYTES = 64 * 1024
+_MINIFIED_LINE_BYTES = 16 * 1024
+_TRANSIENT_RETRY_SECONDS = 60.0
+
+
+def _clip_utf8_bytes(value: str, limit: int, marker: str) -> tuple[str, bool]:
+    """Bound untrusted text by UTF-8 bytes, a tokenizer-independent ceiling."""
+    text = str(value or "")
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text, False
+    marker_bytes = marker.encode("utf-8")
+    if len(marker_bytes) >= limit:
+        return marker_bytes[:limit].decode("utf-8", errors="ignore"), True
+    available = limit - len(marker_bytes)
+    head = (available * 2) // 3
+    tail = available - head
+    clipped = (
+        encoded[:head].decode("utf-8", errors="ignore")
+        + marker
+        + encoded[-tail:].decode("utf-8", errors="ignore")
+    )
+    return clipped, True
+
+
+def _looks_minified_bundle(path: str, raw: bytes) -> bool:
+    """Identify large compact JS/CSS outputs that contain no useful structure."""
+    suffix = posixpath.splitext(path.casefold())[1]
+    if suffix not in {".js", ".mjs", ".cjs", ".css"}:
+        return False
+    if len(raw) <= _MAX_SOURCE_BYTES:
+        return False
+    if ".min." in posixpath.basename(path).casefold() or raw.count(b"\n") <= 8:
+        return True
+    return any(len(line) > _MINIFIED_LINE_BYTES for line in raw.splitlines())
 
 _SCAN_SCRIPT = r'''
 import hashlib
@@ -469,6 +508,7 @@ class ProjectWiki:
         with self._lock:
             dirty = self._manifest.get("dirty_sources", {}) or {}
             states: Dict[str, int] = {}
+            now = _now()
             for item in dirty.values():
                 state = str(item.get("state") or "unknown")
                 states[state] = states.get(state, 0) + 1
@@ -480,6 +520,13 @@ class ProjectWiki:
                 "sources": len(self._manifest.get("sources", {}) or {}),
                 "dirty_sources": len(dirty),
                 "dirty_states": states,
+                "blocked_sources": sum(
+                    1 for item in dirty.values()
+                    if bool(item.get("wiki_update_blocked"))),
+                "deferred_sources": sum(
+                    1 for item in dirty.values()
+                    if (not item.get("wiki_update_blocked")
+                        and float(item.get("wiki_retry_after", 0) or 0) > now)),
                 "stale_pages": self.stale_pages(),
                 "last_scan_at": float(self._manifest.get("last_scan_at", 0) or 0),
                 "updated_at": float(self._manifest.get("updated_at", 0) or 0),
@@ -713,24 +760,6 @@ class ProjectWiki:
             chunks.append(block)
         return "".join(chunks) or "(none)"
 
-    def _source_batch_text(self, service, entries: List[tuple[str, Dict]],
-                           local: bool) -> str:
-        chunks = []
-        root = str(self._manifest.get("root") or ".")
-        for path, dirty in entries:
-            if dirty.get("state") == "removed":
-                text = "[SOURCE REMOVED]"
-            else:
-                relay_path = path if root in ("", ".") else posixpath.join(root, path)
-                try:
-                    raw = service.read_file(relay_path, local=local)
-                    text = raw.decode("utf-8", errors="replace")
-                except Exception as exc:
-                    text = f"[SOURCE UNREADABLE: {type(exc).__name__}]"
-            block = f"\n--- SOURCE {path} ({dirty.get('state', '?')}) ---\n{text}"
-            chunks.append(block)
-        return "".join(chunks)
-
     @staticmethod
     def _digest(value: Any) -> str:
         encoded = json.dumps(
@@ -751,17 +780,32 @@ class ProjectWiki:
         return normalized
 
     def select_update_batch(
-            self, batch_files: int = _DEFAULT_BATCH_FILES,
+            self, batch_files: int = DEFAULT_PROJECT_WIKI_BATCH_FILES,
             focus_paths: Iterable[str] = ()) -> Dict[str, Any]:
-        """Snapshot dirty sources, optionally capped by a positive batch size."""
+        """Snapshot a ready batch within absolute file and UTF-8 byte budgets."""
         limit = int(batch_files or 0)
         if limit < 0:
             raise ValueError("batch_files must be non-negative")
+        limit = min(
+            limit or DEFAULT_PROJECT_WIKI_BATCH_FILES,
+            MAX_PROJECT_WIKI_BATCH_FILES,
+        )
         focus = tuple(
             str(value or "").strip().casefold()
             for value in focus_paths if str(value or "").strip())
         with self._lock:
             dirty = self._manifest.get("dirty_sources", {}) or {}
+            current_sources = self._manifest.get("sources", {}) or {}
+            now = _now()
+            blocked_count = sum(
+                1 for meta in dirty.values()
+                if bool(meta.get("wiki_update_blocked")))
+            retry_times = [
+                float(meta.get("wiki_retry_after", 0) or 0)
+                for meta in dirty.values()
+                if (not meta.get("wiki_update_blocked")
+                    and float(meta.get("wiki_retry_after", 0) or 0) > now)
+            ]
 
             def order(item):
                 path, meta = item
@@ -773,19 +817,45 @@ class ProjectWiki:
                 )
 
             entries = []
-            ordered = sorted(dirty.items(), key=order)
-            if limit > 0:
-                ordered = ordered[:limit]
+            estimated_bytes = 0
+            seen_digests: Dict[str, str] = {}
+            ordered = sorted((
+                item for item in dirty.items()
+                if (not item[1].get("wiki_update_blocked")
+                    and float(item[1].get("wiki_retry_after", 0) or 0) <= now)
+            ), key=order)
             for raw_path, raw_meta in ordered:
                 path = self._clean_source_path(raw_path)
                 meta = dict(raw_meta)
+                state = str(meta.get("state") or "")
+                digest = str(meta.get("sha256") or "")
+                source_meta = current_sources.get(path, {}) or {}
+                size = max(0, int(source_meta.get("size", 0) or 0))
+                header_bytes = len(
+                    f"\n--- SOURCE {path} ({state}) ---\n".encode("utf-8"))
+                if state == "removed":
+                    content_bytes = len("[SOURCE REMOVED]".encode("utf-8"))
+                elif digest and digest in seen_digests:
+                    content_bytes = len(
+                        f"[SOURCE DUPLICATE OF {seen_digests[digest]}]".encode("utf-8"))
+                else:
+                    content_bytes = min(size, _MAX_SOURCE_BYTES)
+                item_bytes = header_bytes + content_bytes
+                if entries and estimated_bytes + item_bytes > _MAX_BATCH_SOURCE_BYTES:
+                    break
                 entries.append({
                     "path": path,
-                    "state": str(meta.get("state") or ""),
+                    "state": state,
                     "old_sha256": str(meta.get("old_sha256") or ""),
-                    "sha256": str(meta.get("sha256") or ""),
+                    "sha256": digest,
                     "detected_at": float(meta.get("detected_at", 0) or 0),
+                    "size": size,
                 })
+                estimated_bytes += item_bytes
+                if digest and state != "removed":
+                    seen_digests.setdefault(digest, path)
+                if len(entries) >= limit:
+                    break
             identity = {
                 "relay_id": self.relay_id,
                 "root": str(self._manifest.get("root") or "."),
@@ -796,13 +866,28 @@ class ProjectWiki:
                     encoding="utf-8")
             except OSError:
                 index = "(empty)"
+            index, index_truncated = _clip_utf8_bytes(
+                index, _MAX_INDEX_BYTES,
+                "\n...[PROJECT WIKI INDEX TRUNCATED TO BYTE BUDGET]...\n")
             paths = {entry["path"] for entry in entries}
+            affected_pages, affected_pages_truncated = _clip_utf8_bytes(
+                self._affected_pages_text(paths), _MAX_AFFECTED_PAGES_BYTES,
+                "\n...[AFFECTED WIKI PAGES TRUNCATED TO BYTE BUDGET]...\n")
             return {
                 **identity,
                 "selection_digest": self._digest(identity),
                 "pending_count": len(dirty),
+                "blocked_count": blocked_count,
+                "deferred_count": len(retry_times),
+                "next_retry_at": min(retry_times) if retry_times else 0.0,
+                "batch_file_limit": limit,
+                "estimated_source_bytes": min(
+                    estimated_bytes, _MAX_BATCH_SOURCE_BYTES),
+                "source_budget_bytes": _MAX_BATCH_SOURCE_BYTES,
                 "index": index,
-                "affected_pages": self._affected_pages_text(paths),
+                "index_truncated": index_truncated,
+                "affected_pages": affected_pages,
+                "affected_pages_truncated": affected_pages_truncated,
             }
 
     def _selection_entries(
@@ -828,6 +913,7 @@ class ProjectWiki:
                 "old_sha256": str(raw.get("old_sha256") or ""),
                 "sha256": str(raw.get("sha256") or ""),
                 "detected_at": float(raw.get("detected_at", 0) or 0),
+                "size": max(0, int(raw.get("size", 0) or 0)),
             })
         identity = {
             "relay_id": self.relay_id,
@@ -851,51 +937,150 @@ class ProjectWiki:
         root = str(selection.get("root") or ".")
         files = []
         superseded = []
+        source_blocks = []
+        source_bytes = 0
+        seen_digests: Dict[str, str] = {}
         for entry in entries:
             path = entry["path"]
             if entry["state"] == "removed":
-                files.append({**entry, "text": "[SOURCE REMOVED]",
-                              "size": 0, "line_count": 0,
-                              "truncated": False, "readable": True,
-                              "binary": False})
-                continue
-            relay_path = path if root in ("", ".") else posixpath.join(root, path)
-            try:
-                raw = service.read_file(relay_path, local=False)
-                if not isinstance(raw, bytes):
-                    raw = bytes(raw)
-            except Exception as exc:
-                files.append({
-                    **entry,
-                    "text": f"[SOURCE UNREADABLE: {type(exc).__name__}]",
-                    "size": 0, "line_count": 0, "truncated": False,
-                    "readable": False, "binary": False,
-                })
-                continue
-            if hashlib.sha256(raw).hexdigest() != entry["sha256"]:
-                superseded.append(path)
-                continue
-            binary = b"\x00" in raw[:8192]
-            text = (
-                "[SOURCE BINARY]" if binary
-                else raw.decode("utf-8", errors="replace").replace(
-                    "\r\n", "\n").replace("\r", "\n"))
-            files.append({
-                **entry, "text": text, "size": len(raw),
-                "line_count": text.count("\n") + (1 if text else 0),
-                "truncated": False, "readable": True, "binary": binary,
-            })
+                item = {
+                    **entry, "text": "[SOURCE REMOVED]",
+                    "size": 0, "line_count": 0,
+                    "truncated": False, "readable": True,
+                    "binary": False, "minified": False,
+                    "duplicate_of": "", "omitted_reason": "",
+                }
+            else:
+                relay_path = (
+                    path if root in ("", ".") else posixpath.join(root, path))
+                try:
+                    raw = service.read_file(relay_path, local=False)
+                    if not isinstance(raw, bytes):
+                        raw = bytes(raw)
+                except Exception as exc:
+                    item = {
+                        **entry,
+                        "text": f"[SOURCE UNREADABLE: {type(exc).__name__}]",
+                        "size": 0, "line_count": 0, "truncated": False,
+                        "readable": False, "binary": False, "minified": False,
+                        "duplicate_of": "", "omitted_reason": "unreadable",
+                    }
+                    raw = None
+                if raw is not None and hashlib.sha256(raw).hexdigest() != entry["sha256"]:
+                    superseded.append(path)
+                    continue
+                if raw is not None:
+                    digest = entry["sha256"]
+                    duplicate_of = seen_digests.get(digest, "") if digest else ""
+                    binary = b"\x00" in raw[:8192]
+                    line_count = raw.count(b"\n") + (1 if raw else 0)
+                    minified = (not binary and _looks_minified_bundle(path, raw))
+                    omitted_reason = ""
+                    truncated = False
+                    if duplicate_of:
+                        text = (
+                            f"[SOURCE DUPLICATE OF {duplicate_of}; identical sha256={digest}]"
+                        )
+                        omitted_reason = "duplicate"
+                    elif binary:
+                        text = "[SOURCE BINARY]"
+                        omitted_reason = "binary"
+                    elif minified:
+                        text = (
+                            "[SOURCE OMITTED: MINIFIED OR GENERATED BUNDLE; "
+                            f"{len(raw)} bytes; sha256={digest}]"
+                        )
+                        truncated = True
+                        omitted_reason = "minified_bundle"
+                    else:
+                        normalized = raw.decode(
+                            "utf-8", errors="replace").replace(
+                                "\r\n", "\n").replace("\r", "\n")
+                        text, truncated = _clip_utf8_bytes(
+                            normalized, _MAX_SOURCE_BYTES,
+                            "\n...[SOURCE TRUNCATED TO PER-FILE BYTE BUDGET]...\n",
+                        )
+                        if truncated:
+                            omitted_reason = "per_file_budget"
+                    if digest:
+                        seen_digests.setdefault(digest, path)
+                    item = {
+                        **entry, "text": text, "size": len(raw),
+                        "line_count": line_count, "truncated": truncated,
+                        "readable": True, "binary": binary,
+                        "minified": minified, "duplicate_of": duplicate_of,
+                        "omitted_reason": omitted_reason,
+                    }
+
+            header = f"\n--- SOURCE {path} ({entry['state']}) ---\n"
+            remaining = _MAX_BATCH_SOURCE_BYTES - source_bytes
+            header_bytes = len(header.encode("utf-8"))
+            if remaining <= header_bytes:
+                block, _clipped = _clip_utf8_bytes(
+                    header + "[SOURCE OMITTED: BATCH BYTE BUDGET EXHAUSTED]",
+                    max(0, remaining), "")
+                item["text"] = "[SOURCE OMITTED: BATCH BYTE BUDGET EXHAUSTED]"
+                item["truncated"] = True
+                item["omitted_reason"] = "batch_budget"
+            else:
+                item["text"], batch_truncated = _clip_utf8_bytes(
+                    item["text"], remaining - header_bytes,
+                    "\n...[SOURCE TRUNCATED TO BATCH BYTE BUDGET]...\n")
+                if batch_truncated:
+                    item["truncated"] = True
+                    item["omitted_reason"] = "batch_budget"
+                block = header + item["text"]
+            files.append(item)
+            source_blocks.append(block)
+            source_bytes += len(block.encode("utf-8"))
         if superseded:
             return {"status": "superseded", "sources": sorted(superseded),
                     "selection_digest": selection["selection_digest"]}
-        source_text = "".join(
-            f"\n--- SOURCE {item['path']} ({item['state']}) ---\n{item['text']}"
-            for item in files)
+        source_text = "".join(source_blocks)
         return {
             "status": "prepared", "files": files,
             "source_text": source_text,
+            "source_bytes": source_bytes,
+            "source_budget_bytes": _MAX_BATCH_SOURCE_BYTES,
             "selection_digest": selection["selection_digest"],
         }
+
+    def _record_update_failure(
+            self, selection: Dict[str, Any], exc: Optional[BaseException] = None,
+            category: str = "") -> None:
+        """Defer transient failures and block deterministic rejected snapshots."""
+        entries = self._selection_entries(selection)
+        failure_category = str(
+            category or getattr(exc, "category", "") or "unknown")
+        provider_status = int(getattr(exc, "provider_status", 0) or 0)
+        permanent = (
+            failure_category in {"context_overflow", "caller_invalid"}
+            or provider_status in {400, 413}
+        )
+        now = _now()
+        retry_delay = max(
+            _TRANSIENT_RETRY_SECONDS,
+            float(getattr(exc, "retry_after_seconds", 0) or 0),
+        )
+        with self._lock:
+            dirty = self._manifest.get("dirty_sources", {}) or {}
+            for entry in entries:
+                current = dirty.get(entry["path"])
+                if not isinstance(current, dict):
+                    continue
+                if (str(current.get("state") or "") != entry["state"]
+                        or str(current.get("sha256") or "") != entry["sha256"]):
+                    continue
+                current["wiki_failure_count"] = int(
+                    current.get("wiki_failure_count", 0) or 0) + 1
+                current["wiki_last_failure_at"] = now
+                current["wiki_failure_category"] = failure_category
+                if permanent:
+                    current["wiki_update_blocked"] = True
+                    current.pop("wiki_retry_after", None)
+                else:
+                    current["wiki_retry_after"] = now + retry_delay
+            self._save()
 
     def validate_update_patch(
             self, selection: Dict[str, Any], payload: Dict[str, Any]
@@ -1212,7 +1397,8 @@ class ProjectWiki:
             return result
 
     def auto_update(self, service, llm_client, local: bool = False,
-                    batch_files: int = _DEFAULT_BATCH_FILES) -> Dict[str, Any]:
+                    batch_files: int = DEFAULT_PROJECT_WIKI_BATCH_FILES
+                    ) -> Dict[str, Any]:
         """Use one ephemeral LLM call to process pending source changes."""
         if local:
             # Same invariant as scan_from_relay: sources are read back on
@@ -1223,6 +1409,16 @@ class ProjectWiki:
             return {"status": "pending", "reason": "no LLM client"}
         selection = self.select_update_batch(batch_files)
         if not selection["entries"]:
+            if selection["pending_count"]:
+                reason = (
+                    "source batch blocked"
+                    if selection["blocked_count"] else "source batch deferred")
+                return {
+                    "status": "pending", "reason": reason,
+                    "remaining": selection["pending_count"],
+                    "blocked": selection["blocked_count"],
+                    "deferred": selection["deferred_count"],
+                }
             return {"status": "unchanged", "processed": 0}
         prepared = self.fetch_update_sources(service, selection, local=local)
         if prepared["status"] == "superseded":
@@ -1255,6 +1451,7 @@ class ProjectWiki:
         except Exception as exc:
             logger.warning("Project wiki LLM call failed relay=%s: %s",
                            self.relay_id, exc)
+            self._record_update_failure(selection, exc)
             return {"status": "pending", "reason": "LLM call failed",
                     "remaining": pending_count}
         raw = str(getattr(response, "content", "") or "").strip()
@@ -1265,6 +1462,8 @@ class ProjectWiki:
                 "content_chars=%d finish_reason=%s",
                 self.relay_id, len(raw),
                 str(getattr(response, "finish_reason", "") or ""))
+            self._record_update_failure(
+                selection, category="invalid_response")
             return {"status": "pending", "reason": "invalid LLM response",
                     "remaining": pending_count}
         payload = self._repair_llm_page_sources(selection, payload)
@@ -1273,6 +1472,8 @@ class ProjectWiki:
         except (TypeError, ValueError) as exc:
             logger.warning("Project wiki LLM returned invalid payload relay=%s: %s",
                            self.relay_id, exc)
+            self._record_update_failure(
+                selection, category="invalid_payload")
             return {"status": "pending", "reason": "invalid LLM payload",
                     "remaining": pending_count}
         key = "auto:" + self._digest({

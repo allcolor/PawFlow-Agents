@@ -351,10 +351,17 @@ back to another LLM when the summarizer binding is unavailable.
 
 Context preparation and successful relay mutations schedule the same coalesced
 background worker as the Project Graph. The worker scans source hashes, selects
-one batch of at most eight changed high-signal files, and makes one ephemeral LLM
-call. This default keeps large pending manifests below reverse-proxy request
-limits; an explicit `batch_files=0` remains available to trusted internal callers
-that intentionally want an unbounded snapshot.
+one batch of at most eight changed high-signal files by default, and makes one
+ephemeral LLM call. `batch_files=0` now means this safe default, not an unbounded
+snapshot; positive configuration is hard-capped at 32 files. Selection and prompt
+preparation also enforce UTF-8 byte budgets: 48 KiB per source, 128 KiB for all
+source blocks, 24 KiB for the wiki index, and 64 KiB for affected pages. These
+provider-independent byte ceilings are a conservative token ceiling and keep a
+single maintenance request well below the configured model context.
+Large compact JavaScript/CSS bundles are represented by a size/hash marker rather
+than their minified body. Identical selected sources are read and hash-checked but
+only the first body is sent; later copies cite the canonical path. Ordinary large
+text keeps bounded head/tail context and carries explicit truncation metadata.
 The source scanner is encoded into the relay command and executed in memory; it
 does not create a helper file in the project or on the server-local root.
 Wiki scans and updates run **only** on the relay container surface:
@@ -383,7 +390,13 @@ the LLM call is running, the response is marked `superseded`, no page is written
 and the newer source remains pending for the next worker run.
 An empty, malformed, or structurally invalid LLM response is also fail-closed:
 no page or source marker changes, the batch remains pending, and the graph/source
-scan portion of project maintenance still completes.
+scan portion of project maintenance still completes. Transient failures defer the
+exact snapshot for at least 60 seconds so another ready batch can progress. A
+deterministic request rejection (`context_overflow`, caller-invalid 4xx, HTTP 400,
+or HTTP 413) marks the unchanged snapshot blocked instead of retrying it forever.
+The status surface reports blocked/deferred counts. A new source digest clears the
+failure metadata automatically; an operator can also use `acknowledge` when the
+generated or irrelevant source should be removed from the pending backlog.
 If an otherwise structured LLM response omits only a page's `sources` field,
 the embedded maintainer conservatively fills it from the non-removed
 `processed_sources` in the exact selected snapshot. When that list is itself

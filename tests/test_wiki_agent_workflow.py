@@ -160,7 +160,7 @@ def test_intent_gate_preserves_request_and_can_only_reduce_positive_batch_size()
     assert SelectWikiSourceBatchTask._batch_limit(state, 8) == 3
     state["wiki_intent"]["batch_files"] = 20
     assert SelectWikiSourceBatchTask._batch_limit(state, 8) == 8
-    assert SelectWikiSourceBatchTask._batch_limit(state, 0) == 20
+    assert SelectWikiSourceBatchTask._batch_limit(state, 0) == 8
 
     state["prepared"] = {"files": [], "source_text": ""}
     flowfile.set_content(json.dumps(state).encode("utf-8"))

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from core._llm_types import LLMCallError
 from core.project_wiki import ProjectWiki
 from core.project_wiki_digest import build_project_wiki_digest
 
@@ -102,7 +103,7 @@ def test_scan_executes_in_memory_without_relay_helper_file(wiki):
     assert local is False
 
 
-def test_zero_batch_selects_all_sources_and_fetches_full_content(wiki):
+def test_zero_batch_uses_safe_default_and_enforces_source_budgets(wiki):
     initial = {"README.md": _source("overview")}
     large_text = "x" * 100_000
     changed = {
@@ -123,10 +124,44 @@ def test_zero_batch_selects_all_sources_and_fetches_full_content(wiki):
     selection = wiki.select_update_batch(0)
     prepared = wiki.fetch_update_sources(relay, selection)
 
-    assert len(selection["entries"]) == 25
-    assert len(prepared["files"]) == 25
-    assert all(item["truncated"] is False for item in prepared["files"])
-    assert all(len(item["text"]) > 100_000 for item in prepared["files"])
+    assert selection["pending_count"] == 25
+    assert selection["batch_file_limit"] == 8
+    assert 0 < len(selection["entries"]) <= 8
+    assert len(prepared["files"]) == len(selection["entries"])
+    assert all(item["truncated"] is True for item in prepared["files"])
+    assert all(len(item["text"].encode("utf-8")) <= 49_152
+               for item in prepared["files"])
+    assert prepared["source_bytes"] <= 131_072
+
+
+def test_minified_duplicate_bundles_are_omitted_and_deduplicated(wiki):
+    initial = {"README.md": _source("overview")}
+    bundle = "(()=>{" + ("const value=1;" * 10_000) + "})();"
+    changed = {
+        "README.md": _source("overview"),
+        "assets/app.min.js": _source(bundle, 2),
+        "public/app.min.js": _source(bundle, 2),
+    }
+    relay = _Relay(
+        [initial, changed],
+        files={"assets/app.min.js": bundle, "public/app.min.js": bundle},
+    )
+    wiki.scan_from_relay(relay)
+    wiki.acknowledge(["README.md"])
+    wiki.scan_from_relay(relay)
+
+    prepared = wiki.fetch_update_sources(
+        relay, wiki.select_update_batch(0))
+
+    first, duplicate = prepared["files"]
+    assert first["path"] == "assets/app.min.js"
+    assert first["minified"] is True
+    assert first["omitted_reason"] == "minified_bundle"
+    assert bundle[:100] not in first["text"]
+    assert duplicate["path"] == "public/app.min.js"
+    assert duplicate["duplicate_of"] == "assets/app.min.js"
+    assert duplicate["omitted_reason"] == "duplicate"
+    assert prepared["source_bytes"] <= 131_072
 
 
 def test_default_batch_bounds_automatic_wiki_payloads(wiki):
@@ -134,7 +169,7 @@ def test_default_batch_bounds_automatic_wiki_payloads(wiki):
     changed = {
         "README.md": _source("overview"),
         **{f"src/file_{number:02d}.py": _source(str(number), 2)
-           for number in range(25)},
+           for number in range(40)},
     }
     relay = _Relay([initial, changed])
     wiki.scan_from_relay(relay)
@@ -143,8 +178,31 @@ def test_default_batch_bounds_automatic_wiki_payloads(wiki):
 
     selection = wiki.select_update_batch()
 
-    assert selection["pending_count"] == 25
+    assert selection["pending_count"] == 40
     assert len(selection["entries"]) == 8
+    explicit = wiki.select_update_batch(100)
+    assert explicit["batch_file_limit"] == 32
+    assert len(explicit["entries"]) == 32
+
+
+def test_selection_bounds_index_and_affected_page_context(wiki):
+    first = {"README.md": _source("old")}
+    second = {"README.md": _source("new", 2)}
+    relay = _Relay([first, second], files={"README.md": "new"})
+    wiki.scan_from_relay(relay)
+    wiki.upsert_page(
+        "overview", "Overview", "Large page", "p" * 100_000,
+        ["README.md"],
+    )
+    wiki.scan_from_relay(relay)
+    (wiki.path / "index.md").write_text("i" * 50_000, encoding="utf-8")
+
+    selection = wiki.select_update_batch()
+
+    assert selection["index_truncated"] is True
+    assert len(selection["index"].encode("utf-8")) <= 24_576
+    assert selection["affected_pages_truncated"] is True
+    assert len(selection["affected_pages"].encode("utf-8")) <= 65_536
 
 
 def test_changed_source_makes_page_stale_until_replaced(wiki):
@@ -427,7 +485,41 @@ def test_auto_update_keeps_sources_pending_when_llm_call_fails(wiki):
     assert result == {
         "status": "pending", "reason": "LLM call failed", "remaining": 1,
     }
+    assert wiki.select_update_batch()["entries"] == []
     assert wiki.status()["dirty_sources"] == 1
+    assert wiki.status()["deferred_sources"] == 1
+
+
+def test_auto_update_blocks_context_rejected_snapshot_from_immediate_retry(wiki):
+    relay = _Relay(
+        [{"README.md": _source("Project overview")}],
+        files={"README.md": "Project overview"})
+    wiki.scan_from_relay(relay)
+    client = _Client({})
+    client.complete = MagicMock(side_effect=LLMCallError(
+        "LLM API error 400: context length exceeded",
+        category="context_overflow", provider_status=400, retryable=False,
+    ))
+
+    result = wiki.auto_update(relay, client)
+    next_selection = wiki.select_update_batch()
+    status = wiki.status()
+
+    assert result == {
+        "status": "pending", "reason": "LLM call failed", "remaining": 1,
+    }
+    assert next_selection["entries"] == []
+    assert next_selection["blocked_count"] == 1
+    assert status["dirty_sources"] == 1
+    assert status["blocked_sources"] == 1
+
+    changed = _Relay(
+        [{"README.md": _source("Changed overview", 2)}],
+        files={"README.md": "Changed overview"})
+    wiki.scan_from_relay(changed)
+    recovered = wiki.select_update_batch()
+    assert [item["path"] for item in recovered["entries"]] == ["README.md"]
+    assert recovered["blocked_count"] == 0
 
 
 def test_auto_update_refuses_response_when_source_changed_during_llm_call(wiki):

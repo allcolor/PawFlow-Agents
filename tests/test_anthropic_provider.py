@@ -193,7 +193,7 @@ def test_anthropic_preserves_signed_thinking_before_tool_results():
     assert api_messages[1]["content"][1]["type"] == "tool_use"
 
 
-def test_anthropic_cache_log_does_not_report_negative_input(caplog):
+def test_anthropic_cache_log_includes_uncached_input_in_hit_rate(caplog):
     client = LLMClient(provider="anthropic", config={"api_key": "test"})
 
     with caplog.at_level("INFO", logger="core.llm_providers.anthropic"):
@@ -207,6 +207,8 @@ def test_anthropic_cache_log_does_not_report_negative_input(caplog):
     assert "-" not in logged
     assert "1508 input tokens" in logged
     assert "164352 read" in logged
+    assert "99% hit" in logged
+    assert "100% hit" not in logged
 
 
 

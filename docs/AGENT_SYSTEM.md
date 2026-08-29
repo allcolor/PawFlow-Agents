@@ -640,6 +640,8 @@ prefix restructuring). Its state is keyed **per conversation**: one
 using it, so a single slot would compare one conversation's turn against
 another's and report a break on every switch. Observed hit rates are visible in
 the usage dashboard (`cache_read / (tokens_in + cache_read)`).
+Anthropic-compatible provider logs use that same denominator; cache-creation
+tokens are reported separately and never turn a partial hit into a false 100%.
 
 ### Project Instructions (`{agent_name}.md`)
 

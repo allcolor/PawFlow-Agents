@@ -48,7 +48,11 @@ class LLMAnthropicMixin:
         """
         _cache_total = cache_creation_tokens + cache_read_tokens
         if _cache_total > 0:
-            _hit_pct = (cache_read_tokens / _cache_total * 100) if _cache_total else 0
+            _cache_eligible_input = tokens_in + cache_read_tokens
+            _hit_pct = (
+                cache_read_tokens / _cache_eligible_input * 100
+                if _cache_eligible_input else 0
+            )
             logger.info(
                 "Anthropic KV cache: %d created, %d read (%.0f%% hit), %d input tokens",
                 cache_creation_tokens, cache_read_tokens, _hit_pct, tokens_in)

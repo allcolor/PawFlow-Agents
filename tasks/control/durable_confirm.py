@@ -502,6 +502,23 @@ class DurableTimerTask(BaseTask):
                    "restarts and routes to elapsed or cancelled.")
     ICON = "clock"
     RELATIONSHIPS: ClassVar = ["elapsed", "cancelled", "failure"]
+    AGENT_WORKFLOW_SAFE = True
+    EFFECTS = (CapabilityEffect.RESOURCE_WRITE,)
+    IDEMPOTENCY = IdempotencyClass.KEYED_EFFECT
+    AUTHORIZATION_TARGET_KIND = "workflow.wait"
+
+    def set_workflow_run_context(self, context, **_kwargs):
+        self._workflow_run_context = context
+
+    def workflow_authorization_target(self, _flowfile: FlowFile) -> Dict[str, Any]:
+        context = getattr(self, "_workflow_run_context", None)
+        if context is None:
+            return {}
+        return {
+            "user_id": context.user_id,
+            "conversation_id": context.conversation_id,
+            "run_id": context.run_id,
+        }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         from core.confirmation_store import (

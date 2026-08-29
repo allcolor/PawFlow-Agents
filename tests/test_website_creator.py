@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import socket
 import json
 import threading
@@ -71,11 +73,11 @@ def test_project_workspace_is_stable_and_scoped_to_run():
 
 def test_tool_phases_have_no_implicit_limits_and_require_visual_tools():
     assert WebsiteCreatorToolTask.allowed_tool_names("explore") == (
-        "screen", "see", "fetch", "read", "glob", "search"
+        "screen", "see", "browser_console_extract", "fetch", "read", "glob", "search"
     )
     assert set(WebsiteCreatorToolTask.allowed_tool_names("build")) == {
         "screen", "see", "save_source_asset", "read", "write", "edit",
-        "glob", "search",
+        "glob", "search", "browser_console_extract",
     }
     for unsafe in ("bash", "run_tests", "apply_patch"):
         assert unsafe not in WebsiteCreatorToolTask.allowed_tool_names("build")
@@ -84,6 +86,7 @@ def test_tool_phases_have_no_implicit_limits_and_require_visual_tools():
     }).get_parameter_schema()
     assert schema["max_iterations"]["default"] == 0
     assert schema["max_tokens"]["default"] == 0
+    assert schema["browser_extractor_required"]["default"] is False
     with pytest.raises(ValueError, match="screen"):
         WebsiteCreatorToolTask.validate_required_observations(
             "explore", {"see": 1}
@@ -116,30 +119,57 @@ def test_build_prompt_uses_visible_chromium_console_and_preserves_source_images(
 
 def test_source_asset_handler_writes_downloaded_image_inside_workspace(monkeypatch):
     workspace = "/workspace/pawflow-sites/wr-1"
-    handler = SaveWebsiteAssetHandler(workspace)
+    handler = SaveWebsiteAssetHandler(
+        workspace,
+        source_url="https://example.com/",
+        rights={"basis": "owner", "allowed_asset_kinds": ["image"]},
+        total_budget_bytes=256 * 1024 * 1024,
+    )
     fetched = {}
-    written = {}
 
     class Relay:
         _service_id = "arbitrary-configured-relay"
+        files = {}
 
-        def http_fetch(self, url, method="GET", headers=None, body=b"",
-                       timeout=300, local=False, **kwargs):
-            fetched.update(
-                url=url, method=method, headers=headers, body=body,
-                timeout=timeout, local=local, kwargs=kwargs,
-            )
+        def exists(self, path, local=False):
+            return path in self.files
+
+        def read_file(self, path, local=False):
+            return self.files[path]
+
+        def atomic_write_file(self, path, content, local=False):
+            self.files[path] = bytes(content)
+
+        def stat(self, path, local=False):
+            return SimpleNamespace(size=len(self.files[path]))
+
+        def hash_file(self, path, local=False):
+            content = self.files[path]
             return {
-                "status": 200,
-                "headers": {"Content-Type": "image/png", "Content-Length": "3"},
-                "body_bytes": b"PNG",
-                "url": url,
+                "bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
             }
 
-        def write_file(self, path, content, local=False):
-            written.update(path=path, content=content, local=local)
+        def http_fetch_to_file(self, url, path, headers=None,
+                               timeout=300, local=False, **kwargs):
+            fetched.update(
+                url=url, path=path, headers=headers,
+                timeout=timeout, local=local, kwargs=kwargs,
+            )
+            content = b"\x89PNG\r\n\x1a\nasset"
+            self.files[path] = content
+            return {
+                "status": 200,
+                "headers": {"Content-Type": "image/png"},
+                "url": url,
+                "bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "content_type": "image/png",
+                "saved": True,
+            }
 
-    handler.set_fs_service(Relay())
+    relay = Relay()
+    handler.set_fs_service(relay)
     monkeypatch.setattr(
         "tasks.ai.workflow.website_creator_tasks.validate_public_website_url",
         lambda value: value,
@@ -147,21 +177,19 @@ def test_source_asset_handler_writes_downloaded_image_inside_workspace(monkeypat
     result = json.loads(handler.execute({
         "url": "https://example.com/photo.png",
         "path": "assets/photo.png",
+        "kind": "image",
     }))
 
     assert fetched["url"] == "https://example.com/photo.png"
-    assert fetched["method"] == "GET"
+    assert fetched["path"] == workspace + "/assets/photo.png"
     assert fetched["local"] is False
     assert fetched["kwargs"] == {
         "max_bytes": 12 * 1024 * 1024,
         "public_only": True,
+        "expected_kind": "image",
     }
-    assert written == {
-        "path": workspace + "/assets/photo.png",
-        "content": b"PNG",
-        "local": False,
-    }
-    assert result["bytes"] == 3
+    assert relay.files[workspace + "/assets/photo.png"].startswith(b"\x89PNG")
+    assert result["bytes"] == len(relay.files[workspace + "/assets/photo.png"])
     assert result["path"] == workspace + "/assets/photo.png"
 
 
@@ -175,11 +203,14 @@ def test_website_review_repeats_until_explicit_acceptance():
     }
 
     assert edges[("apply_review_decision", "accepted")] == "format_result"
-    assert edges[("apply_review_decision", "revise")] == "correct_site"
-    assert edges[("correct_site", "success")] == "review_site"
+    assert edges[("apply_review_decision", "revise")] == (
+        "prepare_correction_batches"
+    )
+    assert edges[("merge_correction", "success")] == "finalize_static_site"
     correction_edge = next(
         row for row in flow["relations"]
-        if row["from"] == "correct_site" and row["to"] == "review_site"
+        if row["from"] == "merge_correction"
+        and row["to"] == "finalize_static_site"
     )
     assert correction_edge["explicit_loop"] is True
     assert "max_visits" not in correction_edge
@@ -196,7 +227,7 @@ def _build_phase_task(monkeypatch, responses):
         agent_name="website-creator",
         user_id="alice",
         root_turn_id="turn-1",
-        flow_ref=SimpleNamespace(name="pawflow.agents.website-creator:1.0.0"),
+        flow_ref=SimpleNamespace(name="pawflow.agents.website-creator:1.1.0"),
     )
     submit = _SubmitWebsitePhaseHandler(task._schema("build"))
     registry = ToolRegistry()

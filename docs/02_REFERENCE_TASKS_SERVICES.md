@@ -615,6 +615,39 @@ The exact production resource is `pawflow.agents.media-studio:1.0.0`, shipped by
 `comfyUIAudioGeneration`; immutable preset metadata and approved provisioning are
 documented in [ComfyUI](comfyui.md).
 
+Website Creator 1.1 adds the following workflow-safe processors:
+
+| Type | Purpose |
+|---|---|
+| `prepareWebsiteRequest` | Validate two public HTTP(S) URLs, parse the crawl contract, and reserve one stable run workspace before effects. |
+| `prepareCrawlDecision` / `applyCrawlDecision` | Build and freeze the effective crawl limits and source-rights decision, or stop before network access. |
+| `initializeSiteCrawl` / `fetchSiteCrawlEntry` / `routeSiteCrawl` | Create or resume the file-backed inventory, execute at most one bounded public fetch, and route queued, complete, bounded, or error checkpoints. |
+| `prepareInventoryDecision` / `applyInventoryDecision` | Require explicit acceptance of bounded/error omissions, adjust limits for a fresh crawl, or stop. |
+| `downloadTemplate` | Stream, SHA-256 verify, and safely extract one immutable reviewed template catalog artifact while propagating attribution. |
+| `prepareWebsiteMappingBatches` / `prepareWebsiteBuildBatches` / `prepareWebsiteCorrectionBatches` | Partition the accepted page set into stable file-backed batches of at most 25 and selectively reuse matching results. |
+| `mapWebsitePageBatch` / `buildWebsitePageBatch` / `correctWebsitePageBatch` | Run the constrained LLM/tool loop for exactly the current mapping, build, or affected-page correction batch. |
+| `routeWebsiteBatches` | Route a page phase to its next batch or its exact-coverage merge. |
+| `mergeWebsiteMapping` / `mergeWebsiteBuild` / `mergeWebsiteCorrection` | Verify exactly-once coverage and emit bounded summaries backed by merged result files. |
+| `finalizeStaticSite` | Parse and rewrite static HTML/CSS references, preserve outbound links, disable active endpoints, hash outputs, and route machine failures to correction before visual review. |
+| `websiteCreatorTool` | Run one bounded visible exploration/build/review/correct phase with an exact relay and closed tool registry. `browser_extractor_required` defaults to false; true rejects a missing fixed extractor. |
+| `prepareWebsiteDecision` / `applyWebsiteDecision` / `formatWebsiteCreatorResult` | Build/apply mapping or final-review decisions and emit the sole typed terminal result. |
+
+The exact production resource is `pawflow.agents.website-creator:1.1.0`,
+shipped by `pawflow.website-creator:1.1.0`. Its ceiling adds
+`network.read` and `browser.control` while retaining the required
+resource/messaging/filesystem effects.
+
+The supporting relay surface is not a general browser-evaluation API.
+`website_browser_start` creates a run-owned visible Chromium session over a
+private CDP pipe, `browser_console_extract` accepts only a shipped
+`script_id` plus closed options and a workflow-bound target, and
+`website_browser_stop` terminates the process and removes only its isolated
+profile. `http_fetch_to_file` and `extract_zip_subtree` provide bounded atomic
+asset/template transport. Older relays may use the recorded fixed-script
+clipboard fallback unless the task requires the extractor. See
+[Website Creator Workflow Agent](WEBSITE_CREATOR_WORKFLOW_AGENT.md) and
+[Workflow Agent Operations](WORKFLOW_AGENT_OPERATIONS.md).
+
 ---
 
 ## 12. Complete Service Reference

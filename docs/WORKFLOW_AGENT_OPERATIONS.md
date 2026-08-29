@@ -231,51 +231,93 @@ preset/service revision and never mutate the active revision in place.
 
 ## Website Creator canary
 
-Install `pawflow.website-creator:1.0.0`, bind the exact
-`pawflow.agents.website-creator:1.0.0` flow, select a vision-capable
-`creator_llm`, and bind a concrete/default/sole linked relay that provides the
-Chromium desktop and filesystem access. Requests must provide two
-public HTTP(S) URLs, either through `source_url` and `template_url` parameters
-or in the user message.
+Install `pawflow.website-creator:1.1.0` and bind the exact
+`pawflow.agents.website-creator:1.1.0` flow. Keep the immutable 1.0.0 package
+and flow available until their pinned runs finish. Select a vision-capable
+`creator_llm` and bind one concrete, default, or sole linked relay.
 
-Managed Desktop relays always enable automation inside their relay container.
-This is independent from server-local execution and host-screen access, which
-remain disabled unless separately and explicitly authorized.
+The 1.1 relay image must provide public HTTP and confined filesystem operations,
+`http_fetch_to_file`, `hash_file`, `atomic_write_file`,
+`extract_zip_subtree`, visible `screen`/`see` access, and preferably the
+`website_browser_start`, `browser_console_extract`, and
+`website_browser_stop` actions. Fixed extraction requires a Linux Managed
+Desktop relay container with automation and execution enabled plus an installed
+Chromium/Chrome binary. This does not authorize server-local execution or host
+screen access.
 
-The first version supports self-contained static HTML/CSS/JavaScript sites. It
-does not expose shell, test-code execution, arbitrary patch paths, package
-installation, Git, deployment, Playwright/headless navigation, or private/local
-URLs. Every run writes only below
-`/workspace/pawflow-sites/<run_id>` (or the configured absolute
-`workspace_root`).
+The preferred extractor launches a visible run-owned Chromium with a private
+CDP pipe and an isolated profile below the run workspace. It opens no debug TCP
+port and never accesses the general persistent browser profile. If negotiation
+fails, the shipped tasks record `clipboard` and use the same fixed script
+through bounded visible clipboard actions. For a strict rollout, set
+`browser_extractor_required: true` on the Website Creator tool/page-batch tasks
+in a reviewed custom flow; the run then fails instead of degrading.
+
+Requests provide a public source URL followed by the exact public immutable
+`package_url` of a shipped template-catalog entry. Mutable branches, preview
+URLs that are not catalogued artifacts, local/private URLs, and unknown
+providers fail closed. Every run writes only below
+`/workspace/pawflow-sites/<run_id>` or its configured absolute
+`workspace_root`.
 
 Validate these branches before broad use:
 
-1. Localhost, private IP literals, credentials in URLs, and hostnames resolving to
-   any private address fail before desktop, filesystem, or network access.
-2. Exploration calls both `screen` and `see` for the source and template;
-   `fetch` is supplementary and cannot satisfy the visual-observation gate.
-3. The proposed source-to-template mapping is shown in one durable form. Reject
-   stops without project writes; approve continues after reconnect without
-   duplicating the request.
-4. Generation stays inside the stable run workspace; relative traversal and
-   non-workspace `file://` previews fail closed.
-5. Final review uses the visible desktop and vision. A reviewer verdict with
-   `passed=false` returns directly to correction without asking the user to
-   approve known-bad work. A passed review opens the user decision; Accept
-   terminates and Revise may repeat correction and review as many times as the
-   user requests. No implicit pass count, timeout, or deadline applies; only an
-   explicitly configured limit or explicit Stop may interrupt the loop.
-6. The terminal result contains one workspace artifact and reports tool-call and
-   correction-pass metrics.
+1. Missing crawl bounds or rights produce one durable form before network
+   access. Reject/Stop returns `no_change`; a complete explicit contract does
+   not show a duplicate form.
+2. Localhost, private IP literals, credentials, DNS resolving to any private
+   address, and private redirects fail before desktop, filesystem, or network
+   effects.
+3. The same-origin crawl processes at most one bounded request per task
+   invocation, honors `durableTimer` politeness, and resumes after server or
+   relay interruption without duplicate records.
+4. A `bounded` or `errors` inventory cannot reach mapping until the durable
+   decision accepts the recorded omissions. Adjust freezes new limits and
+   starts a fresh crawl; Stop cannot write template or site output.
+5. The mapping, build, and correction phases partition accepted pages into
+   stable batches of at most 25. Completed matching batches replay from files,
+   and a changed digest invalidates only dependent batches.
+6. Template download accepts only a shipped commit-pinned artifact, enforces the
+   50 MiB cap and SHA-256, rejects redirects or unsafe archives, extracts only
+   `artifact_root`, and propagates the license notice into `site/`.
+7. Asset downloads enforce type-specific and total byte budgets, origin,
+   provenance, MIME/parser/signature, atomic-publication, and workspace
+   contracts. One-byte-over-limit and partial responses leave no reusable file.
+8. `cdp_pipe` extraction accepts only the three shipped script IDs, the
+   workflow-bound target and origin, closed options, and confined output paths.
+   Clipboard fallback records its mode and never accepts model-authored
+   JavaScript.
+9. Deterministic finalization preserves external links, rewrites parsed HTML and
+   CSS only, leaves JavaScript strings untouched, disables active endpoints,
+   verifies exact page/asset coverage and attribution, and hashes its report.
+   Any blocking issue returns to affected correction batches before visual
+   review.
+10. Exploration and final review use visible `screen` and `see`. Supplementary
+    fetch or an attempted/failed tool call cannot satisfy the observation gate.
+11. A visual `passed=false` verdict returns directly to correction. A passed
+    review opens the durable user decision; Revise may repeat without an
+    implicit pass count, timeout, or deadline, and Accept produces one terminal
+    response.
+12. Restart while parked at each durable gate. Verify the same run ID,
+    workspace, request, cursors, accepted omissions, and completed effects
+    resume without a duplicate question, provider submission, usage event, or
+    terminal transcript row.
 
-Inspect the exact run, confirm both durable waits survive a server restart, and
-verify that cancellation, deadline, service-revision, authorization, and
-workspace-boundary failures remain fail-closed.
+Inspect the exact run and record the flow digest, service revisions, relay image,
+extractor mode, crawl and manifest schema versions, inventory/mapping/template
+digests, batch counts, finalizer report hash, accepted omissions, attribution,
+artifacts, and test results. Cancellation, explicit deadline,
+service-revision, authorization, origin, and workspace failures remain
+fail-closed.
+
+Rollback future submissions by pinning the agent back to
+`pawflow.agents.website-creator:1.0.0`; never mutate either flow version.
+In-flight 1.1.0 runs remain pinned to 1.1.0. A relay downgrade is safe only for
+flows that permit the tested clipboard fallback.
 
 See [Website Creator Workflow Agent](WEBSITE_CREATOR_WORKFLOW_AGENT.md) for the
-supported template catalogs, license constraints, version 1 scope, and chat
-test procedure.
+catalog, limits, file-backed recovery model, security boundary, and full chat
+canary.
 
 ## Wiki shadow and cutover
 

@@ -1,171 +1,289 @@
 # Website Creator Workflow Agent
 
 The first-party Website Creator is a durable Workflow Agent that recreates the
-content and information architecture of one public source website as a new
-static site using the visual language of one public template preview.
+accepted content and information architecture of one public source website as a
+new static site built from one reviewed immutable template artifact.
 
-It is available without a feature flag. The shipped binding is
-`pawflow.agents.website-creator:1.0.0`.
+The shipped package is `pawflow.website-creator:1.1.0` and the active flow
+binding is `pawflow.agents.website-creator:1.1.0`. Version 1.0.0 remains
+immutable for existing pinned and in-flight runs.
 
 ## Requirements
 
-- a visible, enabled `summarizer` or `llmConnection` service bound as
-  `creator_llm`;
-- one connected relay selected for the Website Creator conversation agent;
-- two public HTTP(S) URLs in the request, in this order: source site, then
-  template preview;
-- user authority for every source, image, font, and template element reused in
-  the generated result.
+A run requires:
 
-The agent rejects local, private, credential-bearing, unresolvable, or
-non-HTTP(S) input URLs. Each run writes only under
-`/workspace/pawflow-sites/<run_id>`.
+- a visible, enabled, vision-capable `summarizer` or `llmConnection` service
+  bound as `creator_llm`;
+- one explicit, default, or sole linked relay providing public HTTP,
+  filesystem, and visible desktop access;
+- a public HTTP(S) source URL;
+- a second public HTTP(S) URL matching the exact immutable `package_url` of one
+  entry in the shipped template catalog;
+- a crawl contract and a source-rights declaration, either supplied completely
+  in the request or approved through the first durable form;
+- user authority for every source asset and template element reused in the
+  result.
 
-Starting the Workflow Agent grants only the phase capability declared by its
-server-side tool scope. Calls that pass that scope's allowlist and argument
-guard do not need a second live approval subscriber, so an unattended run can
-use its declared `screen`, `fetch`, and workspace-confined file tools. Explicit
-per-tool `deny` or `confirm`, read-only mode, policy gates, and catastrophic
-command confirmation remain authoritative; the workflow never changes the
-conversation permission mode itself.
+The request parser rejects local, private, credential-bearing, unresolvable, or
+non-HTTP(S) URLs. Every reusable artifact is confined to
+`/workspace/pawflow-sites/<run_id>` unless an operator configured another
+absolute `workspace_root`.
 
-In the add-agent form, `relay`, `source_url`, and `template_url` may be left
-empty. An empty relay uses the concrete default or sole linked relay, while the
-two URLs are then read from each request. Clearing `workspace_root` restores
-the `/workspace/pawflow-sites` contract default.
+The relay must implement `http_fetch_to_file`, `hash_file`,
+`atomic_write_file`, and `extract_zip_subtree` in addition to ordinary
+filesystem and `screen`/`see` operations. The preferred extraction path also
+requires `website_browser_start`, `browser_console_extract`, and
+`website_browser_stop`. The Managed Desktop relay must allow execution and
+automation inside its Linux relay container and provide one of `chromium`,
+`chromium-browser`, `google-chrome`, or `google-chrome-stable`.
+
+No relay service name is hard-coded. The exact explicit, default, or sole
+linked relay is frozen for the run and used for every network, desktop, and
+filesystem operation.
+
+Managed Desktop automation is independent from server-local execution and host
+screen access. Website Creator never enables those broader surfaces.
+
+## Inputs and default crawl contract
+
+`source_url` and `template_url` may be bound on the agent or supplied, in that
+order, in the user message. An empty `relay` selects the concrete default or
+sole linked relay. Clearing `workspace_root` restores
+`/workspace/pawflow-sites`.
+
+The default crawl contract is:
+
+| Bound | Default |
+|---|---:|
+| Maximum accepted pages | 100 |
+| Maximum link depth | 3 |
+| Politeness delay | 750 ms |
+| Per-request timeout | 30 s |
+| Total response bytes | 256 MiB |
+| Total crawl duration | 1,800 s |
+| Include/exclude URL patterns | none |
+
+Defaults are not silent consent. If any safety-relevant bound or the rights
+declaration is absent, the workflow shows the effective contract and parks
+durably before the first network request. A complete explicit contract skips
+only that form; it does not weaken URL, origin, robots, sitemap, byte, duration,
+or workspace enforcement.
 
 ## Durable workflow
 
-The functional layout is the executable workflow and contains labelled,
-described, colored frames for these stages:
+The 1.1.0 graph has 42 presented tasks and four possible durable decision
+boundaries:
 
-1. validate the request and reserve the stable run workspace;
-2. inspect both sites through visible Chromium with `screen` and `see`;
-3. present the complete source-to-template mapping and wait durably;
-4. stop without writing when the mapping is rejected, or generate the approved
-   static HTML/CSS/JavaScript site when it is approved;
-5. inspect the rendered result visually; a negative reviewer verdict returns
-   directly to correction with its issues and never asks the user to confirm
-   known-bad work;
-6. only after the reviewer passes the result, present the durable user decision;
-7. finish only when explicitly accepted; otherwise apply the latest feedback,
-   review the result again, and repeat as many times as the user requests.
+1. validate the server-owned request, public URLs, relay, and stable workspace;
+2. freeze the crawl limits and rights declaration, using a durable form when
+   the request is incomplete;
+3. crawl one public same-origin entry per task invocation, checkpoint every
+   record atomically, and use `durableTimer` for politeness delays;
+4. when the crawl is bounded or records errors, require the user to accept the
+   listed omissions, adjust limits and restart, or stop;
+5. partition the accepted inventory into stable mapping batches of at most 25
+   pages, run only the current batch, and verify exactly-once coverage;
+6. present the complete file-backed mapping summary and park before template or
+   site mutation;
+7. download, hash-check, and safely extract the approved immutable template;
+8. build every approved page in replayable batches of at most 25;
+9. deterministically materialize `site/`, rewrite HTML and CSS references,
+   preserve external navigation, disable active endpoints, hash outputs, and
+   produce the completeness report;
+10. route deterministic failures to the affected correction batches before any
+    visual reviewer can pass the site;
+11. inspect the rendered result through visible Chromium and vision;
+12. after visual success, wait durably for Accept or Revise. Revise selects the
+    affected pages, reruns correction batches, finalizes again, and repeats
+    without an implicit pass limit.
 
-The review/correction loop has no implicit pass count, timeout, or deadline.
-It ends only on explicit acceptance or explicit Stop unless the user configured
-a limit. The individual model phases follow the same rule:
-`max_iterations=0` and `max_tokens=0` mean unlimited; only a user-configured
-positive value activates either bound.
+No implicit pass count, timeout, or deadline applies. Only an explicit user or
+operator bound, Stop, or Force stop ends an otherwise valid review loop.
 
-Rejecting the mapping produces the typed workflow result `no_change` while the
-durable run lifecycle commits as `completed`. Parent flows and terminal events
-retain `no_change` for routing; the run store does not treat a user rejection
-as an execution failure.
+Rejecting or stopping at a decision boundary returns the typed workflow result
+`no_change` while the durable run itself commits as completed. It is not an
+execution error.
 
-The build and correction phases expose only confined file read/write/edit and
-search tools, a public-image downloader, plus desktop inspection. Chromium
-DevTools JavaScript can inventory the rendered DOM and asset URLs through the
-bounded `clipboard_write` / `clipboard_read` screen actions. Each selected public
-image is revalidated, size-limited, written only below the run workspace, and
-referenced locally by the generated site. The phases do not expose a shell, test-code
-execution, arbitrary patch paths, package installation, Git, deployment, or
-headless browser automation. Public fetch is supplementary evidence; desktop
-inspection is mandatory during exploration.
+Flow state contains only paths, hashes, cursors, counts, and bounded summaries.
+Complete crawl records, mappings, batch inputs/results, asset ledgers, and
+finalizer evidence stay in run-workspace files. Matching completed batches
+replay from disk; a changed inventory, template digest, mapping revision, or
+affected-page set invalidates only the dependent work.
 
-The downloader uses the filesystem relay selected for the workflow run for both
-the HTTP fetch and the file write. No relay service name is hard-coded. Public-only
-URL and redirect validation plus the 12 MiB response limit are enforced by that
-selected relay transport.
+## Crawl and completeness
 
-CLI providers that expose PawFlow through MCP are restricted by an ephemeral
-server-side scope keyed to the workflow run and task. Tool discovery, direct
-calls, and lazy `use_tool` calls all use the phase allowlist; filesystem
-arguments are rewritten to the selected relay and run workspace before
-dispatch, while `screen` and `see` are explicitly pinned to that same relay so
-the provider's ephemeral conversation identity cannot lose the desktop or file
-service selection. Passing this bounded scope satisfies only the generic interactive
-approval that would otherwise be requested in default mode. Provider-owned
-session suffixes are resolved only when
-they match the exact `__ephemeral_<32 hex>` format, so an isolated CLI session
-keeps the workflow scope without broadening it to arbitrary conversation IDs.
-Workflow sub-conversations inherit the parent conversation's linked relay and a
-required tool counts as observed only after it returns a successful result;
-authorization attempts, relay errors, blocked calls, and background placeholders
-cannot satisfy the visual inspection gate.
-The scope is removed when each model turn finishes.
+The crawler canonicalizes public same-origin URLs, honors robots and bounded
+sitemaps, rejects query explosions and private redirects, and checkpoints
+queued, in-flight, fetched, skipped, and failed entries. A completed inventory
+is reusable only when its completion manifest hashes every referenced record
+file.
 
-Every tool phase publishes its model attempts, required-tool correction, tool
-starts/completions, and terminal phase state as redacted workflow progress. If
-the model first answers with text instead of calling a tool, the task sends one
-explicit correction requiring tool use and `submit_website_phase`. A second
-tool-free response fails the run immediately; it cannot start an unbounded
-prompt loop or replay the original inbox message. A CLI provider may instead
-return the phase result as exact JSON text when the local submission tool is not
-exposed. The phase prompt includes that exact closed JSON Schema; PawFlow accepts
-the returned object only when it validates against the same schema. Provider
-statuses beginning with `blocked`, `denied`, `error`, or `failed` are surfaced as
-explicit phase blockers rather than misclassified as malformed submissions.
-When a provider returns a complete object missing only final `]` or `}` delimiters,
-PawFlow restores those delimiters and still validates the result against the closed
-schema. This includes one or more missing nested closers immediately before terminal
-outer closers; it does not repair mismatches followed by more content. It never
-repairs a response cut inside a string or invents missing data.
-The run inspector renders valid structured responses as fields and lists; malformed
-structured text is replaced by a readable incomplete-response notice instead of
-displaying raw JSON.
+A `bounded` or `errors` inventory cannot reach mapping automatically. The
+inventory decision records the original status, reasons, bounded issue
+examples, feedback, and timestamp. Final completeness is defined only against
+the accepted manifest plus these explicit omissions; Website Creator never
+claims completeness beyond that contract.
 
-Tool turns have no task-local or implicit timeout. They end when the provider
-returns, when the user explicitly stops the run, or when the workflow reaches
-its declared global duration limit. An explicit Stop or Force stop is propagated
-to the provider client through `abort()`.
+## Immutable template catalog
 
-## Initial template catalogs
+Catalog version 1 currently contains:
 
-Version 1 accepts a public live-preview URL rather than a marketplace account or
-an automated download. The initial reviewed catalogs are:
-
-| Catalog | v1 status | License handling |
+| Template | Immutable input URL | License |
 |---|---|---|
-| [HTML5 UP](https://html5up.net/) | Supported for public template previews | Templates use [Creative Commons Attribution 3.0](https://html5up.net/license); preserve the required design credit unless the user supplies separate attribution-free rights. |
-| [Start Bootstrap](https://startbootstrap.com/themes) | Supported for public previews of free/open-source themes | Use the corresponding official repository and retain its license; the free themes, such as [Creative](https://github.com/StartBootstrap/startbootstrap-creative), are released under MIT. |
-| [ThemeWagon](https://themewagon.com/theme-price/free/) | Preview inspection only; not supported for generation by default | Its [license](https://themewagon.com/license/) varies by author, may require attribution, and restricts generator/derivative-theme use. Proceed only when the user provides a license that explicitly permits this workflow. |
+| Start Bootstrap Creative 7.0.7 | `https://codeload.github.com/StartBootstrap/startbootstrap-creative/zip/b1762d8c690a2379c078c776dc0830bdd81c6f55` | MIT |
+| HTML5 UP Identity `be7721e3` | `https://codeload.github.com/html5up/identity/zip/be7721e3a3c17ba44da0f63df57617fdaf7ee491` | CC BY 3.0 |
 
-Any other provider is unsupported until its public-preview behavior and license
-have been reviewed. The agent never bypasses authentication, paywalls, download
-controls, or attribution.
+The executable 1.1 request contract requires a public URL, so use the exact
+catalog URL above rather than the internal shorthand
+`provider:name:version`. The relay streams at most 50 MiB, verifies the
+catalogued SHA-256, rejects redirects away from the immutable URL, and extracts
+only the reviewed `artifact_root` with traversal, symlink, entry-count,
+expanded-size, and compression-ratio guards. License and attribution are
+written into `site/THIRD_PARTY_NOTICES.txt` and surfaced in the final result.
 
-## Version 1 scope
+ThemeWagon and unknown providers remain preview-only. Mutable branches,
+`latest` archives, authenticated downloads, paywalls, and unreviewed template
+packages fail closed.
 
-Version 1 generates a self-contained static site. It does not reproduce backend
-behavior, authenticated areas, checkout, CMS data, databases, server-side
-routing, or third-party API credentials. It does not import or build an existing
-Node/React/Vue project. Interactive behavior must be expressible with ordinary
-browser-side HTML, CSS, and JavaScript.
+## Fixed-script Chromium extraction
 
-The template URL is a design reference. The workflow does not grant permission
-to copy proprietary code or assets, and visual similarity does not override
-copyright, trademark, privacy, or provider terms.
+The preferred mode is `cdp_pipe`. The relay launches a dedicated visible
+Chromium process with `--remote-debugging-pipe` and no debug TCP port. Its
+target, approved public origin, session ID, and profile are bound to the
+workflow run. The profile is isolated below the run workspace and deleted when
+the session stops; the user's persistent Chromium profile is never opened or
+cleaned.
+
+The model cannot provide JavaScript. `browser_console_extract` accepts only one
+reviewed `script_id`:
+
+- `rendered_inventory_v1`;
+- `dom_outline_v1`;
+- `computed_assets_v1`.
+
+Options are closed and bounded, the target and final origin are revalidated,
+one CDP message is capped at 2 MiB, and one serialized extraction is capped at
+32 MiB and charged to the run inventory budget. Large results are read in fixed
+chunks, hashed, and atomically stored in the workspace; the model receives only
+the path, byte count, hash, schema, counts, and bounded preview.
+
+If an older relay cannot start the CDP-pipe session, the default task records
+`extraction_mode: "clipboard"`. The visible desktop path may then execute only
+the same shipped fixed script through `screen` clipboard actions in chunks of
+at most 14,000 characters. It does not restore arbitrary expressions. A custom
+flow may set `browser_extractor_required: true` on Website Creator tool or page
+batch tasks to fail instead of using this fallback.
+
+## Asset policy
+
+`save_source_asset` supports `image`, `stylesheet`, `script`, `font`,
+`media`, and `manifest`. Per-file limits are:
+
+| Kind | Maximum |
+|---|---:|
+| Image | 12 MiB |
+| Stylesheet or JavaScript | 5 MiB |
+| Font | 5 MiB |
+| Media | 64 MiB |
+| Manifest | 2 MiB |
+
+Downloads stream relay-to-workspace and enforce the approved total asset-byte
+budget. Declared MIME, extension fallback, parser results, and recognized
+signatures must agree before atomic publication. HTML error pages disguised as
+CSS or JavaScript, partial files, unknown formats, and over-budget responses
+are rejected.
+
+Same-origin reuse follows the accepted rights declaration. Third-party assets
+require an approved origin, provenance and license, an immutable URL when
+available, and explicit approval. Analytics, trackers, pixels, ads, active
+endpoints, and source application bundles are skipped by default. Asset
+decisions are checkpointed in manifest files of at most 25 entries.
+
+## Deterministic finalization
+
+The finalizer parses HTML and CSS instead of applying global text replacement.
+It resolves collision-safe local paths, rewrites internal page and approved
+asset references, preserves outbound links, leaves literal JavaScript strings
+untouched, and disables form or endpoint behavior that a static site cannot
+implement.
+
+It validates page coverage, unresolved required internal resources, transitive
+CSS assets, asset hashes, template attribution, and accepted omissions. The
+atomic report includes its replay key, input digests, counts, output hashes,
+and bounded blocking issues. A failed report always returns to correction; an
+LLM reviewer cannot override it.
+
+## Tool and authorization boundary
+
+Website Creator phases expose only their closed tool lists:
+
+- exploration and review: visible desktop inspection, fixed extraction,
+  supplementary public fetch, and confined reads/search;
+- build and correction: the same inspection surface plus confined
+  read/write/edit and approved asset download.
+
+The phases do not expose a shell, arbitrary browser evaluation, test-code execution,
+arbitrary patch paths, package installation, Git, deployment, private URLs, or
+paths outside the run workspace. `network.read` and `browser.control` are part
+of the exact 1.1 flow ceiling; they do not broaden the default agent registry.
+
+Tool calls from CLI providers use an ephemeral server-owned scope keyed to the
+workflow run and task. Relay and path arguments are rewritten and checked
+before dispatch. Authorization attempts, blocked calls, relay errors, or
+background placeholders do not satisfy required visual observations.
+
+## Recovery and stopping
+
+Crawl records, batch inputs/results, manifests, reports, durable interactions,
+and run checkpoints survive server restart. A retry resumes the same run and
+reuses matching keyed effects; it does not submit a replacement generation.
+Changing an input digest causes deterministic selective replay.
+
+Tool turns have no task-local implicit timeout. They end when the provider
+returns, the user explicitly stops the run, or the workflow reaches an explicit
+global duration limit. Stop and Force stop propagate through `abort()`. Relay
+disconnect during fixed extraction is a resumable run error; cleanup also
+terminates relay-owned sessions and removes only the isolated run profile.
+
+## Version 1.1 scope
+
+Website Creator produces a self-contained static HTML/CSS/JavaScript site. It
+does not reproduce backend behavior, authenticated areas, checkout, CMS or
+database state, server-side routing, form processing, private APIs, or
+third-party credentials. It does not import or build an arbitrary Node, React,
+or Vue project and does not automatically clone an application bundle.
+
+The source and template remain untrusted data. Visual similarity never grants
+copyright, trademark, privacy, or provider-term rights.
 
 ## Test from chat
 
-1. Add the global `website-creator` agent to a conversation and select the
-   connected relay and creator LLM service.
-2. Send a request containing a public source URL followed by a supported public
-   template preview URL.
-3. Confirm that the mapping form appears before any project files are written.
-4. Approve the mapping, then inspect the generated run directory and visual
-   review report.
-5. Confirm that a review with `passed=false` returns directly to correction
-   without creating a user interaction.
-6. After a review with `passed=true`, choose `accepted` to finish, or `revise`
-   with feedback. Every revision resumes the same run and workspace, applies
-   that feedback, performs another visual review, and asks again until
-   `accepted` is chosen. No implicit pass count, timeout, or deadline applies.
-7. Keep the Workflow Run view open and confirm that it refreshes in real time,
-   highlights the selected/current block, and shows model attempts, tool
-   starts/completions, errors, usage, artifacts, and the single terminal
-   response.
+1. Install `pawflow.website-creator:1.1.0` and add the global
+   `website-creator` agent to a conversation.
+2. Bind a vision-capable `creator_llm` and a Managed Desktop relay meeting the
+   capability requirements above.
+3. Send the public source URL followed by one exact immutable catalog URL.
+4. Confirm the crawl contract and rights form appears before network access
+   when the request omitted any required field.
+5. Exercise a clean inventory and a bounded/error inventory. Verify that only
+   explicit Accept can continue with omissions and Adjust starts a fresh
+   bounded crawl.
+6. Approve the mapping and verify that the template manifest, attribution,
+   page batches, asset manifests, final site, and deterministic report are
+   confined to the stable run workspace.
+7. Inspect the run and record `cdp_pipe` or `clipboard`. In strict-mode canaries,
+   prove an unavailable extractor fails before model-authored browser code can
+   run.
+8. Confirm a deterministic failure returns to correction before visual review.
+9. Confirm visual `passed=false` returns to correction without a user decision.
+   After `passed=true`, choose Revise at least once and then Accept.
+10. Restart the server while parked at a durable gate and confirm the same
+    request, run ID, workspace, cursors, and completed batches resume without
+    duplicate interaction or provider submission.
+11. Inspect the terminal result for the workspace artifact, accepted omissions,
+    inventory/mapping/template/finalizer digests, extractor mode, counts,
+    attribution, tool calls, and correction passes.
 
-When another agent delegates to Website Creator, PawFlow routes the Workflow
-Agent through shared context automatically. Durable questions still go to the
-user, and the correlated terminal reply wakes the delegating agent once.
+The Workflow Run view should refresh in real time, highlight the current
+presented task, and show bounded progress, tool starts/completions, errors,
+usage, artifacts, and exactly one terminal response.

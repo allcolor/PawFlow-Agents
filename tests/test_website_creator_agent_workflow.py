@@ -16,7 +16,7 @@ from tasks import register_all_tasks
 
 FLOW_PATH = Path(
     "data/repository/flows/global/pawflow/agents/website-creator/"
-    "versions/1.0.0.json"
+    "versions/1.1.0.json"
 )
 LATEST_PATH = FLOW_PATH.parent.parent / "latest.json"
 AGENT_PATH = Path("data/repository/agents/global/website-creator.md")
@@ -48,9 +48,9 @@ def test_shipped_website_creator_flow_and_agent_binding_are_valid():
     flow = _flow()
     report = validate_agent_workflow_definition(flow)
     assert report["ok"] is True, report["problems"]
-    assert flow["fqn"] == "pawflow.agents.website-creator:1.0.0"
+    assert flow["fqn"] == "pawflow.agents.website-creator:1.1.0"
     assert json.loads(LATEST_PATH.read_text(encoding="utf-8")) == {
-        "version": "1.0.0"
+        "version": "1.1.0"
     }
     raw = AGENT_PATH.read_text(encoding="utf-8")
     frontmatter = yaml.safe_load(raw.split("---", 2)[1])
@@ -91,7 +91,7 @@ def test_website_creator_flow_is_fully_presented_and_colored():
         assert task["description"]
 
 
-def test_website_creator_has_two_durable_gates_and_bounded_review_loop():
+def test_website_creator_has_four_durable_gates_and_bounded_review_loop():
     flow = _flow()
     tasks = flow["tasks"]
     assert tasks["request_mapping_approval"]["type"] == "requestUserInput"
@@ -104,26 +104,33 @@ def test_website_creator_has_two_durable_gates_and_bounded_review_loop():
         "website.review_decision"
     )
     assert tasks["wait_final_review"]["type"] == "durableWait"
+    assert tasks["request_crawl_limits"]["type"] == "requestUserInput"
+    assert tasks["wait_crawl_limits"]["type"] == "durableWait"
+    assert tasks["request_inventory_approval"]["type"] == "requestUserInput"
+    assert tasks["wait_inventory_approval"]["type"] == "durableWait"
 
-    assert "build_site" in _reachable(
+    assert "build_page_batch" in _reachable(
         flow, "apply_mapping_decision", "approved"
     )
     assert "agent_terminal" in _reachable(
         flow, "apply_mapping_decision", "rejected"
     )
-    assert "correct_site" in _reachable(
+    assert "prepare_correction_batches" in _reachable(
         flow, "apply_review_decision", "revise"
     )
-    assert "correct_site" in _reachable(
+    assert "prepare_correction_batches" in _reachable(
         flow, "prepare_review_decision", "revise"
     )
     assert "agent_terminal" in _reachable(
         flow, "apply_review_decision", "accepted"
     )
-    assert "request_final_review" in _reachable(flow, "correct_site", "success")
+    assert "request_final_review" in _reachable(
+        flow, "merge_correction", "success"
+    )
     correction_edge = next(
         row for row in flow["relations"]
-        if row["from"] == "correct_site" and row["to"] == "review_site"
+        if row["from"] == "merge_correction"
+        and row["to"] == "finalize_static_site"
     )
     assert correction_edge["explicit_loop"] is True
     assert "max_visits" not in correction_edge
@@ -132,21 +139,56 @@ def test_website_creator_has_two_durable_gates_and_bounded_review_loop():
 def test_website_creator_tools_and_workspace_are_explicit():
     flow = _flow()
     explore = flow["tasks"]["explore_sites"]
-    build = flow["tasks"]["build_site"]
-    correct = flow["tasks"]["correct_site"]
+    mapping = flow["tasks"]["map_page_batch"]
+    build = flow["tasks"]["build_page_batch"]
+    correct = flow["tasks"]["correct_page_batch"]
     assert explore["type"] == "websiteCreatorTool"
     assert explore["parameters"]["phase"] == "explore"
     assert explore["parameters"]["required_tools"] == ["screen", "see"]
+    assert mapping["type"] == "mapWebsitePageBatch"
+    assert mapping["parameters"]["required_tools"] == ["screen", "see"]
+    assert build["type"] == "buildWebsitePageBatch"
     assert build["parameters"]["phase"] == "build"
+    assert correct["type"] == "correctWebsitePageBatch"
     assert correct["parameters"]["phase"] == "correct"
     for task in flow["tasks"].values():
-        if task["type"] == "websiteCreatorTool":
+        if task["type"] in {
+            "websiteCreatorTool", "mapWebsitePageBatch",
+            "buildWebsitePageBatch", "correctWebsitePageBatch",
+        }:
             assert "timeout" not in task["parameters"]
             assert task["parameters"]["max_iterations"] == 0
             assert task["parameters"]["max_tokens"] == 0
     assert flow["agent_contract"]["parameters"]["workspace_root"]["default"] == (
         "/workspace/pawflow-sites"
     )
+    assert {"network.read", "browser.control"} <= set(
+        flow["agent_contract"]["allowed_effects"]
+    )
+
+
+def test_website_creator_scaling_graph_enforces_machine_owned_completeness():
+    flow = _flow()
+    tasks = flow["tasks"]
+    assert tasks["wait_crawl_delay"] == {
+        "type": "durableTimer",
+        "label": "Wait for crawl politeness deadline",
+        "description": (
+            "Park without blocking a worker until the next approved same-origin request."
+        ),
+        "parameters": {"until": "${website.crawl.next_allowed_at}"},
+    }
+    for phase in ("mapping", "build", "correction"):
+        assert tasks[f"route_{phase}_batches"]["parameters"]["phase"] == phase
+    edges = {
+        (row["from"], row["type"]): row["to"]
+        for row in flow["relations"]
+    }
+    assert edges[("merge_build", "success")] == "finalize_static_site"
+    assert edges[("finalize_static_site", "correction")] == (
+        "prepare_correction_batches"
+    )
+    assert edges[("finalize_static_site", "review")] == "review_site"
 
 
 def test_website_creator_package_manifest_contains_flow_before_agent():
@@ -154,6 +196,7 @@ def test_website_creator_package_manifest_contains_flow_before_agent():
         (PACKAGE_PATH / "pfp.json").read_text(encoding="utf-8")
     )
     assert manifest["package"] == "pawflow.website-creator"
+    assert manifest["version"] == "1.1.0"
     assert [row["id"] for row in manifest["objects"]] == [
         "flow:website-creator", "agent:website-creator"
     ]

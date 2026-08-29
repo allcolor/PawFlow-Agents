@@ -343,6 +343,15 @@ class _RelayFsOpsMixin:
             return base64.b64decode(data["content"])
         return data.encode("utf-8") if isinstance(data, str) else data
 
+    def hash_file(self, path: str, local: bool = False) -> dict:
+        """Return a relay-computed SHA-256 without transferring file bytes."""
+
+        result = self._request("hash_file", path, local=local)
+        return {
+            "bytes": int((result or {}).get("bytes") or 0),
+            "sha256": str((result or {}).get("sha256") or ""),
+        }
+
     def iter_file_chunks(self, path: str, local: bool = False,
                          chunk_size: int = 4 * 1024 * 1024):
         """Yield one relay file incrementally with a bounded decoded buffer."""
@@ -389,6 +398,43 @@ class _RelayFsOpsMixin:
         return self._request(
             "copy_file", source_path, dest_path=dest_path, local=local)
 
+    def extract_zip_subtree(
+        self, path: str, dest_path: str, *, artifact_root: str,
+        local: bool = False,
+    ) -> dict:
+        """Validate and atomically materialize one ZIP artifact subtree."""
+
+        return self._request(
+            "extract_zip_subtree",
+            path,
+            dest_path=dest_path,
+            artifact_root=artifact_root,
+            local=local,
+        )
+
+    def website_browser_start(
+        self, *, run_id: str, url: str, approved_origin: str,
+        profile_path: str, timeout: int = 10, local: bool = False,
+    ) -> dict:
+        """Start or reuse one run-scoped fixed-script Chromium session."""
+
+        return self._request(
+            "website_browser_start", ".",
+            run_id=run_id,
+            url=url,
+            approved_origin=approved_origin,
+            profile_path=profile_path,
+            timeout=timeout,
+            local=local,
+        )
+
+    def website_browser_stop(self, session_id: str, *, local: bool = False) -> dict:
+        """Stop one run-scoped Website Creator Chromium session."""
+
+        return self._request(
+            "website_browser_stop", ".", session_id=session_id, local=local,
+        )
+
     def write_file(self, path: str, content: bytes, local: bool = False):
         if len(content) > 50 * 1024 * 1024:  # > 50MB → chunked
             self._write_chunked(path, content, local=local)
@@ -396,6 +442,32 @@ class _RelayFsOpsMixin:
             self._request("write_file", path,
                            content=base64.b64encode(content).decode("ascii"),
                            base64=True, local=local)
+
+    def atomic_write_file(self, path: str, content: bytes,
+                          local: bool = False) -> dict:
+        """Atomically replace one bounded relay file."""
+        return self._request(
+            "atomic_write_file", path,
+            content=base64.b64encode(content).decode("ascii"),
+            base64=True, local=local,
+        )
+
+    def append_file(self, path: str, content: bytes, expected_size: int,
+                    local: bool = False) -> dict:
+        """Append bytes at an exact checkpointed relay-file offset."""
+        return self._request(
+            "append_file", path,
+            content=base64.b64encode(content).decode("ascii"),
+            base64=True, expected_size=expected_size, local=local,
+        )
+
+    def truncate_file(self, path: str, size: int, *, expected_size: int | None = None,
+                      local: bool = False) -> dict:
+        """Truncate a relay file without allowing implicit extension."""
+        kwargs = {"size": size, "local": local}
+        if expected_size is not None:
+            kwargs["expected_size"] = expected_size
+        return self._request("truncate_file", path, **kwargs)
 
     def _write_chunked(self, path: str, content: bytes, local: bool = False):
         """Write a large file in chunks via the relay."""
@@ -596,6 +668,47 @@ class _RelayFsOpsMixin:
             "headers": result.get("headers") or {},
             "body_bytes": body_bytes,
             "url": str(result.get("url") or url),
+        }
+
+    def http_fetch_to_file(
+        self,
+        url: str,
+        path: str,
+        *,
+        headers: dict | None = None,
+        timeout: int = 300,
+        max_bytes: int,
+        public_only: bool = True,
+        expected_kind: str = "",
+        local: bool = False,
+    ) -> dict:
+        """Stream a bounded public response to one atomically replaced relay file."""
+
+        result = self._request(
+            "http_fetch_to_file",
+            path,
+            local=local,
+            url=url,
+            method="GET",
+            headers=headers or {},
+            timeout=timeout,
+            max_bytes=int(max_bytes),
+            public_only=bool(public_only),
+            expected_kind=str(expected_kind or ""),
+        )
+        if not isinstance(result, dict) or not result.get("ok"):
+            error = (result or {}).get(
+                "error", "http_fetch_to_file returned no result",
+            )
+            raise Exception(f"relay http_fetch_to_file failed: {error}")
+        return {
+            "status": int(result.get("status") or 0),
+            "headers": dict(result.get("headers") or {}),
+            "url": str(result.get("url") or url),
+            "bytes": int(result.get("bytes") or 0),
+            "sha256": str(result.get("sha256") or ""),
+            "content_type": str(result.get("content_type") or ""),
+            "saved": bool(result.get("saved")),
         }
 
     def http_fetch_stream(self, url: str, method: str = "GET",

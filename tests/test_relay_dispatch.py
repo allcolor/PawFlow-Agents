@@ -8,7 +8,10 @@ allow_exec gate. First execution coverage of the dispatch routing.
 import sys
 import types
 import urllib.request
+import hashlib
 from pathlib import Path
+
+import pytest
 
 
 # tools/ on path so the dispatcher's lazy `from fs_actions import ACTIONS`
@@ -17,6 +20,11 @@ sys.path.append(str(Path(__file__).resolve().parent.parent / "tools"))
 
 from pawflow_relay import _relay_dispatch as d
 import fs_http
+from _fs_read import (
+    action_append_file,
+    action_atomic_write_file,
+    action_truncate_file,
+)
 
 
 def _ctx(**over):
@@ -119,6 +127,175 @@ def test_http_fetch_enforces_response_byte_limit(monkeypatch):
 
     assert result["ok"] is False
     assert "byte limit" in result["error"]
+
+
+def test_http_fetch_to_file_streams_hashes_and_atomically_replaces(
+    monkeypatch, tmp_path,
+):
+    class Response:
+        status = 200
+        headers = {
+            "Content-Type": "text/css",
+            "Content-Length": "12",
+        }
+
+        def __init__(self):
+            self._chunks = [b"body{", b"color:red}"]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size=-1):
+            return self._chunks.pop(0) if self._chunks else b""
+
+        def geturl(self):
+            return "https://example.com/site.css"
+
+    class Opener:
+        def open(self, _request, timeout=0):
+            assert timeout == 30
+            return Response()
+
+    monkeypatch.setattr(fs_http, "_public_http_url", lambda value: value)
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: Opener())
+    target = tmp_path / "assets" / "site.css"
+    target.parent.mkdir()
+    target.write_bytes(b"old")
+
+    result = fs_http.action_http_fetch_to_file(
+        str(tmp_path),
+        str(target),
+        {
+            "url": "https://example.com/site.css",
+            "timeout": 30,
+            "max_bytes": 20,
+            "public_only": True,
+        },
+    )
+
+    content = b"body{color:red}"
+    assert result["saved"] is True
+    assert result["bytes"] == len(content)
+    assert result["sha256"] == hashlib.sha256(content).hexdigest()
+    assert target.read_bytes() == content
+    assert list(target.parent.glob("*.part")) == []
+
+
+def test_manifest_xml_validation_uses_a_safe_parser():
+    assert fs_http._asset_signature(
+        "manifest",
+        b"<?xml version='1.0'?><manifest><name>PawFlow</name></manifest>",
+        ".xml",
+    ) == "application/xml"
+    with pytest.raises(ValueError, match="declarations are prohibited"):
+        fs_http._asset_signature(
+            "manifest",
+            b"<!DOCTYPE manifest [<!ENTITY leak SYSTEM 'file:///etc/passwd'>]>"
+            b"<manifest>&leak;</manifest>",
+            ".xml",
+        )
+
+
+def test_http_fetch_to_file_removes_partial_and_preserves_destination_on_cap(
+    monkeypatch, tmp_path,
+):
+    class Response:
+        status = 200
+        headers = {"Content-Type": "video/mp4"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size=-1):
+            return b"too-large"
+
+        def geturl(self):
+            return "https://example.com/movie.mp4"
+
+    class Opener:
+        def open(self, _request, timeout=0):
+            return Response()
+
+    monkeypatch.setattr(fs_http, "_public_http_url", lambda value: value)
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: Opener())
+    target = tmp_path / "movie.mp4"
+    target.write_bytes(b"previous")
+
+    result = fs_http.action_http_fetch_to_file(
+        str(tmp_path),
+        str(target),
+        {
+            "url": "https://example.com/movie.mp4",
+            "max_bytes": 3,
+            "public_only": True,
+        },
+    )
+
+    assert result["ok"] is False
+    assert "byte limit" in result["error"]
+    assert target.read_bytes() == b"previous"
+    assert list(tmp_path.glob("*.part")) == []
+
+
+def test_readonly_rejects_http_fetch_to_file():
+    result = d.execute_command(
+        _ctx(readonly=True),
+        {
+            "action": "http_fetch_to_file",
+            "path": "assets/site.css",
+            "url": "https://example.com/site.css",
+            "max_bytes": 10,
+            "public_only": True,
+        },
+    )
+    assert result == {
+        "ok": False,
+        "error": "Operation not allowed in readonly mode",
+    }
+
+
+def test_readonly_rejects_template_archive_extraction():
+    result = d.execute_command(
+        _ctx(readonly=True),
+        {
+            "action": "extract_zip_subtree",
+            "path": "template.zip",
+            "dest_path": "template/content",
+            "artifact_root": "repo/dist",
+        },
+    )
+    assert result == {
+        "ok": False,
+        "error": "Operation not allowed in readonly mode",
+    }
+
+
+def test_atomic_append_and_truncate_enforce_checkpoint_offsets(tmp_path):
+    target = tmp_path / "inventory" / "pages.ndjson"
+    root = str(tmp_path)
+    encoded = lambda value: __import__("base64").b64encode(value).decode("ascii")
+
+    action_atomic_write_file(root, str(target), {
+        "content": encoded(b"first\n"), "base64": True,
+    })
+    appended = action_append_file(root, str(target), {
+        "content": encoded(b"second\n"), "base64": True, "expected_size": 6,
+    })
+    assert appended["size"] == 13
+    assert target.read_bytes() == b"first\nsecond\n"
+    with __import__("pytest").raises(ValueError, match="offset mismatch"):
+        action_append_file(root, str(target), {
+            "content": encoded(b"duplicate\n"), "base64": True,
+            "expected_size": 6,
+        })
+    action_truncate_file(root, str(target), {"size": 6, "expected_size": 13})
+    assert target.read_bytes() == b"first\n"
 
 
 def test_open_terminal_gated_by_allow_exec():

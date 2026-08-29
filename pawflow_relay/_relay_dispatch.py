@@ -55,10 +55,14 @@ from pawflow_relay._relay_actions import (
 )
 from pawflow_relay import service_tunnels as _service_tunnels
 from pawflow_relay import scratchdir as _scratchdir
+from pawflow_relay import website_browser as _website_browser
 
 # Actions refused in readonly mode (mirrors the relay HTTP write set).
 _WRITE_ACTIONS = frozenset({
     "write_file", "write_file_chunked", "copy_file", "delete_file", "mkdir",
+    "atomic_write_file", "append_file", "truncate_file", "http_fetch_to_file",
+    "extract_zip_subtree",
+    "website_browser_start", "browser_console_extract", "website_browser_stop",
     "find_replace", "edit", "batch_edit", "apply_patch", "edit_notebook",
     "exec", "exec_stream",
     "scratchdir_ensure", "scratchdir_renew", "scratchdir_clear",
@@ -226,6 +230,37 @@ def _h_desktop_status(ctx, msg, on_output=None):
     return _dt_desktop_status(ctx.state)
 
 
+def _h_website_browser_start(ctx, msg, on_output=None):
+    if not ctx.allow_exec or not ctx.allow_automation:
+        return {"ok": False, "error": "Website browser extraction is disabled"}
+    try:
+        return {"ok": True, "data": _website_browser.start_session(
+            ctx.state, msg, root_dir=ctx.root_dir,
+        )}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _h_browser_console_extract(ctx, msg, on_output=None):
+    if not ctx.allow_automation:
+        return {"ok": False, "error": "Website browser extraction is disabled"}
+    try:
+        return {"ok": True, "data": _website_browser.extract_for_state(
+            ctx.state, msg, root_dir=ctx.root_dir,
+        )}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _h_website_browser_stop(ctx, msg, on_output=None):
+    try:
+        return {"ok": True, "data": _website_browser.stop_session(
+            ctx.state, str(msg.get("session_id") or ""),
+        )}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def _h_novnc_asset(ctx, msg, on_output=None):
     return _dt_novnc_asset(msg)
 
@@ -305,6 +340,9 @@ _DISPATCH = {
     "start_desktop": _h_start_desktop,
     "stop_desktop": _h_stop_desktop,
     "desktop_status": _h_desktop_status,
+    "website_browser_start": _h_website_browser_start,
+    "browser_console_extract": _h_browser_console_extract,
+    "website_browser_stop": _h_website_browser_stop,
     "novnc_asset": _h_novnc_asset,
     "desktop_ws_open": _h_desktop_ws_open,
     "desktop_ws_send": _h_desktop_ws_send,

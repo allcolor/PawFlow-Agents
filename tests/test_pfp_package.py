@@ -1857,7 +1857,7 @@ def test_shipped_website_creator_package_lifecycle(tmp_path, monkeypatch):
     keypair = pfp_package.create_signing_key()
     built = pfp_package.build_pfp(
         str(package_dir),
-        str(tmp_path / "pawflow.website-creator-1.0.0.pfp"),
+        str(tmp_path / "pawflow.website-creator-1.1.0.pfp"),
         private_key=keypair["private_key"],
     )
     plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
@@ -1879,11 +1879,11 @@ def test_shipped_website_creator_package_lifecycle(tmp_path, monkeypatch):
     from core.resource_store import ResourceStore
 
     flow = ScopedRepository.instance().get_flow(
-        "pawflow.agents.website-creator:1.0.0", "user", user_id="alice")
+        "pawflow.agents.website-creator:1.1.0", "user", user_id="alice")
     agent = ResourceStore.instance().get("agent", "website-creator", "alice")
     assert flow["kind"] == "agent_workflow"
     assert agent["runtime_defaults"]["workflow"]["flow_fqn"] == (
-        "pawflow.agents.website-creator:1.0.0"
+        "pawflow.agents.website-creator:1.1.0"
     )
 
     removed = pfp_package.uninstall_pfp(
@@ -1896,7 +1896,7 @@ def test_shipped_website_creator_package_lifecycle(tmp_path, monkeypatch):
     assert ResourceStore.instance().get(
         "agent", "website-creator", "alice") is None
     assert ScopedRepository.instance().get_flow(
-        "pawflow.agents.website-creator:1.0.0", "user", user_id="alice") is None
+        "pawflow.agents.website-creator:1.1.0", "user", user_id="alice") is None
 
 
 def test_pfp_uninstall_blocks_service_provider_used_by_explicit_instances(

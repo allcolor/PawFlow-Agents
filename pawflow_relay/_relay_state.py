@@ -30,6 +30,8 @@ class RelayWorkerState:
     desktop_watchdog_thread: Optional[threading.Thread] = None
     desktop_ws_sessions: Dict[str, dict] = field(default_factory=dict)
     desktop_audio_sessions: Dict[str, dict] = field(default_factory=dict)
+    # Website Creator fixed-script Chromium sessions
+    website_browser_sessions: Dict[str, object] = field(default_factory=dict)
     # local desktop (host screen)
     local_desktop_procs: Optional[List[subprocess.Popen]] = None
     local_desktop_vnc_port: Optional[int] = None

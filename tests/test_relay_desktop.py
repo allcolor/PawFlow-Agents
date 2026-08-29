@@ -247,6 +247,7 @@ def test_relay_desktop_generated_runtime_has_required_payload():
     runtime = DESKTOP / "runtime"
     assert (runtime / "tools" / "pawflow_relay_launcher.py").is_file()
     assert (runtime / "tools" / "fs_actions.py").is_file()
+    assert (runtime / "tools" / "fs_archive.py").is_file()
     assert (runtime / "tools" / "screen_actions.py").is_file()
     assert (runtime / "tools" / "screen_actions_cua.py").is_file()
     assert (runtime / "docker" / "pawflow_sdk" / "pawflow.py").is_file()
@@ -261,7 +262,7 @@ def test_relay_desktop_generated_runtime_has_required_payload():
             sys.executable,
             "-c",
             "import pawflow_cli.auth; import pawflow_relay.manager_cli; "
-            "import fs_actions; import fs_http; import fs_mcp; import fs_exec; "
+            "import fs_actions; import fs_archive; import fs_http; import fs_mcp; import fs_exec; "
             "import screen_actions; import screen_actions_cua",
         ],
         cwd=DESKTOP,

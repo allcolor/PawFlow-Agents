@@ -2,6 +2,7 @@
 fs_actions.py (list/read/pdf/notebook/stat/exists/search/write/chunked).
 """
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -43,6 +44,25 @@ def action_list_dir(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         if max_entries > 0 and len(entries) >= max_entries:
             break
     return entries
+
+
+def action_hash_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Hash one file incrementally without returning its body."""
+
+    target = Path(path)
+    if not target.is_file():
+        raise FileNotFoundError(path)
+    digest = hashlib.sha256()
+    size = 0
+    with target.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return {
+        "bytes": size,
+        "sha256": digest.hexdigest(),
+        "path": _rel(path, root_dir),
+    }
 
 
 def action_project_context(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
@@ -281,6 +301,93 @@ def action_write_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(raw)
     return {"written": len(raw), "path": _rel(path, root_dir)}
+
+
+def _write_payload(req: Dict[str, Any]) -> bytes:
+    content = req.get("content", "")
+    raw = base64.b64decode(content) if req.get("base64") else content.encode("utf-8")
+    if len(raw) > MAX_FILE_SIZE:
+        raise ValueError(f"Content too large ({len(raw)} bytes, max {MAX_FILE_SIZE})")
+    return raw
+
+
+def action_atomic_write_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Replace one bounded file atomically after syncing its temporary content."""
+
+    raw = _write_payload(req)
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(
+        f".{target.name}.pawflow-atomic-{uuid.uuid4().hex}.part"
+    )
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {"written": len(raw), "path": _rel(path, root_dir)}
+
+
+def action_append_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Append bytes only when the file is at the caller's checkpointed offset."""
+
+    raw = _write_payload(req)
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    expected_size = req.get("expected_size")
+    if isinstance(expected_size, bool) or not isinstance(expected_size, int):
+        raise ValueError("expected_size must be a non-negative integer")
+    if expected_size < 0:
+        raise ValueError("expected_size must be a non-negative integer")
+    current_size = target.stat().st_size if target.exists() else 0
+    if current_size != expected_size:
+        raise ValueError(
+            f"append offset mismatch: expected {expected_size}, found {current_size}"
+        )
+    with target.open("ab") as handle:
+        handle.write(raw)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return {
+        "written": len(raw),
+        "previous_size": current_size,
+        "size": current_size + len(raw),
+        "path": _rel(path, root_dir),
+    }
+
+
+def action_truncate_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Truncate a file to a checkpointed size with an optional current-size guard."""
+
+    target = Path(path)
+    if not target.is_file():
+        raise FileNotFoundError(path)
+    size = req.get("size")
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        raise ValueError("size must be a non-negative integer")
+    current_size = target.stat().st_size
+    expected_size = req.get("expected_size")
+    if expected_size is not None:
+        if (
+            isinstance(expected_size, bool)
+            or not isinstance(expected_size, int)
+            or expected_size < 0
+        ):
+            raise ValueError("expected_size must be a non-negative integer")
+        if current_size != expected_size:
+            raise ValueError(
+                f"truncate size mismatch: expected {expected_size}, found {current_size}"
+            )
+    if size > current_size:
+        raise ValueError("truncate size cannot extend a file")
+    with target.open("r+b") as handle:
+        handle.truncate(size)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return {"size": size, "path": _rel(path, root_dir)}
 
 
 def action_delete_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:

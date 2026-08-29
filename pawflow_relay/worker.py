@@ -404,6 +404,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 f"inflight={locals().get('_active_cmd_summary', lambda: 'unknown')()} "
                 f"diag={locals().get('_diag_summary', lambda: 'unknown')()})\n")
         finally:
+            try:
+                from pawflow_relay.website_browser import cleanup_sessions
+                cleanup_sessions(_state)
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "Website browser session cleanup failed", exc_info=True)
             # Guard: on early connect errors, _term_mgr may not be defined
             # yet (it is created during per-connection setup, past the
             # handshake).

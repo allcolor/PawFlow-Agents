@@ -34,11 +34,12 @@ from _fs_paths import (  # noqa: E402,F401
     _resolve_tool_path,
 )
 from _fs_read import (  # noqa: E402,F401
-    action_delete_file, action_edit_notebook, action_exists,
+    action_delete_file, action_edit_notebook, action_exists, action_hash_file,
     action_list_dir, action_mkdir, action_project_context,
     action_project_init, action_read_chunk, action_read_file,
     action_read_file_chunked, action_read_notebook, action_read_pdf,
     action_search, action_stat, action_write_file, action_copy_file,
+    action_append_file, action_atomic_write_file, action_truncate_file,
     action_write_file_chunked,
 )
 from _fs_grep import action_grep  # noqa: E402,F401
@@ -65,11 +66,14 @@ from fs_mcp import (  # noqa: E402,F401
     action_mcp_start, action_mcp_discover, action_mcp_call,
     action_mcp_stop, action_mcp_list,
 )
-from fs_http import action_http_fetch  # noqa: E402,F401
+from fs_http import action_http_fetch, action_http_fetch_to_file  # noqa: E402,F401
+from fs_archive import action_extract_zip_subtree  # noqa: E402,F401
 
 # Actions that require write access
 WRITE_ACTIONS = frozenset({
-    "write_file", "copy_file", "delete_file", "mkdir", "find_replace", "edit",
+    "write_file", "atomic_write_file", "append_file", "truncate_file",
+    "http_fetch_to_file", "extract_zip_subtree",
+    "copy_file", "delete_file", "mkdir", "find_replace", "edit",
     "batch_edit", "apply_patch",
     "exec", "exec_stream",
     "edit_notebook",
@@ -85,11 +89,15 @@ ACTIONS = {
     "read_pdf": action_read_pdf,
     "read_notebook": action_read_notebook,
     "write_file": action_write_file,
+    "atomic_write_file": action_atomic_write_file,
+    "append_file": action_append_file,
+    "truncate_file": action_truncate_file,
     "copy_file": action_copy_file,
     "delete_file": action_delete_file,
     "mkdir": action_mkdir,
     "stat": action_stat,
     "exists": action_exists,
+    "hash_file": action_hash_file,
     "search": action_search,
     "grep": action_grep,
     "find_replace": action_find_replace,
@@ -99,6 +107,8 @@ ACTIONS = {
     "exec": action_exec,
     "exec_stream": action_exec_stream,
     "http_fetch": action_http_fetch,
+    "http_fetch_to_file": action_http_fetch_to_file,
+    "extract_zip_subtree": action_extract_zip_subtree,
     "read_file_chunked": action_read_file_chunked,
     "read_chunk": action_read_chunk,
     "write_file_chunked": action_write_file_chunked,

@@ -388,10 +388,10 @@ def test_mobile_breakpoints_scroll_header_and_overlay_sidebar():
     # the full-width second row used by the old crowded header.
     assert ".header .actions { margin-left: auto;" in mobile_block
     assert ".sidebar { position: fixed;" in mobile_block
-    # The persistent task rail occupies the left edge while the drawer is
-    # closed. Its grip stays above that rail and both move past the fixed
-    # sidebar while the drawer is open.
-    assert ".sidebar-toggle { left: 35px !important; z-index: 200; }" in mobile_block
+    # The task rail hides together with the closed drawer (_syncToggleBtn
+    # couples them on narrow layouts), so the grip hugs the viewport edge;
+    # both move past the fixed sidebar while the drawer is open.
+    assert ".sidebar-toggle { left: 0 !important; z-index: 200; }" in mobile_block
     assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 0;" in mobile_block
     assert "body:has(.sidebar:not(.collapsed)) .tab-bar { left: 260px; }" in mobile_block
     assert (

@@ -41,12 +41,13 @@ def test_full_height_elements_use_dvh_so_the_header_stays_on_screen():
 
 def test_mobile_sidebar_toggle_clears_the_persistent_rail_then_tracks_the_open_drawer():
     """Regression: on mobile the sidebar becomes a fixed overlay (z-index 150).
-    While the resource drawer is hidden, the persistent task rail still owns
-    the first 35px. Once opened, the toggle tracks the outer edge of the drawer
-    and rail so the menu can always be closed."""
+    While the resource drawer is hidden the task rail is hidden with it
+    (_syncToggleBtn couples them), so the toggle hugs the viewport edge —
+    left: 35px here floated over the chat text. Once opened, the toggle tracks
+    the outer edge of the drawer and rail so the menu can always be closed."""
     mobile = _mobile_block()
     assert ".sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;" in mobile
-    assert ".sidebar-toggle { left: 35px !important; z-index: 200; }" in mobile
+    assert ".sidebar-toggle { left: 0 !important; z-index: 200; }" in mobile
     assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 0;" in mobile
     assert "body:has(.sidebar:not(.collapsed)) .tab-bar { left: 260px; }" in mobile
     assert (
@@ -185,3 +186,14 @@ def test_selected_agent_button_is_right_aligned_compact_and_mobile_safe():
     assert "transform: translateY(-50%)" in css
     assert "position: fixed" in css
     assert "left: 12px; right: 12px" in css
+
+
+def test_android_app_native_expander_keeps_tile_header_buttons_clear():
+    # The PawFlow Android app draws a native chrome expander over the
+    # top-right corner of the WebView; the tile header actions shift left
+    # of it, keyed off a body class set from the app user agent.
+    tabs = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
+    assert "classList.toggle('pf-android-app', isPawFlowAndroidApp())" in tabs
+    assert "body.pf-android-app .workspace-surface-actions" in TEMPLATE_HTML
+    clearance = TEMPLATE_HTML.split("body.pf-android-app .workspace-surface-actions", 1)[1]
+    assert "margin-right: 36px" in clearance[:120]

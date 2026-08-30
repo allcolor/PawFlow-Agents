@@ -398,6 +398,18 @@ function isPawFlowAndroidApp() {
   return /(?:^|\s)PawFlowAndroid(?:\/|\s|$)/.test(navigator.userAgent || '');
 }
 
+// The native app draws its own chrome expander over the WebView; CSS keys off
+// this class to keep overlapping web controls clear of it.
+function _markPawFlowAndroidApp() {
+  if (typeof navigator === 'undefined' || !document.body) return;
+  document.body.classList.toggle('pf-android-app', isPawFlowAndroidApp());
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _markPawFlowAndroidApp, { once: true });
+} else {
+  _markPawFlowAndroidApp();
+}
+
 /** Add a browser tab (iframe pointing to a URL). One per label. */
 function addBrowserTab(label, iframeSrc) {
   const tabId = 'browse-' + label.replace(/[^a-zA-Z0-9._-]/g, '_');

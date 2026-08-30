@@ -113,6 +113,11 @@
   display: inline-flex;
   gap: 3px;
 }
+/* The PawFlow Android app draws its native chrome expander over the top-right
+   corner of the WebView; keep the tile header buttons clear of it. */
+body.pf-android-app .workspace-surface-actions {
+  margin-right: 36px;
+}
 .workspace-surface-actions button {
   width: 24px;
   height: 23px;

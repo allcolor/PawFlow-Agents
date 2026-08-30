@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- OpenSpace is now a workspace tile in its own right: the quick button and its
+  task-bar entry open or focus the tile, the View menu no longer offers an
+  `openspace` mode (a legacy stored value resolves server-side to
+  `simplified`), and the in-scene Webchat button focuses the Webchat tile
+  without touching the conversation view mode.
+- Every conversation tile now owns its own task-bar entry: the permanent chat
+  button follows the first conversation, additional tiles add closable
+  entries, and conversation renames update the entry tooltips.
+
+### Fixed
+
+- Mobile: the sidebar expander now sits flush at the viewport edge when the
+  menu and task rail are hidden, instead of floating 35px into the chat text.
+- Switching conversation tiles now re-projects the per-conversation surfaces
+  living outside the tile — conversation theme, cost badge, pending
+  confirmations, context gauges, and the UI surface stack — and re-resolves a
+  stale "new conversation" tile title from the conversations cache.
+- In the PawFlow Android app, the tile header buttons shift clear of the
+  native chrome expander drawn over the top-right corner of the WebView.
+
 ## [1.0.0-beta.252] — 2026-08-30
 
 ### Added

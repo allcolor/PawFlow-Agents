@@ -22,6 +22,12 @@ function _workspaceLabel(key, fallback) {
   return value && value !== key ? value : fallback;
 }
 
+function _workspaceEscapeTab(tabId) {
+  return typeof CSS !== 'undefined' && CSS.escape
+    ? CSS.escape(String(tabId || ''))
+    : String(tabId || '').replace(/"/g, '\\"');
+}
+
 function _workspacePanel(tabId) {
   return document.getElementById('tabContent_' + tabId)
     || (tabId === 'chat' ? document.getElementById('tabContentChat') : null);
@@ -293,6 +299,9 @@ function workspaceSetSurfaceTitle(tabId, value) {
     titleEl.textContent = title;
     titleEl.title = title;
   }
+  const railButton = document.querySelector(
+    '.tab-btn[data-tab="' + _workspaceEscapeTab(tabId) + '"]');
+  if (railButton) railButton.title = title;
   _workspaceUpdateTargetState();
   _workspaceSaveState();
   return true;
@@ -326,6 +335,9 @@ function workspaceSetConversationTitle(conversationId, value) {
         surfaceTitle.textContent = title;
         surfaceTitle.title = title;
       }
+      const railButton = document.querySelector(
+        '.tab-btn[data-tab="' + _workspaceEscapeTab(tabId) + '"]');
+      if (railButton) railButton.title = title;
     }
   });
   if (updated) {

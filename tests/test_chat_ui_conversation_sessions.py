@@ -318,3 +318,36 @@ if (context.getConversationSession('A')) {
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_taskbar_gets_one_entry_per_conversation_tile():
+    sessions = SESSIONS_JS.read_text(encoding="utf-8")
+    workspace = (CHAT_UI / "workspace.js").read_text(encoding="utf-8")
+
+    # Every conversation surface ensures its own rail button; the canonical
+    # claim repoints the permanent chat button instead of duplicating it.
+    assert "workspaceEnsureTabButton(session.surfaceId" in sessions
+    assert '.tab-btn[data-tab="chat"]' in sessions
+    assert "chatBtn.dataset.tab = session.surfaceId" in sessions
+    # Closing or releasing a conversation removes its rail entry.
+    assert sessions.count("workspaceRemoveTabButton(session.surfaceId)") == 2
+    # Title renames follow through to the rail button tooltip.
+    assert workspace.count("railButton.title = title") == 2
+
+
+def test_tile_focus_reprojects_out_of_tile_conversation_surfaces():
+    sessions = SESSIONS_JS.read_text(encoding="utf-8")
+    project = sessions[
+        sessions.index("function _projectFocusedConversation"):
+        sessions.index("function focusConversationSession")]
+    # Theme, cost badge, confirmations, context gauges and UI surfaces live
+    # outside the tile and must follow a tile switch (loaded sessions only:
+    # a fresh load rehydrates them in loadConversationSession).
+    assert "if (session.loaded)" in project
+    for hook in ("loadThemeSelector()", "hydrateContextUsage()",
+                 "hydrateUsageCost()", "hydrateConfirmations()",
+                 "loadUiSurfaces(session.conversationId)"):
+        assert hook in project, hook
+    assert "renderUsageCostBadge()" in project
+    # A stale 'new conversation' fallback title re-resolves on focus.
+    assert "_conversationTitle(session.conversationId, session.title)" in project

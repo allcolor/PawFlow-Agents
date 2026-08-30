@@ -439,6 +439,14 @@ function _createConversationSurface(session) {
       }
       panel.id = 'tabContent_' + session.surfaceId;
       panel.dataset.tab = session.surfaceId;
+      // The permanent rail button still points at the retired 'chat' id;
+      // repoint it so the rail keeps one entry per conversation tile.
+      var chatBtn = document.querySelector('.tab-btn[data-tab="chat"]');
+      if (chatBtn) {
+        chatBtn.dataset.tab = session.surfaceId;
+        chatBtn.title = session.title;
+        chatBtn.onclick = function() { switchTab(session.surfaceId); };
+      }
       messages.dataset.conversationLocalId = 'messages';
       var scrollNav = document.getElementById('scrollNav');
       if (scrollNav) scrollNav.dataset.conversationLocalId = 'scrollNav';
@@ -469,6 +477,15 @@ function _createConversationSurface(session) {
       conversationId: session.conversationId,
       closable: true,
       close: function() { closeConversationSession(session.conversationId); },
+    });
+  }
+  // One rail entry per conversation tile (the canonical claim above reuses
+  // the permanent button, so this is a no-op for the first conversation).
+  if (typeof workspaceEnsureTabButton === 'function') {
+    workspaceEnsureTabButton(session.surfaceId, {
+      title: session.title,
+      icon: '\uD83D\uDCAC',
+      closable: true,
     });
   }
   if (typeof _msgObserver !== 'undefined' && _msgObserver && messages) {
@@ -502,6 +519,13 @@ function ensureConversationSession(conversationId, options) {
 
 function _projectFocusedConversation(session) {
   if (!session) return;
+  // A session created before the conversations list arrived keeps the
+  // 'new conversation' fallback title; re-resolve it from the cache so a
+  // tile switch never shows a stale header title.
+  var resolvedTitle = _conversationTitle(session.conversationId, session.title);
+  if (resolvedTitle && resolvedTitle !== session.title) {
+    updateConversationSessionTitle(session, resolvedTitle);
+  }
   if (typeof highlightConv === 'function') highlightConv(session.conversationId);
   if (typeof refreshAppearanceContext === 'function') refreshAppearanceContext();
   if (typeof _setInputEnabled === 'function') _setInputEnabled(true);
@@ -512,6 +536,20 @@ function _projectFocusedConversation(session) {
   if (typeof updateActivePanel === 'function') updateActivePanel();
   if (typeof renderAttachments === 'function') renderAttachments();
   if (typeof loadResources === 'function') loadResources(session.conversationId);
+  // Per-conversation surfaces living OUTSIDE the tile (theme <style>, cost
+  // badge, confirmations, context gauges, UI surface stack) must follow the
+  // focus. A fresh load rehydrates them in loadConversationSession, so only
+  // an already-loaded session re-projects here.
+  // Blank the cost badge at once (hydratedFor mismatch hides it) so the
+  // previous conversation's total never lingers while hydration is in flight.
+  if (typeof renderUsageCostBadge === 'function') renderUsageCostBadge();
+  if (session.loaded) {
+    if (typeof loadThemeSelector === 'function') loadThemeSelector();
+    if (typeof hydrateContextUsage === 'function') hydrateContextUsage();
+    if (typeof hydrateUsageCost === 'function') hydrateUsageCost();
+    if (typeof hydrateConfirmations === 'function') hydrateConfirmations();
+    if (typeof loadUiSurfaces === 'function') loadUiSurfaces(session.conversationId);
+  }
   var input = document.getElementById('input');
   if (input) input.setAttribute('aria-label', 'Message conversation ' + session.title);
 }
@@ -573,6 +611,9 @@ function releaseConversationSessionIfUnused(conversationId) {
   if (typeof workspaceUnregisterSurface === 'function') {
     workspaceUnregisterSurface(session.surfaceId);
   }
+  if (typeof workspaceRemoveTabButton === 'function') {
+    workspaceRemoveTabButton(session.surfaceId);
+  }
   if (session.panel) session.panel.remove();
   _conversationSessions.delete(session.conversationId);
   if (wasFocused) {
@@ -599,6 +640,9 @@ function closeConversationSession(conversationId) {
   if (!session) return false;
   if (typeof workspaceUnregisterSurface === 'function') {
     workspaceUnregisterSurface(session.surfaceId);
+  }
+  if (typeof workspaceRemoveTabButton === 'function') {
+    workspaceRemoveTabButton(session.surfaceId);
   }
   if (session.panel) session.panel.remove();
   releaseConversationSessionIfUnused(session.conversationId);

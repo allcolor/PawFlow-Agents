@@ -84,7 +84,7 @@ function _queueUnmatchedToolResult(tcId, data) {
     clearTimeout(_pendingToolResults[tcId].timer);
   }
   _pendingToolResults[tcId] = { data: data || {}, timer: null };
-  _pendingToolResults[tcId].timer = setTimeout(() => {
+  _pendingToolResults[tcId].timer = setTimeout(captureConversationSessionCallback(() => {
     const pending = _pendingToolResults[tcId];
     if (!pending) return;
     const tcEl = (typeof findToolCallElement === 'function')
@@ -118,7 +118,7 @@ function _queueUnmatchedToolResult(tcId, data) {
     }
     if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
     scrollBottom();
-  }, 750);
+  }), 750);
   return true;
 }
 
@@ -193,6 +193,7 @@ function _getTaskBlock(taskId, iteration, agentName) {
     + ' <span class="task-block-status" style="font-size:11px;color:#888">\u25cf running</span>';
   details.appendChild(summary);
   const content = document.createElement('div');
+  content.className = 'task-block-body';
   content.style.cssText = 'padding:4px 12px 8px;max-height:60vh;overflow-y:auto;';
   details.appendChild(content);
   const container = document.getElementById('messages');
@@ -231,7 +232,7 @@ function _finalizeTaskBlock(taskId, iteration, status, color) {
 // chunks and never flushes the final fragment), so the durable text MUST
 // reconcile into the existing block — recreating one leaves the truncated
 // copy on screen next to a complete duplicate.
-const _pendingThinkingPreviews = {};
+let _pendingThinkingPreviews = {};
 const _PENDING_THINKING_MAX = 8;
 
 function _takePendingThinkingPreview(aKey, finalText) {
@@ -248,7 +249,9 @@ function _takePendingThinkingPreview(aKey, finalText) {
 }
 
 function renderThinkingContent(data, reconcileFinal) {
-  const agent = data.agent_name || '';
+  const agent = String(data.agent_name
+    || (data.source && (data.source.name || data.source.from)) || '').trim();
+  if (!agent) throw new Error('BUG: thinking_content missing agent identity');
   const aKey = agentKey(agent);
   const textDelta = data.text || '';
   const msgId = data.msg_id || '';
@@ -275,6 +278,7 @@ function renderThinkingContent(data, reconcileFinal) {
     const details = document.createElement('details');
     details.className = 'msg thinking-block';
     details.dataset.messageRole = 'thinking';
+    details.dataset.agent = agent.toLowerCase();
     details.dataset.live = '1';
     details.dataset.sortTs = String((typeof _messageSortTs === 'function') ? _messageSortTs(data) : Date.now() / 1000);
     details.setAttribute('open', '');
@@ -286,16 +290,14 @@ function renderThinkingContent(data, reconcileFinal) {
     const content = document.createElement('div');
     content.style.cssText = 'font-size:12px;color:#9ca3af;font-style:italic;white-space:pre-wrap;max-height:300px;overflow-y:auto;';
     details.appendChild(content);
-    // If this thinking belongs to a delegate-reply turn, place the
-    // block inside the shared delegate frame for (from→to).
+    // If this thinking belongs to a delegate-reply turn, place it inside the
+    // exact task-scoped frame in this conversation's canonical transcript.
     let _placed = false;
     const _dsrc = data.source || {};
     if (_dsrc.type === 'agent_delegate' && _dsrc.from && _dsrc.to) {
-      // MUST match messages.js bidirectional key: sorted pair so
-      // both A→B and B→A land in the same shared delegate block.
-      const _dpair = [_dsrc.from, _dsrc.to].map(s => String(s).toLowerCase()).sort();
-      const _dkey = 'delegate-shared::' + _dpair[0] + '::' + _dpair[1];
-      const _dblock = document.querySelector('[data-delegate-key="' + CSS.escape(_dkey) + '"]');
+      const _messageRoot = document.getElementById('messages');
+      const _dblock = typeof _delegateFrameForSource === 'function'
+        ? _delegateFrameForSource(_dsrc, _messageRoot) : null;
       const _dbody = _dblock && _dblock.querySelector('.delegate-body');
       if (_dbody) { _dbody.appendChild(details); _placed = true; }
     }

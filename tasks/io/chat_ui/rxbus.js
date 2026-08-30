@@ -262,7 +262,9 @@ function _syncPendingActionsFromServer() {
  * @returns {rxjs.Observable} Observable that emits the parsed result
  */
 function action$(actionName, params = {}, opts = {}) {
-  return defer(() => {
+  const actionSession = typeof captureConversationSession === 'function'
+    ? captureConversationSession() : null;
+  const observable = defer(() => {
     // Fire the fetch (no await). Results are always delivered through the
     // per-tab UI SSE bus, not through the HTTP response body.
     _ensureUIActionSSE();
@@ -348,6 +350,9 @@ function action$(actionName, params = {}, opts = {}) {
       }),
     );
   });
+  return typeof bindObservableToConversationSession === 'function'
+    ? bindObservableToConversationSession(observable, actionSession)
+    : observable;
 }
 
 /**

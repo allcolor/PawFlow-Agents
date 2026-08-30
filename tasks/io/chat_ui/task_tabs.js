@@ -1,14 +1,14 @@
 // Filtered Webchat workspace surfaces.
 //
-// The canonical #messages tree remains the only render target for history and
-// SSE. Filtered views are read-only projections maintained by one observer, so
-// opening several agent/task tiles never creates another connection or changes
-// message reconciliation.
+// Each ConversationSession transcript remains the only render target for its
+// history and SSE. Filtered views are read-only projections of that owning
+// transcript, so they never create another connection or change reconciliation.
 var _taskTabRegistry = {};    // tabId -> filter descriptor
 var _openTaskTabOrder = [];   // tabId[], creation order
 var _activeTaskTabId = null;  // active filtered tab id
 var _taskTabObserverStarted = false;
 var _taskTabObserver = null;
+var _taskTabObservedSources = new Set();
 var _taskTabRenderRaf = 0;
 
 function _filteredViewToken(value) {
@@ -18,10 +18,12 @@ function _filteredViewToken(value) {
     .substring(0, 180);
 }
 
-function _filteredViewTabId(agentName, taskId) {
+function _filteredViewTabId(conversationId, agentName, taskId) {
+  const conversation = _filteredViewToken(conversationId);
   return taskId
-    ? 'filter-task-' + _filteredViewToken(taskId)
-    : 'filter-agent-' + _filteredViewToken(String(agentName || '').toLowerCase());
+    ? 'filter-' + conversation + '-task-' + _filteredViewToken(taskId)
+    : 'filter-' + conversation + '-agent-'
+      + _filteredViewToken(String(agentName || '').toLowerCase());
 }
 
 function _filteredViewLabel(agentName, taskId) {
@@ -54,20 +56,66 @@ function _filteredViewTaskMatch(node, taskId) {
   );
 }
 
+function _filteredViewAgentValue(node) {
+  if (!node || !node.dataset) return '';
+  return String(
+    node.dataset.agentName || node.dataset.agent || node.dataset.targetAgent || ''
+  ).toLowerCase();
+}
+
 function _filteredViewAgentMatch(node, agentName) {
   if (!node || !node.dataset) return false;
   const wanted = String(agentName || '').toLowerCase();
-  const direct = String(
-    node.dataset.agentName || node.dataset.agent || node.dataset.targetAgent || ''
-  ).toLowerCase();
-  if (direct === wanted) return true;
-  return Array.from(node.querySelectorAll(
-    '[data-agent-name], [data-agent], [data-target-agent]'
-  )).some(function(child) {
-    const value = String(
-      child.dataset.agentName || child.dataset.agent || child.dataset.targetAgent || ''
-    ).toLowerCase();
-    return value === wanted;
+  const direct = _filteredViewAgentValue(node);
+  if (direct) return direct === wanted;
+  return Array.from(node.children || []).some(function(child) {
+    return _filteredViewAgentMatch(child, wanted);
+  });
+}
+
+function _filteredViewWalk(root, callback) {
+  Array.from((root && root.children) || []).forEach(function(child) {
+    _filteredViewWalk(child, callback);
+    callback(child);
+  });
+}
+
+function _filteredViewIsAggregateBody(node) {
+  if (!node || !node.classList) return false;
+  return node.classList.contains('task-block-body')
+    || node.classList.contains('delegate-body')
+    || node.classList.contains('delegate-sub-body')
+    || node.classList.contains('technical-group-body')
+    || node.classList.contains('tc-children');
+}
+
+function _filteredViewInheritedAgent(node, root) {
+  let current = node && node.parentElement;
+  while (current) {
+    const value = _filteredViewAgentValue(current);
+    if (value) return value;
+    if (current === root) break;
+    current = current.parentElement;
+  }
+  return '';
+}
+
+function _filteredViewPruneAgents(clone, agentName) {
+  const wanted = String(agentName || '').toLowerCase();
+  _filteredViewWalk(clone, function(node) {
+    const value = _filteredViewAgentValue(node);
+    if (value && value !== wanted) node.remove();
+  });
+  _filteredViewWalk(clone, function(body) {
+    if (!_filteredViewIsAggregateBody(body)) return;
+    const inherited = _filteredViewInheritedAgent(body, clone);
+    Array.from(body.children || []).forEach(function(child) {
+      const direct = _filteredViewAgentValue(child);
+      const allowed = direct === wanted
+        || (!direct && inherited === wanted)
+        || (!direct && !inherited && _filteredViewAgentMatch(child, wanted));
+      if (!allowed) child.remove();
+    });
   });
 }
 
@@ -83,21 +131,7 @@ function _filteredViewPrune(clone, info) {
       }
     });
   } else if (info.agentName) {
-    const wanted = String(info.agentName).toLowerCase();
-    clone.querySelectorAll(
-      '[data-agent-name], [data-agent], [data-target-agent]'
-    ).forEach(function(node) {
-      const value = String(
-        node.dataset.agentName || node.dataset.agent || node.dataset.targetAgent || ''
-      ).toLowerCase();
-      if (value && value !== wanted
-          && !node.querySelector(
-            '[data-agent-name="' + _filteredViewEscape(info.agentName) + '"], '
-            + '[data-target-agent="' + _filteredViewEscape(info.agentName) + '"]'
-          )) {
-        node.remove();
-      }
-    });
+    _filteredViewPruneAgents(clone, info.agentName);
   }
   return clone;
 }
@@ -114,7 +148,7 @@ function _filteredViewClone(node, info) {
 function _renderFilteredView(tabId) {
   const info = _taskTabRegistry[tabId];
   if (!info || !info.body) return;
-  const source = document.getElementById('messages');
+  const source = info.source;
   if (!source) return;
 
   const body = info.body;
@@ -145,20 +179,32 @@ function _queueFilteredViewRender() {
 }
 
 function _startTaskTabObserver() {
-  if (_taskTabObserverStarted) return;
-  const source = document.getElementById('messages');
-  if (!source || typeof MutationObserver === 'undefined') return;
-  _taskTabObserverStarted = true;
-  _taskTabObserver = new MutationObserver(_queueFilteredViewRender);
-  _taskTabObserver.observe(source, {
-    childList: true, subtree: true, characterData: true, attributes: true,
+  if (typeof MutationObserver === 'undefined') return;
+  if (!_taskTabObserver) {
+    _taskTabObserver = new MutationObserver(_queueFilteredViewRender);
+  } else {
+    _taskTabObserver.disconnect();
+  }
+  _taskTabObservedSources = new Set();
+  Object.keys(_taskTabRegistry).forEach(function(tabId) {
+    const source = _taskTabRegistry[tabId].source;
+    if (!source || _taskTabObservedSources.has(source)) return;
+    _taskTabObservedSources.add(source);
+    _taskTabObserver.observe(source, {
+      childList: true, subtree: true, characterData: true, attributes: true,
+    });
   });
+  _taskTabObserverStarted = _taskTabObservedSources.size > 0;
 }
 
 function _stopTaskTabObserverIfIdle() {
-  if (Object.keys(_taskTabRegistry).length) return;
+  if (Object.keys(_taskTabRegistry).length) {
+    _startTaskTabObserver();
+    return;
+  }
   if (_taskTabObserver) _taskTabObserver.disconnect();
   _taskTabObserver = null;
+  _taskTabObservedSources = new Set();
   _taskTabObserverStarted = false;
   if (_taskTabRenderRaf) cancelAnimationFrame(_taskTabRenderRaf);
   _taskTabRenderRaf = 0;
@@ -201,7 +247,10 @@ function openAgentView(agentName, taskId) {
   taskId = String(taskId || '');
   if (!agentName && !taskId) return null;
 
-  const tabId = _filteredViewTabId(agentName, taskId);
+  const sourceSession = captureConversationSession();
+  if (!sourceSession || !sourceSession.messagesRoot) return null;
+  const sourceConversationId = sourceSession.conversationId;
+  const tabId = _filteredViewTabId(sourceConversationId, agentName, taskId);
   const existing = _taskTabRegistry[tabId];
   if (existing) {
     _activeTaskTabId = tabId;
@@ -217,6 +266,7 @@ function openAgentView(agentName, taskId) {
   panel.dataset.tab = tabId;
   panel.dataset.filterAgent = agentName;
   panel.dataset.filterTaskId = taskId;
+  panel.dataset.conversationId = sourceConversationId;
 
   const body = document.createElement('div');
   body.className = 'messages workspace-filter-messages';
@@ -227,6 +277,8 @@ function openAgentView(agentName, taskId) {
     tabId: tabId,
     agentName: agentName,
     taskId: taskId,
+    conversationId: sourceConversationId,
+    source: sourceSession.messagesRoot,
     body: body,
     panel: panel,
   };
@@ -240,6 +292,7 @@ function openAgentView(agentName, taskId) {
       type: 'webchat-filter',
       title: label,
       icon: 'F',
+      conversationId: sourceConversationId,
       close: close,
       closable: true,
     });

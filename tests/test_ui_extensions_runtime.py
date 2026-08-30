@@ -282,7 +282,7 @@ def test_hook_tab_switched_fires_in_tabs():
 
 def test_hook_sse_event_wrapper_in_connectSSE():
     src = (_CHAT_UI / "sse.js").read_text(encoding="utf-8")
-    assert "_wrapSseForExtensions(eventSource)" in src
+    assert "_wrapSseForExtensions(es)" in src
     assert "fireHook('sse_event'" in src
     assert "fireHook('tool_call_started'" in src
     assert "fireHook('tool_call_completed'" in src

@@ -15,6 +15,9 @@ global.document = {
   getElementById: () => ({disabled: false, style: {}, textContent: ''}),
 };
 global.t = key => key;
+// Conversation-session scoping is outside this lifecycle test; run callbacks
+// directly instead of binding them to a ConversationSession.
+global.captureConversationSessionCallback = callback => callback;
 global.updateActivePanel = () => {};
 global.finalizeThinking = () => {};
 global.trackAgentDone = () => {};

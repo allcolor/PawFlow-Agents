@@ -116,7 +116,9 @@ function _renderSharedRow(row) {
     + '<div class="conv-meta">' + escapeHtml(t('ownedBy', { user: row.owner }))
     + ' \u00b7 ' + escapeHtml(t('contextMessages', { n: row.message_count || 0 }))
     + ' \u00b7 ' + timeStr + '</div>';
-  el.onclick = () => resumeConv(row.conversation_id);
+  el.onclick = () => openWorkspaceConversation(row.conversation_id, {
+    title: row.title || row.preview || t('newConversation'),
+  });
   el.oncontextmenu = (ev) => {
     ev.preventDefault();
     showSharedConvMenu(ev, row.conversation_id);

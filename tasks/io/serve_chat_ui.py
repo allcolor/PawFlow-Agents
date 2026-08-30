@@ -64,8 +64,11 @@ _JS_MODULES = [
     # sse.js was split (<=800 lines each); load order matters: sse_state.js
     # (globals + per-connection state + shared helpers) before the wire
     # files, then sse.js (connectSSE resets state + calls _sseWireA/B).
+    # conversation_sessions.js owns per-conversation globals/DOM activation and
+    # must load after the state declarations but before callbacks are wired.
     "ui_surfaces.js", "ui_surface_loader.js",
-    "sse_state.js", "sse_handlers_a.js", "sse_handlers_b.js", "sse.js",
+    "sse_state.js", "conversation_sessions.js",
+    "sse_handlers_a.js", "sse_handlers_b.js", "sse.js",
     "dialogs.js",
     "admin_settings.js",
     # commands_help.js (HELP_DATA) before the cmd_* group so /help's data
@@ -90,7 +93,7 @@ _JS_MODULES = [
     "resources_service_dialogs.js", "resources_service_login.js",
     "resources_service_templates.js",
     "services.js", "file_viewer.js", "file_explorer.js",
-    "tabs.js",
+    "tabs.js", "desktop_dock.js",
     # terminal.js = xterm engine; terminal_commands.js = /terminal,/code,
     # /desktop,/audio,/port-forward,/vm + agent-tmux handlers (load right after).
     # grab.js reuses terminal.js helpers (_terminalInputB64,
@@ -130,6 +133,7 @@ _CSS_MODULES: Tuple[str, ...] = (
     "90_tabs.css",            # tab bar, tab panels, desktop/audio tabs
     "92_workspace.css",       # single/tiled central workspace surfaces
     "95_action_dock.css",     # action menu + conversation dock
+    "96_desktop_dock.css",    # Active Desktops dock popover + stop confirmation
     "99_theme_bridge.css",    # --pf-* variable bridge (must stay last)
 )
 

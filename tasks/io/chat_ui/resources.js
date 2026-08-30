@@ -5,13 +5,19 @@
 // Canonical service lister. Pass a `serviceType` filter (e.g. 'llm',
 // 'tool_relay_service') to get a subset. This is the ONLY way the UI should
 // fetch services — never through agent/resource actions.
-function listServices$(serviceType, withView) {
+function listServices$(serviceType, withView, targetConversationId) {
   let payload = serviceType ? { service_type: serviceType } : {};
-  if (typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+  const hasExplicitConversation = arguments.length >= 3;
+  const scopedConversationId = hasExplicitConversation
+    ? String(targetConversationId || '')
+    : (typeof conversationId !== 'undefined' ? conversationId : '');
+  if (scopedConversationId) payload.conversation_id = scopedConversationId;
   // Only the Services PANEL opts into admin view-all; service pickers
   // (LLM dropdowns, relay selectors) must stay scoped to the caller.
   if (withView) payload = _withView(payload);
-  return action$('list_services', payload);
+  return action$('list_services', payload, {
+    skipConversationId: hasExplicitConversation && !scopedConversationId,
+  });
 }
 
 function notifyServiceConfigurationChanged() {

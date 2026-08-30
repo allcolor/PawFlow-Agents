@@ -2,24 +2,43 @@
 // Load order matters: see _JS_MODULES in tasks/io/serve_chat_ui.py.
 
 var _loadResourcesTimer = null;
-async function loadResources() {
+var _loadResourcesGeneration = 0;
+function _resourcesFocusedConversationId() {
+  if (typeof focusedConversationId === 'function') {
+    return String(focusedConversationId() || '');
+  }
+  return typeof conversationId !== 'undefined' ? String(conversationId || '') : '';
+}
+function _resourcesRequestIsCurrent(conversationId, generation) {
+  return generation === _loadResourcesGeneration
+    && conversationId === _resourcesFocusedConversationId();
+}
+async function loadResources(targetConversationId) {
+  const requestedConversationId = arguments.length
+    ? String(targetConversationId || '') : _resourcesFocusedConversationId();
+  const generation = ++_loadResourcesGeneration;
   // Debounce: coalesce rapid calls into one (300ms window)
   if (_loadResourcesTimer) clearTimeout(_loadResourcesTimer);
-  _loadResourcesTimer = setTimeout(_loadResourcesNow, 300);
+  _loadResourcesTimer = setTimeout(function() {
+    _loadResourcesNow(requestedConversationId, generation);
+  }, 300);
 }
-function _loadResourcesNow() {
+function _loadResourcesNow(requestedConversationId, generation) {
   _loadResourcesTimer = null;
+  if (!_resourcesRequestIsCurrent(requestedConversationId, generation)) return;
   // The panel is shown even with no conversation selected: _renderResourcesData
   // renders only the scope-independent sections (Flows, Services, Packages,
   // Variables, Secrets, Agent/Flows repositories) in that case. Only the
   // conversation-scoped data fetch is skipped below. (Previously this returned
   // early and hid the whole panel, so a user with no conversation — e.g. a
   // freshly-created/technical user — could never see it.)
-  var _noConv = !conversationId;
+  var _noConv = !requestedConversationId;
+  var actionOptions = _noConv ? { skipConversationId: true } : {};
   // Fetch resources and services in parallel — merge then render.
   var _resData = null, _svcData = null, _pfpUserData = null, _pfpConvData = null;
   function _tryRender() {
     if (_resData === null || _svcData === null || _pfpUserData === null || _pfpConvData === null) return;
+    if (!_resourcesRequestIsCurrent(requestedConversationId, generation)) return;
     var services = (_svcData.services || []).slice();
     var seenServices = new Set(services.map(s => (s.scope || '') + ':' + (s.service_id || '')));
     var summarizer = (_resData && _resData.summarizer) || {};
@@ -39,17 +58,28 @@ function _loadResourcesNow() {
     _lastResourcesData = merged;
     _renderResourcesFromSSE(merged);
   }
-  action$('list_resources', _withView({})).subscribe(d => { _resData = d || {}; _tryRender(); });
-  listServices$(null, true).subscribe(d => { _svcData = d || { services: [] }; _tryRender(); });
-  action$('pfp_list_installed', { scope: 'user', conversation_id: conversationId || '' }).subscribe(d => { _pfpUserData = d || { packages: [] }; _tryRender(); });
+  action$('list_resources', _withView({ conversation_id: requestedConversationId }), actionOptions)
+    .subscribe(d => { _resData = d || {}; _tryRender(); });
+  listServices$(null, true, requestedConversationId)
+    .subscribe(d => { _svcData = d || { services: [] }; _tryRender(); });
+  action$('pfp_list_installed', {
+    scope: 'user', conversation_id: requestedConversationId,
+  }, actionOptions).subscribe(d => { _pfpUserData = d || { packages: [] }; _tryRender(); });
   if (_noConv) {
     // No conversation → no conversation-scoped packages to fetch.
     _pfpConvData = { packages: [] };
   } else {
-    action$('pfp_list_installed', { scope: 'conversation', conversation_id: conversationId }).subscribe(d => { _pfpConvData = d || { packages: [] }; _tryRender(); });
+    action$('pfp_list_installed', {
+      scope: 'conversation', conversation_id: requestedConversationId,
+    }).subscribe(d => { _pfpConvData = d || { packages: [] }; _tryRender(); });
   }
   if (!window._cachedTools) {
-    action$('get_tool_schemas', {}).subscribe(data => _renderResourcesFromSSE(data));
+    action$('get_tool_schemas', { conversation_id: requestedConversationId }, actionOptions)
+      .subscribe(data => {
+        if (_resourcesRequestIsCurrent(requestedConversationId, generation)) {
+          _renderResourcesFromSSE(data);
+        }
+      });
   }
 }
 function _renderResourcesFromSSE(data) {

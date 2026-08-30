@@ -1958,9 +1958,11 @@ class TestAgentSSEStreamTask(_SSEConversationFixture):
     def test_chat_ui_sends_stable_sse_client_id(self):
         src = (Path(__file__).resolve().parents[1] / "tasks/io/chat_ui/sse.js").read_text()
         assert "function getSSEClientId()" in src
+        assert "function getConversationSSEClientId(cid)" in src
         assert "sessionStorage.getItem('pawflow_sse_client_id')" in src
+        assert "return getSSEClientId() + ':conv:'" in src
         assert "&client_id=" in src
-        assert "encodeURIComponent(getSSEClientId())" in src
+        assert "encodeURIComponent(getConversationSSEClientId(cid))" in src
 
     def test_query_string_fallback(self):
         from tasks.io.agent_sse_stream import AgentSSEStreamTask

@@ -259,13 +259,15 @@ function renderTypingLine(el, label, verb, pos, color) {
     + '</span>';
 }
 
-function startTypingSweep(elementId, label) {
+function startTypingSweep(elementOrId, label) {
+  const target = typeof elementOrId === 'string'
+    ? document.getElementById(elementOrId) : elementOrId;
   let pos = 0;
   let verb = randomVerb();
   let color = randomColor();
   let lastVerbAt = Date.now();
   const tick = () => {
-    const el = document.getElementById(elementId);
+    const el = target;
     if (!el) return;
     const now = Date.now();
     if (now - lastVerbAt >= TYPING_VERB_MS) {
@@ -292,7 +294,7 @@ function showTyping() {
   el.dataset.transientUi = '1';
   document.getElementById('messages').appendChild(el);
   scrollBottom();
-  typingInterval = startTypingSweep('typing', '');
+  typingInterval = startTypingSweep(el, '');
 }
 
 function hideTyping() {

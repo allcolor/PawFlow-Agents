@@ -17,24 +17,36 @@ function getSSEClientId() {
   return _sseClientId;
 }
 
+function getConversationSSEClientId(cid) {
+  var value = String(cid || '');
+  var hash = 2166136261;
+  for (var index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return getSSEClientId() + ':conv:' + (hash >>> 0).toString(36);
+}
+
 function connectSSE(cid, onReady, opts) {
-  if (eventSource) eventSource.close();
-  if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
-  _sseOnReadyCallback = onReady || null;
-  startActiveSync();
-  sseRetryCount = 0;  // reset so onopen doesn't think we're reconnecting
-  const token = getToken();
+  const session = ensureConversationSession(cid);
+  return withConversationSession(session, function() {
+    if (eventSource) eventSource.close();
+    if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+    _sseOnReadyCallback = onReady || null;
+    startActiveSync();
+    sseRetryCount = 0;  // reset so onopen doesn't think we're reconnecting
+    const token = getToken();
 
   // Fan-out every named SSE event to UI extensions. Wraps addEventListener
   // on the new EventSource only so extensions see all events without each
   // native listener having to call _pawflowExtRuntime explicitly.
   function _wrapSseForExtensions(es) {
-    if (!window._pawflowExtRuntime) return;
     var _orig = es.addEventListener.bind(es);
     es.addEventListener = function (type, listener, opts) {
-      function wrapped(e) {
+      var wrapped = _wrapConversationSessionCallback(session, function(e) {
         try { listener(e); }
         finally {
+          if (!window._pawflowExtRuntime) return;
           try {
             var data = null;
             if (e && typeof e.data === 'string' && e.data.length) {
@@ -49,7 +61,7 @@ function connectSSE(cid, onReady, opts) {
             }
           } catch (_ext) { /* never let an extension hook break SSE */ }
         }
-      }
+      });
       return _orig(type, wrapped, opts);
     };
   }
@@ -62,12 +74,14 @@ function connectSSE(cid, onReady, opts) {
   // A reload means reload, not replay.
   const _noReplay = !!(opts && opts.noReplay);
   const url = SSE_URL + '?conversation_id=' + encodeURIComponent(cid)
-    + '&client_id=' + encodeURIComponent(getSSEClientId())
+    + '&client_id=' + encodeURIComponent(getConversationSSEClientId(cid))
     + (token ? '&token=' + encodeURIComponent(token) : '')
     + (_noReplay ? '&replay=false' : '');
   _sseCreatedAt = Date.now();
-  eventSource = new EventSource(url);
-  _wrapSseForExtensions(eventSource);
+  const es = new EventSource(url);
+  eventSource = es;
+  session.eventSource = es;
+  _wrapSseForExtensions(es);
   // Reset per-connection SSE state (declared in sse_state.js) and wire
   // event handlers (registered in sse_handlers_*.js) onto this socket.
   _sseCid = cid;
@@ -83,19 +97,24 @@ function connectSSE(cid, onReady, opts) {
   if (typeof openspaceWireSSE === 'function') openspaceWireSSE(eventSource);
   // usage.updated listener for the conversation cost gauge (usage_cost.js)
   if (typeof _usageWireSSE === 'function') _usageWireSSE();
+  // desktop_inventory_changed listener for the Active Desktops dock (desktop_dock.js)
+  if (typeof _desktopDockWireSSE === 'function') _desktopDockWireSSE();
   let sseHadError = false;  // track any error on this EventSource
   let sseEverConnected = false;  // distinguish reconnects from initial connect hiccups
 
-  eventSource.onerror = (err) => {
-    const state = eventSource ? eventSource.readyState : EventSource.CLOSED;
+  es.onerror = _wrapConversationSessionCallback(session, (err) => {
+    const state = es.readyState;
     console.warn('[SSE] error, readyState:', state, err);
     sseHadError = true;
     document.getElementById('status').textContent = t('reconnecting');
     // Do not rely on the browser's opaque EventSource retry after the server
     // intentionally closes a long-lived stream. Own the reconnect so live
     // rendering stays on the SSE channel instead of falling back to polling.
-    if (eventSource) { try { eventSource.close(); } catch (_) {} }
-    eventSource = null;
+    try { es.close(); } catch (_) {}
+    if (session.eventSource === es) {
+      eventSource = null;
+      session.eventSource = null;
+    }
     // An expired/invalid session makes the events endpoint answer 401, but
     // EventSource exposes that only as an opaque onerror — so without this
     // probe the stream would back off forever behind a blank screen with no
@@ -103,15 +122,16 @@ function connectSSE(cid, onReady, opts) {
     // anything else (network blip, proxy idle-kill) → silent backoff.
     _probeSSEAuth(cid);
     _scheduleSSEReconnect(cid);
-  };
+  });
 
-  eventSource.onopen = () => {
+  es.onopen = _wrapConversationSessionCallback(session, () => {
     pawflowDebugLog('[SSE] connected for', cid, sseHadError ? '(reconnect)' : '(initial)');
     if (_sseOnReadyCallback) { _sseOnReadyCallback(); _sseOnReadyCallback = null; }
     const wasDisconnected = sseEverConnected && sseHadError;
     sseEverConnected = true;
     sseRetryCount = 0;
     sseHadError = false;
+    session.connectionState = 'connected';
     lastSSEActivity = Date.now();  // prime the watchdog
     // SSE health timer always on — protects paths that open a conversation
     // without explicitly arming the watchdog (direct URL, refresh).
@@ -125,45 +145,55 @@ function connectSSE(cid, onReady, opts) {
       // skip it entirely. Re-read the transcript tail and render the gap.
       if (typeof reconcileMissedMessages === 'function') reconcileMissedMessages();
     }
-  };
+  });
 
   // Server emits `sse_ping` alongside the comment keepalive every ~15s.
   // The comment form is invisible to JS (SSE spec), the typed ping lets
   // us watchdog a silently half-open socket where EventSource never fires
   // onerror (laptop sleep, NAT eviction, proxy idle-kill).
-  eventSource.addEventListener('sse_ping', () => {
+  es.addEventListener('sse_ping', () => {
     lastSSEActivity = Date.now();
   });
 
-  eventSource.addEventListener('sse_reconnect', (e) => {
+  es.addEventListener('sse_reconnect', (e) => {
     lastSSEActivity = Date.now();
     pawflowDebugLog('[SSE] server requested reconnect', e.data || '');
-    if (eventSource) { try { eventSource.close(); } catch (_) {} }
-    eventSource = null;
+    try { es.close(); } catch (_) {}
+    if (session.eventSource === es) {
+      eventSource = null;
+      session.eventSource = null;
+    }
     _scheduleSSEReconnect(cid);
+  });
+  return es;
   });
 }
 
 function _forceSSEReconnect(cid, opts) {
-  if (!cid || cid !== conversationId) return;
-  if (eventSource) { try { eventSource.close(); } catch (_) {} }
-  eventSource = null;
-  lastSSEActivity = 0;
-  if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+  const session = getConversationSession(cid);
+  if (!session) return;
+  withConversationSession(session, function() {
+    if (eventSource) { try { eventSource.close(); } catch (_) {} }
+    eventSource = null;
+    session.eventSource = null;
+    lastSSEActivity = 0;
+    if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+  });
   connectSSE(cid, null, opts || { noReplay: true });
 }
 
-function _waitForSSEOpen(timeoutMs) {
-  if (!eventSource) return Promise.resolve(false);
-  if (eventSource.readyState === EventSource.OPEN) return Promise.resolve(true);
-  const es = eventSource;
+function _waitForSSEOpen(timeoutMs, session) {
+  const es = session ? session.eventSource : eventSource;
+  if (!es) return Promise.resolve(false);
+  if (es.readyState === EventSource.OPEN) return Promise.resolve(true);
   return new Promise(resolve => {
     let done = false;
     const finish = ok => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      resolve(!!ok && es === eventSource && eventSource.readyState === EventSource.OPEN);
+      const current = session ? session.eventSource : eventSource;
+      resolve(!!ok && es === current && current.readyState === EventSource.OPEN);
     };
     const timer = setTimeout(() => finish(false), timeoutMs || 2000);
     es.addEventListener('open', () => finish(true), { once: true });
@@ -171,16 +201,20 @@ function _waitForSSEOpen(timeoutMs) {
   });
 }
 
-function _ensureSSEBeforeUserAction() {
-  if (!conversationId) return Promise.resolve(false);
-  if (_sseIsHealthy()) return Promise.resolve(true);
-  if (eventSource && eventSource.readyState === EventSource.CONNECTING
-      && Date.now() - _sseCreatedAt < 3000) {
-    return _waitForSSEOpen(2000);
-  }
-  console.warn('[SSE] user action while stream is stale — reconnecting before send');
-  _forceSSEReconnect(conversationId, {});
-  return _waitForSSEOpen(2000);
+function _ensureSSEBeforeUserAction(targetConversationId) {
+  const session = getConversationSession(targetConversationId)
+    || captureConversationSession();
+  if (!session) return Promise.resolve(false);
+  return withConversationSession(session, function() {
+    if (_sseIsHealthy()) return Promise.resolve(true);
+    if (eventSource && eventSource.readyState === EventSource.CONNECTING
+        && Date.now() - _sseCreatedAt < 3000) {
+      return _waitForSSEOpen(2000, session);
+    }
+    console.warn('[SSE] user action while stream is stale — reconnecting before send');
+    _forceSSEReconnect(session.conversationId, {});
+    return _waitForSSEOpen(2000, session);
+  });
 }
 
 // SSE liveness watchdog. Pings arrive every ~15s; if we haven't seen one
@@ -190,13 +224,16 @@ var _sseWatchdogTimer = null;
 function _startSSEWatchdog() {
   if (_sseWatchdogTimer) clearInterval(_sseWatchdogTimer);
   _sseWatchdogTimer = setInterval(() => {
-    if (!eventSource || !conversationId) return;
-    if (!lastSSEActivity) return;  // not yet connected
-    const silentFor = Date.now() - lastSSEActivity;
-    if (silentFor > 45000) {
-      console.warn('[SSE] watchdog: no activity for', silentFor, 'ms — forcing reconnect');
-      _forceSSEReconnect(conversationId, { noReplay: true });
-    }
+    _conversationSessions.forEach(session => {
+      withConversationSession(session, function() {
+        if (!eventSource || !lastSSEActivity) return;
+        const silentFor = Date.now() - lastSSEActivity;
+        if (silentFor > 45000) {
+          console.warn('[SSE] watchdog: no activity for', silentFor, 'ms — forcing reconnect');
+          _forceSSEReconnect(session.conversationId, { noReplay: true });
+        }
+      });
+    });
   }, 10000);
 }
 _startSSEWatchdog();
@@ -256,7 +293,9 @@ function _checkServerRestart(data) {
   if (typeof _reconnectUIActionSSE === 'function') {
     try { _reconnectUIActionSSE(); } catch (_) {}
   }
-  _forceSSEReconnect(conversationId, { noReplay: true });
+  _conversationSessions.forEach(function(session) {
+    _forceSSEReconnect(session.conversationId, { noReplay: true });
+  });
 }
 
 // One-shot session-expiry handler. A confirmed 401/403 on the events stream
@@ -269,7 +308,7 @@ function _handleSessionExpired() {
   if (_sseSessionExpired) return;
   _sseSessionExpired = true;
   if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
-  if (eventSource) { try { eventSource.close(); } catch (_) {} eventSource = null; }
+  if (typeof closeAllConversationSessions === 'function') closeAllConversationSessions();
   try { document.getElementById('status').textContent = t('sessionExpired'); } catch (_) {}
   try { addMsg('error', t('sessionExpired')); } catch (_) {}
   var _dest = (typeof LOGIN_URL !== 'undefined' && LOGIN_URL) ? LOGIN_URL : '/auth/login';
@@ -316,17 +355,19 @@ function _probeSSEAuth(cid) {
 
 function _scheduleSSEReconnect(cid) {
   if (_sseSessionExpired) return;  // re-auth in progress — stop retrying
+  const session = getConversationSession(cid);
+  if (!session) return;
   if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
   // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 60s
   const delay = Math.min(1000 * Math.pow(2, sseRetryCount), 60000);
   sseRetryCount++;
   pawflowDebugLog('[SSE] reconnecting in', delay, 'ms (attempt', sseRetryCount, ')');
-  sseReconnectTimer = setTimeout(() => {
+  sseReconnectTimer = setTimeout(_wrapConversationSessionCallback(session, () => {
     sseReconnectTimer = null;
     if (_sseSessionExpired) return;  // re-auth in progress — stop retrying
-    if (!cid || cid !== conversationId) return;  // conversation changed, skip
+    if (getConversationSession(cid) !== session) return;
     connectSSE(cid);
-  }, delay);
+  }), delay);
 }
 
 // ── Idle-safe SSE reconnection ─────────────────────────────────────
@@ -337,20 +378,22 @@ function _sseIsHealthy() {
 }
 
 function startSSEHealthTimer() {
+  const session = captureConversationSession();
+  if (!session) return;
   stopSSEHealthTimer();
-  sseHealthTimer = setInterval(() => {
-    if (!conversationId) return;
+  sseHealthTimer = setInterval(_wrapConversationSessionCallback(session, () => {
+    if (!session.conversationId) return;
     if (typeof document !== 'undefined' && document.hidden && _sseIsHealthy()) return;
     if (_sseIsHealthy()) return;
-    _forceSSEReconnect(conversationId, { noReplay: true });
-  }, 15000);
+    _forceSSEReconnect(session.conversationId, { noReplay: true });
+  }), 15000);
   // Resource refresh is a fallback hydration path, not a hot idle loop.
   if (!resourcesTimer) {
-    resourcesTimer = setInterval(() => {
-      if (!conversationId) return;
+    resourcesTimer = setInterval(_wrapConversationSessionCallback(session, () => {
+      if (!session.conversationId) return;
       if (typeof document !== 'undefined' && document.hidden) return;
-      loadResources();
-    }, 120000);
+      if (isFocusedConversationSession(session)) loadResources(session.conversationId);
+    }), 120000);
   }
 }
 function stopSSEHealthTimer() {

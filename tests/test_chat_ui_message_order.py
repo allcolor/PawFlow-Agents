@@ -61,8 +61,8 @@ def test_add_msg_inserts_by_message_timestamp():
 
 def test_send_ignores_technical_ack_body():
     ack_block = ATTACHMENTS_JS[
-        ATTACHMENTS_JS.index("// If streaming mode"):
-        ATTACHMENTS_JS.index("// Non-streaming mode")]
+        ATTACHMENTS_JS.index("// Streaming responses continue through this session's SSE."):
+        ATTACHMENTS_JS.index("const nsExtra")]
     assert "data.status === 'accepted'" in ack_block
     assert "data.status === 'queued'" in ack_block
     assert "preempted" not in ack_block
@@ -76,7 +76,10 @@ def test_chat_bootstrap_auto_resumes_first_conversation_after_login():
     assert "resumeConv(convs[0].conversation_id);" in FILE_EXPLORER_JS
     assert "action$('load_history', { conversation_id: cid" in CONVERSATIONS_JS
     assert "connectSSE(cid, () => startSSEHealthTimer(), { noReplay: true });" in CONVERSATIONS_JS
-    assert CONVERSATIONS_JS.index("action$('load_history', { conversation_id: cid") < CONVERSATIONS_JS.index("connectSSE(cid")
+    load_session = CONVERSATIONS_JS[
+        CONVERSATIONS_JS.index("function loadConversationSession"):
+        CONVERSATIONS_JS.index("function refreshCurrentConversation")]
+    assert load_session.index("action$('load_history', {") < load_session.index("connectSSE(cid")
 
 
 def test_notifications_do_not_enter_message_ordering():
@@ -342,11 +345,12 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
     assert "_autoScroll = false" in MESSAGES_JS
     assert "Date.now() > _suppressTopLoadUntil" in MESSAGES_JS
     assert "scrollMessagesTop();document.getElementById('input').focus()" in TEMPLATE_HTML
-    assert "m.addEventListener('wheel', markUserScrollIntent" in MESSAGES_JS
-    assert "m.addEventListener('pointerdown'" in MESSAGES_JS
+    assert "function installMessagesRootHandlers(m, session)" in MESSAGES_JS
+    assert "m.addEventListener('wheel', bind(markUserScrollIntent)" in MESSAGES_JS
+    assert "m.addEventListener('pointerdown', bind(" in MESSAGES_JS
     assert "isScrollbarPointerEvent(e)" in MESSAGES_JS
-    assert "m.addEventListener('touchstart', markUserScrollIntent" in MESSAGES_JS
-    assert "m.addEventListener('keydown'" in MESSAGES_JS
+    assert "m.addEventListener('touchstart', bind(markUserScrollIntent)" in MESSAGES_JS
+    assert "m.addEventListener('keydown', bind(" in MESSAGES_JS
     assert "hasUserScrollIntent()" in MESSAGES_JS
     assert "m.scrollTop < _lastScrollTop" not in MESSAGES_JS
     assert "container.scrollTop = container.scrollHeight - prevHeight" not in CONVERSATIONS_JS
@@ -553,6 +557,21 @@ def test_delegate_thinking_chunks_split_after_delegate_non_thinking_events():
     assert "te.text += data.thinking || '';" in delegate_block
     assert "finalizeDelegateThinking(data.task_id)" in delegate_block
     assert "for (const k in delegateThinkingElements) delete delegateThinkingElements[k];" in SSE_JS
+
+
+def test_delegate_frames_stay_task_scoped_and_technical_in_simplified_view():
+    render = Path("tasks/io/chat_ui/messages_render.js").read_text(
+        encoding="utf-8")
+    turn_view = Path("tasks/io/chat_ui/turn_view.js").read_text(
+        encoding="utf-8")
+
+    assert "function _delegateFrameForSource(source, root)" in render
+    assert "root.querySelectorAll('.delegate-shared')" in render
+    assert "frame.dataset.delegateTaskId === taskId" in render
+    assert "_insertMessageChronologically(_body, _inner" in render
+    assert "return _existing;" in render
+    assert "|| _rowSrc.type === 'agent_delegate'" in render
+    assert "if (source.type === 'agent_delegate') kind = 'sub_agent_trace';" in turn_view
 
 
 def test_task_subconv_messages_publish_live_events_on_parent_conversation():
@@ -774,7 +793,7 @@ def test_reconnect_refetches_the_transcript_tail_to_close_the_gap():
     assert "if (typeof reconcileMissedMessages === 'function') reconcileMissedMessages();" in SSE_JS
     reconnect_block = SSE_JS[
         SSE_JS.index("const wasDisconnected = sseEverConnected && sseHadError;"):
-        SSE_JS.index("eventSource.addEventListener('sse_ping'")]
+        SSE_JS.index("es.addEventListener('sse_ping'")]
     assert "reconcileMissedMessages()" in reconnect_block
     recon = CONVERSATIONS_JS[
         CONVERSATIONS_JS.index("function reconcileMissedMessages()"):

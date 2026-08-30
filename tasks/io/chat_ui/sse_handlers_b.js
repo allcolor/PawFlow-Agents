@@ -143,7 +143,7 @@ function _sseWireB() {
     // authoritative poll. The guard below protects a newer local turn from
     // optimistic cleanup; it must not also suppress server reconciliation.
     if (typeof syncActiveFromServer === 'function') {
-      setTimeout(() => syncActiveFromServer(true), 250);
+      setTimeout(captureConversationSessionCallback(() => syncActiveFromServer(true)), 250);
     }
     if (!isAgentTerminalCurrent(agentName, '', terminalTurnId)) return;
     if (typeof turnViewFail === 'function') turnViewFail(data.turn_id || data.request_msg_id, 'stopped');
@@ -168,8 +168,8 @@ function _sseWireB() {
     // Keep the forced reconciliation reachable even when turn-id drift makes
     // the local terminal guard reject this hint. list_active remains truth.
     if (!data.continuing && typeof syncActiveFromServer === 'function') {
-      setTimeout(() => syncActiveFromServer(true), 250);
-      setTimeout(() => syncActiveFromServer(true), 1500);
+      setTimeout(captureConversationSessionCallback(() => syncActiveFromServer(true)), 250);
+      setTimeout(captureConversationSessionCallback(() => syncActiveFromServer(true)), 1500);
     }
     if (!isAgentTerminalCurrent(doneAgent, data.task_id || '', terminalTurnId)) return;
     // Task done: finalize task block
@@ -394,6 +394,13 @@ function _sseWireB() {
     const cid = data.conversation_id || conversationId;
     const title = data.title || '';
     if (!title) return;
+    if (typeof updateConversationSessionTitle === 'function') {
+      updateConversationSessionTitle(cid, title);
+    }
+    [window._ownConvs || [], window._sharedConvs || []].forEach(rows => {
+      const row = rows.find(item => item && item.conversation_id === cid);
+      if (row) row.title = title;
+    });
     // Update sidebar entry in-place without full reload
     const convEl = document.querySelector('.conv-item[data-cid="' + cid + '"] .conv-preview');
     if (convEl) {
@@ -572,8 +579,8 @@ function _sseWireB() {
     // normal done path. Reconcile against process-backed list_active even when
     // turn-id drift makes the optimistic error cleanup unsafe.
     if (typeof syncActiveFromServer === 'function') {
-      setTimeout(() => syncActiveFromServer(true), 250);
-      setTimeout(() => syncActiveFromServer(true), 1500);
+      setTimeout(captureConversationSessionCallback(() => syncActiveFromServer(true)), 250);
+      setTimeout(captureConversationSessionCallback(() => syncActiveFromServer(true)), 1500);
     }
     if (errAgent && !isAgentTerminalCurrent(errAgent, '', terminalTurnId)) return;
     if (typeof turnViewFail === 'function') turnViewFail(data.turn_id || data.request_msg_id, 'error', data.message || '');

@@ -370,9 +370,12 @@ def test_action_bus_starts_work_only_on_subscription():
     start fetch/tracking, otherwise stale "actions in progress" badges remain
     until the SSE status sync clears them."""
     body = _extract_function_body(_RXBUS_JS, "action$")
-    assert "return defer(() => {" in body
-    assert body.index("return defer(() => {") < body.index("_trackPendingAction(")
-    assert body.index("return defer(() => {") < body.index("fetch(_uiUrl")
+    assert "const observable = defer(() => {" in body
+    assert body.index("const observable = defer(() => {") < body.index(
+        "_trackPendingAction(")
+    assert body.index("const observable = defer(() => {") < body.index(
+        "fetch(_uiUrl")
+    assert "bindObservableToConversationSession(observable, actionSession)" in body
 
 
 def test_pending_ui_actions_have_an_sse_independent_status_watchdog():

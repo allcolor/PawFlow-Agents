@@ -383,6 +383,11 @@ async function send() {
   // Nothing else in this function applies: no slash commands, no attachments,
   // and no local echo (the UserPromptSubmit hook files the message).
   if (typeof grabActive === 'function' && grabActive()) { grabSend(); return; }
+
+  const sendSession = captureConversationSession();
+  const sendConversationId = sendSession ? sendSession.conversationId : conversationId;
+  const runInSendSession = callback => sendSession
+    ? withConversationSession(sendSession, callback) : callback();
   let text = input.value.trim();
   if (!text && pendingFiles.length === 0) return;
 
@@ -398,6 +403,12 @@ async function send() {
     if (_bsPayload && _bsPayload.cancel === true) return;
   }
 
+  const submittedInputValue = input.value;
+  const filteredTargetAgent = typeof activeFilteredViewTargetAgent === 'function'
+    ? activeFilteredViewTargetAgent() : '';
+  const targetAgent = filteredTargetAgent || selectedAgent || '';
+  const ttlVal = parseInt(document.getElementById('ttlSelect').value, 10);
+
   // Save to message history (before slash command intercept so commands are in history too)
   if (text) {
     messageHistory.unshift(text);
@@ -407,79 +418,96 @@ async function send() {
   historyIndex = -1;
   savedDraft = '';
 
-  // Intercept slash commands
+  // Intercept slash commands. A command can await an extension, so only clear
+  // the shared composer if this conversation is still focused afterwards.
   if (text.startsWith('/')) {
     const handled = await handleSlashCommand(text);
-    if (handled) { input.value = ''; input.style.height = ''; input.focus(); return; }
-  }
-
-
-  // Capture and clear attachments
-  // Wait for any uploads still in progress
-  if (pendingFiles.some(f => f.uploading)) {
-    addMsg('system', t('filesStillUploading'));
-    return;
-  }
-  const attachments = pendingFiles.map(f => ({
-    filename: f.filename, mime_type: f.mime_type, file_id: f.file_id,
-  }));
-  const attachmentsForDisplay = [...pendingFiles];
-  pendingFiles = [];
-  renderAttachments();
-
-  // Allow stacking: don't block on 'sending', just track pending count
-  if (typeof _ensureSSEBeforeUserAction === 'function') await _ensureSSEBeforeUserAction();
-  sending = true;
-  document.getElementById('status').textContent = t('sending');
-  input.value = '';
-  // Empty composer goes back to its stylesheet size — clearing the
-  // inline height beats 'auto', which mobile keyboards can re-measure
-  // against a stale scrollHeight and leave the box tall after a send.
-  input.style.height = '';
-
-  // Generate msg_id client-side so dedup works across SSE + replay
-  const userMsgId = (crypto.randomUUID ? crypto.randomUUID() : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16))).replace(/-/g, '').slice(0, 12);
-
-  // Show user message with target badge (all messages explicitly show who they go to)
-  const filteredTargetAgent = typeof activeFilteredViewTargetAgent === 'function'
-    ? activeFilteredViewTargetAgent() : '';
-  const targetAgent = filteredTargetAgent || selectedAgent || '';
-  const userSource = { type: 'user', name: '', target_agent: targetAgent };
-  const msgEl = addMsg('user', text || '', { source: userSource, msg_id: userMsgId });
-  if (typeof turnViewRegisterUser === 'function') {
-    turnViewRegisterUser({ source: userSource, msg_id: userMsgId, turn_id: userMsgId }, msgEl);
-  }
-  if (attachmentsForDisplay.length > 0) {
-    msgEl.innerHTML = sourceBadge(userSource) + escapeHtml(text || '') + renderUserAttachments(attachmentsForDisplay);
-  }
-  // Openspace mirrors the composer directly: the sender's own message
-  // never comes back on the SSE stream.
-  if (typeof openspaceUserMessage === 'function') {
-    openspaceUserMessage(text || '', attachmentsForDisplay, targetAgent, userMsgId);
-  }
-  scrollBottom(true);  // Force scroll when user sends
-  // Finalize all active streaming elements so the user message
-  // appears BELOW them (not interleaved above ongoing text)
-  for (const key of Object.keys(streams)) {
-    const s = streams[key];
-    if (s && s.el) {
-      s.el.classList.add('finalized');
-      s.el.dataset.finalizedAgent = key;
-      s.lastEl = s.el;
-      s.el = null; s.text = '';
+    if (handled) {
+      if ((!sendSession || isFocusedConversationSession(sendSession))
+          && input.value === submittedInputValue) {
+        input.value = '';
+        input.style.height = '';
+        input.focus();
+      }
+      return;
     }
   }
-  try {
+
+  const prepared = runInSendSession(() => {
+    // Capture and clear only the attachments owned by the initiating session.
+    if (pendingFiles.some(f => f.uploading)) {
+      addMsg('system', t('filesStillUploading'));
+      return null;
+    }
+    const attachments = pendingFiles.map(f => ({
+      filename: f.filename, mime_type: f.mime_type, file_id: f.file_id,
+    }));
+    const attachmentsForDisplay = [...pendingFiles];
+    pendingFiles = [];
+    if (!sendSession || isFocusedConversationSession(sendSession)) renderAttachments();
+
+    // Allow stacking: don't block on sending, only track this session.
+    sending = true;
+    document.getElementById('status').textContent = t('sending');
+    if ((!sendSession || isFocusedConversationSession(sendSession))
+        && input.value === submittedInputValue) {
+      input.value = '';
+      // Empty composer goes back to its stylesheet size — clearing the
+      // inline height avoids stale mobile-keyboard measurements.
+      input.style.height = '';
+    }
+
+    // Generate msg_id client-side so dedup works across SSE + replay.
+    const userMsgId = (crypto.randomUUID ? crypto.randomUUID() : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16))).replace(/-/g, '').slice(0, 12);
+    const userSource = { type: 'user', name: '', target_agent: targetAgent };
+    const msgEl = addMsg('user', text || '', { source: userSource, msg_id: userMsgId });
+    if (typeof turnViewRegisterUser === 'function') {
+      turnViewRegisterUser({ source: userSource, msg_id: userMsgId, turn_id: userMsgId }, msgEl);
+    }
+    if (attachmentsForDisplay.length > 0) {
+      msgEl.innerHTML = sourceBadge(userSource) + escapeHtml(text || '')
+        + renderUserAttachments(attachmentsForDisplay);
+    }
+    // Openspace mirrors the composer directly: the sender's own message
+    // never comes back on the SSE stream.
+    if (typeof openspaceUserMessage === 'function') {
+      openspaceUserMessage(text || '', attachmentsForDisplay, targetAgent, userMsgId);
+    }
+    scrollBottom(true);
+
+    // Finalize all active streaming elements so the user message appears below
+    // them instead of being interleaved into an earlier stream.
+    for (const key of Object.keys(streams)) {
+      const stream = streams[key];
+      if (stream && stream.el) {
+        stream.el.classList.add('finalized');
+        stream.el.dataset.finalizedAgent = key;
+        stream.lastEl = stream.el;
+        stream.el = null;
+        stream.text = '';
+      }
+    }
+
     const body = { message: text, target_agent: targetAgent, msg_id: userMsgId };
-    if (conversationId) body.conversation_id = conversationId;
+    if (sendConversationId) body.conversation_id = sendConversationId;
     if (attachments.length > 0) body.attachments = attachments;
     if (pendingAgent) { body.pending_agent = pendingAgent; pendingAgent = null; }
-    if (_replyTo) { body.reply_to = _replyTo; cancelReply(); }
-    const ttlVal = parseInt(document.getElementById('ttlSelect').value, 10);
+    if (_replyTo) {
+      body.reply_to = _replyTo;
+      if (!sendSession || isFocusedConversationSession(sendSession)) cancelReply();
+      else _replyTo = null;
+    }
     if (ttlVal > 0) body.ttl = ttlVal;
+    return { body: body };
+  });
+  if (!prepared) return;
 
+  try {
     let resp;
-    const jsonBody = JSON.stringify(body);
+    const jsonBody = JSON.stringify(prepared.body);
+    if (typeof _ensureSSEBeforeUserAction === 'function') {
+      await _ensureSSEBeforeUserAction(sendConversationId);
+    }
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         resp = await fetch(API, {
@@ -489,85 +517,91 @@ async function send() {
           credentials: 'same-origin',
           redirect: 'manual',
         });
-        break;  // success
+        break;
       } catch (fetchErr) {
         if (attempt < 2) {
-          console.warn('Fetch attempt ' + (attempt+1) + ' failed, retrying...', fetchErr);
-          await new Promise(r => setTimeout(r, 500));
+          console.warn('Fetch attempt ' + (attempt + 1) + ' failed, retrying...', fetchErr);
+          await new Promise(resolve => setTimeout(resolve, 500));
         } else {
           throw fetchErr;
         }
       }
     }
 
-    // Session expired → 401 JSON or opaque redirect (302 to OAuth)
+    // Session expired → 401 JSON or opaque redirect (302 to OAuth).
     if (resp.type === 'opaqueredirect' || resp.status === 401 || resp.status === 403) {
       if (LOGIN_URL) { window.location.href = LOGIN_URL; return; }
-      addMsg('error', t('sessionExpired'));
-      sending = false;
-      document.getElementById('status').textContent = t('ready');
+      runInSendSession(() => {
+        addMsg('error', t('sessionExpired'));
+        sending = false;
+        document.getElementById('status').textContent = t('ready');
+      });
       return;
     }
 
     if (!resp.ok) {
       const errText = await resp.text();
-      addMsg('error', t('httpErrorWithStatus', { status: resp.status, error: errText }));
-      sending = false;
-      document.getElementById('status').textContent = t('error');
+      runInSendSession(() => {
+        addMsg('error', t('httpErrorWithStatus', { status: resp.status, error: errText }));
+        sending = false;
+        document.getElementById('status').textContent = t('error');
+      });
       return;
     }
 
     const data = await resp.json();
     if (typeof _checkServerRestart === 'function') _checkServerRestart(data);
-    const cid = data.conversation_id || conversationId;
-    if (cid && cid !== conversationId) {
-      conversationId = cid;
-      // Sync message count/offset from server to prevent load-more overlap.
-      if (typeof _noteLiveHistoryAppend === 'function') {
-        _noteLiveHistoryAppend(data.message_count, 1);
-      } else {
-        serverMsgCount = data.message_count || 1;
+    return runInSendSession(() => {
+      const cid = data.conversation_id || sendConversationId;
+      if (!sendSession && cid && cid !== conversationId) {
+        conversationId = cid;
+        if (typeof _noteLiveHistoryAppend === 'function') {
+          _noteLiveHistoryAppend(data.message_count, 1);
+        } else {
+          serverMsgCount = data.message_count || 1;
+        }
+        connectSSE(cid);
+        startSSEHealthTimer();
+        updateDeleteBtn();
+        loadConversations();
       }
-      connectSSE(cid);  // Start/reconnect SSE for this conversation
-      startSSEHealthTimer();
-      updateDeleteBtn();
-      loadConversations();  // Show new conversation in sidebar immediately
-    }
 
-    // If streaming mode: events come via SSE, don't show response here
-    if (data.status === 'accepted') {
-      if (typeof _noteLiveHistoryAppend === 'function') {
-        _noteLiveHistoryAppend(data.message_count, 1);
-      } else if (data.message_count) serverMsgCount = data.message_count;
-      document.getElementById('status').textContent = t('thinking');
-      // SSE will handle the rest
-      return;
-    }
+      // Streaming responses continue through this session's SSE.
+      if (data.status === 'accepted') {
+        if (typeof _noteLiveHistoryAppend === 'function') {
+          _noteLiveHistoryAppend(data.message_count, 1);
+        } else if (data.message_count) {
+          serverMsgCount = data.message_count;
+        }
+        document.getElementById('status').textContent = t('thinking');
+        return;
+      }
 
-    // Message queued — agent is busy, message will be picked up at next checkpoint
-    if (data.status === 'queued') {
-      if (typeof _noteLiveHistoryAppend === 'function') {
-        _noteLiveHistoryAppend(data.message_count, 1);
-      } else if (data.message_count) serverMsgCount = data.message_count;
+      // Queued messages are persisted and picked up at the next checkpoint.
+      if (data.status === 'queued') {
+        if (typeof _noteLiveHistoryAppend === 'function') {
+          _noteLiveHistoryAppend(data.message_count, 1);
+        } else if (data.message_count) {
+          serverMsgCount = data.message_count;
+        }
+        sending = false;
+        return;
+      }
+
+      const nsExtra = data.source ? { source: data.source } : undefined;
+      addMsg('assistant', data.response || data.content || JSON.stringify(data), nsExtra);
       sending = false;
-      // Agent is already working — the message is persisted and will be injected
-      return;
-    }
-
-    // Non-streaming mode: show response directly
-    conversationId = data.conversation_id || conversationId;
-    const nsExtra = data.source ? { source: data.source } : undefined;
-    addMsg('assistant', data.response || data.content || JSON.stringify(data), nsExtra);
-    sending = false;
-    document.getElementById('status').textContent = t('ready');
-    loadConversations();
-    loadResources();
-
-  } catch (e) {
-    console.error('send() failed:', e);
-    addMsg('error', t('connError', {msg: e.message + ' (check console)'}));
-    sending = false;
-    document.getElementById('status').textContent = t('error');
+      document.getElementById('status').textContent = t('ready');
+      loadConversations();
+      loadResources(sendConversationId);
+    });
+  } catch (error) {
+    console.error('send() failed:', error);
+    runInSendSession(() => {
+      addMsg('error', t('connError', { msg: error.message + ' (check console)' }));
+      sending = false;
+      document.getElementById('status').textContent = t('error');
+    });
   }
 }
 

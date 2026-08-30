@@ -1,4 +1,4 @@
-/* Conversation workspace: single surface or horizontally extensible tile board. */
+/* Conversation workspace: one horizontally extensible board for layouts 1-6. */
 .workspace-shell {
   flex: 1 1 auto;
   min-width: 0;
@@ -82,13 +82,32 @@
   font-size: 11px;
   user-select: none;
 }
-.workspace-surface-title {
+.workspace-surface-identity {
   flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  overflow: hidden;
+}
+.workspace-surface-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
+}
+.workspace-surface-conversation {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pf-muted);
+  font-size: 10px;
+}
+.workspace-surface-conversation::before {
+  content: '\00b7';
+  margin-right: 7px;
 }
 .workspace-surface-actions {
   display: inline-flex;
@@ -134,25 +153,34 @@
   background: #0f0f23;
 }
 .workspace-tiled .workspace-scroller {
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
   scroll-snap-type: x proximity;
   scroll-behavior: smooth;
 }
+.workspace-tiled .workspace-scroller.workspace-overflowing {
+  overflow-x: auto;
+}
 .workspace-tiled .workspace-board {
-  width: max-content;
+  width: 100%;
+  min-width: 100%;
   display: grid;
   grid-auto-flow: column;
   grid-template-rows: repeat(var(--workspace-rows), var(--workspace-tile-height));
   grid-auto-columns: var(--workspace-tile-width);
   gap: 8px;
   align-content: start;
-  padding: 0 8px 8px;
+  padding: 0;
+}
+.workspace-tiled .workspace-scroller.workspace-overflowing .workspace-board {
+  width: max-content;
 }
 .workspace-tiled .workspace-surface {
   display: flex !important;
   width: var(--workspace-tile-width);
   height: var(--workspace-tile-height);
+  box-sizing: border-box;
+  flex: 0 0 auto;
   flex-direction: column;
   border: 1px solid var(--pf-border);
   border-radius: 7px;
@@ -209,9 +237,6 @@
   }
   .workspace-target-hint {
     max-width: 42vw;
-  }
-  .workspace-tiled .workspace-board {
-    padding-inline: 5px;
   }
   .workspace-tiled .workspace-surface {
     scroll-snap-align: center;

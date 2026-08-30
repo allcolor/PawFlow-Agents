@@ -53,6 +53,9 @@ function renderConvList(convs) {
   const list = document.getElementById('convList');
   list.innerHTML = '';
   const shared = window._sharedConvs || [];
+  if (typeof syncConversationSessionTitles === 'function') {
+    syncConversationSessionTitles(convs.concat(shared));
+  }
   if (convs.length === 0 && shared.length === 0) {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:#6c6c8a;font-size:13px;">' + escapeHtml(t('noConversationsHint')) + '</div>';
     if (!conversationId) _setInputEnabled(false);
@@ -65,7 +68,9 @@ function renderConvList(convs) {
   }
   for (const c of convs) {
     const el = document.createElement('div');
-    el.className = 'conv-item' + (c.conversation_id === conversationId ? ' active' : '');
+    el.className = 'conv-item' + (c.conversation_id === conversationId ? ' active' : '')
+      + (typeof workspaceConversationIsOpen === 'function'
+        && workspaceConversationIsOpen(c.conversation_id) ? ' workspace-open' : '');
     el.dataset.cid = c.conversation_id;
     const title = c.title || c.preview || t('newConversation');
     const date = new Date(c.updated_at * 1000);
@@ -82,7 +87,7 @@ function renderConvList(convs) {
       + statusDot + '<span class="conv-title">' + escapeHtml(title) + '</span>' + branchBadge + encBadge + '</div>'
       + '<div class="conv-meta">' + escapeHtml(t('contextMessages', { n: c.message_count })) + ' \u00b7 ' + timeStr + '</div>'
       + '<button class="conv-delete" title="' + escapeHtml(t('delete')) + '" onclick="deleteConv(event,\'' + c.conversation_id + '\')">\u00d7</button>';
-    el.onclick = () => resumeConv(c.conversation_id);
+    el.onclick = () => openWorkspaceConversation(c.conversation_id, { title: title });
     el.oncontextmenu = (function(cid, status) { return function(ev) { ev.preventDefault(); showConvMenu(ev, cid, status); }; })(c.conversation_id, runtimeStatus);
     list.appendChild(el);
   }
@@ -104,7 +109,8 @@ function renameConvInline(e, cid) {
   e.stopPropagation();
   const previewEl = e.target.closest('.conv-preview');
   if (!previewEl) return;
-  const currentTitle = previewEl.textContent.trim();
+  const titleEl = previewEl.querySelector('.conv-title');
+  const currentTitle = (titleEl ? titleEl.textContent : previewEl.textContent).trim();
   const input = document.createElement('input');
   input.type = 'text';
   input.value = currentTitle;
@@ -113,15 +119,45 @@ function renameConvInline(e, cid) {
   previewEl.appendChild(input);
   input.focus();
   input.select();
+  let finished = false;
   const finish = () => {
+    if (finished) return;
+    finished = true;
     const newTitle = input.value.trim();
     if (newTitle && newTitle !== currentTitle) {
-      fireAction('set_conv_title', { conversation_id: cid, title: newTitle });
+      if (typeof updateConversationSessionTitle === 'function') {
+        updateConversationSessionTitle(cid, newTitle);
+      }
+      action$('set_conv_title', { conversation_id: cid, title: newTitle }).subscribe({
+        next: data => {
+          if (data && data.error) {
+            if (typeof updateConversationSessionTitle === 'function') {
+              updateConversationSessionTitle(cid, currentTitle);
+            }
+            addMsg('error', data.error);
+            return;
+          }
+          if (data && data.title && typeof updateConversationSessionTitle === 'function') {
+            updateConversationSessionTitle(cid, data.title);
+          }
+        },
+        error: error => {
+          if (typeof updateConversationSessionTitle === 'function') {
+            updateConversationSessionTitle(cid, currentTitle);
+          }
+          addMsg('error', error.message);
+        },
+        complete: loadConversations,
+      });
+      return;
     }
     loadConversations();
   };
   input.onblur = finish;
-  input.onkeydown = (ev) => { if (ev.key === 'Enter') finish(); if (ev.key === 'Escape') loadConversations(); };
+  input.onkeydown = (ev) => {
+    if (ev.key === 'Enter') finish();
+    if (ev.key === 'Escape') { finished = true; loadConversations(); }
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -175,7 +211,6 @@ function _clearConvState() {
   var _sendBtn = document.getElementById('sendBtn');
   if (_sendBtn) _sendBtn.disabled = false;
   if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
-  if (typeof window._taskTabsReset === 'function') window._taskTabsReset();
   if (typeof activeInteractions !== 'undefined') {
     for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
     if (typeof updateActivePanel === 'function') updateActivePanel();
@@ -371,52 +406,54 @@ function updateTechnicalGroupingToggle(enabled) {
 // SSE event whose msg_id matches an already-rendered message is
 // correctly deduped, and brand-new msg_ids render fresh.
 function resumeConv(cid, force) {
-  if (!cid) { renderEmptyState(); return; }
-  if (cid === conversationId && !force) return;
-  document.getElementById('status').textContent = t('loading');
+  if (!cid) { renderEmptyState(); return null; }
+  return openWorkspaceConversation(cid, { force: !!force });
+}
 
-  var _prevCid = conversationId;
-  // 1. CLEAR -- DOM empty, every conv-scoped global reset, SSE closed.
-  _clearConvState();
-  conversationId = cid;
-  if (typeof refreshAppearanceContext === 'function') refreshAppearanceContext();
-  _setInputEnabled(true);
-  highlightConv(cid);
-  updateDeleteBtn();
-  if (window._pawflowExtRuntime) {
-    window._pawflowExtRuntime.fireHook('conversation_changed', {
-      oldCid: _prevCid || null, newCid: cid, force: !!force,
-    });
-  }
-  if (typeof loadUiSurfaces === 'function') {
-    loadUiSurfaces(cid);
-  }
+function loadConversationSession(session, force) {
+  if (!session) return;
+  if (session.loading && !force) return;
+  var cid = session.conversationId;
+  var generation = ++session.loadGeneration;
+  session.loading = true;
+  withConversationSession(session, function() {
+    document.getElementById('status').textContent = t('loading');
+    var previousCid = conversationId;
+    _clearConvState();
+    conversationId = cid;
+    if (typeof refreshAppearanceContext === 'function') refreshAppearanceContext();
+    _setInputEnabled(true);
+    highlightConv(cid);
+    updateDeleteBtn();
+    if (window._pawflowExtRuntime) {
+      window._pawflowExtRuntime.fireHook('conversation_changed', {
+        oldCid: previousCid || null, newCid: cid, force: !!force,
+      });
+    }
+    if (typeof loadUiSurfaces === 'function') loadUiSurfaces(cid);
+    _showConvLoadingPlaceholder();
 
-  // Visible loading state in the (now empty) message area. load_history
-  // results arrive via the /api/ui task slot + UI-action SSE bus; if that
-  // slot is busy (e.g. first post-restart request while the backend loads
-  // services / spawns the relay), the response can take tens of seconds.
-  // Without this the chat is a silent blank during that wait.
-  _showConvLoadingPlaceholder();
-
-  // 2. LOAD histo(50). No SSE is open yet: nothing can pollute
-  //    _seenMsgIds before render.
-  action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
-    .subscribe(data => {
-      // Stale guard: a late response from a prior switch (rapid A->B
-      // click) must not render into the current conv's DOM.
-      if (cid !== conversationId) return;
-      // 3. DISPLAY.
+    action$('load_history', {
+      conversation_id: cid, limit: displayWindow, offset: 0,
+    }).subscribe(data => {
+      if (getConversationSession(cid) !== session
+          || generation !== session.loadGeneration) return;
+      session.loading = false;
+      if (data && data.error) {
+        session.connectionState = 'error';
+        _clearConvLoadingPlaceholder();
+        addMsg('error', data.error);
+        return;
+      }
       _renderHistory(data);
-      // 4. Hydrate context gauges from current agent contexts, then open SSE
-      //    for live future events. noReplay=true: we just refetched the
-      //    authoritative transcript from disk; buffered bus events would be
-      //    duplicates of what we already rendered.
+      session.loaded = true;
+      session.connectionState = 'connecting';
       if (typeof hydrateContextUsage === 'function') hydrateContextUsage();
       if (typeof hydrateUsageCost === 'function') hydrateUsageCost();
       if (typeof hydrateConfirmations === 'function') hydrateConfirmations();
       connectSSE(cid, () => startSSEHealthTimer(), { noReplay: true });
     });
+  });
 }
 
 function refreshCurrentConversation() {
@@ -467,6 +504,7 @@ function _getHistTaskBlock(taskId, iteration, agentName) {
     + ' <span style="margin-left:auto;font-size:11px;color:#888">\u2714 done</span>';
   details.appendChild(summary);
   const content = document.createElement('div');
+  content.className = 'task-block-body';
   content.style.cssText = 'padding:4px 12px 8px;max-height:60vh;overflow-y:auto;';
   details.appendChild(content);
   document.getElementById('messages').appendChild(details);

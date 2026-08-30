@@ -45,7 +45,7 @@ html[data-pf-atmosphere="on"] .ctx-menu {
   -webkit-backdrop-filter: blur(14px) saturate(120%);
   backdrop-filter: blur(14px) saturate(120%);
 }
-html[data-pf-atmosphere="on"] #tabContentChat.workspace-surface.tab-content {
+html[data-pf-atmosphere="on"] .conversation-workspace-surface.workspace-surface.tab-content {
   background: transparent !important;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;

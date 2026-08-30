@@ -1,8 +1,8 @@
 // ── Global app state ──
 // These are shared across all JS modules via the global scope.
-const _seenMsgIds = new Set();  // dedup msg_ids across SSE + replay
-const _liveCountedMsgIds = new Set();  // msg_ids already counted into currentOffset from SSE
-const _selectedMsgIds = new Set();  // multiselect for batch delete
+let _seenMsgIds = new Set();  // dedup msg_ids across SSE + replay, per conversation session
+let _liveCountedMsgIds = new Set();  // msg_ids already counted into currentOffset from SSE
+let _selectedMsgIds = new Set();  // multiselect for batch delete, per conversation session
 let conversationId = null;
 let sending = false;
 
@@ -239,7 +239,8 @@ if (LOGIN_URL) {
 }
 function beginOAuthAccountLink() {
   if (!confirm('You will be signed out, then asked to sign in with the account to link. Continue?')) return;
-  if (eventSource) { eventSource.close(); eventSource = null; }
+  if (typeof closeAllConversationSessions === 'function') closeAllConversationSessions();
+  else if (eventSource) { eventSource.close(); eventSource = null; }
   const _uiUrl = API.replace(/\/api\/agent$/, '/api/ui');
   fetch(_uiUrl, {
     method: 'POST',
@@ -344,7 +345,8 @@ function showLinkedAccountsDialog() {
   loadLinks();
 }
 function doLogout() {
-  if (eventSource) { eventSource.close(); eventSource = null; }
+  if (typeof closeAllConversationSessions === 'function') closeAllConversationSessions();
+  else if (eventSource) { eventSource.close(); eventSource = null; }
   fetch(window.location.origin + '/auth/logout', { method: 'POST', credentials: 'same-origin' })
     .finally(() => { window.location.href = '/'; });
 }

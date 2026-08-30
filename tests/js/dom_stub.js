@@ -90,6 +90,10 @@ class Element {
     return node === documentElement;
   }
 
+  append(...nodes) {
+    for (const node of nodes) this.appendChild(node);
+  }
+
   appendChild(node) {
     // A fragment is a carrier: what gets inserted is its children, and the
     // fragment itself is left empty. The load-more path builds one per page.

@@ -192,7 +192,7 @@ CONVERSATION_PRELUDE = r"""
   let pendingAgent = null, selectedAgent = '', nicknameMap = {};
   let sseEverConnected = false, sseHadError = false, _expectingClear = false;
   let activeInteractions = {};
-  const _seenMsgIds = new Set(), _liveCountedMsgIds = new Set(), _selectedMsgIds = new Set();
+  let _seenMsgIds = new Set(), _liveCountedMsgIds = new Set(), _selectedMsgIds = new Set();
   window.PAWFLOW_GROUP_TECHNICAL_MESSAGES = false;
   window.PAWFLOW_GROUP_TASK_MESSAGES = false;
   window.PAWFLOW_GROUP_DELEGATE_MESSAGES = false;
@@ -250,7 +250,7 @@ def test_resume_gap_recovery_and_load_more_use_backend_cursor_units(tmp_path):
             const fn=typeof next==='function'?next:next.next; fn(pages.shift());
             if(next && next.complete) next.complete(); }}; }
           function connectSSE(){}
-        """, sources=["conversations.js"], test=r"""
+        """, sources=["conversation_sessions.js", "conversations.js"], test=r"""
           resumeConv('C');
           reconcileMissedMessages();
           const showingAfterGap=document.getElementById('loadMoreBanner').textContent;
@@ -289,17 +289,18 @@ def test_resume_a_b_a_hydrates_runtime_before_no_replay_sse(tmp_path):
           function turnViewSetRuntimeTurns(turns){ runtime=turns; sequence.push('runtime:'+conversationId); }
           function turnViewHydrateRuntimeTurns(){ sequence.push('hydrate:'+conversationId+':'+(runtime[0]?.turn_id||'')); }
           function connectSSE(cid,_cb,opts){ sequence.push('sse:'+cid+':'+(runtime[0]?.turn_id||'')+':'+opts.noReplay); }
-        """, sources=["conversations.js"], test=r"""
+        """, sources=["conversation_sessions.js", "conversations.js"], test=r"""
           resumeConv('A'); resumeConv('B'); resumeConv('A');
           return {sequence,calls,conversationId};
         """,
     )
-    assert value["calls"] == ["A", "B", "A"]
+    # Returning to A refocuses its live ConversationSession: the tile kept its
+    # transcript, runtime turns and SSE, so no third load or replay happens.
+    assert value["calls"] == ["A", "B"]
     assert value["conversationId"] == "A"
     assert value["sequence"] == [
         "runtime:A", "hydrate:A:A-turn", "sse:A:A-turn:true",
         "runtime:B", "hydrate:B:", "sse:B::true",
-        "runtime:A", "hydrate:A:A-turn", "sse:A:A-turn:true",
     ]
 
 

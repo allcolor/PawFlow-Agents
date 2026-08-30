@@ -97,7 +97,7 @@ const CONVERSATION_PRELUDE = `
   let pendingAgent = null, selectedAgent = '', nicknameMap = {};
   let sseEverConnected = false, sseHadError = false, _expectingClear = false;
   let activeInteractions = {};
-  const _seenMsgIds = new Set(), _liveCountedMsgIds = new Set(), _selectedMsgIds = new Set();
+  let _seenMsgIds = new Set(), _liveCountedMsgIds = new Set(), _selectedMsgIds = new Set();
   window.PAWFLOW_GROUP_TECHNICAL_MESSAGES = false;
   window.PAWFLOW_GROUP_TASK_MESSAGES = false;
   window.PAWFLOW_GROUP_DELEGATE_MESSAGES = false;
@@ -160,7 +160,7 @@ test('resume, gap recovery and load-more all page in backend cursor units', () =
       const fn=typeof next==='function'?next:next.next; fn(pages.shift());
       if(next && next.complete) next.complete(); }}; }
     function connectSSE(){}
-  `, ['conversations.js']);
+  `, ['conversation_sessions.js', 'conversations.js']);
 
   const value = e.run(`
     resumeConv('C');
@@ -216,7 +216,7 @@ test('two simplified load-more pages preserve order, live status, last message a
     function setMessagesScrollTop(value){
       scrollWrites.push(value); document.getElementById('messages').scrollTop=value;
     }
-  `, ['turn_view.js', 'conversations.js']);
+  `, ['turn_view.js', 'conversation_sessions.js', 'conversations.js']);
 
   const value = e.run(`
     const box=document.getElementById('messages');
@@ -285,19 +285,20 @@ test('A/B/A publishes and hydrates runtime turns before opening the stream', () 
     function turnViewSetRuntimeTurns(turns){ runtime=turns; sequence.push('runtime:'+conversationId); }
     function turnViewHydrateRuntimeTurns(){ sequence.push('hydrate:'+conversationId+':'+(runtime[0]?.turn_id||'')); }
     function connectSSE(cid,_cb,opts){ sequence.push('sse:'+cid+':'+(runtime[0]?.turn_id||'')+':'+opts.noReplay); }
-  `, ['conversations.js']);
+  `, ['conversation_sessions.js', 'conversations.js']);
 
   const value = e.run(`
     resumeConv('A'); resumeConv('B'); resumeConv('A');
     return {sequence,calls,conversationId};
   `);
 
-  jsonEq(value.calls, ['A', 'B', 'A']);
+  // Returning to A refocuses its live ConversationSession: the tile kept its
+  // transcript, runtime turns and SSE, so no third load or replay happens.
+  jsonEq(value.calls, ['A', 'B']);
   eq(value.conversationId, 'A');
   jsonEq(value.sequence, [
     'runtime:A', 'hydrate:A:A-turn', 'sse:A:A-turn:true',
     'runtime:B', 'hydrate:B:', 'sse:B::true',
-    'runtime:A', 'hydrate:A:A-turn', 'sse:A:A-turn:true',
   ]);
 });
 

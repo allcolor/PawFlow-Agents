@@ -339,9 +339,12 @@ let _autoScroll = true;
 let _suppressTopLoadUntil = 0;
 function isNearBottom() { return _autoScroll; }
 
-(function() {
-  const m = document.getElementById('messages');
+function installMessagesRootHandlers(m, session) {
   if (!m) return;
+  if (m.dataset && m.dataset.pawflowScrollHandlers === '1') return;
+  if (m.dataset) m.dataset.pawflowScrollHandlers = '1';
+  const bind = callback => session && typeof _wrapConversationSessionCallback === 'function'
+    ? _wrapConversationSessionCallback(session, callback) : callback;
   let userScrollIntentUntil = 0;
   let scrollbarDragActive = false;
 
@@ -363,32 +366,39 @@ function isNearBottom() { return _autoScroll; }
     return e.clientX >= rect.right - scrollbarWidth - 2;
   }
 
-  m.addEventListener('wheel', markUserScrollIntent, { passive: true });
-  m.addEventListener('touchstart', markUserScrollIntent, { passive: true });
-  m.addEventListener('pointerdown', (e) => {
+  m.addEventListener('wheel', bind(markUserScrollIntent), { passive: true });
+  m.addEventListener('touchstart', bind(markUserScrollIntent), { passive: true });
+  m.addEventListener('pointerdown', bind((e) => {
     if (isScrollbarPointerEvent(e)) {
       scrollbarDragActive = true;
       markUserScrollIntent();
     }
-  });
-  window.addEventListener('pointerup', () => {
+  }));
+  window.addEventListener('pointerup', bind(() => {
     if (scrollbarDragActive) markUserScrollIntent();
     scrollbarDragActive = false;
-  });
-  m.addEventListener('keydown', (e) => {
+  }));
+  m.addEventListener('keydown', bind((e) => {
     if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', 'Space'].includes(e.key)) {
       markUserScrollIntent();
     }
-  });
+  }));
 
-  m.addEventListener('scroll', () => {
+  m.addEventListener('scroll', bind(() => {
     if (atBottom()) {
       _autoScroll = true;
     } else if (hasUserScrollIntent()) {
       _autoScroll = false;
     }
-  });
-})();
+  }));
+  m.addEventListener('scroll', bind(updateScrollNav));
+  m.addEventListener('scroll', bind(function() {
+    if (m.scrollTop === 0 && Date.now() > _suppressTopLoadUntil
+        && hasMoreMessages && !loadingMore) {
+      loadMoreMessages();
+    }
+  }));
+}
 
 function setMessagesScrollTop(value) {
   const m = document.getElementById('messages');
@@ -430,13 +440,3 @@ function updateScrollNav() {
   // Show buttons when there's scrollable content and user is not at the bottom
   nav.classList.toggle('visible', hasScroll && !atBottom);
 }
-
-// Listen for scroll events on the messages container
-document.getElementById('messages').addEventListener('scroll', updateScrollNav);
-
-// Auto-load older messages when user scrolls to top
-document.getElementById('messages').addEventListener('scroll', function() {
-  if (this.scrollTop === 0 && Date.now() > _suppressTopLoadUntil && hasMoreMessages && !loadingMore) {
-    loadMoreMessages();
-  }
-});

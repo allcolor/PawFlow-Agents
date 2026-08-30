@@ -467,6 +467,9 @@ function showAgentMenu(e, name, scope, autoconv, runtimeKind) {
     item('\u{1F5C2} ' + t('workflowKanbanMenu'), () => showWorkflowKanban(name));
   }
   item('\u2699 ' + t('toolsMcpOverrideMenu'), () => _showToolMcpFilterDialog(name, 'agent'));
+  item('\u2197 ' + t('openFilteredView'), () => {
+    if (typeof openAgentView === 'function') openAgentView(name, '');
+  });
   item('\u25B6 ' + t('select'), () => {
     const result = cmdAgentSelect(name);
     if (result && typeof result.then === 'function') result.then(loadResources);

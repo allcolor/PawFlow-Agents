@@ -21,11 +21,11 @@ def test_sse_lifetime_reconnect_is_explicit_server_and_client_contract():
 
 
 def test_sse_onerror_owns_reconnect_instead_of_waiting_for_browser_retry():
-    handler_start = SSE_JS.index("eventSource.onerror = (err) => {")
-    handler_end = SSE_JS.index("eventSource.onopen = () => {", handler_start)
+    handler_start = SSE_JS.index("es.onerror = _wrapConversationSessionCallback(session, (err) => {")
+    handler_end = SSE_JS.index("es.onopen = _wrapConversationSessionCallback(session, () => {", handler_start)
     handler = SSE_JS[handler_start:handler_end]
 
-    assert "eventSource.close()" in handler
+    assert "es.close()" in handler
     assert "eventSource = null" in handler
     assert "_scheduleSSEReconnect(cid)" in handler
     assert "readyState === EventSource.CLOSED" not in handler
@@ -35,8 +35,8 @@ def test_sse_onerror_classifies_expired_session_for_reauth():
     # An expired session yields an opaque EventSource error; the handler must
     # probe the endpoint to distinguish 401 (→ re-auth) from a network blip
     # (→ silent backoff) instead of looping forever behind a blank screen.
-    handler_start = SSE_JS.index("eventSource.onerror = (err) => {")
-    handler_end = SSE_JS.index("eventSource.onopen = () => {", handler_start)
+    handler_start = SSE_JS.index("es.onerror = _wrapConversationSessionCallback(session, (err) => {")
+    handler_end = SSE_JS.index("es.onopen = _wrapConversationSessionCallback(session, () => {", handler_start)
     handler = SSE_JS[handler_start:handler_end]
     assert "_probeSSEAuth(cid)" in handler
 
@@ -64,7 +64,7 @@ def test_sse_reconnect_paths_never_poll_render_history():
     assert "_recoverConversation(" not in SSE_JS
     assert "function _forceSSEReconnect" in SSE_JS
     assert "connectSSE(cid);" in SSE_JS
-    assert "_forceSSEReconnect(conversationId, { noReplay: true });" in SSE_JS
+    assert "_forceSSEReconnect(session.conversationId, { noReplay: true });" in SSE_JS
 
 
 def test_server_restart_reloads_document_only_when_assets_changed():
@@ -88,13 +88,13 @@ def test_server_restart_reloads_document_only_when_assets_changed():
 def test_user_send_reconnects_stale_sse_without_spoofing_activity():
     assert "_ensureSSEBeforeUserAction" in ATTACHMENTS_JS
     assert "_ensureSSEBeforeUserAction" in CMD_AGENT_JS
-    assert "await _ensureSSEBeforeUserAction()" in ATTACHMENTS_JS
+    assert "await _ensureSSEBeforeUserAction(sendConversationId)" in ATTACHMENTS_JS
     assert "function _waitForSSEOpen" in SSE_JS
     ensure_block = SSE_JS[
         SSE_JS.index("function _ensureSSEBeforeUserAction"):
         SSE_JS.index("// SSE liveness watchdog")]
     assert "EventSource.CONNECTING" in ensure_block
-    assert "_forceSSEReconnect(conversationId, {});" in ensure_block
+    assert "_forceSSEReconnect(session.conversationId, {});" in ensure_block
     assert "{ noReplay: true }" not in ensure_block
     assert "lastSSEActivity = Date.now();" not in ATTACHMENTS_JS
     assert "lastSSEActivity = Date.now();" not in CMD_AGENT_JS

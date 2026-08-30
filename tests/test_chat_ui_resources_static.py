@@ -185,6 +185,16 @@ def test_agent_skills_dialog_surfaces_assign_errors():
     assert "addMsg('error', errors.join('\\n'))" in js
 
 
+def test_agent_context_menu_opens_filtered_view_even_when_agent_is_idle():
+    js = Path("tasks/io/chat_ui/resources_menus.js").read_text(
+        encoding="utf-8")
+    menu = js[js.index("function showAgentMenu"):
+              js.index("function _showSkillAssignDialog")]
+
+    assert "openAgentView(name, '')" in menu
+    assert "t('openFilteredView')" in menu
+
+
 def test_skill_list_uses_real_newlines_and_symbols():
     js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 
@@ -250,7 +260,7 @@ def test_typing_and_context_progress_use_their_dedicated_surfaces():
     assert "'█'" in js
     assert "raw.slice(0, idx) + '█' + raw.slice(idx + 1)" in js
     assert ".typing .verb { animation: none; }" in template
-    assert "typingInterval = startTypingSweep('typing', '')" in js
+    assert "typingInterval = startTypingSweep(el, '')" in js
     assert "showUiNotification(label" in js
     assert "key: 'context-operation'" in js
     assert "removeUiNotificationByKey('context-operation')" in js
@@ -432,11 +442,11 @@ def test_resource_panel_renders_with_no_conversation_selected():
     assert "style.display = 'none'; return; }" not in resources_js
     # The accordion header is always present without imperative display styles;
     # hydration stays independent from which outer block is active.
-    assert "var _noConv = !conversationId;" in resources_js
+    assert "var _noConv = !requestedConversationId;" in resources_js
     assert 'id="resourcesPanel" class="sidebar-section"' in template
     assert 'id="resourcesPanel" class="sidebar-section" style="display:none"' not in template
     assert "_panel.style.display = 'block'" not in resources_js
-    assert "{ scope: 'user', conversation_id: conversationId || '' }" in resources_js
+    assert "scope: 'user', conversation_id: requestedConversationId" in resources_js
     assert "if (_noConv) {" in resources_js
     # _renderResourcesData still detects the no-conv case to drop conv-scoped sections.
     assert "const noConv = !(typeof conversationId !== 'undefined' && conversationId);" in resources_js

@@ -30,6 +30,11 @@ function _tabIsSelected(tabId) {
     || (typeof workspaceSelectedTab === 'function' && workspaceSelectedTab() === tabId);
 }
 
+function _tabCloseSelection() {
+  return typeof workspaceSelectedTab === 'function'
+    ? (workspaceSelectedTab() || 'chat') : 'chat';
+}
+
 /** Switch to a tab by id. */
 function switchTab(tabId) {
   var _prevTab = _activeTab;
@@ -38,9 +43,8 @@ function switchTab(tabId) {
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tabId);
   });
-  // The workspace keeps every surface mounted. In single mode it exposes only
-  // the selected one; in tiled mode it selects and scrolls to the requested
-  // tile without hiding its neighbours.
+  // The workspace keeps every surface mounted. Every layout selects and scrolls
+  // to the requested tile without hiding or reconnecting its neighbours.
   if (typeof workspaceFocusSurface === 'function') {
     workspaceFocusSurface(tabId);
   } else {
@@ -150,8 +154,7 @@ function closeTerminalTab(tabId) {
   // Remove tab button
   const btn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
   if (btn) btn.remove();
-  // Switch to chat if this was the active tab
-  if (wasSelected) switchTab('chat');
+  if (wasSelected) switchTab(_tabCloseSelection());
 }
 
 /** Add a VSCode tab (one per relay). Returns the tab id. */
@@ -231,7 +234,7 @@ function closeVSCodeTab(tabId) {
   }
   const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
-  if (wasSelected) switchTab('chat');
+  if (wasSelected) switchTab(_tabCloseSelection());
 }
 
 /** Add a Desktop tab (one per relay, iframe to noVNC). */
@@ -317,7 +320,7 @@ function closeDesktopTab(tabId) {
   if (typeof audioDisconnect === 'function') audioDisconnect();
   const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
-  if (wasSelected) switchTab('chat');
+  if (wasSelected) switchTab(_tabCloseSelection());
 }
 
 /** Add an Audio-only tab (minimal controls, no VNC). */
@@ -387,7 +390,7 @@ function closeAudioTab(tabId) {
   }
   const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
-  if (wasSelected) switchTab('chat');
+  if (wasSelected) switchTab(_tabCloseSelection());
 }
 
 /** Whether the webchat is hosted by PawFlow's native Android WebView. */
@@ -509,7 +512,7 @@ function closeBrowserTab(tabId) {
   }
   const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
-  if (wasSelected) switchTab('chat');
+  if (wasSelected) switchTab(_tabCloseSelection());
 }
 
 function closeActionMenu() {

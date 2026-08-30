@@ -278,6 +278,23 @@ def test_desktop_actions_have_authorization_roles():
     assert _RELAY_ACTION_ROLES["desktop_stop_confirm"] == "write"
 
 
+@pytest.mark.parametrize("action", [
+    "desktop_list_active",
+    "desktop_stop_request",
+    "desktop_attach",
+    "desktop_stop_confirm",
+])
+def test_desktop_actions_require_conversation_context(action):
+    from tasks.ai.actions.service_flow import _authorize_relay_action
+
+    ff = FakeFlowFile()
+    result = _authorize_relay_action(action, {}, None, "u1", ff)
+
+    assert result == [ff]
+    assert ff.payload == {"error": "Missing conversation_id"}
+    assert ff.get_attribute("http.response.status") == "400"
+
+
 def test_invalid_mode_rejected():
     svc = FakeRelaySvc()
     _res, ff = _call("desktop_stop_request",

@@ -118,6 +118,16 @@ session. Authorization for these actions maps the plan's
 stop-request require `read`; attach and stop-confirm require `write`
 (`_RELAY_ACTION_ROLES` in `tasks/ai/actions/service_flow.py`).
 
+The four inventory/control actions require an explicit `conversation_id`.
+Missing identity is an HTTP 400 response, never a fallback to user/global relay
+visibility, so an authenticated caller cannot bypass the conversation role
+check by omitting the field. At the relay, Docker and host Desktop start,
+status, cleanup, and compare-and-stop operations share one re-entrant lifecycle
+lock per worker. Forwarded Relay Desktop host mode has the same lock on its
+host-helper instance, whose request connections otherwise run concurrently.
+This makes the session-ID comparison and the resulting stop atomic with respect
+to a concurrent restart while leaving non-Desktop relay commands parallel.
+
 ### Events that never stop a desktop
 
 Closing a noVNC tab, viewer count reaching zero, browser or SSE disconnect,

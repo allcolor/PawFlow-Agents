@@ -267,6 +267,11 @@ class _RelayHostHelperMixin:
         conn.sendall(resp.encode("utf-8"))
 
     def _host_start_local_desktop(self, req):
+        """Start or reuse the host Desktop as one atomic lifecycle command."""
+        with self._host_desktop_lifecycle_lock:
+            return self._host_start_local_desktop_locked(req)
+
+    def _host_start_local_desktop_locked(self, req):
         """Start VNC + websockify on the host to share the local screen."""
         import subprocess as _sp  # nosec B404
 
@@ -377,6 +382,11 @@ class _RelayHostHelperMixin:
                 "local_screen": True}
 
     def _host_stop_local_desktop(self, req=None):
+        """Compare and stop the host Desktop under the lifecycle lock."""
+        with self._host_desktop_lifecycle_lock:
+            return self._host_stop_local_desktop_locked(req)
+
+    def _host_stop_local_desktop_locked(self, req=None):
         # Compare-and-stop mirroring the relay contract: a stale
         # session_id must never stop a newer host desktop session.
         _wanted = (req or {}).get("session_id", "")

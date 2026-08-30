@@ -320,6 +320,12 @@ def desktop_is_healthy(state):
     return all(p.poll() is None for p in essential) and novnc_http_ready(state)
 
 def desktop_cleanup(state, reason=""):
+    """Stop and clear the Docker Desktop under the lifecycle lock."""
+    with state.desktop_lifecycle_lock:
+        return _desktop_cleanup_locked(state, reason)
+
+
+def _desktop_cleanup_locked(state, reason=""):
     stop = state.desktop_watchdog_stop
     if stop:
         stop.set()
@@ -364,7 +370,9 @@ def start_desktop_watchdog(state, procs):
             if state.desktop_procs is not procs:
                 return
             if not desktop_is_healthy(state):
-                desktop_cleanup(state, "healthcheck failed")
+                with state.desktop_lifecycle_lock:
+                    if state.desktop_procs is procs:
+                        _desktop_cleanup_locked(state, "healthcheck failed")
                 return
 
     t = threading.Thread(target=_watchdog, daemon=True, name="desktop-healthcheck")
@@ -373,6 +381,12 @@ def start_desktop_watchdog(state, procs):
 
 
 def start_desktop(state, msg):
+    """Start or reuse the Docker Desktop as one atomic lifecycle command."""
+    with state.desktop_lifecycle_lock:
+        return _start_desktop_locked(state, msg)
+
+
+def _start_desktop_locked(state, msg):
     # Idempotent: if already running, return existing info
     if state.desktop_procs:
         if desktop_is_healthy(state):
@@ -555,6 +569,12 @@ def start_desktop(state, msg):
 
 
 def stop_desktop(state, msg=None):
+    """Compare and stop atomically against the current Desktop session."""
+    with state.desktop_lifecycle_lock:
+        return _stop_desktop_locked(state, msg)
+
+
+def _stop_desktop_locked(state, msg=None):
     # Compare-and-stop: a request carrying a session_id stops ONLY that
     # session. A stale id gets a conflict so a confirmation raced by a
     # restart cannot stop the newer Desktop. Requests without session_id
@@ -576,6 +596,12 @@ def stop_desktop(state, msg=None):
 
 
 def desktop_status(state):
+    """Read and reconcile both Desktop modes under the lifecycle lock."""
+    with state.desktop_lifecycle_lock:
+        return _desktop_status_locked(state)
+
+
+def _desktop_status_locked(state):
     _running = desktop_is_healthy(state)
     if state.desktop_procs and not _running:
         desktop_cleanup(state, "healthcheck failed")
@@ -601,6 +627,12 @@ def desktop_status(state):
 
 
 def start_local_desktop(state, msg):
+    """Start or reuse the host Desktop as one atomic lifecycle command."""
+    with state.desktop_lifecycle_lock:
+        return _start_local_desktop_locked(state, msg)
+
+
+def _start_local_desktop_locked(state, msg):
     # Idempotent
     if state.local_desktop_procs:
         _alive = all(p.poll() is None for p in state.local_desktop_procs)
@@ -735,6 +767,12 @@ def start_local_desktop(state, msg):
 
 
 def stop_local_desktop(state, msg=None):
+    """Compare and stop the host Desktop under the lifecycle lock."""
+    with state.desktop_lifecycle_lock:
+        return _stop_local_desktop_locked(state, msg)
+
+
+def _stop_local_desktop_locked(state, msg=None):
     # Same compare-and-stop contract as stop_desktop: a stale session_id
     # answers a DATA conflict (transport strips error envelopes) and never
     # touches the newer session.

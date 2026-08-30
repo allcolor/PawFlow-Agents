@@ -30,6 +30,8 @@ class RelayWorkerState:
     desktop_started_at: Optional[float] = None
     desktop_watchdog_stop: Optional[threading.Event] = None
     desktop_watchdog_thread: Optional[threading.Thread] = None
+    desktop_lifecycle_lock: object = field(
+        default_factory=threading.RLock, repr=False)
     desktop_ws_sessions: Dict[str, dict] = field(default_factory=dict)
     desktop_audio_sessions: Dict[str, dict] = field(default_factory=dict)
     # Website Creator fixed-script Chromium sessions

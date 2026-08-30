@@ -1,5 +1,6 @@
 """AgentLoopTask actions  - service flow"""
 
+import json
 import logging
 
 from tasks.ai.actions._sf_base import (  # noqa: F401
@@ -102,6 +103,13 @@ _RELAY_ACTION_ROLES = {
     "desktop_stop_confirm": "write",
 }
 
+_CONVERSATION_REQUIRED_RELAY_ACTIONS = frozenset({
+    "desktop_list_active",
+    "desktop_stop_request",
+    "desktop_attach",
+    "desktop_stop_confirm",
+})
+
 
 def _request_conversation_id(body, flowfile):
     """The conversation a service_flow request names, body first.
@@ -122,6 +130,11 @@ def _authorize_relay_action(action, body, store, user_id, flowfile):
         return None
     conv_id = _request_conversation_id(body, flowfile)
     if not conv_id:
+        if action in _CONVERSATION_REQUIRED_RELAY_ACTIONS:
+            flowfile.set_content(json.dumps(
+                {"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         return None
     from tasks.ai.actions._conv_base import _authorize_conversation_action
     return _authorize_conversation_action(role, conv_id, user_id, store,

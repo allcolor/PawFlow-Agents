@@ -64,6 +64,7 @@ class RelayThread(_RelayDockerMixin, _RelayHostHelperMixin):
         self._registered = False
         self._docker_container = None
         self._host_bridge_proc = None
+        self._host_desktop_lifecycle_lock = threading.RLock()
         self._on_token_refresh = on_token_refresh
         # Lazily-opened log file handle for [Relay] lines when log_file
         # was configured. Writing to a file keeps pawflow_cli's UI clean

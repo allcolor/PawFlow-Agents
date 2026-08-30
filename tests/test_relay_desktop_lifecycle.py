@@ -7,6 +7,7 @@ State is a SimpleNamespace carrying the desktop_* fields the functions
 touch.
 """
 import base64
+import threading
 import types
 
 
@@ -18,6 +19,7 @@ def _state():
         desktop_procs=None, desktop_essential_procs=None,
         desktop_vnc_port=None, desktop_novnc_port=None, desktop_display=None,
         desktop_watchdog_stop=None, desktop_watchdog_thread=None,
+        desktop_lifecycle_lock=threading.RLock(),
         desktop_session_id=None, desktop_started_at=None,
         local_desktop_procs=None, local_desktop_vnc_port=None,
         local_desktop_novnc_port=None,
@@ -109,6 +111,46 @@ def test_desktop_cleanup_terminates_and_clears(monkeypatch):
     assert "DISPLAY" not in dt.os.environ
 
 
+def test_watchdog_never_cleans_a_replacement_session(monkeypatch):
+    st = _state()
+    old_procs = [FakeProc(True)]
+    replacement_procs = [FakeProc(True)]
+    st.desktop_procs = old_procs
+    st.desktop_essential_procs = old_procs
+    health_checked = threading.Event()
+    finish_health_check = threading.Event()
+
+    class ImmediateWatchdogTick:
+        def wait(self, _timeout):
+            return False
+
+        def set(self):
+            pass
+
+    def stale_unhealthy_check(_state):
+        health_checked.set()
+        assert finish_health_check.wait(2)
+        return False
+
+    monkeypatch.setattr(dt, "threading", types.SimpleNamespace(
+        Event=ImmediateWatchdogTick, Thread=threading.Thread))
+    monkeypatch.setattr(dt, "desktop_is_healthy", stale_unhealthy_check)
+
+    with st.desktop_lifecycle_lock:
+        dt.start_desktop_watchdog(st, old_procs)
+        assert health_checked.wait(1)
+        st.desktop_procs = replacement_procs
+        st.desktop_essential_procs = replacement_procs
+        st.desktop_session_id = "replacement-session"
+        finish_health_check.set()
+
+    st.desktop_watchdog_thread.join(2)
+    assert not st.desktop_watchdog_thread.is_alive()
+    assert st.desktop_procs is replacement_procs
+    assert st.desktop_session_id == "replacement-session"
+    assert replacement_procs[0].poll() is None
+
+
 def test_start_desktop_arg_invariants(monkeypatch, tmp_path):
     calls = []
 
@@ -163,6 +205,47 @@ def test_stop_desktop(monkeypatch):
     st.desktop_procs = [FakeProc(True)]
     monkeypatch.setattr(dt, "desktop_cleanup", lambda *a, **k: None)
     assert dt.stop_desktop(st) == {"ok": True}
+
+
+def test_desktop_lifecycle_commands_are_serialized(monkeypatch):
+    st = _state()
+    stop_entered = threading.Event()
+    allow_stop = threading.Event()
+    start_entered = threading.Event()
+    results = {}
+
+    def fake_stop(_state, _msg=None):
+        stop_entered.set()
+        assert allow_stop.wait(2)
+        _state.desktop_session_id = None
+        return {"ok": True}
+
+    def fake_start(_state, _msg):
+        start_entered.set()
+        _state.desktop_session_id = "new-session"
+        return {"ok": True, "data": {"session_id": "new-session"}}
+
+    monkeypatch.setattr(dt, "_stop_desktop_locked", fake_stop)
+    monkeypatch.setattr(dt, "_start_desktop_locked", fake_start)
+    stop_thread = threading.Thread(
+        target=lambda: results.setdefault("stop", dt.stop_desktop(
+            st, {"session_id": "old-session"})))
+    start_thread = threading.Thread(
+        target=lambda: results.setdefault("start", dt.start_desktop(st, {})))
+
+    stop_thread.start()
+    assert stop_entered.wait(1)
+    start_thread.start()
+    assert not start_entered.wait(0.1)
+    allow_stop.set()
+    stop_thread.join(2)
+    start_thread.join(2)
+
+    assert not stop_thread.is_alive() and not start_thread.is_alive()
+    assert start_entered.is_set()
+    assert st.desktop_session_id == "new-session"
+    assert results["stop"] == {"ok": True}
+    assert results["start"]["data"]["session_id"] == "new-session"
 
 
 def test_stop_local_desktop():
@@ -353,25 +436,58 @@ def test_stop_local_desktop_exact_session_stops():
 
 
 def test_host_helper_stop_compares_session():
-    from pawflow_relay import _thread_host
-    import types as _types
+    from pawflow_relay._thread_host import _RelayHostHelperMixin
 
-    fake = _types.SimpleNamespace(
-        _local_desktop_procs=[FakeProc(True)],
-        _local_desktop_session_id="host-current",
-        _local_desktop_started_at=1.0,
-        _log=lambda *_a: None)
-    stop = None
-    for _klass in vars(_thread_host).values():
-        if isinstance(_klass, type) and hasattr(
-                _klass, "_host_stop_local_desktop"):
-            stop = _klass._host_stop_local_desktop
-            break
-    assert stop is not None, "host helper stop method not found"
-    res = stop(fake, {"session_id": "host-old"})
+    fake = _RelayHostHelperMixin()
+    fake._host_desktop_lifecycle_lock = threading.RLock()
+    fake._local_desktop_procs = [FakeProc(True)]
+    fake._local_desktop_session_id = "host-current"
+    fake._local_desktop_started_at = 1.0
+    fake._log = lambda *_a: None
+    res = fake._host_stop_local_desktop({"session_id": "host-old"})
     assert res["conflict"] is True
     assert res["current_session_id"] == "host-current"
     assert fake._local_desktop_procs[0].terminated is False
-    ok = stop(fake, {"session_id": "host-current"})
+    ok = fake._host_stop_local_desktop({"session_id": "host-current"})
     assert ok == {"ok": True}
     assert fake._local_desktop_session_id is None
+
+
+def test_host_helper_desktop_lifecycle_commands_are_serialized(monkeypatch):
+    from pawflow_relay._thread_host import _RelayHostHelperMixin
+
+    helper = _RelayHostHelperMixin()
+    helper._host_desktop_lifecycle_lock = threading.RLock()
+    stop_entered = threading.Event()
+    allow_stop = threading.Event()
+    start_entered = threading.Event()
+
+    def fake_stop(_self, _req=None):
+        stop_entered.set()
+        assert allow_stop.wait(2)
+        return {"ok": True}
+
+    def fake_start(_self, _req):
+        start_entered.set()
+        return {"session_id": "new-host-session"}
+
+    monkeypatch.setattr(
+        _RelayHostHelperMixin, "_host_stop_local_desktop_locked", fake_stop)
+    monkeypatch.setattr(
+        _RelayHostHelperMixin, "_host_start_local_desktop_locked", fake_start)
+    stop_thread = threading.Thread(
+        target=lambda: helper._host_stop_local_desktop(
+            {"session_id": "old-host-session"}))
+    start_thread = threading.Thread(
+        target=lambda: helper._host_start_local_desktop({}))
+
+    stop_thread.start()
+    assert stop_entered.wait(1)
+    start_thread.start()
+    assert not start_entered.wait(0.1)
+    allow_stop.set()
+    stop_thread.join(2)
+    start_thread.join(2)
+
+    assert not stop_thread.is_alive() and not start_thread.is_alive()
+    assert start_entered.is_set()

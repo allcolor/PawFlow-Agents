@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Backend Desktop sessions now carry a stable session identity end to end
+  (relay, canonical inventory, typed service-flow actions), surfaced in Webchat
+  as an Active Desktops dock with backend-truth listing, reattach, and
+  exact-session stop confirmation, plus `/desktop list|status|attach|stop`
+  subcommands.
+- The Webchat workspace can now host several conversations at once: each tile
+  runs inside its own conversation session with scoped state, SSE client
+  identity, timers, and filtered views, so cross-conversation activity never
+  bleeds between tiles.
+- The server entrypoint and installer now provision the `pawflow` global flows
+  package by default.
+
+### Changed
+
+- Shared delegate request/reply frames now render as agent activity inside the
+  simplified Tool view with explicit agent identity, instead of appearing as
+  plain user/assistant rows.
+
+### Fixed
+
+- A superseded agent worker (for example a scheduled wake-up claiming the
+  session right after a user message) now stops silently through
+  `AgentSuperseded` control flow instead of emitting error, done, or cancelled
+  events; streaming-mode identity now includes the task id so parallel task
+  turns cannot collide.
+
 ## [1.0.0-beta.251] — 2026-08-29
 
 ### Changed

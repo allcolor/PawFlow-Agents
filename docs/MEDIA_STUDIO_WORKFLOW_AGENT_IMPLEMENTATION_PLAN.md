@@ -1,570 +1,584 @@
-# Media Studio Workflow Agent Implementation Plan
+# Media Studio Workflow Agent Evolution Plan
 
-Status: implementation complete; validation and authorized hotpatch pending
-Date: 2026-08-25
+Status: Media Studio 1.0.0 installed; production/review evolution 1.1 planned
+Date: 2026-08-30
 Owner: PawFlow core and first-party media packages
+Priority: P0 after the multi-conversation tiled workspace
 
-Implemented delivery:
+## 1. Reviewed verdict
 
-- immutable intent, brief, proposal, capability, ComfyUI revision,
-  provisioning, project/revision, and FFmpeg recipe contracts;
-- scoped append-only MediaProjectStore and deterministic service discovery,
-  filtering, scoring, alternatives, and stable rejection reasons;
-- exact-service image/video/audio/speech/clone execution plus safe shell-free
-  FFmpeg composition with durable provider-job replay boundaries;
-- durable grouped questions, scenario/voice approval, capability choice,
-  revision lineage, artifact QA, and typed terminal formatting;
-- the installable `pawflow.media-studio:1.0.0` package and exact
-  `pawflow.agents.media-studio:1.0.0` flow/agent resources with nine colored
-  English functional frames;
-- generalized immutable ComfyUI image/video/audio preset revisions and the
-  `pawflow.comfyui-operator:1.2.0` provisioning-validation contract.
+The installed Media Studio 1.0.0 has a solid secure generation foundation, but it
+is currently closer to a governed media-generation workflow than a complete
+production and review studio.
 
-Activation remains governed by the existing Workflow Agent rollout gate. This
-delivery does not introduce a separate Media Studio feature flag.
+It can classify, plan, select a deterministic capability, generate, store, and
+append revisions. It does not yet support the real production cycle observed on
+Tiles and Soup Palm: compare several attempts, approve per shot, regenerate only
+one element with continuity, assemble approved choices, and approve a reproducible
+master.
 
-## 1. Outcome
+This plan is an evolution of the existing backend, not a rewrite.
 
-Deliver one user-facing Media Studio Workflow Agent that understands multimedia requests, rejects unrelated work, discovers the actual PawFlow and ComfyUI capabilities available to the conversation, asks durable questions when material information is missing, proposes a creative scenario before composite or expensive production, generates or edits image, video, audio and speech, supports authorized voice cloning, performs deterministic post-production through FFmpeg, preserves every revision and artifact, and can safely evolve reviewed ComfyUI workflows, models, LoRAs and custom nodes.
+## 2. Installed baseline to preserve
 
-The agent is ComfyUI-first, not ComfyUI-only. It selects the best installed and configured media capability. ComfyUI presets, built-in PawFlow media services, PocketTTS or another voice provider, third-party audio services, and FFmpeg are peers behind one capability catalog.
+The 1.0 delivery includes:
 
-## 2. Architectural decisions
+- intent filtering before project, file, or service access;
+- immutable capability snapshots and deterministic selection;
+- durable forms and confirmations across reconnect;
+- exact service revision pinning;
+- idempotent fail-closed behavior and retention of old artifacts;
+- bounded multi-shot fan-out with at most four concurrent generations and a join;
+- FileStore as the exact deliverable source;
+- explicit voice-clone consent;
+- closed FFmpeg recipes without raw shell arguments;
+- append-only MediaProjectStore with parentage and optimistic concurrency;
+- image, video, audio, speech, clone, and composition adapters;
+- immutable ComfyUI preset revisions and reviewed provisioning proposals;
+- the installed pawflow.media-studio:1.0.0 package and
+  pawflow.agents.media-studio:1.0.0 workflow.
 
-1. Media Studio is one visible conversation agent with runtime kind agent_workflow.
-2. FlowDefinition remains the only executable workflow format.
-3. Creative briefs, storyboards and production proposals are versioned input artifacts, never an alternative executable plan format.
-4. Every agent turn is an isolated WorkflowRun pinned to an immutable flow version and service snapshot.
-5. Cross-turn creative continuity is stored in MediaProjectStore, not in model memory.
-6. Media bytes live only in FileStore or an explicitly selected relay filesystem. MediaProjectStore stores references and lineage, not duplicate bytes.
-7. Generation is idempotent at the PawFlow run boundary. Every provider submission has a stable key and a durable provider job reference before waiting.
-8. Existing installed and enabled services are preferred over provisioning new software when they satisfy the brief.
-9. ComfyUI workflows are reviewed API-format presets. The agent may create a new revision but never overwrite an active preset in place.
-10. Host mutation, model or LoRA download, custom-node installation and ComfyUI restart require a durable approved provisioning proposal.
-11. Voice cloning requires explicit durable confirmation that the user is authorized to use the reference voice.
-12. FFmpeg receives a closed typed recipe. The model never supplies a raw shell command or unrestricted filter expression.
-13. Every output is append-only. A modification creates a child MediaRevision and never destroys the parent.
-14. Every flow ships with an English functional presentation: named layout, colored frames, labels and descriptions.
-15. No commit, push, live flag activation or hotpatch is part of this implementation unless separately requested.
+These invariants remain mandatory in 1.1.
 
-## 3. Product model
+## 3. Verified live gaps
 
-### 3.1 Visible agent
+### 3.1 Revision resume is incomplete
 
-Resource name: media-studio
-Display name: Media Studio
-Flow FQN: pawflow.agents.media-studio:1.0.0
-Input port: media_request
-Terminal port: media_terminal
-Preempt policies: checkpoint and queue
+PrepareMediaIntent emits revision_selector, but LoadMediaProjectTask in
+tasks/ai/workflow/media_tasks.py loads only the current project. The selector is
+not consumed.
 
-The agent accepts:
+PrepareMediaBriefTask rebuilds context from the new message and new attachments.
+It does not inherit the selected parent brief, references, scenario, technical
+parameters, or artifacts.
 
-- image generation and editing;
-- video generation, animation, extension and editing;
-- audio generation, music and sound effects;
-- speech synthesis and authorized voice cloning;
-- subtitles, transcoding and FFmpeg composition;
-- multi-shot or multi-engine productions;
-- modification of an earlier project revision;
-- ComfyUI workflow, model, LoRA and custom-node evolution required by an accepted production.
+MediaProjectStore already has get_revision and list_revisions, but no workflow/UI
+handler exposes the complete revision operations.
 
-It rejects unrelated work before media services, files or project sources are accessed.
+Result: a request such as regenerate only shot 11 with exactly the same character
+requires the user to repeat context and often reattach references.
 
-### 3.2 Internal authority boundary
+### 3.2 Revise ends instead of looping
 
-The visible agent performs discovery, creative design, generation and composition with the exact effects declared by its flow.
+In the installed flow, scenario decision revise routes to format_result. An
+invalid artifact also routes to a terminal unavailable result. Both paths force a
+new message and new WorkflowRun.
 
-A privileged internal Process Group owns provisioning actions. It may execute only after a typed approval containing the exact sources, revisions, checksums, licenses, destinations, changes, expected restart and rollback notes. The user still interacts with one visible agent.
+Target behavior:
 
-### 3.3 Media project
+    scenario -> revise -> corrected brief/scenario -> approval
+    invalid QA -> diagnosis -> targeted correction -> QA
 
-A project is conversation-scoped and may later be promoted explicitly. It contains:
+Both loops are bounded. Creative approval remains human.
 
-- project UUID, title, user and conversation;
-- state revision for optimistic concurrency;
-- current revision ID;
-- append-only revisions;
-- named asset references;
-- created and updated UTC timestamps.
+### 3.3 The real ComfyUI job identity is lost
 
-A revision contains:
+Media Studio stores a synthetic sync:<internal job> reference and calls the
+handler synchronously. ComfyUIClient.run in services/_comfyui_client.py creates
+the real prompt_id immediately before blocking on history.
 
-- UUID and UTC timestamp;
-- parent revision ID;
-- root turn and WorkflowRun IDs;
-- original request;
-- normalized intent;
-- CreativeBrief;
-- approved MediaProductionProposal when required;
-- exact engine, service, preset, model and seed;
-- reference roles and FileStore IDs;
-- provider job IDs;
-- FFmpeg recipe when used;
-- output artifacts;
-- QA report;
-- status and supersession reason.
+If PawFlow restarts after submit, ComfyUI may finish, but Media Studio cannot
+retrieve the output. Replay correctly refuses duplicate submission and leaves the
+job submitted, but no recovery path exists.
 
-## 4. Versioned contracts
+The integration must split submit, durable wait, and retrieve and persist the
+real prompt_id before waiting.
 
-### 4.1 MediaIntent
+### 3.4 Current QA is reference validation, not media QA
+
+ValidateMediaArtifactTask verifies that an artifact exists and that file_id
+matches its FileStore URL. It does not verify decode, duration, dimensions, FPS,
+codecs, audio streams, clipping, loudness, transitions, synchronization,
+identity continuity, or content requirements.
+
+### 3.5 Multi-shot ShotSpec is too permissive
+
+The scenario requires only shot ID and duration. Fan-out uses shot.prompt when
+present and otherwise reuses the global prompt for every shot. Distinct shot
+intent and continuity are therefore not contractual.
+
+### 3.6 No variant review or editorial lock
+
+A generic immutable revision cannot express generation attempts A/B/C,
+per-candidate review, an approved artifact, editorial lock, supersession, and
+replacement independently.
+
+### 3.7 Montage is not an editorial manifest
+
+FFmpeg recipes describe execution, but the project does not retain a
+human-readable independent edit decision: shot order, exact files, trims,
+transitions, black frames, sound layers, subtitles, ducking, loudness, and master
+settings.
+
+### 3.8 Terminal result is too weak
+
+FormatMediaStudioResultTask returns a generic project/revision/artifact summary.
+The UI does not expose batch review, remaining decisions, per-shot QA,
+continuity, approved revision, edit manifest, or targeted actions.
+
+## 4. 1.1 outcome
+
+Deliver a production and review layer in the existing Media Studio:
+
+1. resume any authorized revision with complete inherited context;
+2. apply explicit localized deltas;
+3. submit, wait, and retrieve provider jobs durably;
+4. validate media with typed automatic QA;
+5. generate and compare bounded candidate sets;
+6. record human decisions and editorial locks per shot/segment;
+7. regenerate only rejected/unlocked elements;
+8. compile an explicit edit manifest through safe FFmpeg recipes;
+9. run master QA and final human approval;
+10. expose the entire state as a structured production board.
+
+## 5. Non-goals
+
+- Do not create a separate Media Studio application.
+- Do not build a Premiere-style timeline editor.
+- Do not expose raw ComfyUI graphs to ordinary users.
+- Do not let an LLM auto-approve aesthetic quality.
+- Do not automatically repeat an expensive generation after a warning.
+- Do not overwrite or delete rejected variants.
+- Do not require confirmation at every step.
+- Do not let Media Studio install or modify models/custom nodes automatically.
+- Do not copy AGPL OpenMontage code into the MIT core.
+
+## 6. Revised domain model
+
+### 6.1 MediaProject
+
+Add:
+
+- current_revision_id;
+- approved_revision_id;
+- active_edit_manifest_id;
+- final_master_artifact_id;
+- production status;
+- optimistic state_revision.
+
+Current and approved are distinct. Returning to a historical revision does not
+silently change the approved baseline.
+
+### 6.2 MediaRevisionV2
+
+Contains:
+
+- UUID/timestamp, parent, project, user, conversation, turn, and run IDs;
+- complete inherited context snapshot;
+- original request and normalized delta;
+- brief and proposal digests;
+- exact references and continuity anchors;
+- ShotSpec collection;
+- candidate/review/lock references;
+- job and artifact references;
+- QA reports;
+- edit manifest reference;
+- status and supersession.
+
+Revisions remain immutable.
+
+### 6.3 RevisionDeltaV1
 
 Required fields:
 
-- schema_version;
-- kind: unsupported, image, video, audio, speech, voice_clone, compose or composite;
-- operation;
-- confidence;
-- explanation;
-- requires_references;
-- requires_scenario;
-- missing_fields;
-- requested_project_id and revision selector.
+- base_revision_id;
+- change_scope: project, sequence, shot:<id>, audio, subtitles, transition, or
+  master;
+- change instructions;
+- keep anchors such as identity, wardrobe, voice, camera, palette, seed policy,
+  timing, or approved media;
+- replace references;
+- expected project state_revision;
+- reason and requesting turn.
 
-### 4.2 MediaReference
+The resolver produces a full inherited context plus an explicit delta report.
+Omitted fields inherit; explicit null/reset is typed and auditable.
 
-Required fields:
+### 6.4 ShotSpecV1
 
-- role;
-- file_id;
-- filename;
-- content_type;
-- source_message_id;
-- optional selected revision ID.
+Every produced shot requires:
 
-Allowed roles include subject_reference, style_reference, composition_reference, source_image, start_frame, end_frame, source_video, source_audio, voice_reference, music_bed, sound_effect and subtitle_source.
+- shot_id and objective;
+- prompt and negative constraints;
+- duration, framing, aspect, resolution, and expected output;
+- action, subject motion, camera movement, and dialogue;
+- references and the role of each;
+- identity, wardrobe, environment, palette, camera, and temporal continuity
+  anchors;
+- engine, service, preset, model, seed policy, and parameters;
+- dependency on previous/next shots;
+- acceptance criteria and QA profile;
+- candidate count and cost ceiling.
 
-### 4.3 CreativeBrief
+A missing prompt or acceptance contract is an error; global prompt fallback is
+removed.
 
-The brief preserves the original request and adds normalized medium, operation, prompt, refined prompt, negative prompt, style, composition, motion, timing, dimensions, aspect ratio, references, audio intent, delivery target, quality preference, local preference, budget ceiling and assumptions.
+### 6.5 MediaGenerationJobV1
 
-Prompt refinement never discards the original prompt. A user can require exact-prompt mode.
+Contains stable job ID, receipt/idempotency data, shot/candidate identity, exact
+service snapshot, provider, real provider reference, submitted/observed
+timestamps, state, retry safety, output selection, and failure projection.
 
-### 4.4 MediaProductionProposal
+States:
 
-A proposal is mandatory for multi-shot, multi-engine, composite, montage, costly or long-running work. It contains:
+    prepared -> submitted -> waiting -> available -> retrieved -> verified
+                                  -> unknown -> reconciled
+                         -> failed or cancelled
 
-- proposal UUID and UTC timestamp;
-- project and parent revision;
-- title and creative direction;
-- ordered shots or segments with duration and references;
-- narration, music and sound design;
-- post-production recipe;
-- proposed engines, services, presets and models;
-- missing assets;
-- estimated cost, duration and resource needs;
-- warnings and approvals;
-- proposal digest and state revision.
+Provider reference persistence is transactional before any wait.
 
-Approval choices are produce, revise and cancel. The exact approved digest is recorded on the resulting revision.
+### 6.6 MediaCandidateV1
 
-### 4.5 MediaCapability
+Separates a technical generation from an editorial candidate:
 
-A catalog entry declares:
+- candidate_id and label such as A, B, C;
+- shot/segment and generation job;
+- exact FileStore artifact;
+- automatic QA;
+- continuity report;
+- review state;
+- supersession/replacement;
+- created revision.
 
-- stable capability ID;
-- engine and service ID;
-- scope and exact service revision;
-- media kinds and operations;
-- accepted reference roles;
-- output content types;
-- preset and model identifiers;
-- quality, speed, local and privacy tags;
-- duration, dimension and count limits;
-- cost information when known;
-- required nodes, models, LoRAs and custom nodes;
-- availability and failure reason.
+### 6.7 ReviewDecisionV1 and EditorialLockV1
 
-### 4.6 FFmpegRecipe
+Review decisions are approved, changes_requested, or rejected and include actor,
+timestamp, comment, criteria, candidate, expected project generation, and
+decision digest.
 
-The V1 closed operation catalog is:
+An editorial lock identifies the approved candidate for a shot/segment, the
+decision that authorized it, and the revision in which it became active. Replacing
+a lock creates a new lock that supersedes the old one. It never mutates or deletes
+the old candidate.
 
-- probe;
-- trim;
-- concat;
-- resize;
-- crop;
-- pad;
-- transcode;
-- change_fps;
-- extract_frame;
-- extract_audio;
-- replace_audio;
-- mix_audio;
-- duck_audio;
-- normalize_loudness;
-- fade;
-- crossfade;
-- overlay_image;
-- overlay_text;
-- burn_subtitles;
-- loop_image_with_audio.
+### 6.8 EditManifestV1
 
-Paths, protocols, codecs, dimensions, durations, gains and collection sizes are validated. No shell, command, script, arbitrary arguments or unrestricted filter graph is accepted.
+The manifest is the readable editorial decision, independent of FFmpeg argv:
 
-## 5. Capability discovery and selection
+- ordered approved shots with exact FileStore IDs and digests;
+- trims, speed, transforms, and transitions;
+- black frames and exact durations;
+- voice, music, SFX, ambience, and subtitle tracks;
+- time positions and channel mapping;
+- ducking rules, loudness target, and true-peak ceiling;
+- master resolution, FPS, codecs, bitrate/quality, color, and audio settings;
+- expected duration and hash;
+- source project/revision/lock digests.
 
-MediaCapabilityCatalog builds a bounded snapshot from:
+FFmpegRecipe is compiled from this manifest. Arbitrary filter graphs remain
+forbidden.
 
-1. visible enabled service definitions;
-2. ComfyUI media presets and their declared bindings;
-3. live ComfyUI readiness and object inventory when requested;
-4. PocketTTS and other speech or voice-clone providers;
-5. generic image, video and audio generation services;
-6. FFmpeg availability and codecs on the selected relay;
-7. user and conversation preferences.
+### 6.9 Typed QA reports
 
-Selection is deterministic:
+MediaQAReportV1 records profile, artifact, probe data, checks, severity, result,
+diagnostics, correction eligibility, and evidence artifacts.
 
-1. filter by requested kind and operation;
-2. require compatible references and output;
-3. enforce hard duration, dimension, budget and privacy constraints;
-4. require live availability;
-5. score explicit user model or preset;
-6. score local-first, quality, speed and cost preferences;
-7. select a unique dominant candidate;
-8. request a user choice when alternatives imply a material trade-off.
+Profiles:
 
-The result includes reason codes and rejected-candidate reason codes. LLM prose never decides authorization or availability.
+- image: decode, dimensions, orientation, colorspace, alpha;
+- video: ffprobe, full decode, frame count, duration, FPS, codecs, dimensions,
+  color, audio presence, frozen/black-frame bounds;
+- audio: decode, duration, channels, sample rate, integrated loudness, true peak,
+  clipping, silence bounds;
+- montage: expected/actual timeline, transition contact sheets, join boundaries,
+  subtitle bounds, A/V synchronization;
+- multi-shot: contact sheet per shot and continuity report;
+- human review: approved, changes_requested, rejected, and comment.
 
-## 6. Questions and scenarios
+Semantic/aesthetic model observations are advisory. Only humans approve creative
+quality.
 
-Questions use the canonical typed interaction store and durable wait. The agent asks only for missing information that changes feasibility, cost or creative intent.
+## 7. Revision operations
 
-Typical fields:
+Add scoped workflow/UI handlers:
 
-- target media or composite intent;
-- required references and their roles;
-- duration;
-- aspect ratio and target platform;
-- fidelity versus style freedom;
-- speed versus quality;
-- local versus remote provider;
-- model choice when trade-offs are meaningful;
-- language, voice and clone authorization;
-- budget.
+- list_media_revisions;
+- get_media_revision;
+- compare_media_revisions;
+- fork_media_revision;
+- return_to_media_revision;
+- set_approved_media_revision;
+- load_revision_context.
 
-Related fields are grouped into one form.
+Return selects a historical snapshot as the current working base by creating a
+new child pointer revision; it never mutates history. Fork creates a child with a
+new delta. Compare reports structural and artifact differences.
 
-Simple one-shot work can execute from safe defaults. Composite work must produce and receive approval for a MediaProductionProposal before provider submission.
+Every mutation requires authenticated identity, project scope, expected
+state_revision, and an idempotency key.
 
-## 7. ComfyUI control plane
+## 8. Durable provider boundary
 
-### 7.1 Generalized media presets
+Replace synchronous generation with three workflow-safe tasks:
 
-The ComfyUI integration accepts image, video and audio media kinds. A preset declares operations, bindings, output node/key/index/content types, capabilities, limits and required inventory.
+### submitMediaGeneration
 
-Existing image and video service definitions remain resolvable during migration, but normalize into the same MediaCapability representation.
+- validates frozen ShotSpec and service snapshot;
+- creates/resolves MediaGenerationJobV1;
+- prepares an effect receipt;
+- calls a submit-only provider method;
+- persists the real prompt_id/provider reference immediately;
+- returns without polling.
 
-### 7.2 Knowledge loading
+### waitMediaGeneration
 
-A bounded deterministic task assembles only relevant references:
+- uses durable wait or webhook notification;
+- never occupies an HTTP worker or active agent loop;
+- records bounded progress;
+- on timeout/restart retains submitted/waiting/unknown;
+- never resubmits.
 
-- installed operate-comfyui skill;
-- PawFlow ComfyUI documentation;
-- official ComfyUI documentation selected for the operation;
-- live object_info summaries;
-- installed workflow and preset metadata;
-- model and LoRA cards;
-- custom-node README and pinned revision metadata.
+### retrieveMediaGeneration
 
-External and project content is untrusted data and cannot expand effects or approvals.
+- queries exact history/reference;
+- selects the declared provider output;
+- downloads once through bounded adapter code;
+- stores the artifact in FileStore;
+- records digest/provenance;
+- advances the effect receipt and job state.
 
-### 7.3 Workflow evolution
+ComfyUIClient gains submit, status/history, and retrieve methods. run may remain a
+compatibility composition only until all callers migrate, then is removed in the
+one-shot migration.
 
-When no existing preset satisfies the brief:
+## 9. Flow graph 1.1
 
-1. report existing alternatives first;
-2. draft a ComfyWorkflowRevision;
-3. identify exact required nodes, models, LoRAs and custom nodes;
-4. validate sources, licenses, hashes, size, VRAM and compatibility;
-5. create a provisioning proposal;
-6. await durable approval;
-7. install only approved items;
-8. restart only with an empty queue;
-9. validate object inventory;
-10. run a bounded low-cost smoke test;
-11. publish a new immutable preset revision;
-12. retain the previous active revision for rollback.
+Functional stages:
 
-## 8. Audio and voice
+1. Intent gate.
+2. Project and selected revision context.
+3. Full inheritance and RevisionDelta validation.
+4. Capability snapshot.
+5. Brief and ShotSpec preparation.
+6. Scenario approval loop.
+7. Bounded candidate planning.
+8. submit -> durable wait/webhook -> retrieve.
+9. Typed automatic QA.
+10. Bounded technical correction loop.
+11. Batch A/B/C human review.
+12. Regenerate only rejected or unlocked elements.
+13. Editorial lock and approved revision.
+14. EditManifest approval.
+15. FFmpeg compilation and master generation.
+16. Master QA and final human approval.
+17. Structured project result.
 
-Audio routing distinguishes:
+Scenario revise loops to brief/scenario. Invalid QA loops to a typed correction
+planner only when correction is safe, bounded, and non-creative. Maximum attempts
+are explicit per project/profile. Exhaustion becomes a human decision, not an
+automatic expensive retry.
 
-- music or SFX: ComfyUI audio preset or generic audio generation service;
-- ordinary speech: speak through PocketTTS or another TTS provider;
-- cloned speech: clone_voice then speak;
-- audio edit or mix: FFmpeg.
+## 10. Production board and UI
 
-PocketTTS is a zero-shot clone provider. The stored user voice resource contains the owner-scoped reference, normalized hash and consent record. Identical synthesis requests use the existing content-addressed cache.
+Extend existing durable cards; do not build a separate NLE.
 
-The design remains provider-independent so future voice and audio services enter through capabilities.
+Required surfaces:
 
-## 9. FFmpeg media composition
+- project summary with current and approved revision;
+- scenario card with Produce, Revise, and Cancel;
+- shot list with ShotSpec, dependencies, QA, and continuity;
+- synchronized A/B/C candidate grid;
+- Approve, Reject, Request changes, Regenerate this shot, Compare, and Lock;
+- revision tree with Current, Approved, Fork, Return, and Compare;
+- job card with real provider reference and recovery state;
+- outstanding decision table;
+- edit manifest summary and master settings;
+- master QA and final approval;
+- exact FileStore artifact previews/downloads.
 
-Add a first-party FFmpegMediaService and workflow-safe task.
+A representative board:
 
-The service:
+    Shot 11
+      A — rejected: identity unstable
+      B — approved and locked
+      C — pending
 
-- resolves only owner-authorized FileStore or selected-relay inputs;
-- probes every input before compilation;
-- compiles FFmpegRecipe into argv without a shell;
-- runs in a bounded working directory on the selected relay;
-- writes a unique output;
-- probes and validates the result;
-- stores it in FileStore or the approved destination;
-- returns typed metadata and provenance;
-- cleans only its own temporary files.
+    Bumper
+      A — rejected
+      B — approved and locked
+      C — rejected
 
-The workflow task declares filesystem.read, filesystem.write and process.execute effects and keyed_effect idempotency. Its authorization target includes relay and resource paths.
+Reconnect reconstructs cards from authoritative stores. UI state is never the
+source of review or lock decisions.
 
-## 10. Workflow graph
+## 11. Fewer round trips
 
-The Media Studio flow has one English functional layout with the following colored frames:
+Current real workflow:
 
-1. Request gate — validate and classify before media access.
-2. Project context — freeze or durably choose the authorized relay, then load
-   project, revisions and references.
-3. Capability discovery — snapshot services, ComfyUI and FFmpeg.
-4. Creative direction — refine the brief and ask durable questions.
-5. Scenario approval — create and approve composite production proposals.
-6. Technical preparation — select engines and provision approved dependencies.
-7. Production — execute image, video, audio, speech and composition branches.
-8. Quality assurance — structural and modality-specific QA with bounded correction.
-9. Revision and delivery — append lineage, publish artifacts and complete the turn.
+    request -> scenario -> render -> chat links
+    -> user comment -> new run without full inheritance
+    -> render -> separate QA -> choice by message
+    -> manual edit -> separate QA -> delivery
 
-Every task has a concise English label and an English description. Every frame has a distinct accessible fill and border color, a numbered label, a descriptive block, explicit membership and enough spacing to avoid edge crossings. The default layout is functional. Presentation validation and tests fail when labels, descriptions, frames or membership are missing.
+Target:
 
-## 11. Task inventory
+    locked brief -> candidate batch -> automatic QA
+    -> one structured batch review
+    -> regenerate only rejected elements
+    -> lock approved shots
+    -> compile edit manifest -> master QA -> final approval
 
-Core workflow tasks:
-
-- prepareMediaIntent;
-- routeMediaIntent;
-- prepareMediaRelay;
-- applyMediaRelay;
-- loadMediaProject;
-- resolveMediaReferences;
-- snapshotMediaCapabilities;
-- prepareMediaBrief;
-- validateMediaBrief;
-- prepareMediaQuestions;
-- prepareMediaScenario;
-- validateMediaScenario;
-- selectMediaCapability;
-- prepareMediaProvisioning;
-- splitMediaGeneration;
-- submitMediaGeneration;
-- joinMediaGeneration;
-- validateMediaArtifact;
-- composeMedia;
-- appendMediaRevision;
-- formatMediaStudioResult.
-
-Reuse:
-
-- agentWorkflowInput;
-- agentLLMCall;
-- receiveAgentMessages;
-- requestUserInput;
-- durableWait;
-- requestConfirmation;
-- emitAgentProgress;
-- completeAgentTurn;
-- inputPort and outputPort.
-
-Package tasks receive workflow capability metadata and narrow allowed tool/service grants.
+Tiles V3 through V7 corrections become localized deltas for voice, subtitle
+order, opening, ending, and mix. Soup Palm retains all eighteen shots, bumper B,
+and transition decisions as explicit locks and a reproducible manifest.
 
 ## 12. Storage and concurrency
 
-MediaProjectStore uses SQLite transactions and optimistic state_revision checks.
+Extend MediaProjectStore through one-shot schema migration with tables for jobs,
+candidates, decisions, locks, manifests, and QA reports.
 
-Multi-shot production emits correlated FlowFiles only after scenario approval.
-The shot count is bounded by `WorkflowLimits.max_fanout`, provider submission is
-limited to four task instances, and the checkpointable join restores shot order
-while combining unique durable jobs and artifacts before QA.
+Rules:
 
-Invariants:
+- append-only domain records;
+- one idempotency key creates one record;
+- CAS project generation for decisions and pointers;
+- one active lock per shot projection, with immutable supersession history;
+- FileStore access checked at creation and read;
+- provider references cannot cross user/project;
+- exact run and service revisions retained;
+- cleanup follows conversation and FileStore ownership;
+- rejected artifacts remain available;
+- large reports/contact sheets live in FileStore.
 
-- every record has UUID and UTC creation timestamp;
-- conversation and user are required;
-- current revision belongs to the project;
-- parent revision belongs to the same project;
-- revisions are immutable;
-- one idempotency key creates at most one revision;
-- artifact references are owner-accessible;
-- provider job IDs cannot be attached to another user or project;
-- concurrent updates fail with an explicit conflict;
-- deleting a conversation removes its media projects but follows FileStore ownership rules.
+Do not create a second production-board store; the board projects these tables.
 
-## 13. Security
+## 13. Security and cost
 
-- Reject unsupported intent before file or service access.
-- Pin exact service definitions in WorkflowRunContext.
-- Use normal AuthorizationRef lineage at every task.
-- Never expose secrets in briefs, presets, reports or logs.
-- Treat ComfyUI graphs and custom nodes as executable code.
-- Require HTTPS, license and checksum for model or LoRA downloads.
-- Require HTTPS and pinned revision for custom nodes.
-- Preserve the ComfyUI queue; no restart while jobs are active.
-- Require explicit clone authorization.
-- Never allow arbitrary FFmpeg arguments or paths.
-- Keep public media shares temporary and revoke them after provider use.
-- Preserve all prior outputs.
+- Preserve intent gate before all project/service/file reads.
+- Pin exact service/preset/model revisions.
+- Use effect receipts for provider submit and FFmpeg compilation.
+- Never expose ComfyUI raw graphs to ordinary users.
+- Preserve closed FFmpeg operations and path validation.
+- Require voice consent and reference ownership.
+- Treat probes, model observations, provider metadata, and media as untrusted.
+- Bound candidates, shots, correction attempts, output bytes, duration, and cost.
+- Require human approval before expensive regeneration after warnings.
+- Never install models/nodes without the existing exact provisioning proposal.
+- Redact provider IDs only where they carry secrets; retain safe prompt_id needed
+  for recovery.
+- Use separate technical and creative decision roles.
 
-## 14. UI
+## 14. Migration
 
-The conversation renders:
+1. add V2-compatible tables and contracts;
+2. map each existing revision to a legacy single-candidate projection without
+   fabricating review approval;
+3. preserve current_revision_id;
+4. leave approved_revision_id empty until explicit review;
+5. migrate submitted jobs that lack real provider references to
+   unrecoverable_legacy with no resubmit;
+6. publish flow/package version 1.1.0 alongside 1.0.0;
+7. validate canaries and move new runs to 1.1.0;
+8. remove 1.0 compatibility code in the next breaking package revision.
 
-- intent and current project;
-- resolved references with role and preview;
-- grouped durable question forms;
-- scenario cards with Produce, Revise and Cancel;
-- selected engine/model with human-readable reasons;
-- progress by functional stage;
-- generated image, video and audio artifacts;
-- revision tree and active revision;
-- Retry, Modify, Compare and Return to revision actions;
-- provisioning proposal with exact changes;
-- QA warnings.
+Existing artifacts and revisions are never overwritten.
 
-Agent resource UI shows Workflow badge, exact flow version, service parameters, preempt policy and limits.
+## 15. Work packages and order
 
-## 15. Documentation
+### WP0 — Red tests and contract corrections
 
-Update in the same delivery:
+Capture the verified gaps: revision_selector ignored, full parent context absent,
+revise terminal route, invalid QA terminal route, synthetic ComfyUI job ID,
+structural-only QA, global prompt fallback, and generic terminal result.
 
-- docs/media_tools.md;
-- docs/comfyui.md;
-- docs/voice_clone.md;
-- docs/02_REFERENCE_TASKS_SERVICES.md;
-- docs/AGENT_SYSTEM.md;
-- docs/WORKFLOW_AGENT_OPERATIONS.md;
-- package skill and manifest descriptions.
+### WP1 — Full revision context
 
-All documentation, source comments, UI labels and descriptions are English.
+Add RevisionDeltaV1, selected revision loading, inheritance, compare/fork/return,
+current versus approved pointers, handlers, and CAS tests.
 
-## 16. Work packages
+### WP2 — Durable ComfyUI jobs
 
-### WP0 — Contracts and red gates
+Split submit/wait/retrieve, persist real prompt_id before wait, add recovery and
+webhook/status polling, and migrate adapters.
 
-- Add pure contracts for intent, references, briefs, proposals, capabilities, recipes, projects and revisions.
-- Add schema, UUID, timestamp, size and cross-reference tests.
-- Add presentation contract tests for English labels, descriptions and colored frames.
+### WP3 — Typed QA
 
-### WP1 — MediaProjectStore
+Add probe/decode profiles, reports/evidence, thresholds, contact sheets, and
+bounded technical correction decisions.
 
-- Add SQLite schema and transactional API.
-- Add append-only revision and optimistic concurrency tests.
-- Add cleanup integration.
+### WP4 — ShotSpec and candidate production
 
-### WP2 — Capability catalog
+Require full ShotSpec, remove prompt fallback, generate bounded A/B/C candidates,
+and retain exact lineage/cost.
 
-- Normalize installed PawFlow media services and ComfyUI presets.
-- Add deterministic filtering, scoring, alternatives and reason codes.
-- Add service-snapshot and scope tests.
+### WP5 — Review and editorial locks
 
-### WP3 — FFmpeg service
+Add decisions, notes, approval/rejection, lock/supersession, batch review, and
+approved revision projection.
 
-- Add typed recipe validator and safe argv compiler.
-- Add relay execution, ffprobe validation and FileStore output.
-- Add injection, path, limit, idempotency and fixture-based media tests.
+### WP6 — EditManifest and master
 
-### WP4 — Media workflow tasks
+Add manifest contracts, validation, FFmpeg compilation, reproducibility digest,
+master QA, and final approval.
 
-- Add deterministic preparation, routing, validation, selection, project and formatting tasks.
-- Make canonical typed interactions admissible in Workflow Agents with explicit effects and idempotency.
-- Add task-unit tests.
+### WP7 — Production board and result
 
-### WP5 — Agent flow and resource
+Add specialized cards, revision tree, candidate grid, outstanding decisions,
+targeted actions, and structured terminal result.
 
-- Publish pawflow.agents.media-studio:1.0.0.
-- Add one agent resource bound to the exact flow.
-- Add the complete functional layout, colored frames, labels and descriptions.
-- Validate through the normal Workflow Agent validator.
+### WP8 — Package migration and operations
 
-### WP6 — Generation adapters
+Publish 1.1 flow/package/resources, migration, metrics, runbook, canary, rollback,
+and compatibility removal.
 
-- Add workflow-safe, exact-service media submission.
-- Support image, video, ComfyUI audio, generic audio, speech and clone paths.
-- Persist stable job and result correlation.
-- Add retry and recovery tests. Explicitly retryable task failures pause the same
-  WorkflowRun with an exact task/FlowFile checkpoint; retry preserves the run ID
-  and provider idempotency key. Submitted jobs without a durable recovery result
-  remain non-retryable and fail closed instead of being submitted twice.
+### WP9 — Documentation and delivery
 
-### WP7 — ComfyUI evolution
+Update media, ComfyUI, voice, FFmpeg, Workflow Agent operations, task/service
+reference, package skill, and user guidance. Run focused and full CI.
 
-- Generalize preset metadata to audio.
-- Add inventory and knowledge preparation.
-- Add immutable workflow revision and provisioning proposal contracts.
-- Add queue-safe smoke and promotion gates.
+## 16. Test matrix
 
-### WP8 — UX
+Required scenarios include:
 
-- Add scenario, reference, engine-choice, progress, artifact and revision surfaces.
-- Support restore after reconnect in Web, PawCode and VS Code.
-- Add accessibility and locale coverage.
+1. unrelated request stops before project/service/file access;
+2. selected historical revision loads full brief/references/scenario/artifacts;
+3. localized shot delta preserves declared continuity anchors;
+4. stale project generation rejects mutation;
+5. compare/fork/return preserve immutable lineage;
+6. current and approved revision remain distinct;
+7. scenario revise loops and requests a new approval;
+8. correction loop is bounded and never makes creative approval;
+9. submit persists real ComfyUI prompt_id before wait;
+10. restart after submit retrieves without resubmission;
+11. unknown job reconciles before retry;
+12. image/video/audio probes detect corrupt fixtures;
+13. loudness, peak, clipping, duration, FPS, codec, and A/V checks work;
+14. ShotSpec missing prompt/acceptance fails;
+15. no global-prompt fallback exists;
+16. candidate A/B/C jobs and artifacts remain distinct;
+17. review decisions require actor, comment policy, and expected generation;
+18. locks supersede without deleting old candidates;
+19. regenerate-this-shot leaves other locked shots unchanged;
+20. manifest references exact approved FileStore IDs;
+21. FFmpeg output is reproducible from the manifest;
+22. transition/contact-sheet and master QA evidence is retained;
+23. rejected artifacts remain accessible;
+24. final approval pins master hash;
+25. reconnect reconstructs outstanding decisions;
+26. legacy synthetic jobs never auto-resubmit;
+27. package install/update/uninstall and exact flow validation pass;
+28. full security and Python 3.10–3.13 CI pass.
 
-### WP9 — Integration and migration
+## 17. Definition of done
 
-- Import or normalize current ComfyUI image/video presets.
-- Build bundled PFP artifacts.
-- Test installation, update and uninstall protection.
-- Keep feature activation gated.
+Media Studio 1.1 is complete when a user can reopen any production revision,
+change only one declared element, recover every submitted provider job, review
+several candidates per shot, lock approved choices, compile a readable edit
+manifest, validate the exact master, and reproduce the final artifact without
+reconstructing decisions from chat history.
 
-### WP10 — Validation and delivery
+## 18. External influence and license boundaries
 
-- Focused unit and integration matrix.
-- Full pytest suite.
-- Ruff blocking gate, syntax compile, package build and security scan.
-- Manual canary for unsupported, image, video, audio, clone, scenario, modification and FFmpeg.
-- No hotpatch or release action without explicit authorization.
+OpenMontage was reviewed at SHA cd9f3c1 under AGPL-3.0. Its storyboard approval,
+provider scoring, phased budgets, checkpoints, archived replacements, and
+production-board concepts may inform clean-room behavior or a separately
+deployed service. No AGPL source, tests, prompts, text, or assets enter PawFlow
+MIT core or first-party MIT packages.
 
-## 17. Test matrix
+GameFactory-3A was reviewed at SHA 6670bb7 under Apache-2.0. Selective QA,
+artifact-promotion, and package-adapter patterns require attribution and
+qualification; upstream evaluation coverage was incomplete at the reviewed
+revision.
 
-Required scenarios:
-
-1. unrelated request stops before project or service access;
-2. text-to-image with safe defaults;
-3. ambiguous video duration asks one durable form;
-4. attached image is assigned source_image;
-5. ambiguous multiple references require role selection;
-6. multi-shot video produces a proposal and waits;
-7. stale proposal approval fails closed;
-8. installed ComfyUI preset wins when dominant;
-9. meaningful local versus paid trade-off asks the user;
-10. missing model creates a provisioning proposal, not a download;
-11. denied provisioning leaves the installation untouched;
-12. approved pinned LoRA install publishes a new preset revision;
-13. ComfyUI audio preset is selectable;
-14. generic audio fallback works;
-15. PocketTTS ordinary speech works;
-16. clone without authorization is blocked;
-17. authorized clone persists and cached speech is reused;
-18. FFmpeg recipe rejects shell and traversal input;
-19. composite video plus voice plus music creates one lineage;
-20. modification creates a child revision and preserves the parent;
-21. correction before submission updates the brief;
-22. correction after submission supersedes without losing output;
-23. crash recovery does not duplicate provider submission;
-24. service definition change cannot alter an active run;
-25. every flow frame, group and task has an English label and description;
-26. every functional frame has a distinct color and valid membership;
-27. layout has no ungrouped functional tasks;
-28. terminal result contains exact artifacts and answered turn IDs.
-
-## 18. Definition of done
-
-The feature is done only when:
-
-- the plan and owned documentation are current;
-- contracts, store, catalog, FFmpeg service, workflow tasks, flow and agent resource are implemented;
-- image, video, audio, speech, clone, composite and modification paths are covered;
-- ComfyUI can expose audio presets;
-- questions and scenario approval are durable;
-- every graph is visually grouped with English colored labels and descriptions;
-- focused and global tests are green;
-- package build and security gates are green;
-- no unrelated file was changed;
-- no commit, push, flag activation, hotpatch or release occurred without authorization.
+Salomondiei08/oh-my-hermes had no declared license at the reviewed revision.
+Product/dead-letter loop concepts are ideas only; no content may be copied.

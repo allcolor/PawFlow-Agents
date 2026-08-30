@@ -260,16 +260,16 @@ def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     assert "opts.silent" not in CONVERSATION_TTS_JS
     assert "{ silent: true }" in CONVERSATION_TTS_JS
     assert """action$('tts_synthesize', {
-    conversation_id: conversationId,
+    conversation_id: ownerConversationId,
     text: text,
     service: cfg.service,
     voice: cfg.voice,
     language: cfg.language,
     transient: true,
     transient_ttl: 300,""" in CONVERSATION_TTS_JS
-    assert "function _convTtsDeleteFile(fileId)" in CONVERSATION_TTS_JS
+    assert "function _convTtsDeleteFile(fileId, ownerConversationId)" in CONVERSATION_TTS_JS
     assert "action$('tts_delete'" in CONVERSATION_TTS_JS
-    assert "_convTtsDeleteFile(item.file_id)" in CONVERSATION_TTS_JS
+    assert "_convTtsDeleteFile(item.file_id, item.conversation_id)" in CONVERSATION_TTS_JS
     assert "function _convTtsPrepareAudio(item)" in CONVERSATION_TTS_JS
     assert "audio.preload = 'auto';" in CONVERSATION_TTS_JS
     assert "try { audio.load(); }" in CONVERSATION_TTS_JS

@@ -12,6 +12,8 @@ var _voiceSelectedService = '';
 var _voiceLinkedService = '';
 var _voiceActive = false;
 var _voiceStarting = false; // a second click while connecting must not open a parallel capture/session
+var _voiceOwnerConversationId = '';
+var _voiceStartGeneration = 0;
 var _voiceMuted = false;
 var _voiceWs = null;
 var _voiceStream = null;
@@ -59,8 +61,11 @@ function _voiceMediaDetach(reason) {
 }
 
 function stopRealtimeMediaForConversationChange() {
+  _voiceStartGeneration += 1;
+  _voiceStarting = false;
   if (typeof stopLiveKitVoiceMode === 'function'
-      && ((typeof _lkActive !== 'undefined' && _lkActive)
+      && ((typeof _lkStarting !== 'undefined' && _lkStarting)
+          || (typeof _lkActive !== 'undefined' && _lkActive)
           || (typeof _lkRoom !== 'undefined' && _lkRoom))) {
     stopLiveKitVoiceMode('conversation_changed');
   }
@@ -69,10 +74,17 @@ function stopRealtimeMediaForConversationChange() {
   if (runtime && typeof runtime.resetMedia === 'function') {
     runtime.resetMedia('conversation_changed');
   }
+  _voiceOwnerConversationId = '';
 }
 
 function _voiceConversationId() {
-  return (typeof conversationId !== 'undefined' && conversationId) ? conversationId : '';
+  return _voiceOwnerConversationId
+    || ((typeof conversationId !== 'undefined' && conversationId) ? conversationId : '');
+}
+
+function _voiceStartStillOwned(cid, generation) {
+  return generation === _voiceStartGeneration
+    && _voiceOwnerConversationId === cid;
 }
 
 function _voiceT(key, fallback) {
@@ -102,10 +114,15 @@ function _voiceUpdateButton() {
 
 function refreshRealtimeVoiceServices(done) {
   if (typeof action$ !== 'function') { if (done) done(); return; }
+  const requestConversationId = _voiceConversationId();
   action$('list_realtime_services', {
-    conversation_id: _voiceConversationId(),
+    conversation_id: requestConversationId,
     agent_name: (typeof selectedAgent !== 'undefined' && selectedAgent) ? selectedAgent : '',
   }, { silent: true }).subscribe(res => {
+    if (requestConversationId !== _voiceConversationId()) {
+      if (done) done();
+      return;
+    }
     // {services, linked} since P2b; tolerate the P1 bare-array shape.
     _voiceServices = Array.isArray(res) ? res : ((res && res.services) || []);
     _voiceLinkedService = (!Array.isArray(res) && res && res.linked) || '';
@@ -126,6 +143,10 @@ function refreshRealtimeVoiceServices(done) {
     _voiceScheduleEmptyRetry(_voiceServices.length);
     if (done) done();
   }, () => {
+    if (requestConversationId !== _voiceConversationId()) {
+      if (done) done();
+      return;
+    }
     _voiceServices = []; _voiceLinkedService = ''; _voiceUpdateButton();
     _voiceScheduleEmptyRetry(0);
     if (done) done();
@@ -397,8 +418,12 @@ function _voiceDownsampleToPcm16(f32, fromRate) {
   return out;
 }
 
-async function _voiceStartCapture() {
+async function _voiceStartCapture(cid, generation) {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  if (!_voiceStartStillOwned(cid, generation)) {
+    stream.getTracks().forEach(track => track.stop());
+    return false;
+  }
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   _voiceStream = stream;
   _voiceCaptureCtx = new AudioCtx();
@@ -422,6 +447,7 @@ async function _voiceStartCapture() {
   };
   _voiceCaptureSource.connect(_voiceCaptureProcessor);
   _voiceCaptureProcessor.connect(_voiceCaptureCtx.destination);
+  return true;
 }
 
 function _voiceStopCapture() {
@@ -444,20 +470,27 @@ async function toggleVoiceMode() {
   if (_voiceActive) { stopVoiceMode('user'); return; }
   const cid = _voiceConversationId();
   if (!cid) { addMsg('error', _voiceT('voiceNoConversation', 'Open a conversation first')); return; }
+  const generation = ++_voiceStartGeneration;
+  _voiceOwnerConversationId = cid;
   _voiceStarting = true;
   try {
-    await _toggleVoiceModeStart(cid);
+    await _toggleVoiceModeStart(cid, generation);
   } finally {
-    _voiceStarting = false;
+    if (generation === _voiceStartGeneration) {
+      _voiceStarting = false;
+      const livekitActive = typeof _lkActive !== 'undefined' && _lkActive;
+      if (!_voiceActive && !livekitActive) _voiceOwnerConversationId = '';
+    }
   }
 }
 
-async function _toggleVoiceModeStart(cid) {
+async function _toggleVoiceModeStart(cid, generation) {
   const pick = document.getElementById('voiceServicePick');
   if (pick) pick.remove();
   // Fresh fetch: the agent link depends on the current conversation/agent,
   // and the action lazily registers the /ws/realtime route on the listener.
   await new Promise(resolve => refreshRealtimeVoiceServices(resolve));
+  if (!_voiceStartStillOwned(cid, generation)) return;
   if (!_voiceSelectedService) { addMsg('error', _voiceT('voiceNoService', 'No realtime voice service configured')); return; }
   // Engine routing (P3): livekit services use the WebRTC path
   // (conversation_livekit.js); legacy services keep the PCM bridge until
@@ -473,10 +506,16 @@ async function _toggleVoiceModeStart(cid) {
     + '&service=' + encodeURIComponent(_voiceSelectedService)
     + '&agent=' + encodeURIComponent(selectedAgent || '');
   try {
-    await _voiceStartCapture();
+    const started = await _voiceStartCapture(cid, generation);
+    if (!started) return;
   } catch (err) {
+    if (!_voiceStartStillOwned(cid, generation)) return;
     _voiceStopCapture(); // a failure after getUserMedia must not leave the mic held
     addMsg('error', _voiceT('voiceMicDenied', 'Microphone access denied: ') + (err && err.message ? err.message : err));
+    return;
+  }
+  if (!_voiceStartStillOwned(cid, generation)) {
+    _voiceStopCapture();
     return;
   }
   const ws = new WebSocket(url);
@@ -489,6 +528,7 @@ async function _toggleVoiceModeStart(cid) {
   _voiceShowOverlay();
   _voiceSetState('connecting');
   ws.onmessage = function(e) {
+    if (_voiceWs !== ws || _voiceOwnerConversationId !== cid) return;
     if (e.data instanceof ArrayBuffer) { _voicePlayChunk(e.data); return; }
     let msg = {};
     try { msg = JSON.parse(e.data); } catch (_err) { return; }
@@ -508,13 +548,21 @@ async function _toggleVoiceModeStart(cid) {
     else if (msg.type === 'closed') { stopVoiceMode(msg.reason || 'closed'); }
   };
   ws.onerror = function() {
-    if (_voiceActive) addMsg('error', _voiceT('voiceWsError', 'Voice session connection failed'));
+    if (_voiceWs === ws && _voiceActive) addMsg('error', _voiceT('voiceWsError', 'Voice session connection failed'));
   };
-  ws.onclose = function() { if (_voiceActive) stopVoiceMode('disconnected'); };
+  ws.onclose = function() {
+    if (_voiceWs === ws && _voiceActive) stopVoiceMode('disconnected');
+  };
 }
 
 function stopVoiceMode(reason) {
-  if (!_voiceActive && !_voiceWs) return;
+  _voiceStartGeneration += 1;
+  _voiceStarting = false;
+  if (!_voiceActive && !_voiceWs) {
+    _voiceStopCapture();
+    _voiceOwnerConversationId = '';
+    return;
+  }
   _voiceSetState('idle');
   _voiceMediaDetach(reason || 'session_stopped');
   _voiceActive = false;
@@ -530,6 +578,7 @@ function stopVoiceMode(reason) {
   if (_voicePlayCtx) { try { _voicePlayCtx.close(); } catch (_err) {} _voicePlayCtx = null; }
   _voiceRemoveCaptions();
   _voiceHideOverlay();
+  _voiceOwnerConversationId = '';
   _voiceUpdateButton();
 }
 

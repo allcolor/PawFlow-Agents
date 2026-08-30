@@ -2,7 +2,11 @@
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from chat_ui_testing import rendered_chat_html
 
@@ -135,7 +139,7 @@ def test_view_mode_plumbing_no_longer_accepts_openspace():
 
 def test_sse_socket_is_wired_into_openspace():
     sse = _text("tasks/io/chat_ui/sse.js")
-    assert "openspaceWireSSE(eventSource)" in sse
+    assert "openspaceWireSSE(eventSource, cid)" in sse
     openspace = _openspace_text()
     # The view mirrors the stream: talking, thinking, tools, delegation,
     # approval waits. Losing one of these silently degrades the scene.
@@ -146,6 +150,17 @@ def test_sse_socket_is_wired_into_openspace():
         "'sub_agent_start'", "'sub_agent_text'", "'sub_agent_done'",
     ):
         assert re.search(r"on\(" + event, openspace), event
+
+
+@pytest.mark.skipif(shutil.which("node") is None,
+                    reason="node is not available to run the JS suite")
+def test_openspace_conversation_cache_behaviour():
+    spec = ROOT / "tests/js/openspace_conversation_cache_spec.js"
+    proc = subprocess.run(
+        ["node", str(spec)], capture_output=True, text=True,
+        cwd=str(ROOT), timeout=60)
+    assert proc.returncode == 0, (
+        "JS suite failed:\n" + proc.stdout + proc.stderr)
 
 
 def test_openspace_bubbles_are_bounded_and_coalesced():
@@ -419,7 +434,7 @@ def test_camera_has_frontal_surface_presets_and_level_side_views():
 def test_room_style_is_seeded_by_the_loaded_conversation():
     source = _openspace_text()
     assert "function _osApplyRoomStyle(seed)" in source
-    assert "_osApplyRoomStyle(cid);" in source
+    assert "_osApplyRoomStyle(next);" in source
     assert "_osRoomMats.walls" in source
 
 

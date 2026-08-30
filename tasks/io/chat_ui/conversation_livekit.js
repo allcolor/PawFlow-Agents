@@ -10,6 +10,8 @@
 
 var _lkActive = false;
 var _lkStarting = false;
+var _lkOwnerConversationId = '';
+var _lkGeneration = 0;
 var _lkRoom = null;
 var _lkSession = null;      // start payload: {session_id, room, token, ...}
 var _lkMicMuted = false;
@@ -47,7 +49,7 @@ function _lkAttachAudioTrack(track, publication, participant) {
       transport: 'livekit',
       kind: 'audio',
       direction: 'agent_downlink',
-      conversation: _voiceConversationId(),
+      conversation: _lkOwnerConversationId,
       session_id: (_lkSession && _lkSession.session_id) || '',
       participant: (participant && (participant.identity || participant.sid)) || '',
       track: track,
@@ -119,11 +121,12 @@ function _lkLoadSdk() {
 
 // ── SSE wiring (called by sse.js after each (re)connect) ─────────────
 
-function _lkWireSSE() {
+function _lkWireSSE(conversationOwnerId) {
   if (typeof eventSource === 'undefined' || !eventSource) return;
+  const ownerId = String(conversationOwnerId || '');
   const wire = function(type, handler) {
     eventSource.addEventListener(type, function(e) {
-      if (!_lkActive) return;
+      if (!_lkActive || !ownerId || _lkOwnerConversationId !== ownerId) return;
       let data = {};
       try { data = JSON.parse(e.data || '{}'); } catch (_err) { return; }
       if (_lkSession && data.session_id && data.session_id !== _lkSession.session_id) return;
@@ -221,9 +224,12 @@ async function _lkToggleScreen() {
 
 async function startLiveKitVoiceMode(cid, svc) {
   if (_lkActive || _lkStarting) return;
+  const generation = ++_lkGeneration;
+  _lkOwnerConversationId = cid;
   _lkStarting = true;
   try {
     await _lkLoadSdk();
+    if (generation !== _lkGeneration || _lkOwnerConversationId !== cid) return;
     const resp = await fetch('/api/realtime/livekit/start', {
       method: 'POST', headers: _lkAuthHeaders(), credentials: 'same-origin',
       body: JSON.stringify({
@@ -233,6 +239,10 @@ async function startLiveKitVoiceMode(cid, svc) {
       }),
     });
     const payload = await resp.json();
+    if (generation !== _lkGeneration || _lkOwnerConversationId !== cid) {
+      _lkStopServerSession(payload);
+      return;
+    }
     if (!resp.ok) {
       addMsg('error', _voiceT('lkStartFailed', 'Live session failed: ') + (payload.error || resp.status));
       return;
@@ -242,19 +252,23 @@ async function startLiveKitVoiceMode(cid, svc) {
     const room = new LK.Room({ adaptiveStream: true, dynacast: true });
     _lkRoom = room;
     room.on(LK.RoomEvent.TrackSubscribed, function(track, publication, participant) {
+      if (_lkRoom !== room || _lkOwnerConversationId !== cid) return;
       _lkAttachAudioTrack(track, publication, participant);
     });
     room.on(LK.RoomEvent.TrackUnsubscribed, function(track) {
+      if (_lkRoom !== room || _lkOwnerConversationId !== cid) return;
       _lkDetachAudioTrack(track, 'track_unsubscribed');
     });
     room.on(LK.RoomEvent.Reconnecting, function() {
+      if (_lkRoom !== room || _lkOwnerConversationId !== cid) return;
       _lkDetachAllAudio('reconnecting');
     });
     room.on(LK.RoomEvent.Reconnected, function() {
+      if (_lkRoom !== room || _lkOwnerConversationId !== cid) return;
       _lkRestoreRemoteAudio(room);
     });
     room.on(LK.RoomEvent.Disconnected, function() {
-      if (_lkActive) stopLiveKitVoiceMode('disconnected');
+      if (_lkRoom === room && _lkActive) stopLiveKitVoiceMode('disconnected');
     });
     _lkActive = true;
     _lkMicMuted = false; _lkCamOn = false; _lkScreenOn = false;
@@ -270,32 +284,45 @@ async function startLiveKitVoiceMode(cid, svc) {
               + location.host + payload.livekit_path;
     }
     await room.connect(lkUrl, payload.token);
+    if (generation !== _lkGeneration || _lkOwnerConversationId !== cid
+        || _lkRoom !== room) {
+      try { room.disconnect(); } catch (_err) {}
+      return;
+    }
     await room.localParticipant.setMicrophoneEnabled(true);
   } catch (err) {
+    if (generation !== _lkGeneration || _lkOwnerConversationId !== cid) return;
     addMsg('error', _voiceT('lkStartFailed', 'Live session failed: ') + (err && err.message ? err.message : err));
     stopLiveKitVoiceMode('error');
   } finally {
-    _lkStarting = false;
+    if (generation === _lkGeneration) _lkStarting = false;
   }
 }
 
+function _lkStopServerSession(session) {
+  if (!session || !session.session_id) return;
+  fetch('/api/realtime/livekit/stop', {
+    method: 'POST', headers: _lkAuthHeaders(), credentials: 'same-origin',
+    body: JSON.stringify({ session_id: session.session_id }),
+  }).catch(function() {});
+}
+
 function stopLiveKitVoiceMode(reason) {
-  if (!_lkActive && !_lkRoom) return;
+  _lkGeneration += 1;
+  _lkStarting = false;
   _voiceSetState('idle');
   _lkActive = false;
   const room = _lkRoom;
   _lkRoom = null;
   const session = _lkSession;
   _lkSession = null;
+  _lkOwnerConversationId = '';
   _lkDetachAllAudio(reason || 'session_stopped');
   if (room) { try { room.disconnect(); } catch (_err) {} }
   if (session && reason !== 'closed') {
     // Tell PawFlow to end the session server-side (worker shutdown, token
     // invalidation). 'closed' means the server already did.
-    fetch('/api/realtime/livekit/stop', {
-      method: 'POST', headers: _lkAuthHeaders(), credentials: 'same-origin',
-      body: JSON.stringify({ session_id: session.session_id }),
-    }).catch(function() {});
+    _lkStopServerSession(session);
   }
   if (typeof _voiceRemoveCaptions === 'function') _voiceRemoveCaptions();
   if (typeof _voiceHideOverlay === 'function') _voiceHideOverlay();

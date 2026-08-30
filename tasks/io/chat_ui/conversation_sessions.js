@@ -120,6 +120,28 @@ function isFocusedConversationSession(sessionOrId) {
   return !!session && session === _conversationFocusedSession;
 }
 
+function _transferConversationRuntimeOwnership(previousSession, nextSession) {
+  var previousId = previousSession ? previousSession.conversationId : '';
+  var nextId = nextSession ? nextSession.conversationId : '';
+  if (previousId === nextId) return;
+
+  var releasePrevious = function() {
+    if (typeof stopRealtimeMediaForConversationChange === 'function') {
+      stopRealtimeMediaForConversationChange();
+    }
+    if (typeof stopConversationTTSForConversationChange === 'function') {
+      stopConversationTTSForConversationChange();
+    }
+  };
+  if (previousSession) {
+    if (_conversationActiveSession === previousSession) releasePrevious();
+    else withConversationSession(previousSession, releasePrevious);
+  }
+  if (typeof openspaceSetConversationOwner === 'function') {
+    openspaceSetConversationOwner(nextId);
+  }
+}
+
 function _conversationDomNodes(session) {
   if (!session || !session.messagesRoot) return [];
   var nodes = [session.messagesRoot];
@@ -558,7 +580,9 @@ function focusConversationSession(sessionOrId, options) {
   var session = typeof sessionOrId === 'string'
     ? getConversationSession(sessionOrId) : sessionOrId;
   if (!session) return false;
+  var previousFocused = _conversationFocusedSession;
   var previous = _conversationActiveSession;
+  _transferConversationRuntimeOwnership(previousFocused, session);
   if (previous) {
     _saveConversationSessionState(previous);
     _setConversationSessionDomActive(previous, false);
@@ -613,6 +637,9 @@ function releaseConversationSessionIfUnused(conversationId) {
   }
   if (typeof workspaceRemoveTabButton === 'function') {
     workspaceRemoveTabButton(session.surfaceId);
+  }
+  if (typeof openspaceReleaseConversation === 'function') {
+    openspaceReleaseConversation(session.conversationId);
   }
   if (session.panel) session.panel.remove();
   _conversationSessions.delete(session.conversationId);

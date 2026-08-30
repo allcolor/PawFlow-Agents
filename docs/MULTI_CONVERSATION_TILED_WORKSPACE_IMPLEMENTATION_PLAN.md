@@ -238,6 +238,29 @@ requires a connection budget, suspension must be explicit, preserve persisted
 history, show a visible paused state, and resume with gap reconciliation. No
 silent cap is part of V1.
 
+### 8.1 Focus-owned browser runtimes
+
+Transcript state and EventSource connections remain live per session, but the
+browser exposes only one microphone, one realtime voice/LiveKit attachment, one
+TTS playback pipeline, and one OpenSpace room. Tile focus is therefore the
+authority for these global runtimes:
+
+- changing to a different conversation cancels legacy voice, LiveKit, and both
+  live and one-shot TTS work under the previous session's captured context;
+- acquisition and playback callbacks carry an owner plus generation and cannot
+  mutate, report errors into, or stop a newer focused session;
+- STT captures the recording session, conversation ID, configuration, and
+  composer state before microphone acquisition; transcription and optional
+  auto-send return to that session even if focus changes;
+- OpenSpace keeps a history cache only for open conversation sessions and
+  projects only the focused conversation. Durable `new_message` events update
+  their owner session's cache even in the background, but no background event
+  may mutate the visible room or take ownership. History refreshes merge by
+  message ID so a stale response cannot erase newer SSE rows.
+
+Releasing the last surface closes its SSE state and evicts its OpenSpace cache.
+Refocusing the same conversation is idempotent and does not interrupt its media.
+
 ## 9. Transcript and rendering refactor
 
 Replace document-global transcript access with a ConversationViewContext.

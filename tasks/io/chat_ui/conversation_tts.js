@@ -3,6 +3,7 @@
 
 var _convTtsEnabled = false;
 var _convTtsEnabledAt = 0;
+var _convTtsOwnerConversationId = '';
 var _convTtsRunId = 0;
 var _convTtsQueue = [];
 var _convTtsSynthInFlight = 0;
@@ -12,6 +13,7 @@ var _convTtsPendingAudio = {};
 var _convTtsPlaying = false;
 var _convTtsCurrentAudio = null;
 var _convTtsCurrentAudioFileId = '';
+var _convTtsCurrentAudioConversationId = '';
 var _convTtsBuffers = {};
 var _convTtsRecentText = '';
 var _convTtsSpokenMessages = new Set();
@@ -36,8 +38,10 @@ var _convTtsStartAfterRefresh = false;
 var _convTtsAfterRefresh = null;
 var _convTtsAfterServiceSelect = null;
 var _convTtsOneShotRunId = 0;
+var _convTtsOneShotOwnerConversationId = '';
 var _convTtsOneShotAudio = null;
 var _convTtsOneShotFileId = '';
+var _convTtsOneShotFileConversationId = '';
 var _convTtsOneShotInFlight = 0;
 var _convTtsOneShotQueue = [];
 var _convTtsOneShotPendingAudio = {};
@@ -260,6 +264,8 @@ function _convTtsShowServiceDialog() {
 }
 
 function _convTtsStart() {
+  _convTtsOwnerConversationId = _convTtsCurrentConversationId();
+  if (!_convTtsOwnerConversationId) return;
   _convTtsEnabled = true;
   _convTtsRunId += 1;
   _convTtsEnabledAt = Date.now();
@@ -283,7 +289,7 @@ function _convTtsWarmup() {
   if (typeof action$ !== 'function') return;
   const cfg = _convTtsConfig();
   action$('tts_warmup', {
-    conversation_id: conversationId,
+    conversation_id: _convTtsOwnerConversationId,
     service: cfg.service,
     voice: cfg.voice,
     language: cfg.language,
@@ -295,6 +301,7 @@ function _convTtsWarmup() {
 }
 
 function _convTtsStop() {
+  const ownerConversationId = _convTtsOwnerConversationId;
   _convTtsEnabled = false;
   _convTtsRunId += 1;
   _convTtsQueue = [];
@@ -309,19 +316,24 @@ function _convTtsStop() {
     _convTtsCurrentAudio = null;
   }
   Object.keys(_convTtsPendingAudio).forEach(key => {
-    _convTtsDeleteFile(_convTtsPendingAudio[key] && _convTtsPendingAudio[key].file_id);
+    const item = _convTtsPendingAudio[key];
+    _convTtsDeleteFile(item && item.file_id,
+      (item && item.conversation_id) || ownerConversationId);
   });
   _convTtsPendingAudio = {};
-  _convTtsDeleteFile(_convTtsCurrentAudioFileId);
+  _convTtsDeleteFile(_convTtsCurrentAudioFileId,
+    _convTtsCurrentAudioConversationId || ownerConversationId);
   _convTtsCurrentAudioFileId = '';
+  _convTtsCurrentAudioConversationId = '';
   _convTtsPlaying = false;
+  _convTtsOwnerConversationId = '';
   _convTtsUpdateButton();
 }
 
-function _convTtsDeleteFile(fileId) {
+function _convTtsDeleteFile(fileId, ownerConversationId) {
   if (!fileId || typeof action$ !== 'function') return;
   action$('tts_delete', {
-    conversation_id: conversationId,
+    conversation_id: ownerConversationId || _convTtsCurrentConversationId(),
     file_id: fileId,
   }, { silent: true }).subscribe(function() {}, function(err) {
     console.warn('[conversation-tts] cleanup failed', err);
@@ -334,6 +346,22 @@ function toggleConversationTTS() {
     return;
   }
   refreshConversationTTSServices(true);
+}
+
+function stopConversationTTSForConversationChange() {
+  _convTtsStartAfterRefresh = false;
+  _convTtsAfterRefresh = null;
+  _convTtsAfterServiceSelect = null;
+  if (_convTtsEnabled || _convTtsCurrentAudio
+      || _convTtsQueue.length || Object.keys(_convTtsPendingAudio).length) {
+    _convTtsStop();
+  } else {
+    _convTtsRunId += 1;
+    _convTtsOwnerConversationId = '';
+  }
+  _convTtsStopOneShot();
+  const overlay = document.getElementById('convTtsServiceDialog');
+  if (overlay) overlay.remove();
 }
 
 function _convTtsEventIsNew(data) {
@@ -363,6 +391,7 @@ function _convTtsNormText(text) {
 
 function _convTtsIsAgentMessage(data) {
   if (!_convTtsEnabled || !data) return false;
+  if (_convTtsOwnerConversationId !== _convTtsCurrentConversationId()) return false;
   const src = data.source || {};
   if (data.role && data.role !== 'assistant') return false;
   if (src.type && ['agent_delegate', 'tool', 'tool_call', 'tool_result', 'system', 'user'].includes(src.type)) return false;
@@ -462,6 +491,7 @@ function _convTtsSynthesizeNext() {
   const text = _convTtsQueue.shift();
   const seq = _convTtsNextAudioSeq++;
   const runId = _convTtsRunId;
+  const ownerConversationId = _convTtsOwnerConversationId;
   const cfg = _convTtsConfig();
   let settled = false;
   _convTtsSynthInFlight += 1;
@@ -475,7 +505,7 @@ function _convTtsSynthesizeNext() {
     _convTtsPump();
   }, 12000);
   action$('tts_synthesize', {
-    conversation_id: conversationId,
+    conversation_id: ownerConversationId,
     text: text,
     service: cfg.service,
     voice: cfg.voice,
@@ -484,7 +514,7 @@ function _convTtsSynthesizeNext() {
     transient_ttl: 300,
   }, { silent: true }).subscribe(result => {
     if (settled || runId !== _convTtsRunId) {
-      _convTtsDeleteFile(result && result.file_id);
+      _convTtsDeleteFile(result && result.file_id, ownerConversationId);
       return;
     }
     settled = true;
@@ -501,6 +531,7 @@ function _convTtsSynthesizeNext() {
     _convTtsPendingAudio[seq] = _convTtsPrepareAudio({
       url: result.url,
       file_id: result.file_id || '',
+      conversation_id: ownerConversationId,
     });
     _convTtsPlayNext();
     _convTtsPump();
@@ -531,44 +562,49 @@ function _convTtsPlayNext() {
 function _convTtsPlayUrl(item) {
   _convTtsPrepareAudio(item);
   const audio = item.audio;
+  const runId = _convTtsRunId;
   let cleaned = false;
   function cleanup() {
     if (cleaned) return;
     cleaned = true;
-    _convTtsDeleteFile(item.file_id);
+    _convTtsDeleteFile(item.file_id, item.conversation_id);
   }
   _convTtsCurrentAudio = audio;
   _convTtsCurrentAudioFileId = item.file_id || '';
+  _convTtsCurrentAudioConversationId = item.conversation_id || '';
   _convTtsPlaying = true;
   audio.onended = audio.onerror = function() {
     cleanup();
+    if (runId !== _convTtsRunId || _convTtsCurrentAudio !== audio) return;
     _convTtsPlaying = false;
-    if (_convTtsCurrentAudio === audio) {
-      _convTtsCurrentAudio = null;
-      _convTtsCurrentAudioFileId = '';
-    }
+    _convTtsCurrentAudio = null;
+    _convTtsCurrentAudioFileId = '';
+    _convTtsCurrentAudioConversationId = '';
     _convTtsPlayNext();
   };
   audio.play().catch(err => {
     console.warn('[conversation-tts] play failed', err);
     cleanup();
+    if (runId !== _convTtsRunId || _convTtsCurrentAudio !== audio) return;
     _convTtsPlaying = false;
-    if (_convTtsCurrentAudio === audio) {
-      _convTtsCurrentAudio = null;
-      _convTtsCurrentAudioFileId = '';
-    }
+    _convTtsCurrentAudio = null;
+    _convTtsCurrentAudioFileId = '';
+    _convTtsCurrentAudioConversationId = '';
     _convTtsPlayNext();
   });
 }
 
 function _convTtsStopOneShot() {
+  const ownerConversationId = _convTtsOneShotOwnerConversationId;
   _convTtsOneShotRunId += 1;
   if (_convTtsOneShotAudio) {
     try { _convTtsOneShotAudio.pause(); } catch (_err) {}
     _convTtsOneShotAudio = null;
   }
   Object.keys(_convTtsOneShotPendingAudio).forEach(key => {
-    _convTtsDeleteFile(_convTtsOneShotPendingAudio[key] && _convTtsOneShotPendingAudio[key].file_id);
+    const item = _convTtsOneShotPendingAudio[key];
+    _convTtsDeleteFile(item && item.file_id,
+      (item && item.conversation_id) || ownerConversationId);
   });
   _convTtsOneShotQueue = [];
   _convTtsOneShotPendingAudio = {};
@@ -576,14 +612,19 @@ function _convTtsStopOneShot() {
   _convTtsOneShotNextSeq = 1;
   _convTtsOneShotPlaySeq = 1;
   _convTtsOneShotPlaying = false;
-  _convTtsDeleteFile(_convTtsOneShotFileId);
+  _convTtsDeleteFile(_convTtsOneShotFileId,
+    _convTtsOneShotFileConversationId || ownerConversationId);
   _convTtsOneShotFileId = '';
+  _convTtsOneShotFileConversationId = '';
+  _convTtsOneShotOwnerConversationId = '';
 }
 
 function conversationTTSSpeakText(text) {
   const clean = _convTtsCleanText(text);
   if (!clean) return;
   _convTtsStopOneShot();
+  _convTtsOneShotOwnerConversationId = _convTtsCurrentConversationId();
+  if (!_convTtsOneShotOwnerConversationId) return;
   const runId = _convTtsOneShotRunId;
   _convTtsChooseService(() => {
     _convTtsSpeakSegmentsOnce(_convTtsSplitSegments(clean), runId);
@@ -612,9 +653,10 @@ function _convTtsSynthesizeOneShotNext(runId) {
   const text = _convTtsOneShotQueue.shift();
   const seq = _convTtsOneShotNextSeq++;
   const cfg = _convTtsConfig();
+  const ownerConversationId = _convTtsOneShotOwnerConversationId;
   _convTtsOneShotInFlight += 1;
   action$('tts_synthesize', {
-    conversation_id: conversationId,
+    conversation_id: ownerConversationId,
     text: text,
     service: cfg.service,
     voice: cfg.voice,
@@ -624,7 +666,7 @@ function _convTtsSynthesizeOneShotNext(runId) {
   }, { silent: true }).subscribe(result => {
     _convTtsOneShotInFlight = Math.max(0, _convTtsOneShotInFlight - 1);
     if (runId !== _convTtsOneShotRunId) {
-      _convTtsDeleteFile(result && result.file_id);
+      _convTtsDeleteFile(result && result.file_id, ownerConversationId);
       return;
     }
     if (!result || result.error || !result.url) {
@@ -637,11 +679,13 @@ function _convTtsSynthesizeOneShotNext(runId) {
     _convTtsOneShotPendingAudio[seq] = _convTtsPrepareAudio({
       url: result.url,
       file_id: result.file_id || '',
+      conversation_id: ownerConversationId,
     });
     _convTtsPlayOneShotNext(runId);
     _convTtsPumpOneShot(runId);
   }, err => {
     _convTtsOneShotInFlight = Math.max(0, _convTtsOneShotInFlight - 1);
+    if (runId !== _convTtsOneShotRunId) return;
     _convTtsReportError('Speech synthesis request failed: ' + (err && err.message ? err.message : err));
     _convTtsOneShotPendingAudio[seq] = '';
     _convTtsPlayOneShotNext(runId);
@@ -663,7 +707,7 @@ function _convTtsPlayOneShotNext(runId) {
 
 function _convTtsPlayOneShot(item, runId, done) {
   if (runId !== _convTtsOneShotRunId) {
-    _convTtsDeleteFile(item.file_id);
+    _convTtsDeleteFile(item.file_id, item.conversation_id);
     return;
   }
   _convTtsPrepareAudio(item);
@@ -672,27 +716,29 @@ function _convTtsPlayOneShot(item, runId, done) {
   function cleanup() {
     if (cleaned) return;
     cleaned = true;
-    _convTtsDeleteFile(item.file_id);
+    _convTtsDeleteFile(item.file_id, item.conversation_id);
   }
   _convTtsOneShotAudio = audio;
   _convTtsOneShotFileId = item.file_id || '';
+  _convTtsOneShotFileConversationId = item.conversation_id || '';
   _convTtsOneShotPlaying = true;
   audio.onended = audio.onerror = function() {
     cleanup();
+    if (runId !== _convTtsOneShotRunId || _convTtsOneShotAudio !== audio) return;
     _convTtsOneShotPlaying = false;
-    if (_convTtsOneShotAudio === audio) {
-      _convTtsOneShotAudio = null;
-      _convTtsOneShotFileId = '';
-    }
-    if (runId === _convTtsOneShotRunId && typeof done === 'function') done();
+    _convTtsOneShotAudio = null;
+    _convTtsOneShotFileId = '';
+    _convTtsOneShotFileConversationId = '';
+    if (typeof done === 'function') done();
   };
   audio.play().catch(err => {
     console.warn('[conversation-tts] message play failed', err);
     cleanup();
-    if (_convTtsOneShotAudio === audio) {
-      _convTtsOneShotAudio = null;
-      _convTtsOneShotFileId = '';
-    }
+    if (runId !== _convTtsOneShotRunId || _convTtsOneShotAudio !== audio) return;
+    _convTtsOneShotPlaying = false;
+    _convTtsOneShotAudio = null;
+    _convTtsOneShotFileId = '';
+    _convTtsOneShotFileConversationId = '';
   });
 }
 
@@ -719,7 +765,8 @@ function conversationTTSOnMessage(data) {
 }
 
 function conversationTTSOnDone(data) {
-  if (!_convTtsEnabled || !data) return;
+  if (!_convTtsEnabled || !data
+      || _convTtsOwnerConversationId !== _convTtsCurrentConversationId()) return;
   const key = data.msg_id || ('agent:' + (data.agent_name || (data.source && data.source.name) || 'assistant'));
   if (_convTtsBuffers[key]) {
     _convTtsFlushReady(key, true);

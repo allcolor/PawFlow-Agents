@@ -83,6 +83,7 @@ let _osUserCount = 0;
 // which msg_ids are already reflected (seeded or received live).
 let _osSeedConvId = null;
 const _osSeededIds = new Set();
+const _osHistoryByConversation = new Map();
 // Projection wall: a read-only projection of the canonical transcript is
 // perspective-mapped onto a big screen in the scene. The real #messages stays
 // in the Webchat surface so both surfaces can be visible in a tiled workspace.

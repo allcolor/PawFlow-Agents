@@ -31,6 +31,7 @@ var _convSttWavSampleRate = 0;
 var _convSttChunks = [];
 var _convSttRecording = false;
 var _convSttInputWasEmpty = true;
+var _convSttRecordingContext = null;
 var _convSttWarmupKey = '';
 
 function _convSttConfig() {
@@ -253,6 +254,19 @@ async function _convSttStartRecording() {
   if (!_convSttSelectedService && _convSttServices.length) _convSttSelectedService = _convSttServices[0].id;
   const input = document.getElementById('input');
   _convSttInputWasEmpty = !input || !String(input.value || '').trim();
+  const recordingSession = typeof captureConversationSession === 'function'
+    ? captureConversationSession() : null;
+  const recordingContext = {
+    session: recordingSession,
+    conversationId: recordingSession ? recordingSession.conversationId
+      : ((typeof conversationId !== 'undefined' && conversationId) || ''),
+    config: _convSttConfig(),
+    inputWasEmpty: _convSttInputWasEmpty,
+  };
+  if (!recordingContext.conversationId) {
+    addMsg('error', 'Open a conversation before recording');
+    return;
+  }
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -260,11 +274,13 @@ async function _convSttStartRecording() {
     addMsg('error', 'Microphone permission denied: ' + (err && err.message ? err.message : err));
     return;
   }
+  _convSttRecordingContext = recordingContext;
   if (window.MediaRecorder) {
-    _convSttStartMediaRecorder(stream);
+    _convSttStartMediaRecorder(stream, recordingContext);
     return;
   }
-  if (!_convSttStartWavRecorder(stream)) {
+  if (!_convSttStartWavRecorder(stream, recordingContext)) {
+    _convSttRecordingContext = null;
     stream.getTracks().forEach(track => track.stop());
     addMsg('error', 'Browser microphone recording is not available');
   }
@@ -281,7 +297,7 @@ function _convSttStopRecording() {
   }
 }
 
-function _convSttStartMediaRecorder(stream) {
+function _convSttStartMediaRecorder(stream, recordingContext) {
   _convSttChunks = [];
   _convSttMediaRecorder = new MediaRecorder(stream);
   _convSttMediaRecorder.ondataavailable = function(e) {
@@ -291,14 +307,17 @@ function _convSttStartMediaRecorder(stream) {
     stream.getTracks().forEach(track => track.stop());
     _convSttRecording = false;
     _convSttUpdateButton();
-    _convSttTranscribeBlob(new Blob(_convSttChunks, { type: _convSttMediaRecorder.mimeType || 'audio/webm' }));
+    if (_convSttRecordingContext === recordingContext) _convSttRecordingContext = null;
+    _convSttTranscribeBlob(
+      new Blob(_convSttChunks, { type: _convSttMediaRecorder.mimeType || 'audio/webm' }),
+      recordingContext);
   };
   _convSttMediaRecorder.start();
   _convSttRecording = true;
   _convSttUpdateButton();
 }
 
-function _convSttStartWavRecorder(stream) {
+function _convSttStartWavRecorder(stream, recordingContext) {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtx) return false;
   _convSttStream = stream;
@@ -318,11 +337,14 @@ function _convSttStartWavRecorder(stream) {
   _convSttSource.connect(_convSttProcessor);
   _convSttProcessor.connect(_convSttAudioContext.destination);
   _convSttRecording = true;
+  _convSttRecordingContext = recordingContext;
   _convSttUpdateButton();
   return true;
 }
 
 function _convSttStopWavRecorder() {
+  const recordingContext = _convSttRecordingContext;
+  _convSttRecordingContext = null;
   const chunks = _convSttWavChunks.slice();
   const sampleRate = _convSttWavSampleRate || 48000;
   if (_convSttProcessor) {
@@ -348,7 +370,8 @@ function _convSttStopWavRecorder() {
     addMsg('error', 'No microphone audio was captured');
     return;
   }
-  _convSttTranscribeBlob(_convSttEncodeWav(chunks, sampleRate));
+  _convSttTranscribeBlob(
+    _convSttEncodeWav(chunks, sampleRate), recordingContext);
 }
 
 function _convSttEncodeWav(chunks, sampleRate) {
@@ -393,46 +416,73 @@ function _convSttBlobToBase64(blob) {
   });
 }
 
-async function _convSttTranscribeBlob(blob) {
+function _convSttRunInRecordingSession(recordingContext, callback) {
+  const session = recordingContext && recordingContext.session;
+  if (session && typeof getConversationSession === 'function'
+      && getConversationSession(recordingContext.conversationId) !== session) return;
+  if (session && typeof withConversationSession === 'function') {
+    return withConversationSession(session, callback);
+  }
+  return callback();
+}
+
+function _convSttReportForRecording(recordingContext, message) {
+  _convSttRunInRecordingSession(recordingContext, function() {
+    addMsg('error', message);
+  });
+}
+
+async function _convSttTranscribeBlob(blob, recordingContext) {
   if (!blob || !blob.size) {
-    addMsg('error', 'No microphone audio was captured');
+    _convSttReportForRecording(recordingContext, 'No microphone audio was captured');
     return;
   }
-  const cfg = _convSttConfig();
+  const context = recordingContext || {
+    session: typeof captureConversationSession === 'function'
+      ? captureConversationSession() : null,
+    conversationId: (typeof conversationId !== 'undefined' && conversationId) || '',
+    config: _convSttConfig(),
+    inputWasEmpty: _convSttInputWasEmpty,
+  };
+  const cfg = context.config || _convSttConfig();
   let b64 = '';
   try {
     b64 = await _convSttBlobToBase64(blob);
   } catch (err) {
-    addMsg('error', 'Microphone audio encoding failed: ' + (err && err.message ? err.message : err));
+    _convSttReportForRecording(context,
+      'Microphone audio encoding failed: ' + (err && err.message ? err.message : err));
     return;
   }
   action$('stt_transcribe', {
-    conversation_id: conversationId,
+    conversation_id: context.conversationId,
     service: cfg.service,
     audio_b64: b64,
     mime_type: blob.type || 'audio/webm',
     filename: blob.type === 'audio/wav' ? 'speech.wav' : 'speech.webm',
     language: cfg.language,
   }, { silent: true }).subscribe(result => {
-    if (!result || result.error) {
-      addMsg('error', result && result.error ? result.error : 'Speech transcription failed');
-      return;
-    }
-    const text = String(result.text || '').trim();
-    if (!text) {
-      addMsg('error', 'Speech transcription returned no text');
-      return;
-    }
-    const input = document.getElementById('input');
-    if (!input) return;
-    const current = String(input.value || '').trim();
-    input.value = current ? (current + '\n' + text) : text;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
-    if (cfg.autoSend && _convSttInputWasEmpty && typeof send === 'function') send();
+    _convSttRunInRecordingSession(context, function() {
+      if (!result || result.error) {
+        addMsg('error', result && result.error ? result.error : 'Speech transcription failed');
+        return;
+      }
+      const text = String(result.text || '').trim();
+      if (!text) {
+        addMsg('error', 'Speech transcription returned no text');
+        return;
+      }
+      const input = document.getElementById('input');
+      if (!input) return;
+      const current = String(input.value || '').trim();
+      input.value = current ? (current + '\n' + text) : text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+      if (cfg.autoSend && context.inputWasEmpty && typeof send === 'function') send();
+    });
   }, err => {
-    addMsg('error', 'Speech transcription request failed: ' + (err && err.message ? err.message : err));
+    _convSttReportForRecording(context,
+      'Speech transcription request failed: ' + (err && err.message ? err.message : err));
   });
 }
 

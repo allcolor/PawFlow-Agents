@@ -351,3 +351,432 @@ def test_tile_focus_reprojects_out_of_tile_conversation_surfaces():
     assert "renderUsageCostBadge()" in project
     # A stale 'new conversation' fallback title re-resolves on focus.
     assert "_conversationTitle(session.conversationId, session.title)" in project
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_focus_transfers_global_runtime_ownership_once():
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+const calls = [];
+const context = {
+  console,
+  window: null,
+  document: {},
+  stopRealtimeMediaForConversationChange: () => calls.push('realtime-stop'),
+  stopConversationTTSForConversationChange: () => calls.push('tts-stop'),
+  openspaceSetConversationOwner: cid => calls.push('openspace:' + cid),
+};
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const a = { conversationId: 'A' };
+const b = { conversationId: 'B' };
+context._conversationActiveSession = a;
+context._conversationFocusedSession = a;
+context._transferConversationRuntimeOwnership(a, b);
+if (calls.join(',') !== 'realtime-stop,tts-stop,openspace:B') {
+  throw new Error('focus did not transfer every global runtime: ' + calls.join(','));
+}
+context._transferConversationRuntimeOwnership(b, b);
+if (calls.length !== 3) throw new Error('same-session focus released its runtimes');
+"""
+    result = subprocess.run(
+        ["node", "-e", harness, str(SESSIONS_JS)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_stt_transcript_stays_with_recording_conversation_after_focus_change():
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+const inputs = {
+  A: { value: '', style: {}, scrollHeight: 20, dispatchEvent: () => {} },
+  B: { value: '', style: {}, scrollHeight: 20, dispatchEvent: () => {} },
+};
+const sessions = { A: { conversationId: 'A' }, B: { conversationId: 'B' } };
+const sends = [];
+let request = null;
+let pending = null;
+const context = {
+  console,
+  window: null,
+  conversationId: 'B',
+  selectedAgent: 'agent',
+  document: {
+    hidden: false,
+    addEventListener: () => {},
+    getElementById: id => id === 'input' ? inputs[context.conversationId] : null,
+  },
+  localStorage: { getItem: () => null, removeItem: () => {} },
+  Event: function Event() {},
+  addMsg: (_kind, text) => { throw new Error(text); },
+  send: () => sends.push(context.conversationId),
+  captureConversationSession: () => sessions[context.conversationId],
+  getConversationSession: cid => sessions[cid] || null,
+  withConversationSession: (session, callback) => {
+    const previous = context.conversationId;
+    context.conversationId = session.conversationId;
+    try { return callback(); } finally { context.conversationId = previous; }
+  },
+  action$: (action, args) => ({ subscribe: (next, error) => {
+    request = { action, args };
+    pending = { next, error };
+  }}),
+  setTimeout,
+  clearTimeout,
+};
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+context._convSttBlobToBase64 = async () => 'YXVkaW8=';
+const recording = {
+  session: sessions.A,
+  conversationId: 'A',
+  config: { service: 'stt', language: '', autoSend: true },
+  inputWasEmpty: true,
+};
+(async () => {
+  await context._convSttTranscribeBlob({ size: 4, type: 'audio/webm' }, recording);
+  if (!request || request.action !== 'stt_transcribe'
+      || request.args.conversation_id !== 'A') {
+    throw new Error('transcription request escaped recording conversation A');
+  }
+  pending.next({ text: 'hello from A' });
+  if (inputs.A.value !== 'hello from A' || inputs.B.value !== '') {
+    throw new Error('transcript was inserted into the focused conversation B');
+  }
+  if (sends.join(',') !== 'A' || context.conversationId !== 'B') {
+    throw new Error('auto-send or focus restoration used the wrong conversation');
+  }
+})().catch(err => { console.error(err); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        ["node", "-e", harness, str(CHAT_UI / "conversation_stt.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_openspace_ignores_background_conversation_sse():
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+function eventSource() {
+  const listeners = {};
+  return {
+    listeners,
+    addEventListener: (type, callback) => { listeners[type] = callback; },
+  };
+}
+let ensured = 0;
+const context = {
+  console,
+  window: null,
+  _osSeedConvId: 'B',
+  _osActive: false,
+  _osEventAgent: () => 'agent',
+  _osEnsureAgent: () => { ensured += 1; return { state: 'idle' }; },
+  _osSetState: () => {},
+  _osStreamBubble: () => {},
+};
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const a = eventSource();
+context.openspaceWireSSE(a, 'A');
+a.listeners.token({ data: JSON.stringify({ content: 'wrong room' }) });
+if (ensured !== 0) throw new Error('background A event mutated OpenSpace B');
+const b = eventSource();
+context.openspaceWireSSE(b, 'B');
+b.listeners.token({ data: JSON.stringify({ content: 'right room' }) });
+if (ensured !== 1) throw new Error('owner B event did not reach OpenSpace');
+"""
+    result = subprocess.run(
+        ["node", "-e", harness, str(CHAT_UI / "openspace_runtime.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_openspace_background_history_is_cached_without_stealing_focus():
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+const resets = [];
+const styles = [];
+const context = {
+  console,
+  window: null,
+  _osSeedConvId: 'B',
+  _osHistoryByConversation: new Map(),
+  _osAgents: new Map(),
+  openspaceResetTransient: () => resets.push('reset'),
+  _osApplyRoomStyle: cid => styles.push(cid),
+};
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+context.openspaceResetTransient = () => resets.push('reset');
+context._osApplyRoomStyle = cid => styles.push(cid);
+context.openspaceSeedHistory([], 'A');
+if (context._osSeedConvId !== 'B' || resets.length || styles.length) {
+  throw new Error('background history stole OpenSpace ownership');
+}
+if (!context._osHistoryByConversation.has('A')) {
+  throw new Error('background history was not cached for a later focus');
+}
+context.openspaceSetConversationOwner('A');
+if (context._osSeedConvId !== 'A' || resets.length !== 1 || styles.join(',') !== 'A') {
+  throw new Error('focus did not project the cached OpenSpace owner');
+}
+"""
+    result = subprocess.run(
+        ["node", "-e", harness, str(CHAT_UI / "openspace_agents.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_tts_focus_transfer_stops_both_pipelines_in_owner_context():
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+const deletes = [];
+let pauses = 0;
+const context = {
+  console,
+  window: null,
+  conversationId: 'A',
+  document: {
+    hidden: false,
+    addEventListener: () => {},
+    getElementById: () => null,
+    querySelectorAll: () => [],
+  },
+  localStorage: { getItem: () => null },
+  action$: (action, args) => ({ subscribe: () => {
+    if (action === 'tts_delete') deletes.push(args);
+  }}),
+  setTimeout,
+  clearTimeout,
+};
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+context._convTtsEnabled = true;
+context._convTtsOwnerConversationId = 'A';
+context._convTtsCurrentAudio = { pause: () => { pauses += 1; } };
+context._convTtsCurrentAudioFileId = 'live-current';
+context._convTtsCurrentAudioConversationId = 'A';
+context._convTtsPendingAudio = {
+  1: { file_id: 'live-pending', conversation_id: 'A' },
+};
+context._convTtsOneShotOwnerConversationId = 'A';
+context._convTtsOneShotAudio = { pause: () => { pauses += 1; } };
+context._convTtsOneShotFileId = 'one-current';
+context._convTtsOneShotFileConversationId = 'A';
+context._convTtsOneShotPendingAudio = {
+  1: { file_id: 'one-pending', conversation_id: 'A' },
+};
+context.stopConversationTTSForConversationChange();
+if (pauses !== 2 || context._convTtsEnabled
+    || context._convTtsOwnerConversationId
+    || context._convTtsOneShotOwnerConversationId) {
+  throw new Error('TTS pipelines survived focus transfer');
+}
+if (deletes.length !== 4 || deletes.some(row => row.conversation_id !== 'A')) {
+  throw new Error('TTS cleanup escaped owner A: ' + JSON.stringify(deletes));
+}
+context._convTtsEnabled = true;
+context._convTtsOwnerConversationId = 'B';
+context.conversationId = 'A';
+context._convTtsQueue = [];
+context.conversationTTSOnMessage({ role: 'assistant', content: 'background A' });
+if (context._convTtsQueue.length) throw new Error('background A entered owner B queue');
+
+const oldLive = { play: () => Promise.resolve() };
+const newLive = {};
+context._convTtsRunId = 10;
+context._convTtsEnabled = true;
+context._convTtsPlayUrl({
+  audio: oldLive, url: 'old-live', file_id: '', conversation_id: 'A',
+});
+context._convTtsRunId = 11;
+context._convTtsCurrentAudio = newLive;
+context._convTtsPlaying = true;
+oldLive.onended();
+if (context._convTtsCurrentAudio !== newLive || !context._convTtsPlaying) {
+  throw new Error('stale live playback callback mutated the new TTS run');
+}
+
+const oldOneShot = { play: () => Promise.resolve() };
+const newOneShot = {};
+context._convTtsOneShotRunId = 20;
+context._convTtsPlayOneShot({
+  audio: oldOneShot, url: 'old-one', file_id: '', conversation_id: 'A',
+}, 20, () => { throw new Error('stale one-shot advanced the new queue'); });
+context._convTtsOneShotRunId = 21;
+context._convTtsOneShotAudio = newOneShot;
+context._convTtsOneShotPlaying = true;
+oldOneShot.onended();
+if (context._convTtsOneShotAudio !== newOneShot || !context._convTtsOneShotPlaying) {
+  throw new Error('stale one-shot callback mutated the new TTS run');
+}
+"""
+    result = subprocess.run(
+        ["node", "-e", harness, str(CHAT_UI / "conversation_tts.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_voice_and_livekit_starts_are_owned_and_cancellable():
+    voice = (CHAT_UI / "conversation_voice.js").read_text(encoding="utf-8")
+    livekit = (CHAT_UI / "conversation_livekit.js").read_text(encoding="utf-8")
+    sse = (CHAT_UI / "sse.js").read_text(encoding="utf-8")
+
+    assert "var _voiceOwnerConversationId = ''" in voice
+    assert "var _voiceStartGeneration = 0" in voice
+    assert "_voiceStartStillOwned(cid, generation)" in voice
+    assert "if (_voiceWs !== ws || _voiceOwnerConversationId !== cid) return" in voice
+    assert "var _lkOwnerConversationId = ''" in livekit
+    assert "var _lkGeneration = 0" in livekit
+    assert "_lkStopServerSession(payload)" in livekit
+    assert "_lkOwnerConversationId !== ownerId" in livekit
+    assert "_lkWireSSE(cid)" in sse
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_voice_capture_commits_only_after_ownership_check():
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+function deferred() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return { promise, resolve };
+}
+function stream(name) {
+  const track = { stopped: false, stop() { this.stopped = true; } };
+  return { name, track, getTracks: () => [track] };
+}
+class AudioContext {
+  constructor() { this.state = 'running'; this.sampleRate = 48000; this.destination = {}; }
+  createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+  createScriptProcessor() { return { connect() {}, disconnect() {}, onaudioprocess: null }; }
+  close() {}
+}
+const requestA = deferred();
+const requestB = deferred();
+const requests = [requestA, requestB];
+const context = {
+  console,
+  window: null,
+  document: { addEventListener: () => {}, getElementById: () => null },
+  navigator: { mediaDevices: { getUserMedia: () => requests.shift().promise } },
+  localStorage: { getItem: () => null },
+  AudioContext,
+  setTimeout,
+  clearTimeout,
+};
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const streamA = stream('A');
+const streamB = stream('B');
+context._voiceOwnerConversationId = 'A';
+context._voiceStartGeneration = 1;
+const pendingA = context._voiceStartCapture('A', 1);
+context._voiceOwnerConversationId = 'B';
+context._voiceStartGeneration = 2;
+const pendingB = context._voiceStartCapture('B', 2);
+(async () => {
+  requestB.resolve(streamB);
+  if (!await pendingB || context._voiceStream !== streamB) {
+    throw new Error('owned B capture was not committed');
+  }
+  requestA.resolve(streamA);
+  if (await pendingA || !streamA.track.stopped) {
+    throw new Error('stale A capture was not rejected and released');
+  }
+  if (context._voiceStream !== streamB || streamB.track.stopped) {
+    throw new Error('stale A capture replaced or stopped B');
+  }
+})().catch(err => { console.error(err); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        ["node", "-e", harness, str(CHAT_UI / "conversation_voice.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_cancelled_livekit_start_cannot_stop_the_new_owner():
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+let rejectFetch;
+let errors = 0;
+const context = {
+  console,
+  window: null,
+  document: {
+    head: { appendChild: () => {} },
+    body: { appendChild: () => {} },
+    getElementById: () => null,
+    querySelector: () => null,
+    createElement: () => ({}),
+  },
+  fetch: () => new Promise((_resolve, reject) => { rejectFetch = reject; }),
+  addMsg: () => { errors += 1; },
+  _voiceT: (_key, fallback) => fallback,
+  _voiceSetState: () => {},
+  _voiceRemoveCaptions: () => {},
+  _voiceHideOverlay: () => {},
+  _voiceUpdateButton: () => {},
+  setImmediate,
+};
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+context._lkLoadSdk = () => Promise.resolve();
+const pendingA = context.startLiveKitVoiceMode('A', { id: 'livekit' });
+(async () => {
+  await new Promise(resolve => setImmediate(resolve));
+  context._lkGeneration += 1;
+  context._lkOwnerConversationId = 'B';
+  context._lkActive = true;
+  rejectFetch(new Error('cancelled A'));
+  await pendingA;
+  if (errors || !context._lkActive || context._lkOwnerConversationId !== 'B') {
+    throw new Error('cancelled A start mutated active owner B');
+  }
+})().catch(err => { console.error(err); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        ["node", "-e", harness, str(CHAT_UI / "conversation_livekit.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

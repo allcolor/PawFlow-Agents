@@ -547,13 +547,65 @@ function _osLog(rec, kind, title, body) {
 // Called by _renderHistory after a full load: the openspace shows the
 // last message/thought per participant even before any live event, and
 // user avatars exist for every author already in the transcript.
+function openspaceSetConversationOwner(cid) {
+  const next = String(cid || '');
+  if (next === _osSeedConvId) return;
+  _osSeedConvId = next || null;
+  openspaceResetTransient();
+  if (!next) return;
+  _osApplyRoomStyle(next);
+  const cached = _osHistoryByConversation.get(next);
+  if (cached) _openspaceApplyHistory(cached);
+}
+
+function openspaceReleaseConversation(cid) {
+  const released = String(cid || '');
+  if (!released) return;
+  _osHistoryByConversation.delete(released);
+  if (_osSeedConvId === released) openspaceSetConversationOwner('');
+}
+
+function _osMergeConversationHistory(messages, cached) {
+  const merged = [];
+  const seen = new Set();
+  const append = (message) => {
+    if (!message) return;
+    const msgId = String(message.msg_id || '');
+    if (msgId && seen.has(msgId)) return;
+    const row = Object.assign({}, message);
+    if (!row.timestamp && row.ts) row.timestamp = row.ts;
+    if (msgId) seen.add(msgId);
+    merged.push(row);
+  };
+  (messages || []).forEach(append);
+  (cached || []).forEach(append);
+  merged.sort((a, b) => {
+    const at = Number(a.timestamp || a.ts || 0);
+    const bt = Number(b.timestamp || b.ts || 0);
+    return at && bt ? at - bt : 0;
+  });
+  return merged;
+}
+
+function _osCacheConversationMessage(cid, message) {
+  const owner = String(cid || '');
+  if (!owner || !message || !message.msg_id) return;
+  const cached = _osHistoryByConversation.get(owner) || [];
+  _osHistoryByConversation.set(owner,
+    _osMergeConversationHistory(cached, [message]));
+}
+
 function openspaceSeedHistory(messages, cid) {
-  if (cid && cid !== _osSeedConvId) {
-    _osSeedConvId = cid;
-    openspaceResetTransient();
-    // New conversation → new room palette (deterministic per id).
-    _osApplyRoomStyle(cid);
-  }
+  const owner = String(cid || '');
+  const cached = _osHistoryByConversation.get(owner) || [];
+  const history = _osMergeConversationHistory(
+    Array.isArray(messages) ? messages : [], cached);
+  if (owner) _osHistoryByConversation.set(owner, history);
+  if (!owner || owner !== _osSeedConvId) return;
+  _openspaceApplyHistory(history);
+}
+
+function _openspaceApplyHistory(messages) {
   (messages || []).forEach((m) => {
     if (!m) return;
     const msgId = m.msg_id || '';
@@ -616,6 +668,10 @@ function openspaceUserMessage(text, attachments, targetAgent, msgId) {
   const author = (typeof window !== 'undefined' && window._userId) || 'user';
   const rec = _osEnsureUser(author);
   if (!rec) return;
+  _osCacheConversationMessage(_osSeedConvId, {
+    role: 'user', content: text || '', msg_id: msgId || '',
+    source: { type: 'user', name: author }, timestamp: Date.now() / 1000,
+  });
   if (msgId) _osSeededIds.add(msgId);
   if (text) {
     _osLog(rec, 'message', t('osvSaid'), text);

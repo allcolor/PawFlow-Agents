@@ -92,9 +92,9 @@ function connectSSE(cid, onReady, opts) {
   _sseWireA();
   _sseWireB();
   // realtime.* listeners for LiveKit live sessions (conversation_livekit.js)
-  if (typeof _lkWireSSE === 'function') _lkWireSSE();
+  if (typeof _lkWireSSE === 'function') _lkWireSSE(cid);
   // openspace 3D view mirrors agent activity from the same socket (openspace.js)
-  if (typeof openspaceWireSSE === 'function') openspaceWireSSE(eventSource);
+  if (typeof openspaceWireSSE === 'function') openspaceWireSSE(eventSource, cid);
   // usage.updated listener for the conversation cost gauge (usage_cost.js)
   if (typeof _usageWireSSE === 'function') _usageWireSSE();
   // desktop_inventory_changed listener for the Active Desktops dock (desktop_dock.js)

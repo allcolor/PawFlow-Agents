@@ -206,12 +206,12 @@ function _osDelegateDone(sourceName) {
 }
 
 // ── SSE wiring (called by connectSSE after the EventSource exists) ──
-function openspaceWireSSE(es) {
-  if (!es) return;
+function openspaceWireSSE(es, conversationOwnerId) {
+  if (!es) return; const ownerId = String(conversationOwnerId || '');
   const on = (type, fn) => es.addEventListener(type, (e) => {
-    let data = {};
-    try { data = e.data ? JSON.parse(e.data) : {}; } catch (_) { return; }
-    fn(data);
+    let data = {}; try { data = e.data ? JSON.parse(e.data) : {}; } catch (_) { return; }
+    if (type === 'new_message') _osCacheConversationMessage(ownerId, data);
+    if (!ownerId || ownerId !== _osSeedConvId) return; fn(data);
   });
 
   on('token', (d) => {

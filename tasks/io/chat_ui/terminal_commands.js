@@ -255,33 +255,89 @@ async function cmdDesktop(text, parts) {
     return true;
   }
 
+  if (sub === 'list') {
+    // Backend-truth inventory (never inferred from open tabs).
+    desktopDockCliList();
+    return true;
+  }
+
+  if (sub === 'status') {
+    const relay = parts[2] || '';
+    if (!relay) { addMsg('system', t('desktopStatusUsage')); return true; }
+    action$('desktop_list_active', { relay_id: relay, probe: true }).subscribe({
+      next: (data) => {
+        const rows = (data && data.desktops) || [];
+        if (!rows.length) {
+          addMsg('system', t('desktopStatusStopped', { relay: relay }));
+          return;
+        }
+        addMsg('system', rows.map(r =>
+          '`' + r.relay_id + '` [' + r.mode + '] ' + r.state
+          + ' (session `' + r.desktop_session_id + '`)').join('\n'));
+      },
+      error: (e) => addMsg('system', t('failed', { error: e.message })),
+    });
+    return true;
+  }
+
+  if (sub === 'attach') {
+    const relay = parts[2] || '';
+    if (!relay) { addMsg('system', t('desktopAttachUsage')); return true; }
+    const attachMode = (parts[3] || 'docker').toLowerCase();
+    action$('desktop_attach', {
+      relay_id: relay, mode: attachMode, source: 'slash',
+    }).subscribe({
+      next: (resp) => {
+        if (resp.error) { addMsg('system', '\u26a0 ' + resp.error); return; }
+        if (!resp.url) { addMsg('error', t('desktopNoUrl')); return; }
+        const label = attachMode === 'host' ? relay + ' (local)' : relay;
+        const tabId = addDesktopTab(label, resp.url);
+        if (typeof desktopDockStampTab === 'function') {
+          desktopDockStampTab(tabId, relay, attachMode);
+        }
+        if (resp.audio_session && resp.audio_token) {
+          audioConnect(resp.audio_session, resp.audio_token);
+        }
+      },
+      error: (e) => addMsg('system', t('failed', { error: e.message })),
+    });
+    return true;
+  }
+
   if (sub === 'stop') {
-    // Actually stop the desktop on the relay
+    // Deliberate backend stop: resolve the EXACT current session first,
+    // then confirm against that session ID so a stop raced by a restart
+    // conflicts instead of killing the newer desktop (plan §11.6/§15).
     const relayToStop = parts[2] || '';
     let _stopRelayId = relayToStop;
+    let _stopTabMode = '';
     if (!_stopRelayId) {
       // Find relay from active desktop tab
       const panel = _activeTab && document.getElementById('tabContent_' + _activeTab);
       _stopRelayId = panel && panel.dataset.relayId;
+      _stopTabMode = (panel && panel.dataset.desktopMode) || '';
       if (!_stopRelayId) {
         const anyPanel = document.querySelector('[id^="tabContent_desktop-"]');
         _stopRelayId = anyPanel && anyPanel.dataset.relayId;
+        _stopTabMode = (anyPanel && anyPanel.dataset.desktopMode) || _stopTabMode;
       }
     }
     if (!_stopRelayId) {
       addMsg('system', t('desktopStopUsage'));
       return true;
     }
-    addMsg('system', t('stoppingDesktop', { relay: _stopRelayId }));
-    fireAction('close_desktop', { relay_id: _stopRelayId });
-    // Close all desktop tabs for this relay
-    document.querySelectorAll('[id^="tabContent_desktop-"]').forEach(p => {
-      if (p.dataset.relayId === _stopRelayId) {
-        const tId = p.id.replace('tabContent_', '');
-        closeDesktopTab(tId);
-      }
-    });
-    addMsg('system', t('desktopStopped'));
+    const stopMode = (parts[3] || _stopTabMode || 'docker').toLowerCase();
+    action$('desktop_stop_request', {
+      relay_id: _stopRelayId, mode: stopMode, source: 'slash',
+    }).subscribe({
+        next: (resp) => {
+          if (resp.error) { addMsg('system', '\u26a0 ' + resp.error); return; }
+          const row = resp.desktop || {};
+          addMsg('system', t('stoppingDesktop', { relay: _stopRelayId }));
+          desktopDockRequestStopRow(row);
+        },
+        error: (e) => addMsg('system', t('failed', { error: e.message })),
+      });
     return true;
   }
 
@@ -344,7 +400,13 @@ async function cmdDesktop(text, parts) {
         addMsg('error', t('desktopNoUrl'));
         return;
       }
-      addDesktopTab(_tabLabel, resp.url);
+      const _dTabId = addDesktopTab(_tabLabel, resp.url);
+      // Stamp the backend identity so lifecycle operations match by
+      // relay/mode instead of the display label.
+      if (typeof desktopDockStampTab === 'function') {
+        desktopDockStampTab(_dTabId, relayId,
+                            localScreen ? 'host' : 'docker');
+      }
       // Connect audio if available. The capability token is separate
       // from the VNC one (different resource_type) — audioConnect needs
       // both the session id and the audio token to build the WS URL.

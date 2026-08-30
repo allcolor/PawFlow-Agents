@@ -26,6 +26,8 @@ class RelayWorkerState:
     desktop_vnc_port: Optional[int] = None
     desktop_novnc_port: Optional[int] = None
     desktop_display: Optional[str] = None
+    desktop_session_id: Optional[str] = None
+    desktop_started_at: Optional[float] = None
     desktop_watchdog_stop: Optional[threading.Event] = None
     desktop_watchdog_thread: Optional[threading.Thread] = None
     desktop_ws_sessions: Dict[str, dict] = field(default_factory=dict)
@@ -36,3 +38,5 @@ class RelayWorkerState:
     local_desktop_procs: Optional[List[subprocess.Popen]] = None
     local_desktop_vnc_port: Optional[int] = None
     local_desktop_novnc_port: Optional[int] = None
+    local_desktop_session_id: Optional[str] = None
+    local_desktop_started_at: Optional[float] = None

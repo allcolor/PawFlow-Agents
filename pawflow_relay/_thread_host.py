@@ -251,7 +251,7 @@ class _RelayHostHelperMixin:
             if action == "start_local_desktop":
                 result = self._host_start_local_desktop(req)
             elif action == "stop_local_desktop":
-                result = self._host_stop_local_desktop()
+                result = self._host_stop_local_desktop(req)
             elif action.startswith("screen_"):
                 result = self._host_screen_tool(req, action)
             else:
@@ -273,7 +273,10 @@ class _RelayHostHelperMixin:
         if hasattr(self, '_local_desktop_procs') and self._local_desktop_procs:
             alive = all(p.poll() is None for p in self._local_desktop_procs)
             if alive:
-                return {"novnc_port": self._local_desktop_novnc_port, "already_running": True}
+                return {"novnc_port": self._local_desktop_novnc_port,
+                        "session_id": getattr(self, '_local_desktop_session_id', None),
+                        "started_at": getattr(self, '_local_desktop_started_at', None),
+                        "already_running": True}
             for p in self._local_desktop_procs:
                 try:
                     p.kill()
@@ -364,10 +367,24 @@ class _RelayHostHelperMixin:
         self._local_desktop_procs = procs
         self._local_desktop_vnc_port = vnc_port
         self._local_desktop_novnc_port = novnc_port
+        import uuid as _uuid
+        self._local_desktop_session_id = _uuid.uuid4().hex
+        self._local_desktop_started_at = time.time()
 
-        return {"vnc_port": vnc_port, "novnc_port": novnc_port, "local_screen": True}
+        return {"vnc_port": vnc_port, "novnc_port": novnc_port,
+                "session_id": self._local_desktop_session_id,
+                "started_at": self._local_desktop_started_at,
+                "local_screen": True}
 
-    def _host_stop_local_desktop(self):
+    def _host_stop_local_desktop(self, req=None):
+        # Compare-and-stop mirroring the relay contract: a stale
+        # session_id must never stop a newer host desktop session.
+        _wanted = (req or {}).get("session_id", "")
+        _current = getattr(self, '_local_desktop_session_id', None)
+        if (_wanted and getattr(self, '_local_desktop_procs', None)
+                and _wanted != _current):
+            return {"stopped": False, "conflict": True,
+                    "current_session_id": _current}
         if hasattr(self, '_local_desktop_procs') and self._local_desktop_procs:
             for p in self._local_desktop_procs:
                 if p.poll() is None:
@@ -378,6 +395,8 @@ class _RelayHostHelperMixin:
                 except Exception:
                     p.kill()
             self._local_desktop_procs = None
+            self._local_desktop_session_id = None
+            self._local_desktop_started_at = None
             self._log("[Relay] Local desktop stopped")
             return {"ok": True}
         return {"was_running": False}

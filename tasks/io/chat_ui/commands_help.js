@@ -209,14 +209,18 @@ const HELP_DATA = {
       + '  /relay-audio stop         \u2014 Close the audio tab',
   },
   '/desktop': {
-    usage: '/desktop [relay_name] | /desktop local [relay] | /desktop docker [relay] | /desktop close',
+    usage: '/desktop [relay_name] | /desktop local|docker [relay] | /desktop list|status|attach|close|stop [relay]',
     short: t('commandShort.21'),
     detail: 'Opens noVNC in a tab connected to a virtual desktop on the relay.\n\n'
       + '  /desktop              \u2014 Open on first relay (choose mode if local screen available)\n'
       + '  /desktop my_relay     \u2014 Open on a specific relay\n'
       + '  /desktop local        \u2014 Open user\'s local screen via VNC\n'
       + '  /desktop docker       \u2014 Open Docker virtual desktop\n'
-      + '  /desktop close        \u2014 Close the active desktop tab',
+      + '  /desktop close        \u2014 Close the active desktop tab (desktop keeps running)\n'
+      + '  /desktop list         \u2014 List backend-active desktops (server truth, not tabs)\n'
+      + '  /desktop status <r>   \u2014 Report one relay\'s backend desktop state\n'
+      + '  /desktop attach <r> [host|docker] \u2014 Reattach a viewer; never starts a desktop\n'
+      + '  /desktop stop [r] [host|docker]   \u2014 Stop the backend session after explicit confirmation',
   },
   '/port-forward': {
     usage: '/port-forward <add|remove|list|open> [relay_id] [port]',

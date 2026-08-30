@@ -1,0 +1,48 @@
+/* ── Active Desktops dock (desktop_dock.js) ── */
+#desktopDockBtn { position: relative; }
+.desktop-dock-pop { position: fixed; z-index: 300; width: min(330px, calc(100vw - 16px));
+                    background: var(--pf-panel, #16213e); border: 1px solid var(--pf-border, #0f3460);
+                    border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+                    padding: 8px; color: var(--pf-text, #c0c0d0); font-size: 12px; }
+.desktop-dock-head { display: flex; align-items: center; justify-content: space-between;
+                     font-weight: 600; margin-bottom: 6px; }
+.desktop-dock-refresh { background: none; border: 1px solid var(--pf-border, #0f3460);
+                        border-radius: 4px; color: inherit; cursor: pointer; padding: 1px 6px; }
+.desktop-dock-empty, .desktop-dock-note { color: var(--pf-muted, #6c6c8a); padding: 4px 2px; }
+.desktop-dock-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+                    padding: 5px 4px; border-top: 1px solid var(--pf-border, #0f3460); }
+.desktop-dock-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.desktop-dock-relay { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.desktop-dock-badge { font-size: 10px; border-radius: 999px; padding: 0 6px; width: fit-content; }
+.desktop-dock-badge.isolated { background: color-mix(in srgb, var(--pf-accent, #6c5ce7) 25%, transparent);
+                               color: var(--pf-accent, #6c5ce7); }
+.desktop-dock-badge.shared { background: color-mix(in srgb, var(--pf-warning, #f0a500) 25%, transparent);
+                             color: var(--pf-warning, #f0a500); }
+.desktop-dock-state { color: var(--pf-muted, #6c6c8a); font-size: 11px; }
+.desktop-dock-state.state-unknown { color: var(--pf-warning, #f0a500); }
+.desktop-dock-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.desktop-dock-row-actions button { background: var(--pf-sidebar, #0f3460); color: var(--pf-text, #e0e0e0);
+                                   border: 1px solid var(--pf-border, #0f3460); border-radius: 4px;
+                                   padding: 2px 8px; cursor: pointer; font-size: 11px; }
+.desktop-dock-row-actions .desktop-dock-stop { border-color: var(--pf-danger, #e94560);
+                                               color: var(--pf-danger, #e94560); }
+.desktop-dock-confirm { position: fixed; inset: 0; z-index: 400; display: flex;
+                        align-items: center; justify-content: center;
+                        background: rgba(0,0,0,0.55); }
+.desktop-dock-confirm-box { background: var(--pf-panel, #16213e); border: 1px solid var(--pf-danger, #e94560);
+                            border-radius: 8px; max-width: min(420px, calc(100vw - 32px));
+                            padding: 14px; color: var(--pf-text, #e0e0e0); }
+.desktop-dock-confirm-title { font-weight: 700; margin-bottom: 8px; }
+.desktop-dock-confirm-body { font-size: 12px; line-height: 1.45; }
+.desktop-dock-confirm-body code { word-break: break-all; }
+.desktop-dock-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.desktop-dock-confirm-actions button { border-radius: 5px; padding: 4px 12px; cursor: pointer;
+                                       border: 1px solid var(--pf-border, #0f3460);
+                                       background: var(--pf-sidebar, #0f3460); color: var(--pf-text, #e0e0e0); }
+.desktop-dock-confirm-actions .ddc-stop { background: var(--pf-danger, #e94560); color: #fff;
+                                          border-color: var(--pf-danger, #e94560); }
+@media (max-width: 640px) {
+  /* Bottom-sheet presentation on mobile (plan section 13.1). */
+  .desktop-dock-pop { left: 0 !important; right: 0; bottom: 0 !important;
+                      width: 100vw; border-radius: 12px 12px 0 0; }
+}

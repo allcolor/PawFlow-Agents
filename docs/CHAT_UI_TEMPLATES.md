@@ -81,6 +81,7 @@ tasks/io/chat_ui/css/               # CSS modules, served by serveAssets at /cha
   85_terminal_files.css             # terminal output, file explorer
   90_tabs.css                       # tab bar, tab panels, desktop/audio tabs
   95_action_dock.css                # action menu + conversation dock
+  96_desktop_dock.css               # Active Desktops dock popover + stop confirmation
   99_theme_bridge.css               # --pf-* variable bridge (last)
 ```
 

@@ -18,6 +18,10 @@ Use local desktop mode only when you trust the active agent and permissions.
 /desktop local [relay]
 /desktop docker [relay]
 /desktop close
+/desktop list
+/desktop status <relay>
+/desktop attach <relay>
+/desktop stop [relay]
 ```
 
 Examples:
@@ -26,7 +30,16 @@ Examples:
 /desktop docker
 /desktop local my_relay
 /desktop close
+/desktop list
+/desktop stop my_relay
 ```
+
+`close` detaches the local viewer tab only; the backend desktop keeps
+running. `list` and `status` report the server's canonical inventory, never
+the state of open browser tabs. `attach` reattaches a viewer to a running
+desktop and refuses (rather than starts) when none is running. `stop` is the
+only lifecycle-ending command and always goes through an explicit
+confirmation against the exact current session (see below).
 
 The browser opens a noVNC session connected through PawFlow's VNC proxy. For a
 remote relay, the proxy carries VNC WebSocket frames over the relay's existing
@@ -57,6 +70,62 @@ terminates remaining child processes so `desktop_status` cannot keep reporting
 a stale `running=true` session. `open_desktop` repeats the server-side noVNC
 probe before reusing an existing session and restarts the desktop when the
 backend is not reachable from PawFlow.
+
+## Session Identity and Inventory
+
+Every desktop start mints a random `desktop_session_id` that lives for the
+session's lifetime and is returned by `start_desktop`, `desktop_status`, and
+`start_local_desktop` (host desktops carry `local_screen_session_id`).
+
+The server keeps a canonical inventory (`services/desktop_inventory.py`)
+keyed by `(relay_id, kind)` and populated only from authoritative sources:
+start/stop action results and `desktop_status` probes. Open browser tabs are
+never a source. An unreachable relay marks its rows `unknown` — visibly
+distinct from `stopped`, because confirmation cannot currently reach the
+relay.
+
+Typed actions over the inventory (all visibility-filtered by the requesting
+principal's relay visibility):
+
+- `desktop_list_active` — list rows; `probe: true` performs a full
+  status-probe reconciliation (used by the dock's open and manual refresh);
+- `desktop_attach` — viewer URL for a running desktop; refuses with
+  `not_running` instead of starting one;
+- `desktop_stop_request` — returns the exact session a stop would target,
+  with `confirm_required: true`;
+- `desktop_stop_confirm` — compare-and-stop carrying the observed
+  `desktop_session_id`. A stale ID returns `session_conflict` (HTTP 409) at
+  the server AND at the relay (`stop_desktop` rejects a mismatched
+  `session_id`), so a stale confirmation can never stop a newer session.
+  Retries after a lost acknowledgement are idempotent.
+
+State changes emit a `desktop_inventory_changed` SSE event; the Webchat
+action dock shows an "Active Desktops" button with a count badge, per-row
+Open/Stop, and an explicit confirmation dialog. There is no bulk stop.
+Every start/attach/stop request, confirmation, conflict, and failure writes
+a structured `[desktop-audit]` log line without credentials or host paths.
+
+Relays predating the session-identity contract keep working: their desktops
+simply stay out of the inventory (no `session_id` in status), and exact-
+session stop is unavailable for them until the relay is updated.
+
+Host desktops carry the same atomic compare-and-stop as Docker desktops:
+`stop_local_desktop` accepts a `session_id` and answers a data conflict on
+a stale one, both in the relay runtime and in the host helper, so a
+restart racing the confirmation is caught at the process that owns the
+session. Authorization for these actions maps the plan's
+`desktop.view`/`desktop.control` onto conversation roles: list and
+stop-request require `read`; attach and stop-confirm require `write`
+(`_RELAY_ACTION_ROLES` in `tasks/ai/actions/service_flow.py`).
+
+### Events that never stop a desktop
+
+Closing a noVNC tab, viewer count reaching zero, browser or SSE disconnect,
+conversation inactivity, the agent turn ending, or a Webchat reload never
+stop a healthy desktop. The relay watchdog cleans up only sessions whose
+essential processes or noVNC probe FAIL — that is failure handling, not an
+idle policy — and a failed desktop is not restarted without a new explicit
+start.
 
 ## `screen` Tool
 

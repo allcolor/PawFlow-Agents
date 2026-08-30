@@ -692,7 +692,7 @@ Open VS Code (code-server) in a tab on a relay.
 ### /desktop
 
 ```
-/desktop [relay_name] | /desktop local [relay] | /desktop docker [relay] | /desktop close
+/desktop [relay_name] | /desktop local|docker [relay] | /desktop list|status|attach|close|stop [relay]
 ```
 
 Open a noVNC virtual desktop on a relay.
@@ -702,8 +702,19 @@ Open a noVNC virtual desktop on a relay.
 /desktop my_relay      -- open on specific relay
 /desktop local         -- open user's local screen via VNC
 /desktop docker        -- open Docker virtual desktop
-/desktop close         -- close desktop tab
+/desktop close         -- detach the local tab only; the desktop keeps running
+/desktop list          -- list backend-active desktops (server inventory, not tabs)
+/desktop status <r>    -- report one relay's backend desktop state and session ID
+/desktop attach <r> [host|docker] -- reattach a viewer to a RUNNING desktop; never starts one
+/desktop stop [r] [host|docker]   -- stop the backend session after an explicit confirmation
 ```
+
+`stop` resolves the current `desktop_session_id` first and confirms against
+exactly that session: a confirmation raced by a restart returns a conflict
+instead of stopping the newer desktop. Closing a tab, losing the browser or
+SSE connection, or reaching zero viewers never stops a backend desktop.
+The mode argument defaults to `docker`; without it, `stop` reuses the mode
+stamped on the active desktop tab when one is focused.
 
 ### /relay-audio
 

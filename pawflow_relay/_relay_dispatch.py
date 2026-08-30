@@ -223,7 +223,7 @@ def _h_start_desktop(ctx, msg, on_output=None):
 
 
 def _h_stop_desktop(ctx, msg, on_output=None):
-    return _dt_stop_desktop(ctx.state)
+    return _dt_stop_desktop(ctx.state, msg)
 
 
 def _h_desktop_status(ctx, msg, on_output=None):
@@ -478,7 +478,7 @@ def execute_command(ctx, msg, on_output=None):
     if action == "start_local_desktop":
         return _dt_start_local_desktop(ctx.state, msg)
     if action == "stop_local_desktop":
-        return _dt_stop_local_desktop(ctx.state)
+        return _dt_stop_local_desktop(ctx.state, msg)
     if action == "local_screen_check":
         return _dt_local_screen_check(ctx.allow_local_screen)
 

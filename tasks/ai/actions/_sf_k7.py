@@ -15,6 +15,58 @@ from tasks.ai.actions._sf_routes import (
 logger = logging.getLogger(__name__)
 
 
+def _desktop_inventory_record_running(relay_id, local_screen, info, user_id,
+                                      flowfile):
+    """Record a confirmed-running desktop in the canonical inventory.
+
+    ``info`` is the relay's status/start payload. Relays predating the
+    session-identity contract return no session_id; their desktops keep
+    working but stay out of the inventory (and of exact-session stop).
+    """
+    try:
+        session_key = "local_screen_session_id" if (
+            local_screen and "local_screen_session_id" in (info or {})
+        ) else "session_id"
+        started_key = "local_screen_started_at" if (
+            local_screen and "local_screen_started_at" in (info or {})
+        ) else "started_at"
+        session_id = (info or {}).get(session_key)
+        if not session_id:
+            logger.info(
+                "[desktop] relay %s returned no session_id; inventory skipped",
+                relay_id)
+            return
+        from services import desktop_inventory as inv
+        rows_kind = inv.KIND_HOST if local_screen else inv.KIND_DOCKER
+        inv.record_running(relay_id, rows_kind, session_id,
+                           started_at=(info or {}).get(started_key),
+                           started_by=user_id)
+        _desktop_inventory_publish(user_id, flowfile)
+    except Exception:
+        logger.debug("desktop inventory record failed", exc_info=True)
+
+
+def _desktop_inventory_record_stopped(relay_id, local_screen, user_id,
+                                      flowfile):
+    try:
+        from services import desktop_inventory as inv
+        kind = inv.KIND_HOST if local_screen else inv.KIND_DOCKER
+        inv.record_stopped(relay_id, kind)
+        _desktop_inventory_publish(user_id, flowfile)
+    except Exception:
+        logger.debug("desktop inventory record failed", exc_info=True)
+
+
+def _desktop_inventory_publish(user_id, flowfile):
+    from tasks.ai.actions._sf_desktop import (
+        _publish_inventory_changed, _visible_relay_ids)
+    from services import desktop_inventory as inv
+    conv_id = flowfile.get_attribute("http.conversation_id") or ""
+    if conv_id:
+        _publish_inventory_changed(conv_id, inv.list_active(
+            _visible_relay_ids(user_id, conv_id)))
+
+
 def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
     """service_flow cluster _sf_k7. Returns result or _UNHANDLED."""
     (_find_relay_svc, _audio_lookup_token, _get_server_relay_container_ip,
@@ -142,6 +194,8 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                             "audio_session": _sid if _audio_token else "",
                             "audio_token": _audio_token,
                         }).encode())
+                        _desktop_inventory_record_running(
+                            relay_id, True, status, user_id, flowfile)
                         return [flowfile]
                 else:
                     _backend_host, _backend_port = _server_relay_proxy_target(relay_id, 6080)
@@ -198,8 +252,20 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                             "audio_session": _sid if _audio_token else "",
                             "audio_token": _audio_token,
                         }).encode())
+                        _desktop_inventory_record_running(
+                            relay_id, False, status, user_id, flowfile)
                         return [flowfile]
 
+            if body.get("no_start"):
+                # desktop_attach: attaching must never change lifecycle.
+                # Reaching this point means no healthy reachable session, so
+                # refuse instead of falling through to the start path.
+                flowfile.set_content(json.dumps({
+                    "error": "No running desktop to attach",
+                    "code": "not_running", "relay_id": relay_id,
+                }).encode())
+                flowfile.set_attribute("http.response.status", "409")
+                return [flowfile]
             logger.info("[open_desktop] Starting %s on relay %s", _action_start, relay_id)
             result = svc._request(_action_start, **_local_kwargs)
             logger.debug("[open_desktop] %s result: %s", _action_start, result)
@@ -287,6 +353,9 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                 "audio_session": session_id if _audio_token else "",
                 "audio_token": _audio_token,
             }).encode())
+            _desktop_inventory_record_running(
+                relay_id, local_screen, result if isinstance(result, dict) else {},
+                user_id, flowfile)
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
@@ -316,6 +385,8 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                 unregister_audio_source(_session_id)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            _desktop_inventory_record_stopped(
+                relay_id, local_screen, user_id, flowfile)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

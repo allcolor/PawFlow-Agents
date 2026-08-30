@@ -32,6 +32,8 @@ import socket
 import subprocess  # nosec B404
 import sys
 import threading
+import time
+import uuid
 from pathlib import Path
 
 from pawflow_relay._relay_ws_proto import encode_masked_frame, read_ws_frame
@@ -344,6 +346,8 @@ def desktop_cleanup(state, reason=""):
     state.desktop_vnc_port = None
     state.desktop_novnc_port = None
     state.desktop_display = None
+    state.desktop_session_id = None
+    state.desktop_started_at = None
     state.desktop_watchdog_stop = None
     state.desktop_watchdog_thread = None
     if "DISPLAY" in os.environ:
@@ -376,6 +380,8 @@ def start_desktop(state, msg):
                 "vnc_port": state.desktop_vnc_port,
                 "novnc_port": state.desktop_novnc_port,
                 "display": state.desktop_display,
+                "session_id": state.desktop_session_id,
+                "started_at": state.desktop_started_at,
                 "already_running": True
             }}
         desktop_cleanup(state, "stale desktop process")
@@ -514,6 +520,11 @@ def start_desktop(state, msg):
         state.desktop_vnc_port = _vnc_port
         state.desktop_novnc_port = _novnc_port
         state.desktop_display = _display
+        # Stable random identity for this Desktop session's lifetime.
+        # Stop confirmations compare against it so a stale confirmation
+        # can never stop a newer session (plan §11.6).
+        state.desktop_session_id = uuid.uuid4().hex
+        state.desktop_started_at = time.time()
 
         _deadline = _time_mod.time() + 8
         _novnc_ready = False
@@ -533,7 +544,9 @@ def start_desktop(state, msg):
         return {"ok": True, "data": {
             "vnc_port": _vnc_port, "novnc_port": _novnc_port,
             "audio_port": _audio_port,
-            "display": _display, "resolution": _resolution
+            "display": _display, "resolution": _resolution,
+            "session_id": state.desktop_session_id,
+            "started_at": state.desktop_started_at,
         }}
     except FileNotFoundError as e:
         return {"ok": False, "error": f"Desktop dependency not installed: {e}"}
@@ -541,7 +554,21 @@ def start_desktop(state, msg):
         return {"ok": False, "error": f"Failed to start desktop: {e}"}
 
 
-def stop_desktop(state):
+def stop_desktop(state, msg=None):
+    # Compare-and-stop: a request carrying a session_id stops ONLY that
+    # session. A stale id gets a conflict so a confirmation raced by a
+    # restart cannot stop the newer Desktop. Requests without session_id
+    # keep the unconditional legacy behavior.
+    #
+    # The conflict is a DATA answer, not an ok:false error: the message
+    # loop forwards ``result.get("data", result)`` and the server-side
+    # ``_request`` turns ``ok: false`` into a bare exception, so an error
+    # envelope would lose ``conflict``/``current_session_id`` in transit.
+    _wanted = (msg or {}).get("session_id", "")
+    if _wanted and state.desktop_procs and _wanted != state.desktop_session_id:
+        return {"ok": True, "data": {
+            "stopped": False, "conflict": True,
+            "current_session_id": state.desktop_session_id}}
     if state.desktop_procs:
         desktop_cleanup(state, "requested")
         return {"ok": True}
@@ -561,9 +588,15 @@ def desktop_status(state):
         "display": state.desktop_display,
         "vnc_port": state.desktop_vnc_port,
         "novnc_port": _novnc,
+        "session_id": state.desktop_session_id if _running else None,
+        "started_at": state.desktop_started_at if _running else None,
         "audio_port": (_novnc + 100) if _novnc and _running else 0,
         "local_screen_running": _local_running,
         "local_screen_novnc_port": state.local_desktop_novnc_port,
+        "local_screen_session_id":
+            state.local_desktop_session_id if _local_running else None,
+        "local_screen_started_at":
+            state.local_desktop_started_at if _local_running else None,
     }}
 
 
@@ -574,6 +607,8 @@ def start_local_desktop(state, msg):
         if _alive:
             return {"ok": True, "data": {
                 "novnc_port": state.local_desktop_novnc_port,
+                "session_id": state.local_desktop_session_id,
+                "started_at": state.local_desktop_started_at,
                 "already_running": True
             }}
         else:
@@ -684,10 +719,14 @@ def start_local_desktop(state, msg):
         state.local_desktop_procs = _procs
         state.local_desktop_vnc_port = _vnc_port
         state.local_desktop_novnc_port = _novnc_port
+        state.local_desktop_session_id = uuid.uuid4().hex
+        state.local_desktop_started_at = time.time()
         sys.stderr.write(f"[FSRelay] Local desktop started: vnc={_vnc_port} novnc={_novnc_port} platform={_platform}\n")
         return {"ok": True, "data": {
             "vnc_port": _vnc_port, "novnc_port": _novnc_port,
-            "platform": _platform, "local_screen": True
+            "platform": _platform, "local_screen": True,
+            "session_id": state.local_desktop_session_id,
+            "started_at": state.local_desktop_started_at,
         }}
     except FileNotFoundError as e:
         return {"ok": False, "error": f"Local desktop dependency not installed: {e}"}
@@ -695,7 +734,16 @@ def start_local_desktop(state, msg):
         return {"ok": False, "error": f"Failed to start local desktop: {e}"}
 
 
-def stop_local_desktop(state):
+def stop_local_desktop(state, msg=None):
+    # Same compare-and-stop contract as stop_desktop: a stale session_id
+    # answers a DATA conflict (transport strips error envelopes) and never
+    # touches the newer session.
+    _wanted = (msg or {}).get("session_id", "")
+    if (_wanted and state.local_desktop_procs
+            and _wanted != state.local_desktop_session_id):
+        return {"ok": True, "data": {
+            "stopped": False, "conflict": True,
+            "current_session_id": state.local_desktop_session_id}}
     if state.local_desktop_procs:
         for p in state.local_desktop_procs:
             if p.poll() is None:
@@ -708,6 +756,8 @@ def stop_local_desktop(state):
         state.local_desktop_procs = None
         state.local_desktop_vnc_port = None
         state.local_desktop_novnc_port = None
+        state.local_desktop_session_id = None
+        state.local_desktop_started_at = None
         sys.stderr.write("[FSRelay] Local desktop stopped\n")
         return {"ok": True}
     return {"ok": True, "data": {"was_running": False}}

@@ -67,6 +67,7 @@ from tasks.ai.actions._sf_k6 import _handle_sf_k6
 from tasks.ai.actions._sf_k7 import _handle_sf_k7
 from tasks.ai.actions._sf_k8 import _handle_sf_k8
 from tasks.ai.actions._sf_k9 import _handle_sf_k9
+from tasks.ai.actions._sf_desktop import _handle_sf_desktop
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,15 @@ _RELAY_ACTION_ROLES = {
     "destroy_server_execution_relay": "owner",
     "server_workspace_status": "read",
     "server_execution_relay_status": "read",
+    # Desktop inventory actions (WS7). The plan's desktop.view /
+    # desktop.control capabilities map onto the conversation-role
+    # primitive available today: listing and reading the stop target are
+    # read; attaching a viewer (interactive control of the desktop) and
+    # confirming a stop are write.
+    "desktop_list_active": "read",
+    "desktop_stop_request": "read",
+    "desktop_attach": "write",
+    "desktop_stop_confirm": "write",
 }
 
 
@@ -285,7 +295,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         _get_relay_published_port, _server_relay_proxy_target, _private_gateway_for_body)
     for _handler in (_handle_sf_k1, _handle_sf_k2, _handle_sf_k3, _handle_sf_k4,
                      _handle_sf_k5, _handle_sf_k6, _handle_sf_k7, _handle_sf_k8,
-                     _handle_sf_k9):
+                     _handle_sf_k9, _handle_sf_desktop):
         _res = _handler(self, action, body, store, user_id, flowfile, _helpers)
         if _res is not _UNHANDLED:
             return _res

@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.254] — 2026-08-30
+
+### Fixed
+
+- Desktop inventory and control actions now require an explicit conversation
+  identity, so omitting `conversation_id` fails closed instead of bypassing
+  conversation-role authorization.
+- Docker and forwarded-host Desktop lifecycle operations are serialized, and
+  the watchdog rechecks session identity under the lifecycle lock before
+  cleanup so a stale health check cannot terminate a replacement session.
+- Focusing a conversation tile now transfers ownership of microphone,
+  realtime voice, LiveKit, and TTS runtimes; asynchronous callbacks retain
+  their originating conversation and cannot mutate or stop a newer session.
+- OpenSpace now caches durable messages per open conversation, including
+  background SSE events and local echoes, and merges history snapshots without
+  erasing newer live rows or projecting them into the wrong room.
+
 ## [1.0.0-beta.253] — 2026-08-30
 
 ### Changed

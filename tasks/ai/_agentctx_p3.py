@@ -753,6 +753,7 @@ class _PACPhase3Mixin:
                         st._turn_mode = {
                             "type": "delegate_reply",
                             "source_agent": st._ms.get("from", ""),
+                            "task_id": st._ms.get("task_id", ""),
                         }
                         # Tell the agent HOW to reply: just write text, the
                         # auto-tag machinery in agent_core._append routes it

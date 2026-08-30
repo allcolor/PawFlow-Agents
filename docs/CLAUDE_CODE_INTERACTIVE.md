@@ -150,6 +150,11 @@ the turn the user is waiting on. A `capture` claim (the orphan-turn safety net)
 refuses while a request coordinator holds its explicit lease, and when evicted
 mid-turn it discards only its partial local text, never a queue event.
 
+`CCIConsumerEvicted` is propagated as silent `AgentSuperseded` control flow. The
+obsolete worker must not call the error emitter or publish `error_event`, `done`,
+or `cancelled`; the replacement owns the visible turn. This also covers a
+scheduled wake-up that claims the session immediately after a user message.
+
 A claim owns the stream from the moment it is granted, not from the first poll.
 The provider claims before it sends anything, and the send blocks on TUI
 readiness, paste, submit and verification — up to a minute on a cold TUI —

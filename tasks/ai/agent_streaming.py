@@ -567,6 +567,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                         _incoming_mode = {
                             "type": "delegate_reply",
                             "source_agent": _ms.get("from", ""),
+                            "task_id": _ms.get("task_id", ""),
                         }
                     elif (isinstance(_ms, dict)
                           and _ms.get("type") in {
@@ -586,6 +587,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             _modes_match = (
                 _incoming_mode.get("type") == _running_mode.get("type")
                 and _incoming_mode.get("source_agent") == _running_mode.get("source_agent")
+                and _incoming_mode.get("task_id") == _running_mode.get("task_id")
             )
             if not _modes_match:
                 logger.info(

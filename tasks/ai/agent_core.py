@@ -4,7 +4,7 @@ import time
 from typing import Dict
 
 from core.llm_client import (
-    LLMMessage, LLMResponse,
+    AgentSuperseded, LLMMessage, LLMResponse,
 )
 from tasks.ai.agent_emitter import AgentEmitter, AgentResult
 from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
@@ -547,6 +547,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                     "from": st._self_name,
                                     "to": st._src_agent,
                                     "kind": "reply",
+                                    "task_id": st._tm_end.get("task_id", ""),
                                 }
                                 st._reply_mid = _uuid_dr.uuid4().hex[:12]
                                 st._caller_key = (
@@ -643,6 +644,12 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     messages=st.messages, new_messages=st.new_messages)
             st.emitter.on_cancelled(_make_result("cancelled"), st.ctx)
             return _make_result("cancelled")
+
+        except AgentSuperseded:
+            # A newer worker already owns the agent/provider stream.  This is
+            # concurrency control, not a user-visible failure: the outer
+            # streaming wrapper stops the obsolete worker silently.
+            raise
 
         except Exception as e:
             logger.error(f"Agent loop error: {e}", exc_info=True)

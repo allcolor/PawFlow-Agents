@@ -84,6 +84,7 @@ class _CCStreamTurnMixin:
                 "type": "agent_delegate",
                 "from": st.agent_name or "",
                 "to": _tm["source_agent"],
+                "task_id": _tm.get("task_id", ""),
             }
         # Invariant: user-visible state MUST be on disk before we
         # publish the SSE that makes it visible. For message_meta with

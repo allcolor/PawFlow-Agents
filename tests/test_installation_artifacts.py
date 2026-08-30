@@ -108,6 +108,7 @@ def test_server_image_bundles_novnc_static_assets():
         "agents/global",
         "configs",
         "flows/global/default",
+        "flows/global/pawflow",
         "packages/bundled",
         "private_gateway_skin/global",
         "prompts/global",

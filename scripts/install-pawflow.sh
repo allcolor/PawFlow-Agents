@@ -733,6 +733,7 @@ dest = Path(sys.argv[2])
 manifest = Path(sys.argv[3])
 managed_roots = [
     "agents/global", "configs", "flows/global/default",
+    "flows/global/pawflow",
     "flows/global/telegram", "flows/global/github",
     "flows/global/cryptos", "flows/global/http_bots",
     "packages/bundled",

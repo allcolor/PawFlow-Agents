@@ -78,6 +78,7 @@ function env() {
 function historyToolCall(extra) {
   return Object.assign({
     tool_name: 'bash',
+    agent_name: 'claude',
     arguments: { command: 'sleep 300' },
     tc_id: 'toolu_1',
     tool_call_id: 'toolu_1',

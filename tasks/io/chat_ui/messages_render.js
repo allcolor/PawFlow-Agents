@@ -81,6 +81,67 @@ function trimLiveDisplayWindowIfAutoscrolling(wasAutoscroll) {
   if (typeof _updateLoadMoreBanner === 'function') _updateLoadMoreBanner();
 }
 
+function _delegateSource(extra) {
+  const source = extra && extra.source ? extra.source : extra;
+  return source && source.type === 'agent_delegate' ? source : null;
+}
+
+function _delegatePairKey(source) {
+  if (!source) return '';
+  const from = String(source.from || '').trim().toLowerCase();
+  const to = String(source.to || '').trim().toLowerCase();
+  if (!from || !to) return '';
+  return [from, to].sort().join('::');
+}
+
+// A delegate frame belongs to one logical delegate task inside one canonical
+// transcript. Pair identity alone is deliberately insufficient: the same two
+// agents can exchange many independent requests over the life of a conversation.
+function _delegateFrameForSource(source, root) {
+  const pairKey = _delegatePairKey(source);
+  if (!pairKey || !root) return null;
+  const taskId = String((source && source.task_id) || '').trim();
+  const frames = Array.from(root.querySelectorAll('.delegate-shared')).filter(function(frame) {
+    return frame.dataset && frame.dataset.delegatePair === pairKey;
+  });
+  if (taskId) {
+    return frames.find(function(frame) {
+      return frame.dataset.delegateTaskId === taskId;
+    }) || null;
+  }
+  // Legacy replies did not always retain task_id. Attach them only to the most
+  // recent unfinished frame for this pair, never to the first frame on screen.
+  if (source && source.kind === 'reply') {
+    for (let index = frames.length - 1; index >= 0; index--) {
+      if (frames[index].dataset.delegateComplete !== '1') return frames[index];
+    }
+  }
+  return null;
+}
+
+function _delegateFrameKey(source, msgId) {
+  const extra = source && source.source ? source : null;
+  if (extra) {
+    msgId = msgId || extra.task_id || extra.msg_id || '';
+    source = extra.source;
+  }
+  const pairKey = _delegatePairKey(source);
+  if (!pairKey) throw new Error('BUG: agent_delegate message missing from/to identity');
+  const taskId = String((source && source.task_id) || '').trim();
+  const fallbackId = String(msgId || '').trim();
+  if (!taskId && !fallbackId) {
+    throw new Error('BUG: agent_delegate message missing request identity');
+  }
+  const threadKey = taskId ? 'task::' + taskId : 'message::' + fallbackId;
+  return 'delegate-shared::' + pairKey + '::' + threadKey;
+}
+
+function _delegateReplyCompletesFrame(role, text, source) {
+  return !!(source && source.kind === 'reply'
+    && role === 'assistant' && String(text || '').trim()
+    && source.delegate_visibility !== 'self_only');
+}
+
 function addMsg(role, text, extra) {
   // Dedup by msg_id — if we've already displayed this message, skip
   const msgId = (extra && extra.msg_id) || '';
@@ -184,7 +245,8 @@ function addMsg(role, text, extra) {
   // tool rows instead of treating it as a user boundary.
   const _rowSrc = (extra && extra.source) || {};
   if (role === 'user' && (_rowSrc.delegate || _rowSrc.name === 'system'
-      || _rowSrc.name === 'background' || _rowSrc.type === 'system')) {
+      || _rowSrc.name === 'background' || _rowSrc.type === 'system'
+      || _rowSrc.type === 'agent_delegate')) {
     el.dataset.systemInjected = '1';
   }
   const _msgTaskId = (extra && (extra.task_id || (extra.source && extra.source.task_id))) || '';
@@ -256,14 +318,20 @@ function addMsg(role, text, extra) {
       && window.PAWFLOW_GROUP_DELEGATE_MESSAGES !== false;
   pawflowDebugLog('[delegate-render]', role, 'isDelegate=', _isDelegateMsg, 'source=', extra && extra.source);
   if (_isDelegateMsg) {
-    const _from = extra.source.from || '?';
-    const _to = extra.source.to || '?';
-    // Bidirectional key: both A→B and B→A land in the same block.
-    const _pair = [_from, _to].map(s => s.toLowerCase()).sort();
-    const _key = 'delegate-shared::' + _pair[0] + '::' + _pair[1];
-    let _existing = document.querySelector('[data-delegate-key="' + CSS.escape(_key) + '"]');
+    const _from = String(extra.source.from || '').trim();
+    const _to = String(extra.source.to || '').trim();
+    if (!_from || !_to) throw new Error('BUG: agent_delegate message missing from/to identity');
+    const _pairKey = _delegatePairKey(extra.source);
+    const _taskId = String(extra.source.task_id || '').trim();
+    const _key = _delegateFrameKey(extra.source, msgId);
+    const _messageRoot = document.getElementById('messages');
+    let _existing = _delegateFrameForSource(extra.source, _messageRoot);
     const _inner = document.createElement('div');
     _inner.className = 'delegate-message msg-inner-' + role;
+    _inner.dataset.messageRole = role;
+    _inner.dataset.agent = _from.toLowerCase();
+    _inner.dataset.rawText = String(text || '').substring(0, 500);
+    if (_taskId) _inner.dataset.taskId = _taskId;
     if (msgId) _inner.dataset.msgid = msgId;
     if (role === 'tool_call' || role === 'tool') {
       let toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
@@ -280,11 +348,6 @@ function addMsg(role, text, extra) {
       _inner.dataset.tool = toolName;
       const origin = _toolOriginValue(extra, (extra && (extra.tool_name || extra.tool)) || toolName);
       if (origin) _inner.dataset.toolOrigin = origin;
-      // Tag the agent that owns this tool so the `done` handler can
-      // scope its pending-bullet cleanup correctly.
-      const _ownerAgent = (extra && (extra.agent_name
-          || (extra.source && extra.source.from))) || '';
-      if (_ownerAgent) _inner.dataset.agent = String(_ownerAgent).toLowerCase();
       if (args && args.path) _inner.dataset.path = args.path;
       if (args && args.command) _inner.dataset.command = args.command.substring(0, 200);
       const isLive = extra && extra.live;
@@ -320,10 +383,16 @@ function addMsg(role, text, extra) {
     }
     if (_existing) {
       const _body = _existing.querySelector('.delegate-body');
-      if (_body) _body.appendChild(_inner);
+      if (!_body) throw new Error('BUG: delegate frame missing body');
+      _insertMessageChronologically(_body, _inner, _ts, _hasRealSortTs(extra));
+      if (_delegateReplyCompletesFrame(role, text, extra.source)) {
+        _existing.dataset.delegateComplete = '1';
+      }
+      _existing._delegateInner = _inner;
       el.style.display = 'none';
-      el._delegateInner = _inner;
-      return _inner;
+      // The simplified turn controller must move the complete delegate frame,
+      // never tear its newest inner message out of the frame.
+      return _existing;
     }
     const _arrow = '\u{1F500} <span class="delegate-src">'
         + escapeHtml(displayAgentName(_from)) + '</span> \u2192 '
@@ -331,9 +400,12 @@ function addMsg(role, text, extra) {
         + escapeHtml(displayAgentName(_to)) + '</span>';
     el.className = 'msg delegate-block delegate-shared';
     el.dataset.delegateKey = _key;
+    el.dataset.delegatePair = _pairKey;
+    if (_taskId) el.dataset.delegateTaskId = _taskId;
+    el.dataset.delegateComplete = _delegateReplyCompletesFrame(role, text, extra.source) ? '1' : '0';
     const _body = document.createElement('div');
     _body.className = 'delegate-body';
-    _body.appendChild(_inner);
+    _insertMessageChronologically(_body, _inner, _ts, _hasRealSortTs(extra));
     const _details = document.createElement('details');
     _details.open = true;
     const _summary = document.createElement('summary');
@@ -346,6 +418,10 @@ function addMsg(role, text, extra) {
   } else if (role === 'assistant') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
   } else if (role === 'tool_call' || role === 'tool') {
+    const _toolAgent = String((extra && (extra.agent_name
+      || (extra.source && (extra.source.name || extra.source.from)))) || '').trim();
+    if (!_toolAgent) throw new Error('BUG: tool call missing agent identity');
+    el.dataset.agent = _toolAgent.toLowerCase();
     let toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
     // Prefer `arguments` (untouched dict from classify) over `tool_args`
     // (JSON string truncated to 500 chars — invalid on long bash commands,

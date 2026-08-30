@@ -710,7 +710,9 @@ function _sseWireA() {
     }
     pawflowDebugLog('[SSE] tool_call received:', data.tool, data.agent_name, data.llm_service, JSON.stringify(data.arguments || {}).substring(0, 200));
     // Finalize streaming for THIS agent before showing tool call
-    const tcAgent = data.agent_name || '';
+    const tcAgent = String(data.agent_name
+      || (data.source && (data.source.name || data.source.from)) || '').trim();
+    if (!tcAgent) throw new Error('BUG: tool_call event missing agent identity');
     const tcs = streams[tcAgent.toLowerCase()];
     if (tcs && tcs.el) {
       // Finalize: keep reference for done handler to add metadata later
@@ -748,7 +750,7 @@ function _sseWireA() {
     const tcEl = addMsg('tool_call', data.tool, tcExtra);
     // Tag owning agent so the `done` handler can scope its cleanup
     // (otherwise agent A's done closes agent B's still-live tools).
-    if (tcEl) tcEl.dataset.agent = (tcAgent || '').toLowerCase();
+    if (tcEl) tcEl.dataset.agent = tcAgent.toLowerCase();
     // Move into task block if this is a task event
     if (data.task_id && tcEl && !data.parent_tc_id) {
       const tb = _getTaskBlock(data.task_id, data.task_iteration, tcAgent);

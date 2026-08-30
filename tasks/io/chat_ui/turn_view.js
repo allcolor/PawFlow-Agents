@@ -31,10 +31,10 @@ const _turnRainCanvases = new Set();
 let _turnRainTimer = null;
 
 let PAWFLOW_CHAT_VIEW_MODE = 'classic';
-const simplifiedTurns = new Map();
+let simplifiedTurns = new Map();
 // What the server said was still RUNNING when this page was built. It answers
 // "is this turn still alive" -- never "which turn does this row belong to".
-const _turnRuntime = new Map();
+let _turnRuntime = new Map();
 // ── THE RULE: turn boundaries are POSITIONAL, never correlated ─────────────
 //
 //     USER | SYSTEM WAKE MESSAGE > BLOCK > the block's last message
@@ -427,6 +427,12 @@ function _turnCurrentState(create) {
 
 function turnViewIngest(kind, data, element) {
   if (!turnViewIsSimplified()) return false;
+  // A shared delegate request/reply is agent activity, even though its durable
+  // wire roles are user/assistant. Keep the complete delegate frame in Tool
+  // calls; it must never become the turn's outside final message or pull later
+  // normal assistant text underneath an old detail panel.
+  const source = (data && data.source) || {};
+  if (source.type === 'agent_delegate') kind = 'sub_agent_trace';
   // No open turn means the agent is working without a user row above it: a
   // history page that starts mid-turn, a provider that ended a turn and went
   // back to work, a delegate returning. That is still a turn, and its rows

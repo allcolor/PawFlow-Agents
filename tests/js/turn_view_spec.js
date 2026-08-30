@@ -206,6 +206,65 @@ test('an answer takes the outside spot back from a system notice', () => {
   assert(notice.parentNode !== e.messages, 'and the notice is filed in the block');
 });
 
+test('delegate frames stay in tools while normal answers stay outside detail', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const delegate = e.row('d1', 'delegate-shared');
+  delegate.dataset.messageRole = 'assistant';
+  delegate.dataset.rawText = 'private delegate reply';
+  const delegateData = {
+    msg_id: 'd1',
+    content: 'private delegate reply',
+    source: { type: 'agent_delegate', from: 'worker', to: 'assistant', task_id: 'task-1' },
+  };
+  e.ctx.turnViewIngest('assistant', delegateData, delegate);
+
+  const block = e.block();
+  const tools = block.querySelector('#turn-panel-u1-tools .simple-turn-panel-scroll');
+  assert(delegate.parentNode === tools, 'the whole delegate frame stays in Tool calls');
+  eq(block.nextSibling, null, 'delegate activity never takes the outside answer spot');
+
+  const answer = e.row('a1');
+  answer.dataset.messageRole = 'assistant';
+  answer.dataset.rawText = 'normal answer';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1', content: 'normal answer' }, answer);
+  assert(block.nextSibling === answer, 'the normal assistant answer remains directly below detail');
+  assert(delegate.parentNode === tools, 'the delegate frame was not pulled out by the answer');
+});
+
+test('delegate frame lookup uses task id and the supplied transcript root', () => {
+  const e = env('simplified');
+  const first = e.row('d1', 'delegate-shared');
+  first.dataset.delegatePair = 'assistant::worker';
+  first.dataset.delegateTaskId = 'task-1';
+  first.dataset.delegateComplete = '1';
+  const second = e.row('d2', 'delegate-shared');
+  second.dataset.delegatePair = 'assistant::worker';
+  second.dataset.delegateTaskId = 'task-2';
+  second.dataset.delegateComplete = '0';
+
+  const exact = e.ctx._delegateFrameForSource({
+    type: 'agent_delegate', from: 'worker', to: 'assistant', task_id: 'task-2', kind: 'reply',
+  }, e.messages);
+  assert(exact === second, 'task correlation selects the matching frame');
+  const legacy = e.ctx._delegateFrameForSource({
+    type: 'agent_delegate', from: 'worker', to: 'assistant', kind: 'reply',
+  }, e.messages);
+  assert(legacy === second, 'legacy correlation selects the newest unfinished frame');
+
+  const otherRoot = e.dom.document.createElement('div');
+  const foreign = e.dom.document.createElement('div');
+  foreign.className = 'delegate-shared';
+  foreign.dataset.delegatePair = 'assistant::worker';
+  foreign.dataset.delegateTaskId = 'task-2';
+  otherRoot.appendChild(foreign);
+  const foreignMatch = e.ctx._delegateFrameForSource({
+    type: 'agent_delegate', from: 'assistant', to: 'worker', task_id: 'task-2',
+  }, otherRoot);
+  assert(foreignMatch === foreign, 'lookup is scoped to the supplied transcript');
+  assert(exact !== foreign, 'another conversation cannot capture this reply');
+});
+
 test('a newer system notice replaces the one holding the spot', () => {
   const e = env('simplified');
   startTurn(e, 'u1');

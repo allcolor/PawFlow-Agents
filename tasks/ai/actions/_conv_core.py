@@ -193,7 +193,9 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             except Exception:
                 raw = "simplified"
             mode = str(raw).strip().lower()
-            allowed = ("classic", "simplified", "openspace")
+            # OpenSpace is a workspace tile, not a view mode; a legacy stored
+            # "openspace" resolves to the simplified transcript it mirrored.
+            allowed = ("classic", "simplified")
             return mode if mode in allowed else "simplified"
 
         group_technical_messages = _resolve_chat_flag("group_technical_messages")

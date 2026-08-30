@@ -257,11 +257,9 @@ const VIEW_TOGGLES = {
 
 function updateViewModeItems(mode) {
   const simplified = mode === 'simplified';
-  const openspace = mode === 'openspace';
-  const classic = !simplified && !openspace;
+  const classic = !simplified;
   const classicItem = document.getElementById('viewItemClassic');
   const simpleItem = document.getElementById('viewItemSimplified');
-  const openspaceItem = document.getElementById('viewItemOpenspace');
   const classicOptions = document.getElementById('viewClassicOptions');
   if (classicItem) {
     classicItem.classList.toggle('active', classic);
@@ -271,21 +269,13 @@ function updateViewModeItems(mode) {
     simpleItem.classList.toggle('active', simplified);
     simpleItem.setAttribute('aria-checked', simplified ? 'true' : 'false');
   }
-  if (openspaceItem) {
-    openspaceItem.classList.toggle('active', openspace);
-    openspaceItem.setAttribute('aria-checked', openspace ? 'true' : 'false');
-  }
   if (classicOptions) classicOptions.style.display = classic ? '' : 'none';
 }
 
 function onViewModeSelect(mode) {
-  if (!conversationId || !['classic', 'simplified', 'openspace'].includes(mode)) return;
-  const openspaceItem = document.getElementById('viewItemOpenspace');
-  const currentOpenspace = !!(openspaceItem && openspaceItem.classList.contains('active'));
+  if (!conversationId || !['classic', 'simplified'].includes(mode)) return;
   if (typeof turnViewIsSimplified === 'function'
-      && !currentOpenspace && mode !== 'openspace'
       && turnViewIsSimplified() === (mode === 'simplified')) { closeViewMenu(); return; }
-  if (currentOpenspace && mode === 'openspace') { closeViewMenu(); return; }
   const menu = document.getElementById('viewMenu');
   if (menu) menu.classList.add('disabled');
   action$('set_param', {
@@ -295,12 +285,7 @@ function onViewModeSelect(mode) {
     next: data => {
       if (data && data.error) { addMsg('error', data.error); return; }
       if (typeof turnViewSetMode === 'function') {
-        turnViewSetMode(mode === 'openspace' ? 'simplified' : mode);
-      }
-      if (mode === 'openspace' && typeof workspaceOpenOpenspace === 'function') {
-        workspaceOpenOpenspace();
-      } else if (mode !== 'openspace' && typeof workspaceOpenWebchat === 'function') {
-        workspaceOpenWebchat();
+        turnViewSetMode(mode);
       }
       updateViewModeItems(mode); closeViewMenu(); resumeConv(conversationId, true);
     },
@@ -657,20 +642,11 @@ function _renderHistory(data) {
     }
     return;
   }
-  const viewMode = ['simplified', 'openspace'].includes(data.view_mode)
-    ? data.view_mode : 'classic';
-  // OpenSpace owns no conversation state. It is a workspace surface whose wall
-  // screen mirrors the canonical transcript; legacy conversations that stored
-  // `openspace` still use simplified rendering for that canonical source.
+  // OpenSpace is its own workspace tile, not a chat view mode; the server
+  // resolves legacy `openspace` params to simplified before we get here.
+  const viewMode = data.view_mode === 'simplified' ? 'simplified' : 'classic';
   if (typeof turnViewSetMode === 'function') {
-    turnViewSetMode(viewMode === 'openspace' ? 'simplified' : viewMode);
-  }
-  if (viewMode === 'openspace' && typeof workspaceOpenOpenspace === 'function') {
-    workspaceOpenOpenspace();
-  } else if (typeof workspaceSelectedTab === 'function'
-      && workspaceSelectedTab() === 'openspace'
-      && typeof workspaceOpenWebchat === 'function') {
-    workspaceOpenWebchat();
+    turnViewSetMode(viewMode);
   }
   updateViewModeItems(viewMode);
   const groupTechnicalMessages = !!data.group_technical_messages;

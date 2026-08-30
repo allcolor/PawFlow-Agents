@@ -480,7 +480,7 @@ function _osUpdateCamera() {
 function openspaceZoomToWebchat() {
   if (!_osActive || !_osCamera || _osWebchatTransitionRaf) return;
   if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    onViewModeSelect('simplified');
+    if (typeof workspaceOpenWebchat === 'function') workspaceOpenWebchat();
     return;
   }
   const wrap = document.getElementById('openspaceWrap');
@@ -523,7 +523,7 @@ function openspaceZoomToWebchat() {
       return;
     }
     _osWebchatTransitionRaf = 0;
-    onViewModeSelect('simplified');
+    if (typeof workspaceOpenWebchat === 'function') workspaceOpenWebchat();
     setTimeout(() => {
       if (wrap) wrap.classList.remove('osv-webchat-transition');
       if (button) button.disabled = false;

@@ -72,24 +72,29 @@ def test_environment_module_supports_restart_free_hotpatch_loading():
     assert ".then(() => _osEnsureEnvironment())" in openspace
 
 
-def test_view_menu_offers_openspace_mode():
+def test_openspace_is_a_tile_not_a_view_mode():
+    # OpenSpace opens/focuses its own workspace tile: the quick button opens
+    # the tile directly and the view menu no longer offers an openspace mode.
     template = rendered_chat_html()
-    assert 'id="viewItemOpenspace"' in template
-    assert "onViewModeSelect('openspace')" in template
+    assert 'id="viewItemOpenspace"' not in template
+    assert "onViewModeSelect('openspace')" not in template
+    assert 'id="openspaceQuickBtn"' in template
+    assert 'onclick="workspaceOpenOpenspace()"' in template
     assert 'id="openspaceWrap"' in template
     assert 'id="openspaceOverlay"' in template
-    assert 'id="openspaceQuickBtn"' in template
     assert 'id="workspaceBoard"' in template
     # Webchat remains independently visible when OpenSpace occupies another tile.
     assert "body.openspace-active .messages:not(.osv-projected) { display: none; }" not in template
 
 
-def test_webchat_button_zooms_to_main_screen_before_simplified_view():
+def test_webchat_button_zooms_to_main_screen_then_focuses_webchat_tile():
     openspace = _openspace_text()
     css = _text("tasks/io/chat_ui/css/60_openspace.css")
     assert "function openspaceZoomToWebchat()" in openspace
     assert "OSV_SCREEN_Z" in openspace
-    assert "onViewModeSelect('simplified')" in openspace
+    # Focus moves to the webchat tile; the view mode is never touched.
+    assert "workspaceOpenWebchat()" in openspace
+    assert "onViewModeSelect(" not in openspace
     assert "prefers-reduced-motion: reduce" in openspace
     assert ".osv-webchat-btn" in css
     assert "osvWebchatTransition" not in css
@@ -114,18 +119,18 @@ def test_visitor_stays_off_screen_axis_and_screen_blocks_floor_navigation():
     assert "OSV_SCREEN_Z + 2.2" in runtime
 
 
-def test_view_mode_plumbing_accepts_openspace():
+def test_view_mode_plumbing_no_longer_accepts_openspace():
+    # The view mode is classic/simplified only; changing it never opens,
+    # closes, or refocuses workspace tiles.
     conversations = _text("tasks/io/chat_ui/conversations.js")
-    assert "['classic', 'simplified', 'openspace']" in conversations
-    assert "workspaceOpenOpenspace" in conversations
-    assert "workspaceOpenWebchat" in conversations
-    assert "openspaceItem.classList.contains('active')" in conversations
+    assert "['classic', 'simplified']" in conversations
+    assert "workspaceOpenOpenspace" not in conversations
+    assert "workspaceOpenWebchat" not in conversations
+    assert "viewItemOpenspace" not in conversations
     assert "openspaceIsActive" not in conversations
-    assert "workspaceSelectedTab() === 'openspace'" in conversations
-    # OpenSpace mirrors the canonical simplified transcript without owning it.
-    assert "turnViewSetMode(mode === 'openspace' ? 'simplified' : mode)" in conversations
+    # A legacy stored `openspace` param resolves server-side to simplified.
     server = _text("tasks/ai/actions/_conv_core.py")
-    assert '"openspace"' in server
+    assert 'allowed = ("classic", "simplified")' in server
 
 
 def test_sse_socket_is_wired_into_openspace():

@@ -28,7 +28,7 @@
                 title="Conversation appearance" data-i18n-title="appearanceTitle"
                 aria-label="Conversation appearance" data-i18n-aria-label="appearanceTitle">&#x1F3A8;</button>
         <button class="conversation-quick-btn conversation-control-button" id="openspaceQuickBtn" type="button"
-                onclick="onViewModeSelect('openspace')"
+                onclick="workspaceOpenOpenspace()"
                 title="Openspace (3D)" data-i18n-title="openspaceView"
                 aria-label="Openspace (3D)" data-i18n-aria-label="openspaceView">&#x1F3E2;</button>
         <button class="speak-toggle-btn conversation-control-button" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" aria-label="Speak agent messages live" data-i18n-aria-label="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
@@ -48,11 +48,6 @@
                  onclick="onViewModeSelect('simplified')">
               <span class="view-menu-radio" aria-hidden="true"></span>
               <span class="vmi-label" data-i18n="simplifiedView">Simplified</span>
-            </div>
-            <div class="view-menu-item" id="viewItemOpenspace" role="menuitemradio" aria-checked="false"
-                 onclick="onViewModeSelect('openspace')">
-              <span class="view-menu-radio" aria-hidden="true"></span>
-              <span class="vmi-label" data-i18n="openspaceView">Openspace (3D)</span>
             </div>
             <div class="view-menu-divider"></div>
             <div id="viewClassicOptions">

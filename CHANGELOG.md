@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.252] — 2026-08-30
+
 ### Added
 
 - Backend Desktop sessions now carry a stable session identity end to end

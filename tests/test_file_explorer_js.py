@@ -42,10 +42,11 @@ def test_file_explorer_streams_uploads_and_keeps_mobile_toolbar_visible():
     assert "FileReader" not in upload
     assert "readAsDataURL" not in upload
     assert "base64" not in upload
-    assert "if(_fe.overlay)_feNav(_fe.path);" in upload
+    assert "if(_fe.surface)_feNav(_fe.path);" in upload
     mobile = template[template.index("@media (max-width:768px){", template.index("/* File Explorer */")):]
     assert ".fe-toolbar{display:grid;" in mobile
-    assert ".fe-panel{width:100%;max-width:none;height:100dvh;" in mobile
+    assert ".fe-panel{background:#1a1a2e;width:100%;height:100%;" in template
+    assert ".fe-overlay" not in template
 
 
 def test_file_explorer_preview_uses_relay_read_and_blob_viewer():
@@ -56,9 +57,9 @@ def test_file_explorer_preview_uses_relay_read_and_blob_viewer():
     ]
 
     assert "action$('fs_read_file'" in preview
-    assert "openFileViewer(URL.createObjectURL(blob),name)" in preview
+    assert "openFileViewer(URL.createObjectURL(blob),name,blob)" in preview
     assert "'/fs/'" not in preview
-    assert "function openFileViewer(filenameOrUrl, displayName)" in viewer
+    assert "function openFileViewer(filenameOrUrl, displayName, sourceBlob)" in viewer
     assert "!filenameOrUrl.startsWith('blob:')" in viewer
 
 

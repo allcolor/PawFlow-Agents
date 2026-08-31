@@ -1,21 +1,37 @@
 // ── File Explorer ──────────────────────────────────────────────────
-let _fe={overlay:null,svc:'',path:'.',entries:[],clip:null,sel:new Set(),svcs:[],ctx:null,preview:null,sort:{col:'name',asc:true},upload:{active:false,text:'',error:false}};
+const _FE_TAB_ID='files';
+let _fe={surface:null,svc:'',path:'.',entries:[],clip:null,sel:new Set(),svcs:[],ctx:null,preview:null,sort:{col:'name',asc:true},upload:{active:false,text:'',error:false}};
+
+function _feFocusSurface(){
+  if(typeof switchTab==='function')switchTab(_FE_TAB_ID);
+  else if(typeof workspaceFocusSurface==='function')workspaceFocusSurface(_FE_TAB_ID);
+}
 
 function openExplorer(){
-  if(_fe.overlay)return;
-  const o=document.createElement('div');o.className='fe-overlay';
-  o.innerHTML=`<div class="fe-panel"><div class="fe-toolbar"><select id="feSvcSel" onchange="_feSelSvc(this.value)"></select><div class="fe-bc" id="feBc"></div><input class="fe-search" placeholder="${t('searchPlaceholder')}" onkeydown="if(event.key==='Enter')_feSearch(this.value)"><button class="btn" onclick="_feRefresh()" title="${t('refresh')}">&#x21bb;</button><button class="btn" onclick="_feNewFile()" title="${t('newFile')}">&#128196;</button><button class="btn" onclick="_feNewDir()" title="${t('newFolder')}">&#128193;+</button><button class="btn" onclick="_feUpload()">&#x2B06; ${t('upload')}</button><button class="btn" onclick="closeExplorer()">&#x2715;</button></div><div class="fe-content"><table class="fe-table"><thead><tr><th></th><th onclick="_feSortBy('name')">${t('fileName')}</th><th onclick="_feSortBy('size')">${t('fileSize')}</th><th onclick="_feSortBy('modified')">${t('modified')}</th></tr></thead><tbody id="feTbody"></tbody></table></div><div class="fe-status"><span id="feCount"></span><span id="feClip" class="fe-clip"></span></div></div>`;
+  if(_fe.surface){_feFocusSurface();return;}
+  const surface=document.createElement('div');
+  surface.className='tab-content fe-surface';
+  surface.id='tabContent_'+_FE_TAB_ID;
+  surface.dataset.tab=_FE_TAB_ID;
+  surface.innerHTML=`<div class="fe-panel"><div class="fe-toolbar"><select id="feSvcSel" onchange="_feSelSvc(this.value)"></select><div class="fe-bc" id="feBc"></div><input class="fe-search" placeholder="${t('searchPlaceholder')}" onkeydown="if(event.key==='Enter')_feSearch(this.value)"><button class="btn" onclick="_feRefresh()" title="${t('refresh')}">&#x21bb;</button><button class="btn" onclick="_feNewFile()" title="${t('newFile')}">&#128196;</button><button class="btn" onclick="_feNewDir()" title="${t('newFolder')}">&#128193;+</button><button class="btn" onclick="_feUpload()">&#x2B06; ${t('upload')}</button></div><div class="fe-content"><table class="fe-table"><thead><tr><th></th><th onclick="_feSortBy('name')">${t('fileName')}</th><th onclick="_feSortBy('size')">${t('fileSize')}</th><th onclick="_feSortBy('modified')">${t('modified')}</th></tr></thead><tbody id="feTbody"></tbody></table></div><div class="fe-status"><span id="feCount"></span><span id="feClip" class="fe-clip"></span></div></div>`;
+  _fe.surface=surface;
 
-  document.body.appendChild(o);_fe.overlay=o;
+  if(typeof workspaceRegisterSurface==='function'){
+    workspaceRegisterSurface(surface,{tabId:_FE_TAB_ID,type:'file-explorer',title:t('fileExplorer'),icon:'FS',close:closeExplorer,closable:true});
+    if(typeof workspaceEnsureTabButton==='function')workspaceEnsureTabButton(_FE_TAB_ID,{title:t('fileExplorer'),icon:'FS',closable:true});
+  } else {
+    const main=document.querySelector('.main');
+    if(main)main.appendChild(surface);
+  }
   // Right-clicking empty space (no row) still offers create/paste — the
   // only way to make the first folder of an empty directory.
-  o.querySelector('.fe-content').addEventListener('contextmenu',(e)=>{
+  surface.querySelector('.fe-content').addEventListener('contextmenu',(e)=>{
     if(e.target.closest('tr[data-name]'))return;
     _feCtxEmpty(e);
   });
   document.addEventListener('keydown',_feKeys);
   // Drag-and-drop upload
-  const panel=o.querySelector('.fe-panel');
+  const panel=surface.querySelector('.fe-panel');
   panel.addEventListener('dragover',e=>{e.preventDefault();e.stopPropagation();panel.classList.add('fe-dragover');});
   panel.addEventListener('dragleave',e=>{e.preventDefault();panel.classList.remove('fe-dragover');});
   panel.addEventListener('drop',e=>{
@@ -23,13 +39,24 @@ function openExplorer(){
     if(e.dataTransfer.files.length>0)_feUploadFiles(e.dataTransfer.files);
   });
   _feLoadSvcs();
+  _feFocusSurface();
 }
 
 function closeExplorer(){
-  if(_fe.overlay){_fe.overlay.remove();_fe.overlay=null;}
+  const surface=_fe.surface;
+  const wasSelected=typeof workspaceSelectedTab==='function'&&workspaceSelectedTab()===_FE_TAB_ID;
+  _fe.surface=null;
   if(_fe.ctx){_fe.ctx.remove();_fe.ctx=null;}
   if(_fe.preview){_fe.preview.remove();_fe.preview=null;}
   document.removeEventListener('keydown',_feKeys);
+  if(typeof workspaceRemoveTabButton==='function')workspaceRemoveTabButton(_FE_TAB_ID);
+  if(typeof workspaceUnregisterSurface==='function')workspaceUnregisterSurface(_FE_TAB_ID);
+  if(surface)surface.remove();
+  if(wasSelected){
+    const next=typeof workspaceSelectedTab==='function'?(workspaceSelectedTab()||'chat'):'chat';
+    if(typeof switchTab==='function')switchTab(next);
+    else if(typeof workspaceFocusSurface==='function')workspaceFocusSurface(next);
+  }
 }
 
 function _feLoadSvcs(){
@@ -322,7 +349,7 @@ async function _feUploadFiles(files){
     }
   }
   _fe.upload={active:false,error:false,text:t('itemsCount',{n:count})+' — '+t('upload')+' ✓'};
-  if(_fe.overlay)_feNav(_fe.path);
+  if(_fe.surface)_feNav(_fe.path);
   else _feStatus();
 }
 
@@ -357,7 +384,7 @@ function _fePreview(name){
       const bin=atob(d.content);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
       blob=new Blob([arr]);
     } else {blob=new Blob([d.content],{type:'text/plain;charset=utf-8'});}
-    openFileViewer(URL.createObjectURL(blob),name);
+    openFileViewer(URL.createObjectURL(blob),name,blob);
   });
 }
 
@@ -388,8 +415,8 @@ function _feSortBy(col){
 function _feRefresh(){_feNav(_fe.path);}
 
 function _feKeys(e){
-  if(!_fe.overlay)return;
-  if(e.key==='Escape'){closeExplorer();e.preventDefault();}
+  if(!_fe.surface)return;
+  if(typeof workspaceSelectedTab==='function'&&workspaceSelectedTab()!==_FE_TAB_ID)return;
   if(e.key==='Backspace'&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName)){
     e.preventDefault();
     if(_fe.path!=='.'&&_fe.path){const p=_fe.path.replace(/\\/g,'/').split('/');p.pop();_feNav(p.join('/')||'.');}

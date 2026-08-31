@@ -20,7 +20,7 @@ textarea, input, select, .input-row textarea, .sidebar-settings select, .fe-tool
 .msg.user { border-left-color: var(--pf-accent-2) !important; }
 .msg.assistant, .msg.btw, .msg.sub_agent_trace, .delegate-block, .delegate-sub-block { border-left-color: var(--pf-accent) !important; }
 .msg.error, .exec-risk.high { background: color-mix(in srgb, var(--pf-danger) 18%, var(--pf-panel)) !important; color: var(--pf-danger) !important; }
-.ctx-menu, .action-menu, .dialog, .exec-dialog, .fe-panel, .fe-ctx, .fe-preview-pane, .scroll-nav button { box-shadow: 0 4px 16px var(--pf-shadow) !important; }
+.ctx-menu, .action-menu, .dialog, .exec-dialog, .fe-ctx, .fe-preview-pane, .scroll-nav button { box-shadow: 0 4px 16px var(--pf-shadow) !important; }
 ::-webkit-scrollbar-thumb { background: var(--pf-border) !important; }
 
 /* Shared Beautiful UI dialog contract. Dynamic dialogs historically carried

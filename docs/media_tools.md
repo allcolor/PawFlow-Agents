@@ -37,12 +37,17 @@ Providers that read FileStore locally (`ACCEPTS_FILESTORE_URLS`) keep the
 
 The webchat resolves Markdown links using the canonical
 `fs://filestore/<id>/<name>` form to the authenticated, same-origin
-`/files/<id>/<name>` route. Relay file previews use
-`/fs/<service>/<path>`. Both routes are passed to the shared file viewer,
-which selects the image, video, audio, PDF, HTML, text, or unknown-binary view
-from the filename and response `Content-Type`. The relay file explorer does
-not read preview content through `fs_read_file` or decode binary files into a
-text pane.
+`/files/<id>/<name>` route. The relay file explorer reads preview content
+through the authenticated `fs_read_file` action, decodes base64 binary results,
+and creates a browser-local `blob:` URL. Both paths are passed to the shared
+file viewer, which selects the image, video, audio, PDF, HTML, text, or
+unknown-binary view from the display filename and response `Content-Type`.
+HTTP file routes retain the bearer token and same-origin credentials. Relay
+previews pass their already-read `Blob` directly to the viewer, avoiding a
+second `fetch(blob:)` that would be rejected by the Webchat `connect-src`
+policy. The relay file explorer itself is a closable `files` surface in the
+tiled workspace; opening it again focuses the mounted tile instead of creating
+another surface or a blocking dialog.
 
 Webchat uploads use a raw single-file HTTP body. The HTTP listener consumes it
 in bounded chunks before the generic request-body reader: attachments are

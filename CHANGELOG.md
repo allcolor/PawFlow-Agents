@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.255] — 2026-08-31
+
+### Added
+
+- Added a Temporal-inspired durable-execution architecture reference covering
+  authoritative run histories, deterministic command replay, task execution
+  policies, effect receipts, leases, runtime build pinning, child runs,
+  visibility projections, crash testing, and a phased PawFlow-native adoption
+  path without a Temporal dependency.
+
+### Changed
+
+- The relay File Explorer now opens as a closable tiled-workspace surface,
+  supports native focus/maximize/close behavior, avoids duplicate surfaces when
+  reopened, and limits its keyboard shortcuts to the focused tile.
+
+### Fixed
+
+- Relay file previews now pass the already-read browser `Blob` directly to the
+  shared viewer, avoiding a CSP-blocked second `fetch(blob:)` while preserving
+  authenticated same-origin fetching for FileStore URLs.
+
 ## [1.0.0-beta.254] — 2026-08-30
 
 ### Fixed

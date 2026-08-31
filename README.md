@@ -551,6 +551,7 @@ pytest tests/ -v    # 7000+ tests across 360+ test files
 | Document | Description |
 |----------|-------------|
 | [Architecture](docs/architecture.md) | Internal architecture, FlowFile, components |
+| [Temporal-Inspired Durable Execution](docs/TEMPORAL_DURABLE_EXECUTION_INSPIRATION.md) | PawFlow-native durability patterns: event history, replay, task policies, receipts, leases, versioning, and worked examples |
 | [Agent System](docs/AGENT_SYSTEM.md) | Agent loop, context, plans, multi-agent, streaming |
 | [Cognitive Tools](docs/COGNITIVE_TOOLS.md) | Memory, KG, diary, todo, scratchpad, project graph/wiki (20 exposed tools) |
 | [Skill Learning Loop](docs/LEARNING_LOOP_PLAN.md) | Agent-created skills, drafts from compaction, usage stats, curator task |

@@ -5,6 +5,7 @@
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | Internal architecture: FlowFile, Task, Service, Flow, engine |
+| [Temporal-Inspired Durable Execution](TEMPORAL_DURABLE_EXECUTION_INSPIRATION.md) | PawFlow-native event history, replay, task policies, effect receipts, leases, build pinning, child runs, visibility, worked example, and adoption order |
 | [Agent System](AGENT_SYSTEM.md) | Agent loop, context management, plans, multi-agent, streaming |
 | [Workflow Agents Implementation Plan](WORKFLOW_AGENTS_IMPLEMENTATION_PLAN.md) | Implemented opt-in architecture for dedicated versioned-flow agents, preemption checkpoints, durable runs, and the Wiki Agent reference design |
 | [Declarative Workflows Implementation Plan](DECLARATIVE_WORKFLOWS_IMPLEMENTATION_PLAN.md) | Implemented opt-in unified declarative/technical authoring, per-block execution, multi-view layouts, durable interactions, Workflow Agent composition, one-shot runs, and PlanStore cutover |

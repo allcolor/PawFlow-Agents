@@ -195,18 +195,27 @@ executor.stop()
 ```
 
 **Transaction model:**
-1. **Peek**: FlowFile read from the input queue (without removing)
-2. **Execute**: task executed
-3. **Commit**: FlowFile removed from input, results sent to output
-4. **Rollback**: FlowFile stays in the queue, task transitions to ERROR
+1. **Claim**: one FlowFile is atomically dequeued from an input connection
+2. **Checkpoint**: the pre-attempt FlowFile is cloned for failure/retry handling
+3. **Execute**: the task runs under its configured retry loop
+4. **Commit**: results are enqueued on matching output relationships
+5. **Failure handling**: the FlowFile is routed to a failure relationship when
+   one exists; otherwise the executor records the failure checkpoint and applies
+   its consecutive-failure policy
+
+This is a local queue-processing transaction, not an atomic transaction across
+connection queues, run stores, relays, filesystems, and external providers.
+Effectful tasks require stable idempotency and durable receipt/reconciliation
+semantics to close those crash windows.
 
 **Relationship routing:**
 - FlowFiles with `route.relationship` attribute → matching connection
 - Fallback → all output connections
 
 **Failure routing (penalty box):**
-- If a "failure" connection exists → FlowFile dequeued and routed there
-- Otherwise → FlowFile stays in the queue, task in ERROR, backpressure cascades
+- If a "failure" connection exists → the failed FlowFile is routed there
+- Otherwise → the executor retains a failure checkpoint; after five consecutive
+  failures the task transitions to ERROR
 
 **Hot-swap:**
 ```python
@@ -228,6 +237,12 @@ flowfiles = mgr.restore_flowfiles(data)
 ```
 
 Format: JSON with FlowFile content as base64 (small) or files (> 256 KB).
+
+Checkpointing is snapshot recovery, not a complete event-sourced execution
+history. See
+[Temporal-Inspired Durable Execution Patterns for PawFlow](TEMPORAL_DURABLE_EXECUTION_INSPIRATION.md)
+for the proposed boundary between authoritative run journals, replay, snapshots,
+effect receipts, and projections.
 
 ---
 
@@ -319,6 +334,9 @@ stats = repo.to_dict()
 ```
 
 Event types: CREATE, RECEIVE, SEND, MODIFY, CLONE, DROP, ROUTE.
+
+The current repository is a bounded in-memory lineage projection. It is not the
+authoritative crash-recovery journal for a durable run.
 
 ---
 

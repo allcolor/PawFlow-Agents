@@ -605,6 +605,15 @@ class FlowManagerHandler(ToolHandler):
         if inst.owner != self._owner_tag():
             return f"Error: flow '{flow_id}' belongs to another user"
 
+        from core.system_flow_guard import (
+            RequiredSystemFlowError,
+            ensure_required_system_flow_action_allowed,
+        )
+        try:
+            ensure_required_system_flow_action_allowed(flow_id, "stopped")
+        except RequiredSystemFlowError as exc:
+            return f"Error: {exc}"
+
         try:
             from core.executor_registry import ExecutorRegistry
             reg = ExecutorRegistry.get_instance()
@@ -830,6 +839,15 @@ class FlowManagerHandler(ToolHandler):
             return f"Error: flow '{flow_id}' not found"
         if inst.owner != self._owner_tag():
             return f"Error: flow '{flow_id}' belongs to another user"
+
+        from core.system_flow_guard import (
+            RequiredSystemFlowError,
+            ensure_required_system_flow_action_allowed,
+        )
+        try:
+            ensure_required_system_flow_action_allowed(flow_id, "undeployed")
+        except RequiredSystemFlowError as exc:
+            return f"Error: {exc}"
 
         dep_reg.undeploy(flow_id)
         return f"Flow '{flow_id}' deleted."

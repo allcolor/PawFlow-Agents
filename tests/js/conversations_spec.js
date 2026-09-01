@@ -263,6 +263,35 @@ test('two simplified load-more pages preserve order, live status, last message a
   eq(value.currentOffset, 6);
 });
 
+test('grouped load-more preserves task id, iteration and agent arguments', () => {
+  const e = env(CONVERSATION_PRELUDE + `
+    window.PAWFLOW_GROUP_TASK_MESSAGES=true;
+    function turnViewIsSimplified(){ return false; }
+    const pages=[
+      {conversation_id:'C',messages:[{role:'user',content:'latest',msg_id:'latest'}],
+       message_count:2,raw_count:1,offset:0,has_more:true,
+       history_cursor:{offset:1,before_msg_id:'latest'},active_agent:'worker',view_mode:'classic'},
+      {conversation_id:'C',messages:[{role:'assistant',content:'older',msg_id:'older',
+         task_id:'task-7',source:{name:'worker',task_id:'task-7',task_iteration:3}}],
+       message_count:2,raw_count:1,offset:1,has_more:false,
+       history_cursor:{offset:2,before_msg_id:'older'}}
+    ];
+    function action$(){ return {subscribe(next){
+      const fn=typeof next==='function'?next:next.next; fn(pages.shift()); }}; }
+    function connectSSE(){}
+  `, ['conversation_sessions.js', 'conversations.js']);
+
+  const value = e.run(`
+    resumeConv('C'); loadMoreMessages();
+    const summary=document.querySelector('.task-block summary');
+    return summary ? summary.textContent : '';
+  `);
+  assert(value.includes('task-7'), 'task id disappeared from the grouped page');
+  assert(!value.includes('task-7::iter3'), 'composed block key leaked as task id');
+  assert(value.includes('worker'), 'agent argument was passed in the iteration slot');
+  assert(value.includes('iter 3'), 'task iteration was lost');
+});
+
 // -- Runtime turns belong to the conversation being opened ---------------
 //
 // A -> B -> A: each load publishes its own active turns, hydrates them, and
@@ -354,6 +383,30 @@ test('trimming evicts every grouped id and lets ungrouped traces reload', () => 
     cursor: { offset: 200, before_msg_id: '' },
     reloaded: true, rows: 2,
   });
+});
+
+test('assistant rows use explicit agent identity when source.name is empty', () => {
+  const e = env(`
+    let displayWindow=50, hasMoreMessages=false, currentOffset=0;
+    let serverMsgCount=0, historyCursor={offset:0,before_msg_id:''};
+    const _seenMsgIds=new Set(), _selectedMsgIds=new Set();
+    window.PAWFLOW_GROUP_DELEGATE_MESSAGES=false;
+    function _messageSortTs(){ return 0; } function _hasRealSortTs(){ return false; }
+    function makeTimeHtml(){ return ''; } function displayAgentName(s){ return String(s||''); }
+    function sourceBadge(){ return ''; } function _authorBadgeHtml(){ return ''; }
+    function renderMarkdown(s){ return String(s||''); } function buildMetaLine(){ return ''; }
+    function escapeHtml(s){ return String(s||''); } function t(k){ return k; }
+    function collapseTechnicalGroups(){} function isNearBottom(){ return false; }
+    function scrollBottom(){} function pawflowDebugLog(){} function renderUserAttachments(){ return ''; }
+    function _insertMessageChronologically(container,el){ container.appendChild(el); }
+    function _hasCompleteMcpDisplayedToolCall(){ return true; }
+  `, ['messages_render.js'], ['messages']);
+  const value = e.run(`
+    const row=addMsg('assistant','answer',{
+      msg_id:'answer-1',agent_name:'assistant',source:{type:'agent',name:''}});
+    return row.dataset.agentName || '';
+  `);
+  eq(value, 'assistant');
 });
 
 if (failures.length) {

@@ -22,14 +22,15 @@ ACTIVE_AGENTS_JS = Path("tasks/io/chat_ui/active_agents.js").read_text(encoding=
 def test_finalize_mismatch_guard_requires_live_successor():
     finalize = TURN_VIEW_JS[TURN_VIEW_JS.index("function turnViewFinalize"):
                             TURN_VIEW_JS.index("function turnViewFail")]
-    assert "incomingTurnId !== state.turnId" in finalize
+    assert "const stateRuntimeId = _turnRuntimeId(state)" in finalize
+    assert "incomingTurnId !== stateRuntimeId" in finalize
     assert "_turnLiveSuccessorExists(incomingTurnId)" in finalize
 
 
 def test_fail_mismatch_guard_requires_live_successor():
     fail = TURN_VIEW_JS[TURN_VIEW_JS.index("function turnViewFail"):
                         TURN_VIEW_JS.index("function _turnLiveSuccessorExists")]
-    assert "turnId !== state.turnId" in fail
+    assert "turnId !== _turnRuntimeId(state)" in fail
     assert "_turnLiveSuccessorExists(turnId)" in fail
 
 

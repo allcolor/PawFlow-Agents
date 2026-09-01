@@ -129,6 +129,7 @@ class ExecutorRegistry:
     def __init__(self):
         self._executors: Dict[str, ContinuousFlowExecutor] = {}
         self._executor_lock = threading.Lock()
+        self._restore_lock = threading.Lock()
         self._restored = False
 
     @classmethod
@@ -161,11 +162,16 @@ class ExecutorRegistry:
         if dr:
             dr.update_status(instance_id, "running")
 
-    def unregister(self, instance_id: str):
+    def unregister(self, instance_id: str, *, allow_required: bool = False):
         """Remove an executor from the registry and persist state.
 
         Marks the deployment as stopped (does NOT delete it).
         """
+        from core.system_flow_guard import (
+            ensure_required_system_flow_action_allowed,
+        )
+        ensure_required_system_flow_action_allowed(
+            instance_id, "stopped", allow_required=allow_required)
         try:
             from core.workflow_agent_invocation import (
                 WorkflowParentInvocationStore,
@@ -228,60 +234,87 @@ class ExecutorRegistry:
 
     # -- Persistence --
 
-    def restore_from_disk(self):
-        """Restore executors from deployed instances marked as running.
+    def restore_from_disk(self, required_instance_id: str = ""):
+        """Restore persisted executors, forcing one required instance first.
 
-        Uses DeploymentRegistry as the sole source of truth.
+        Ordinary deployments retain status-driven restoration. The required
+        runtime is attempted regardless of its persisted status and a failure
+        leaves this registry retryable instead of freezing ``_restored``.
         """
-        with self._executor_lock:
-            if self._restored:
-                return
-            self._restored = True
+        with self._restore_lock:
+            with self._executor_lock:
+                if self._restored:
+                    return
 
-        _restore_t0 = time.monotonic()
-        # Connect all enabled global services (listeners, filesystem, etc.)
-        try:
-            from core.service_registry import ServiceRegistry
-            _t0 = time.monotonic()
-            ServiceRegistry.get_instance().connect_all_enabled("global", "")
-            logger.info("Global services connected at startup")
-            logger.debug("[startup-timing] global services connect: %.1fms",
-                        (time.monotonic() - _t0) * 1000)
-        except Exception as e:
-            from core.llm_router_migration import LLMRouterMigrationError
-            if isinstance(e, LLMRouterMigrationError):
-                raise
-            logger.warning("Failed to connect global services: %s", e)
+            _restore_t0 = time.monotonic()
+            try:
+                from core.service_registry import ServiceRegistry
+                _t0 = time.monotonic()
+                ServiceRegistry.get_instance().connect_all_enabled("global", "")
+                logger.info("Global services connected at startup")
+                logger.debug("[startup-timing] global services connect: %.1fms",
+                             (time.monotonic() - _t0) * 1000)
+            except Exception as e:
+                from core.llm_router_migration import LLMRouterMigrationError
+                if isinstance(e, LLMRouterMigrationError):
+                    raise
+                logger.warning("Failed to connect global services: %s", e)
 
-        dr = _get_deployment_registry()
-        if dr:
-            _t0 = time.monotonic()
-            dr._ensure_loaded()
-            logger.debug("[startup-timing] deployment registry load: %.1fms",
-                        (time.monotonic() - _t0) * 1000)
-            # Do NOT sync before restore — sync would mark all "running" as
-            # "stopped" because executors aren't in memory yet (fresh process).
-            for iid, inst in dr.get_all().items():
-                if inst.status != "running":
-                    continue
-                if self.get(iid) is not None:
-                    continue
-                _inst_t0 = time.monotonic()
-                self._restore_instance(iid, inst.flow_path,
-                                       inst.max_workers, inst.max_retries,
-                                       flow_fqn=getattr(inst, 'flow_fqn', ''),
-                                       flow_scope=getattr(inst, 'flow_scope', '') or '',
-                                       parameters=inst.parameters,
-                                       service_overrides=inst.service_overrides,
-                                       service_configs=inst.service_configs,
-                                       owner=inst.owner or "",
-                                       conversation_id=inst.conversation_id or "",
-                                       agent_name=getattr(inst, 'agent_name', '') or "")
-                logger.debug("[startup-timing] restore instance %s: %.1fms",
-                            iid, (time.monotonic() - _inst_t0) * 1000)
+            dr = _get_deployment_registry()
+            if dr:
+                _t0 = time.monotonic()
+                dr._ensure_loaded()
+                logger.debug("[startup-timing] deployment registry load: %.1fms",
+                             (time.monotonic() - _t0) * 1000)
+                deployments = dr.get_all()
+                if required_instance_id and required_instance_id not in deployments:
+                    raise RuntimeError(
+                        f"required deployment is missing: {required_instance_id}")
 
-        logger.debug("[startup-timing] executor registry restore total: %.1fms",
-                    (time.monotonic() - _restore_t0) * 1000)
+                ordered = list(deployments.items())
+                if required_instance_id:
+                    ordered.sort(key=lambda item: item[0] != required_instance_id)
+
+                # Do NOT sync before restore: no executors exist yet in a fresh
+                # process, so sync would incorrectly persist them as stopped.
+                for iid, inst in ordered:
+                    is_required = bool(
+                        required_instance_id and iid == required_instance_id)
+                    if not is_required and inst.status != "running":
+                        continue
+                    if self.get(iid) is not None:
+                        continue
+                    _inst_t0 = time.monotonic()
+                    restored = self._restore_instance(
+                        iid, inst.flow_path,
+                        inst.max_workers, inst.max_retries,
+                        flow_fqn=getattr(inst, 'flow_fqn', ''),
+                        flow_scope=getattr(inst, 'flow_scope', '') or '',
+                        parameters=inst.parameters,
+                        service_overrides=inst.service_overrides,
+                        service_configs=inst.service_configs,
+                        owner=inst.owner or "",
+                        conversation_id=inst.conversation_id or "",
+                        agent_name=getattr(inst, 'agent_name', '') or "",
+                        strict_initialization=is_required,
+                        require_http_routes=is_required,
+                    )
+                    logger.debug("[startup-timing] restore instance %s: %.1fms",
+                                 iid, (time.monotonic() - _inst_t0) * 1000)
+                    if is_required and not restored:
+                        raise RuntimeError(
+                            f"required executor failed startup: {iid}")
+
+            elif required_instance_id:
+                raise RuntimeError(
+                    f"deployment registry unavailable for required flow: "
+                    f"{required_instance_id}")
+
+            with self._executor_lock:
+                self._restored = True
+            logger.debug(
+                "[startup-timing] executor registry restore total: %.1fms",
+                (time.monotonic() - _restore_t0) * 1000)
 
 
     def _restore_instance(self, instance_id: str, flow_path: str,
@@ -294,8 +327,11 @@ class ExecutorRegistry:
                           owner: str = "",
                           conversation_id: str = "",
                           agent_name: str = "",
-                          enabled_one_shot_root_task_ids: Optional[List[str]] = None) -> bool:
+                          enabled_one_shot_root_task_ids: Optional[List[str]] = None,
+                          strict_initialization: bool = False,
+                          require_http_routes: bool = False) -> bool:
         """Restore a single executor from the repository or flow_path."""
+        executor = None
         try:
             _restore_t0 = time.monotonic()
             from tasks import register_all_tasks
@@ -344,6 +380,9 @@ class ExecutorRegistry:
                 if not flow_path or not Path(flow_path).exists():
                     logger.warning("Cannot restore '%s': not found (fqn=%s, path=%s)",
                                    instance_id, flow_fqn, flow_path)
+                    if strict_initialization:
+                        raise FileNotFoundError(
+                            f"required flow definition not found: {flow_path or flow_fqn}")
                     return False
                 with open(flow_path, "r", encoding="utf-8") as ff:
                     raw = json.load(ff)
@@ -391,6 +430,7 @@ class ExecutorRegistry:
                     "agent_name": agent_name,
                 },
                 enabled_one_shot_root_task_ids=enabled_one_shot_root_task_ids,
+                strict_initialization=strict_initialization,
             )
             if flow_fqn:
                 executor._flow_fqn = flow_fqn
@@ -413,15 +453,31 @@ class ExecutorRegistry:
 
             _t0 = time.monotonic()
             executor.start()
+            if strict_initialization or require_http_routes:
+                executor.validate_startup_readiness(
+                    require_http_routes=require_http_routes)
             logger.debug("[startup-timing] %s executor.start: %.1fms",
                         instance_id, (time.monotonic() - _t0) * 1000)
             self.register(instance_id, executor)
+            if require_http_routes:
+                from core.runtime_readiness import mark_required_flow_ready
+                mark_required_flow_ready(instance_id)
             logger.info("Restored executor for '%s'", instance_id)
             logger.debug("[startup-timing] %s restore total: %.1fms",
                         instance_id, (time.monotonic() - _restore_t0) * 1000)
             return True
         except Exception as e:
             logger.error("Failed to restore executor for '%s': %s", instance_id, e, exc_info=True)
+            if executor is not None:
+                try:
+                    executor.stop()
+                except Exception:
+                    logger.warning(
+                        "Failed to clean partial executor for '%s'", instance_id,
+                        exc_info=True)
+            if require_http_routes:
+                from core.runtime_readiness import mark_required_flow_failed
+                mark_required_flow_failed(instance_id, str(e))
             # Mark as error in deployment registry
             if _get_deployment_registry():
                 _get_deployment_registry().update_status(instance_id, "error", str(e))

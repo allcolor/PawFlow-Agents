@@ -1465,11 +1465,13 @@ def test_cli_bootstrap_tokens_survive_actual_agent_setup_clone(tmp_path):
         def __init__(self):
             self._active_contexts_lock = threading.RLock()
             self._active_claude_client = {}
+            self._active_client_owners = {}
 
     owner = _Owner()
 
     owner._alc_setup(st)
     assert st.client is not original
+    assert owner._active_client_owners["c:assistant"] == ""
 
     st.client._build_cli_initial_context_prompt(
         messages, system_prompt="", user_text="real cold start",
@@ -1966,10 +1968,11 @@ def test_interrupt_uses_live_stop_or_graceful_api_stop_turn():
 
 def test_api_tool_execution_registers_kill_hooks_for_ui_kill():
     src = Path("tasks/ai/agent_tool_exec.py").read_text(encoding="utf-8")
-    assert "ToolRelayService._inflight[tc.id]" in src
+    assert '_inflight_key = f"{run_handle}:{tc.id}"' in src
+    assert "ToolRelayService._inflight[_inflight_key]" in src
     assert "_set_current_cancel_event(_cancel_event)" in src
     assert "_set_current_kill_hooks(_kill_hooks)" in src
-    assert "ToolRelayService._inflight.pop(tc.id, None)" in src
+    assert "ToolRelayService._inflight.pop(_inflight_key, None)" in src
 
 
 def test_screen_actions_have_server_side_timeout_and_cancel_pending():

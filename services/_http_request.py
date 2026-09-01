@@ -294,13 +294,15 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # before auth/gateway routing; it returns no sensitive state.
         if method == "GET" and path == "/health":
             from core import __version__ as _pf_version
+            from core.runtime_readiness import health_snapshot
 
+            readiness = health_snapshot()
             body = json.dumps({
-                "ok": True,
                 "version": str(_pf_version),
                 "instance": _INSTANCE_ID,
+                **readiness,
             }).encode("utf-8")
-            self.send_response(200)
+            self.send_response(200 if readiness["ok"] else 503)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))

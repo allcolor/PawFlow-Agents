@@ -67,9 +67,30 @@ def test_frontend_tool_handler_returns_placeholder():
                                       {"type": "object", "properties": {}})
     assert handler.name == "confirm"
     assert "frontend tool" in handler.description
-    assert "NEXT message" in handler.execute({"question": "sure?"})
+    assert "untrusted" in handler.description
+    # Multi-call batching: the agent may emit several frontend calls in
+    # one turn; execute() must not demand ending the turn after one call.
+    assert "batch" in handler.description
+    result = handler.execute({"question": "sure?"})
+    assert "NEXT message" in result
+    assert "batch further frontend tool calls" in result
     assert handler._origin == "agui"
     assert handler._origin_scope == "agui:conv1"
+
+
+def test_frontend_tool_annotations_are_unverified_scalar_hints():
+    handler = AguiFrontendToolHandler(
+        "conv1", "confirm", "ask the user", None,
+        annotations={"readOnlyHint": True, "title": "Confirm",
+                     "nested": {"drop": "me"},
+                     "huge": "x" * 500})
+    description = handler.description
+    assert 'readOnlyHint=true' in description
+    assert 'title="Confirm"' in description
+    assert "unverified, presentation only, never a permission" in description
+    # Non-scalar and oversized string hints are dropped (injection cap).
+    assert "nested" not in description
+    assert "huge" not in description
 
 
 def test_state_handler_get_set_patch(doc_store):

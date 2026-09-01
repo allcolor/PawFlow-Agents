@@ -287,7 +287,7 @@ test('a system notice with no open turn never opens a block', () => {
   assert(notice.parentNode === e.messages, 'the notice stays top level');
 });
 
-test('a system notice after a completed turn opens no second block', () => {
+test('a system notice after a completed turn belongs to the next segment', () => {
   const e = env('simplified');
   startTurn(e, 'u1');
   const answer = e.row('a1');
@@ -295,8 +295,8 @@ test('a system notice after a completed turn opens no second block', () => {
   e.ctx.turnViewFinalize({ msg_id: 'a1', final_msg_id: 'a1' });
   const notice = e.row('s1');
   e.ctx.turnViewIngest('system', { agent: 'assistant' }, notice);
-  eq(e.messages.querySelectorAll('.simple-turn-block').length, 1,
-     'the notice files into the existing block, never a new one');
+  eq(e.messages.querySelectorAll('.simple-turn-block').length, 2,
+     'done remains a boundary before later non-boundary activity');
   assert(notice.parentNode !== e.messages, 'the notice did not stay at top level');
 });
 
@@ -525,6 +525,88 @@ test('activity after a finished turn keeps a block', () => {
   eq(e.ctx.turnViewIngest('tool_call', { msg_id: 'c9' }, late), true);
   assert(late.parentNode !== e.messages, 'the late tool call is in a block');
   assert(user.isConnected, 'the user row is untouched');
+});
+
+test('each agent done is a boundary and only the successor block is animated', () => {
+  const e = env('simplified');
+  e.ctx.activeInteractions = {
+    claude: { name: 'claude', turnId: 'u1' },
+    assistant: { name: 'assistant', turnId: 'u1' },
+  };
+  startTurn(e, 'u1');
+  const firstFinal = e.row('done-claude');
+  firstFinal.dataset.messageRole = 'assistant';
+  firstFinal.dataset.rawText = 'Claude final';
+
+  // The SSE handler removes the completed agent before finalizing its row.
+  delete e.ctx.activeInteractions.claude;
+  e.ctx.turnViewIngest('assistant', {
+    turn_id: 'u1', msg_id: 'done-claude', final_msg_id: 'done-claude',
+    turn_final: true, agent_name: 'claude',
+  }, firstFinal);
+
+  let blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,done-claude,BLOCK');
+  eq(blocks.filter(b => b.classList.contains('turn-working')).length, 1,
+     'exactly one Detail block is animated');
+  assert(!blocks[0].classList.contains('turn-working'), 'the block above done is closed');
+  assert(blocks[1].classList.contains('turn-working'), 'the successor block below done is live');
+
+  const secondFinal = e.row('done-assistant');
+  secondFinal.dataset.messageRole = 'assistant';
+  secondFinal.dataset.rawText = 'Assistant final';
+  delete e.ctx.activeInteractions.assistant;
+  e.ctx.turnViewIngest('assistant', {
+    turn_id: 'u1', msg_id: 'done-assistant', final_msg_id: 'done-assistant',
+    turn_final: true, agent_name: 'assistant',
+  }, secondFinal);
+
+  blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,done-claude,BLOCK,done-assistant');
+  eq(blocks.filter(b => b.classList.contains('turn-working')).length, 0,
+     'no block remains animated after the last active agent ends');
+});
+
+test('activity after done opens a new segment below that final boundary', () => {
+  const e = env('simplified');
+  e.ctx.activeInteractions = {};
+  startTurn(e, 'u1');
+  const firstFinal = e.row('done-1');
+  firstFinal.dataset.messageRole = 'assistant';
+  firstFinal.dataset.rawText = 'first final';
+  e.ctx.turnViewIngest('assistant', {
+    turn_id: 'u1', msg_id: 'done-1', final_msg_id: 'done-1', turn_final: true,
+  }, firstFinal);
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,done-1',
+     'no empty Detail block is invented while nobody is active');
+
+  e.ctx.activeInteractions = { assistant: { name: 'assistant', turnId: 'u1' } };
+  const progress = e.row('after-1');
+  progress.dataset.messageRole = 'thinking';
+  e.ctx.turnViewIngest('thinking', {
+    turn_id: 'u1', msg_id: 'after-1', content: 'continuing', agent_name: 'assistant',
+  }, progress);
+
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,done-1,BLOCK');
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  assert(progress.parentNode !== e.messages, 'post-done activity is inside the new Detail block');
+  eq(blocks.filter(b => b.classList.contains('turn-working')).length, 1);
+});
+
+test('reload preserves every stored final as a boundary between Detail blocks', () => {
+  const e = env('simplified');
+  replayHistory(e, [
+    { type: 'user', role: 'user', msg_id: 'u1', turn_id: 'u1' },
+    { type: 'assistant', role: 'assistant', msg_id: 'work-1', turn_id: 'u1', content: 'work' },
+    { type: 'assistant', role: 'assistant', msg_id: 'done-1', turn_id: 'u1', turn_final: true, content: 'first final' },
+    { type: 'thinking', role: 'thinking', msg_id: 'work-2', turn_id: 'u1', content: 'more work' },
+    { type: 'assistant', role: 'assistant', msg_id: 'done-2', turn_id: 'u1', turn_final: true, content: 'second final' },
+  ]);
+
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,done-1,BLOCK,done-2');
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  eq(blocks.length, 2);
+  eq(blocks.filter(b => b.classList.contains('turn-working')).length, 0);
 });
 
 test('a provider retry after stop reuses the positional block', () => {
@@ -1471,6 +1553,32 @@ test('streamed tokens coalesce into a single cue', () => {
   assert(e.ephemeralText() !== 'tok49', 'the cue arrives scrambled, not typed out');
   e.clock.tick(14 * 40);
   eq(e.ephemeralText(), 'tok49', 'and resolves to the newest excerpt');
+});
+
+test('mixed-agent rows and transient cues retain per-event provenance', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const assistantThinking = e.row('think-a');
+  e.ctx.turnViewIngest('thinking', {
+    msg_id: 'think-a', content: 'assistant reasoning', agent_name: 'assistant',
+  }, assistantThinking);
+  e.clock.tick(300);
+  const claudeThinking = e.row('think-b');
+  e.ctx.turnViewIngest('thinking', {
+    msg_id: 'think-b', content: 'claude reasoning', agent_name: 'claude',
+  }, claudeThinking);
+  e.clock.tick(300);
+  const assistantTool = e.row('tool-a');
+  e.ctx.turnViewIngest('tool_call', {
+    msg_id: 'tool-a', tc_id: 'tc-a', agent_name: 'assistant',
+  }, assistantTool);
+
+  const cues = Array.from(e.messages.querySelectorAll('.simple-turn-cue'));
+  eq(cues.map(cue => cue.dataset.agentName).join(','),
+    'assistant,claude,assistant', 'each cue must carry the event agent');
+  eq(assistantThinking.dataset.agentName, 'assistant');
+  eq(claudeThinking.dataset.agentName, 'claude');
+  eq(assistantTool.dataset.agentName, 'assistant');
 });
 
 // The scramble is decoration over a value that is always there: whatever the

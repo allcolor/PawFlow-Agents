@@ -59,6 +59,7 @@
 .ask-user-btn:hover{background:#c73e54}
 .load-more-banner{text-align:center;padding:8px;color:#e94560;cursor:pointer;font-size:13px;border-bottom:1px solid #0f3460;background:#0f1629}
 .load-more-banner:hover{background:#16213e}
+button.workspace-filter-load-more{display:block;width:100%;border:0;border-bottom:1px solid #0f3460;font:inherit}
 .diff-output{background:#161b22;border-radius:4px;padding:4px 8px;overflow-x:auto;line-height:1.5}
 .diff-output div{margin:0;padding:0 4px;border-radius:2px}
 pre code.hljs{background:transparent!important;padding:0!important}

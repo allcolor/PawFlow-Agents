@@ -218,6 +218,17 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
         _agent_name = ctx.get("active_agent_name", "")
         _ctx_key = f"{conversation_id}:{_agent_name}" if _agent_name else conversation_id
         ctx["_active_context_key"] = _ctx_key
+        # Run identity (B1-O): a unique handle per run, and the fence token
+        # captured at THIS run's start. A force stop bumps the fence, so a
+        # zombie fails the effect-boundary check while the successor —
+        # which captured the bumped token — keeps passing.
+        import uuid as _uuid
+        ctx.setdefault("run_handle", _uuid.uuid4().hex)
+        ctx["run_fence_token"] = type(self).run_fence_token(
+            conversation_id, _agent_name)
+        type(self).register_agent_run(
+            conversation_id, _agent_name, ctx["run_handle"],
+            fence_token=ctx["run_fence_token"])
         with self._active_contexts_lock:
             self._active_contexts[_ctx_key] = ctx
         try:
@@ -226,6 +237,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
             with self._active_contexts_lock:
                 if self._active_contexts.get(_ctx_key) is ctx:
                     self._active_contexts.pop(_ctx_key, None)
+            type(self).finish_agent_run(ctx.get("run_handle", ""))
 
     def _run_agent_loop_inner(self, ctx, emitter):
         st = _ALCState()
@@ -409,10 +421,16 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     logger.info("[agent:%s] drained %d message(s), %d were duplicates — NOT re-triggering",
                                 st.conversation_id[:8], len(st.messages[st._pre_drain:]), st._dupes)
 
-            # Unregister claude-code client BEFORE done (prevents stale preempt)
+            # Unregister claude-code client BEFORE done (prevents stale
+            # preempt) — but ONLY the entry this run owns: a zombie's
+            # cleanup must never evict its successor's live client (B1-O).
             st._unreg_key = f"{st.conversation_id}:{st.ctx.get('active_agent_name', '')}" if st.ctx.get('active_agent_name') else st.conversation_id
+            _own_handle = str(st.ctx.get("run_handle") or "")
             with self._active_contexts_lock:
-                self._active_claude_client.pop(st._unreg_key, None)
+                _owner = self._active_client_owners.get(st._unreg_key, "")
+                if not _owner or _owner == _own_handle:
+                    self._active_claude_client.pop(st._unreg_key, None)
+                    self._active_client_owners.pop(st._unreg_key, None)
 
             # Post-loop: ALWAYS publish done, even if cleanup fails
             try:

@@ -152,6 +152,7 @@ def test_update_flow_params_restarts_running_executor(monkeypatch):
 
         def _restore_instance(self, *args, **kwargs):
             calls.append(("restore", args, kwargs))
+            return True
 
     monkeypatch.setattr(
         "core.executor_registry.ExecutorRegistry.get_instance",

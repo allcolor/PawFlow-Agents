@@ -471,6 +471,14 @@ class _AgentMediaMixin:
         if ctx and ctx.get("_active_cleanup_done"):
             return
         _agent_n = ctx.get("active_agent_name", "") if ctx else ""
+        # Retire this run's registry row — its own handle only (B1-O).
+        try:
+            from tasks.ai.agent_loop import AgentLoopTask
+            AgentLoopTask.finish_agent_run(str(
+                (ctx or {}).get("run_handle")
+                or (ctx or {}).get("_active_turn_owner_id") or ""))
+        except Exception:
+            logger.debug("run registry cleanup failed", exc_info=True)
         # A relay binding may change while this turn is running. Its CLI
         # workspace invalidation is deliberately deferred so linking a relay
         # cannot kill the live tmux. Flush while this worker's active marker is

@@ -146,6 +146,12 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         _user_msg_id = _body.get("msg_id", "")
+        # Set ONLY by the programmatic runtime API (before stamping): those
+        # transports retry on lost acks, so their ingress is idempotent and
+        # acknowledged AFTER the durable write (B1-O: accepted = durably
+        # persisted). Web chat keeps the asynchronous writer.
+        _programmatic_turn_id = flowfile.get_attribute(
+            "agent.request_msg_id") or ""
         stamp_turn_identity(flowfile, _user_msg_id)
 
         # Authorization has to happen HERE, not in _prepare_agent_context.
@@ -403,21 +409,107 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                     _cw = ConversationWriter.for_conversation(conversation_id)
                     _stream_step("writer_obtained", _writer_started)
                     _enqueue_started = _t_stream.monotonic()
-                    _cw.enqueue_message(
-                        dict(_stamped_user), agent_name=_target or "",
-                        user_id=_uid,
-                        wait=(_channel == "telegram"),
-                        sse_events=[{"type": "new_message", "data": {
-                            "role": "user",
-                            "content": _stamped_user.get("content", ""),
-                            "msg_id": _stamped_user.get("msg_id", ""),
-                            "ts": _stamped_user.get("ts"),
-                            "source": _stamped_user.get("source") or {},
-                            "channel": _channel,
-                            "attachments": _attachments_body,
-                        }}])
+                    _ingress_sse = [{"type": "new_message", "data": {
+                        "role": "user",
+                        "content": _stamped_user.get("content", ""),
+                        "msg_id": _stamped_user.get("msg_id", ""),
+                        "ts": _stamped_user.get("ts"),
+                        "source": _stamped_user.get("source") or {},
+                        "channel": _channel,
+                        "attachments": _attachments_body,
+                    }}]
+                    if _programmatic_turn_id:
+                        # Idempotent ingress: the duplicate check and the
+                        # append share one durable boundary. A retried
+                        # turn_id NEVER starts a second turn — the retry is
+                        # acknowledged as the already-accepted original.
+                        from core._conversation_store_append import (
+                            MessageIdempotencyConflict)
+                        try:
+                            _inserted = _cw.enqueue_message_if_absent(
+                                dict(_stamped_user),
+                                agent_name=_target or "",
+                                user_id=_uid, sse_events=_ingress_sse)
+                        except MessageIdempotencyConflict as _ic:
+                            # Same idempotency key, DIFFERENT payload:
+                            # explicit 409, never a silent dedupe.
+                            flowfile.set_content(json.dumps({
+                                "error": str(_ic),
+                                "code": "idempotency_conflict",
+                                "conversation_id": conversation_id,
+                            }).encode("utf-8"))
+                            flowfile.set_attribute(
+                                "http.response.status", "409")
+                            flowfile.set_attribute(
+                                "agent.conversation_id", conversation_id)
+                            return [flowfile]
+                        if not _inserted:
+                            # A late retry may arrive AFTER the original
+                            # turn finished: replay the durable terminal
+                            # instead of pointing the caller at a `done`
+                            # event that already passed.
+                            _final = {}
+                            try:
+                                _rows = ConversationStore.instance().load(
+                                    conversation_id, user_id=_uid) or []
+                                for _row in reversed(_rows):
+                                    if str(_row.get("turn_id") or "") \
+                                            == _programmatic_turn_id \
+                                            and _row.get("turn_final"):
+                                        _final = {
+                                            "response": str(
+                                                _row.get("content") or ""),
+                                            "final_msg_id": str(
+                                                _row.get("msg_id") or ""),
+                                            "agent_name": str(
+                                                _row.get("agent")
+                                                or _target or ""),
+                                        }
+                                        break
+                            except Exception:
+                                logger.debug(
+                                    "terminal replay lookup failed",
+                                    exc_info=True)
+                            _ack_payload = {
+                                "status": "accepted",
+                                "duplicate": True,
+                                "conversation_id": conversation_id,
+                                "message_count": _ack_message_count(),
+                                "server_start_time": SERVER_START_TIME,
+                                "run_handle": flowfile.get_attribute(
+                                    "agent.run_handle") or "",
+                                "wait_for_done": not bool(_final)}
+                            _ack_payload.update(_final)
+                            flowfile.set_content(
+                                json.dumps(_ack_payload).encode("utf-8"))
+                            flowfile.set_attribute(
+                                "agent.conversation_id", conversation_id)
+                            return [flowfile]
+                    else:
+                        _cw.enqueue_message(
+                            dict(_stamped_user), agent_name=_target or "",
+                            user_id=_uid,
+                            wait=(_channel == "telegram"),
+                            sse_events=_ingress_sse)
                     _stream_step("pre_persist_enqueue", _enqueue_started)
                 except Exception as _pe:
+                    if _programmatic_turn_id:
+                        # Ack-after-persist: a failed durable write must be
+                        # a refused submission, never an accepted turn whose
+                        # user message is missing from the transcript.
+                        logger.exception(
+                            "[agent:%s] idempotent ingress persistence "
+                            "failed", conversation_id[:8])
+                        flowfile.set_content(json.dumps({
+                            "error": str(_pe),
+                            "code": "ingress_persistence_failed",
+                            "conversation_id": conversation_id,
+                        }).encode("utf-8"))
+                        flowfile.set_attribute(
+                            "http.response.status", "503")
+                        flowfile.set_attribute(
+                            "agent.conversation_id", conversation_id)
+                        return [flowfile]
                     logger.warning(
                         "[agent:%s] pre-persist user message failed: %s",
                         conversation_id[:8], _pe)
@@ -795,7 +887,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             if _active_agent_guess else conversation_id
         )
         _active_turn_started = time.time()
-        _active_turn_owner_id = uuid.uuid4().hex
+        _active_turn_owner_id = (
+            flowfile.get_attribute("agent.run_handle") or uuid.uuid4().hex)
         _gen_key = f"{conversation_id}:{_target}" if _target else conversation_id
         with self._conv_gen_lock:
             _starting_generation = self._conv_generation.get(_gen_key, 0)
@@ -813,7 +906,16 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 "generation": _starting_generation,
                 "owner_id": _active_turn_owner_id,
                 "owner_type": "streaming_worker",
+                # Run-handle granularity (B1-O): the worker's owner id IS
+                # the run handle — the same value reaches the loop ctx, the
+                # in-flight tool ledger and targeted force-stops.
+                "run_handle": _active_turn_owner_id,
             }
+        # Registered from the very first marker: a successor still in
+        # preparation already COEXISTS with its zombie in the run registry
+        # — a handle-targeted stop can never mistake one for the other.
+        type(self).register_agent_run(
+            conversation_id, _active_agent_guess, _active_turn_owner_id)
 
         if _target:
             bus.publish_event(conversation_id, "thinking", {
@@ -872,6 +974,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             ctx["_gen_key"] = _gen_key
             ctx["_active_turn_key"] = _active_turn_key
             ctx["_active_turn_owner_id"] = _active_turn_owner_id
+            ctx["run_handle"] = _active_turn_owner_id
 
             if not self._is_current_generation(_gen_key, _starting_generation):
                 logger.info(
@@ -926,7 +1029,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
         _ack_started = _t_stream.monotonic()
         ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
                           "message_count": _ack_message_count(),
-                          "server_start_time": SERVER_START_TIME})
+                          "server_start_time": SERVER_START_TIME,
+                          "run_handle": _active_turn_owner_id})
         _stream_step("ack_message_count", _ack_started)
         _stream_mark("ack_built")
         flowfile.set_content(ack.encode("utf-8"))

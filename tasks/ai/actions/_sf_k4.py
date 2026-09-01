@@ -452,6 +452,19 @@ def _handle_sf_k4(self, action, body, store, user_id, flowfile, _helpers):
                     flowfile.set_content(json.dumps({"error": "Requires admin role"}).encode())
                     return [flowfile]
 
+            if action in ("stop_flow", "undeploy_flow"):
+                from core.system_flow_guard import (
+                    RequiredSystemFlowError,
+                    ensure_required_system_flow_action_allowed,
+                )
+                try:
+                    ensure_required_system_flow_action_allowed(
+                        iid, "stopped" if action == "stop_flow" else "undeployed")
+                except RequiredSystemFlowError as exc:
+                    flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+                    flowfile.set_attribute("http.response.status", "409")
+                    return [flowfile]
+
             if action == "stop_flow":
                 ex = reg.get(iid)
                 if ex and ex.is_running:

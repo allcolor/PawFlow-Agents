@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 import core.paths as _paths
+from core.system_flow_guard import REQUIRED_SYSTEM_FLOW_INSTANCE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ INSTALL_STATE_FILE = _paths.RUNTIME_DIR / "install_state.json"
 INSTALLER_INSTANCE_ID = "pawflow-installer"
 INSTALLER_FLOW_FQN = "default.pawflow_installer:1.0.0"
 INSTALLER_TEMPLATE = _paths.flow_version_file("default", "pawflow_installer", "1.0.0")
-MAIN_INSTANCE_ID = "pawflow-agent"
+MAIN_INSTANCE_ID = REQUIRED_SYSTEM_FLOW_INSTANCE_ID
 MAIN_FLOW_FQN = "default.pawflow_agent:1.0.0"
 MAIN_TEMPLATE = _paths.flow_version_file("default", "pawflow_agent", "1.0.0")
 DEFAULT_BOOTSTRAP_GATEWAY_KEY = "RoyBatty"

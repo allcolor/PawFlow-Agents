@@ -231,7 +231,8 @@ function addMsg(role, text, extra) {
   // Agent identity rides on the row too: the reconciliation pass opens
   // blocks for history pages with no user row, and without this it could
   // only title them "Agent activity".
-  const _rowAgentName = (extra && extra.source && extra.source.name) || '';
+  const _rowAgentName = String((extra && (extra.agent_name
+    || (extra.source && (extra.source.name || extra.source.from)))) || '').trim();
   if (_rowAgentName) el.dataset.agentName = _rowAgentName;
   const _rowTargetAgent = (extra && extra.source && extra.source.target_agent) || '';
   if (_rowTargetAgent) el.dataset.targetAgent = _rowTargetAgent;
@@ -244,6 +245,14 @@ function addMsg(role, text, extra) {
   // the user speaking. The simplified turn view files it into the block's
   // tool rows instead of treating it as a user boundary.
   const _rowSrc = (extra && extra.source) || {};
+  if (extra && extra.turn_final && !extra.turn_final_derived) {
+    el.dataset.turnFinal = '1';
+    el.dataset.turnBoundary = 'final';
+  }
+  if (role === 'user' && _rowSrc.type === 'scheduled_wakeup') {
+    el.dataset.scheduledWakeup = '1';
+    el.dataset.turnBoundary = 'scheduled_wakeup';
+  }
   if (role === 'user' && (_rowSrc.delegate || _rowSrc.name === 'system'
       || _rowSrc.name === 'background' || _rowSrc.type === 'system'
       || _rowSrc.type === 'agent_delegate')) {

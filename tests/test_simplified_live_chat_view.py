@@ -120,6 +120,21 @@ def test_stream_emitter_stamps_turn_correlation_on_live_events():
     assert data["request_msg_id"] == "user-1"
 
 
+def test_visible_assistant_events_and_storage_carry_resolved_agent_identity():
+    source = Path("tasks/ai/_alc_closures1.py").read_text(encoding="utf-8")
+    block = source[
+        source.index("_store_msg = {"):
+        source.index("_writer = ConversationWriter", source.index("_store_msg = {"))
+    ]
+
+    assert '"source": _event_source' in block
+    new_message = block[
+        block.index('"type": "new_message"'):
+        block.index("# Assistant tool_calls", block.index('"type": "new_message"'))
+    ]
+    assert '"agent_name": _agent' in new_message
+
+
 def test_display_classification_preserves_explicit_turn_metadata():
     rows = AgentLoopTask._classify_messages_for_display([
         {"role": "user", "content": "go", "msg_id": "user-1"},
@@ -140,6 +155,82 @@ def test_display_classification_preserves_explicit_turn_metadata():
     assert by_id["final-1"]["turn_final"] is True
     assert by_id["call-1"]["turn_id"] == "user-1"
     assert by_id["result-1"]["turn_id"] == "user-1"
+
+
+def test_scheduled_wakeup_is_a_visible_user_boundary():
+    rows = AgentLoopTask._classify_messages_for_display([
+        {
+            "role": "user",
+            "content": "[System: Scheduled wake-up. finish validation]",
+            "msg_id": "wake-1",
+            "turn_id": "wake-1",
+            "ts": 1.0,
+            "source": {
+                "type": "scheduled_wakeup",
+                "target_agent": "assistant",
+            },
+        },
+        {
+            "role": "user",
+            "content": "[System: hidden context]",
+            "msg_id": "hidden-1",
+            "ts": 2.0,
+            "source": {"type": "context", "target_agent": "assistant"},
+        },
+    ])
+
+    assert [row["msg_id"] for row in rows] == ["wake-1"]
+    assert rows[0]["type"] == "user"
+    assert rows[0]["turn_id"] == "wake-1"
+    assert rows[0]["source"]["type"] == "scheduled_wakeup"
+
+
+def test_poll_context_persists_boundary_before_reusing_its_id(monkeypatch):
+    from core.conversation_store import ConversationStore
+    from tasks.ai._agent_poll_checkin import _AgentPollCheckinMixin
+
+    writes = []
+
+    class _Store:
+        @staticmethod
+        def get_metadata(_cid):
+            return {"user_id": "alice"}
+
+    class _Writer:
+        @classmethod
+        def for_conversation(cls, cid):
+            assert cid == "conv-1"
+            return cls()
+
+        def enqueue_message(self, message, **kwargs):
+            writes.append((message, kwargs))
+
+    class _Harness(_AgentPollCheckinMixin):
+        @staticmethod
+        def _prepare_agent_context(*_args, **_kwargs):
+            return {"messages": [], "active_agent_name": "assistant"}
+
+        @staticmethod
+        def _build_poll_checkin(*_args, **_kwargs):
+            return "[System: Scheduled wake-up. finish validation]"
+
+    monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: _Store()))
+    monkeypatch.setattr("core.conversation_writer.ConversationWriter", _Writer)
+
+    ctx = _Harness()._build_poll_context(
+        "conv-1", [], scheduled_reasons=["[scheduled:assistant] finish validation"])
+
+    assert len(writes) == 1
+    message, kwargs = writes[0]
+    assert message["source"]["type"] == "scheduled_wakeup"
+    assert message["source"]["target_agent"] == "assistant"
+    assert message["turn_id"] == message["msg_id"]
+    assert ctx["request_msg_id"] == message["msg_id"]
+    assert ctx["messages"][-1].msg_id == message["msg_id"]
+    event = kwargs["sse_events"][0]
+    assert event["type"] == "new_message"
+    assert event["data"]["turn_id"] == message["msg_id"]
+    assert kwargs["wait"] is True
 
 
 def test_display_classification_derives_legacy_turn_at_user_boundary_only():

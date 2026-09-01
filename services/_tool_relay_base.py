@@ -204,6 +204,23 @@ def _set_current_kill_hooks(hooks_list):
     _thread_local.kill_hooks = hooks_list
 
 
+def _set_current_run_identity(identity):
+    """Bind the calling thread to its agent run (B1-O).
+
+    ``identity`` is ``(run_handle, fence_token, conversation_id,
+    agent_name)`` or ``None``. Nested relay requests started from this
+    thread inherit it, so their in-flight entries carry the run handle
+    and their admission is fence-checked.
+    """
+    _thread_local.run_identity = identity
+
+
+def current_run_identity():
+    """The (run_handle, fence_token, conversation_id, agent_name) of the
+    currently-executing tool's run, or None outside a dispatch."""
+    return getattr(_thread_local, "run_identity", None)
+
+
 def register_kill_hook(callback) -> None:
     """Register a callable to be invoked when the current tool is killed.
 

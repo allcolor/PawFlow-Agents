@@ -552,6 +552,10 @@ Operational notes:
   Large pastes receive a proportionally longer bounded acknowledgement window; a
   fragmented submit or an unacknowledged prompt fails explicitly instead of
   being reported as a successful turn.
+- A live Codex preempt waits for the editable-composer signal after its two
+  `Escape` keys and before loading the paste. If the composer does not return,
+  the preempt is refused before mutation and its pending-queue rescue remains
+  available for replay after the active turn.
 - Codex's `.codex/sessions/**/rollout-*.jsonl` supplies the interactive context
   gauge after each exchange: `last_token_usage.input_tokens` is the current
   prompt occupancy and `model_context_window` is its native window. The

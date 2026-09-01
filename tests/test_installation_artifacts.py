@@ -1238,10 +1238,21 @@ def test_docker_docs_explain_wsl_vhdx_compaction():
 
 def test_cli_bootstrap_failure_is_not_silently_ignored():
     src = Path("cli.py").read_text(encoding="utf-8")
-    block = src[src.index("from core.install_bootstrap import ensure_install_bootstrap"):
+    block = src[src.index("from core.install_bootstrap import ("):
                 src.index("logger.info(\"Restoring deployed flows")]
     assert "logger.error" in block
     assert "raise" in block
+
+
+def test_completed_install_requires_main_flow_before_ready_log():
+    src = Path("cli.py").read_text(encoding="utf-8")
+    restore = src.index("restore_from_disk(")
+    ready = src.index("PawFlow server ready", restore)
+    block = src[restore:ready]
+
+    assert "required_instance_id" in src[src.index("def cmd_start("):restore + 200]
+    assert "MAIN_INSTANCE_ID" in src[src.index("def cmd_start("):restore + 200]
+    assert "critical" in block.lower() or "raise" in block
 
 
 def test_startup_urls_match_install_phase():

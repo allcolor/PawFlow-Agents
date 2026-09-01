@@ -197,6 +197,30 @@ class _ToolRelayExecuteMixin:
         # Shared mutable list — the exec thread populates it via
         # register_kill_hook(); cancel_agent reads + invokes each hook.
         kill_hooks: list = []
+        # Run identity (B1-O): inherited from the agent-loop thread that
+        # dispatched this request. Admission is ATOMIC — the fence check
+        # and the in-flight registration happen under the same locks, so
+        # a fence bump either refuses this request here or finds its
+        # entry (with run_handle, cancel event and kill hooks) already
+        # targetable by cancel_agent(run_handle=...).
+        from services._tool_relay_base import current_run_identity
+        _run_identity = current_run_identity()
+        _run_handle = str(_run_identity[0]) if _run_identity else ""
+        _fence_token = _run_identity[1] if _run_identity else None
+        if _fence_token is not None:
+            with self._fence_highwater_lock:
+                _hw_key = f"{conversation_id}:{agent_name}"
+                _stale = int(_fence_token) \
+                    < self._fence_highwater.get(_hw_key, 0)
+            if _stale:
+                logger.warning(
+                    "[tool-relay] refusing request %s (tool=%s): fence "
+                    "token %s is below the high-water for %s/%s",
+                    request_id, tool_name, _fence_token,
+                    conversation_id[:8], agent_name)
+                return {"type": "result", "request_id": request_id,
+                        "data": ("Error: run superseded (fence lost) — "
+                                 f"tool '{tool_name}' was NOT executed.")}
         with self._cache_lock:
             self._executing[request_id] = evt
         with self._inflight_lock:
@@ -212,6 +236,8 @@ class _ToolRelayExecuteMixin:
                 "args_hash": _ah,
                 "started_at": started_at,
                 "kill_hooks": kill_hooks,
+                "run_handle": _run_handle,
+                "fence_token": _fence_token,
             }
 
         if not cc_tc_id and not _is_sentinel:

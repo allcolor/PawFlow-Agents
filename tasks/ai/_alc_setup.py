@@ -105,6 +105,10 @@ class _ALCSetupMixin:
         if st.conversation_id and (hasattr(st.client, 'send_user_message') or hasattr(st.client, 'abort')):
             with self._active_contexts_lock:
                 self._active_claude_client[st._agent_name_key] = st.client
+                # This run OWNS the entry: cleanups and targeted stops
+                # compare against this before touching the client (B1-O).
+                self._active_client_owners[st._agent_name_key] = \
+                    str(st.ctx.get("run_handle") or "")
         # Clear cancelled relay/tool state from previous run for every
         # provider, not only CLI providers.
         if st.conversation_id:
@@ -296,6 +300,8 @@ class _ALCSetupMixin:
                                    or hasattr(st.client, 'abort')):
             with self._active_contexts_lock:
                 self._active_claude_client[st._agent_name_key] = st.client
+                self._active_client_owners[st._agent_name_key] = \
+                    str(st.ctx.get("run_handle") or "")
 
         st.registry = st.ctx["registry"]
         st.tool_defs = st.ctx["tool_defs"]

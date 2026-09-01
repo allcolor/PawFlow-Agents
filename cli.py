@@ -296,7 +296,11 @@ def cmd_start(args):
     register_all_tasks()
 
     try:
-        from core.install_bootstrap import ensure_install_bootstrap, is_install_complete
+        from core.install_bootstrap import (
+            MAIN_INSTANCE_ID,
+            ensure_install_bootstrap,
+            is_install_complete,
+        )
         ensure_install_bootstrap(port=int(args.port))
     except Exception as _ib_err:
         logger.error("Install bootstrap setup failed: %s", _ib_err, exc_info=True)
@@ -304,8 +308,20 @@ def cmd_start(args):
 
     logger.info("Restoring deployed flows...")
     from core.executor_registry import ExecutorRegistry
+    from core.runtime_readiness import require_flow_readiness
     er = ExecutorRegistry.get_instance()
-    er.restore_from_disk()
+    install_complete = is_install_complete()
+    required_instance_id = MAIN_INSTANCE_ID if install_complete else ""
+    if required_instance_id:
+        require_flow_readiness(required_instance_id)
+    try:
+        er.restore_from_disk(required_instance_id=required_instance_id)
+    except Exception as _restore_err:
+        logger.critical(
+            "Required PawFlow runtime failed startup; readiness remains "
+            "unavailable and the next boot will retry: %s", _restore_err,
+            exc_info=True)
+        raise
 
     # FRPS calls this private route before accepting service-tunnel clients and
     # STCP proxies. The registration is disabled when no signing key is set.
@@ -316,7 +332,7 @@ def cmd_start(args):
 
     n = er.count()
     logger.info(f"PawFlow server ready — {n} flow(s) restored")
-    _log_startup_urls(logger, args.host, int(args.port), is_install_complete())
+    _log_startup_urls(logger, args.host, int(args.port), install_complete)
 
     # Startup security report. In production mode
     # (PAWFLOW_ENV=production / PAWFLOW_PUBLIC_MODE=true) this raises

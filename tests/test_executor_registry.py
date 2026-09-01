@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from core.executor_registry import ExecutorRegistry
@@ -81,6 +82,66 @@ class TestExecutorRegistry(unittest.TestCase):
             mock_dr.return_value = None
             self.registry.restore_from_disk()  # Should not crash
         assert self.registry.count() == 0
+
+    def test_restore_required_instance_first_even_when_persisted_error(self):
+        instances = {
+            "ordinary": SimpleNamespace(
+                status="running", flow_path="ordinary.json", max_workers=4,
+                max_retries=0, parameters={}, service_overrides={},
+                service_configs={}, owner=None, conversation_id=None,
+                flow_fqn="", flow_scope="", agent_name=""),
+            "pawflow-agent": SimpleNamespace(
+                status="error", flow_path="main.json", max_workers=4,
+                max_retries=0, parameters={}, service_overrides={},
+                service_configs={}, owner=None, conversation_id=None,
+                flow_fqn="", flow_scope="", agent_name=""),
+        }
+        deployments = MagicMock()
+        deployments.get_all.return_value = instances
+        restored = []
+
+        def fake_restore(instance_id, *args, **kwargs):
+            restored.append((instance_id, kwargs))
+            return True
+
+        with patch("core.executor_registry._get_deployment_registry",
+                   return_value=deployments), patch.object(
+                       self.registry, "_restore_instance", side_effect=fake_restore):
+            self.registry.restore_from_disk(required_instance_id="pawflow-agent")
+
+        assert [item[0] for item in restored] == ["pawflow-agent", "ordinary"]
+        assert restored[0][1]["strict_initialization"] is True
+        assert restored[0][1]["require_http_routes"] is True
+        assert self.registry._restored is True
+
+    def test_failed_required_restore_remains_retryable(self):
+        main = SimpleNamespace(
+            status="error", flow_path="main.json", max_workers=4,
+            max_retries=0, parameters={}, service_overrides={},
+            service_configs={}, owner=None, conversation_id=None,
+            flow_fqn="", flow_scope="", agent_name="")
+        deployments = MagicMock()
+        deployments.get_all.return_value = {"pawflow-agent": main}
+
+        with patch("core.executor_registry._get_deployment_registry",
+                   return_value=deployments), patch.object(
+                       self.registry, "_restore_instance", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "pawflow-agent"):
+                self.registry.restore_from_disk(
+                    required_instance_id="pawflow-agent")
+
+        assert self.registry._restored is False
+
+    def test_required_instance_cannot_be_unregistered_by_default(self):
+        executor = MagicMock()
+        with patch("core.executor_registry._get_deployment_registry",
+                   return_value=None):
+            self.registry.register("pawflow-agent", executor)
+            with self.assertRaisesRegex(RuntimeError, "required system flow"):
+                self.registry.unregister("pawflow-agent")
+            assert self.registry.get("pawflow-agent") is executor
+            self.registry.unregister("pawflow-agent", allow_required=True)
+        assert self.registry.get("pawflow-agent") is None
 
     def test_restore_merges_deployment_parameters_before_parse(self):
         from engine.continuous_executor import ContinuousFlowExecutor

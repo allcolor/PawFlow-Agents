@@ -37,7 +37,7 @@ def test_frps_config_forces_tls_and_authorizes_login_and_proxy():
 
 def test_server_startup_registers_private_authorizer():
     source = (ROOT / "cli.py").read_text(encoding="utf-8")
-    restore = source.index("er.restore_from_disk()")
+    restore = source.index("er.restore_from_disk(")
     register = source.index("ensure_service_tunnel_route()", restore)
     ready = source.index("PawFlow server ready", register)
     assert restore < register < ready

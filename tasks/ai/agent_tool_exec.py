@@ -33,7 +33,9 @@ class AgentToolExecMixin:
                             is_claude_code: bool = False,
                             cancel_check: callable = None,
                             event_cid: str = "",
-                            permission_mode_override: str = ""):
+                            permission_mode_override: str = "",
+                            run_handle: str = "",
+                            fence_token=None):
         """Execute tool calls with consecutive-call limiting + approval gate.
 
         Returns list of (tool_call, result_text) in original order.
@@ -277,6 +279,11 @@ class AgentToolExecMixin:
             _kill_hooks = []
             _cancel_event = threading.Event()
             _background_event = threading.Event()
+            # Provider tc ids are NOT globally unique: two runs of the same
+            # conversation can emit the same id. The in-flight ledger is
+            # therefore keyed (run_handle, call_id) — a zombie's entry can
+            # never collide with (or be popped by) its successor's (B1-O).
+            _inflight_key = f"{run_handle}:{tc.id}" if run_handle else tc.id
             try:
                 # API-provider tools execute directly in this pool, not through
                 # ToolRelayService._handle_execute. Register the same in-flight
@@ -284,9 +291,9 @@ class AgentToolExecMixin:
                 # nested relay requests (screen/local screenshots, bash, etc.).
                 from services.tool_relay_service import (
                     ToolRelayService, _set_current_cancel_event,
-                    _set_current_kill_hooks)
+                    _set_current_kill_hooks, _set_current_run_identity)
                 with ToolRelayService._inflight_lock:
-                    ToolRelayService._inflight[tc.id] = {
+                    ToolRelayService._inflight[_inflight_key] = {
                         "conv": conversation_id,
                         "agent": agent_name,
                         "cancel": _cancel_event,
@@ -297,9 +304,16 @@ class AgentToolExecMixin:
                         "args_hash": "",
                         "started_at": time.time(),
                         "kill_hooks": _kill_hooks,
+                        "run_handle": run_handle,
                     }
                 _set_current_cancel_event(_cancel_event)
                 _set_current_kill_hooks(_kill_hooks)
+                # Nested relay requests inherit this run's identity: their
+                # in-flight entries carry the run handle and their
+                # admission is fence-checked at dispatch (B1-O).
+                _set_current_run_identity(
+                    (run_handle, fence_token, conversation_id, agent_name)
+                    if run_handle else None)
                 _tool_relay_bound = True
                 try:
                     from core.agent_hooks import AgentHookRunner
@@ -351,6 +365,27 @@ class AgentToolExecMixin:
                 _denied = _authorize(_eff_name, _eff_args)
                 if _denied:
                     return tc, _denied
+                # Effect boundary (B1-O): the LAST check before the tool
+                # runs. A zombie run whose fence was bumped (force stop,
+                # successor takeover) can still prepare and authorize, but
+                # it can never execute an effect — and the relay-side
+                # high-water refuses the same stale token independently.
+                if fence_token is not None:
+                    from tasks.ai.agent_loop import AgentLoopTask
+                    from services.tool_relay_service import (
+                        ToolRelayService as _TRS)
+                    if not AgentLoopTask.run_fence_valid(
+                            conversation_id, agent_name, fence_token) \
+                            or not _TRS.fence_highwater_allows(
+                                conversation_id, agent_name, fence_token):
+                        logger.warning(
+                            "[fence] run %s of %s/%s lost the fence — "
+                            "refusing tool '%s' at the effect boundary",
+                            (run_handle or "?")[:8], conversation_id[:8],
+                            agent_name, _eff_name)
+                        return tc, (
+                            "Error: run superseded (fence lost) — tool "
+                            f"'{_eff_name}' was NOT executed.")
                 logger.info(
                     "Agent calling tool '%s' with args: %s",
                     _eff_name, _eff_args)
@@ -452,8 +487,9 @@ class AgentToolExecMixin:
                     try:
                         _set_current_cancel_event(None)
                         _set_current_kill_hooks(None)
+                        _set_current_run_identity(None)
                         with ToolRelayService._inflight_lock:
-                            ToolRelayService._inflight.pop(tc.id, None)
+                            ToolRelayService._inflight.pop(_inflight_key, None)
                     except Exception:
                         logger.debug("exception suppressed", exc_info=True)
 

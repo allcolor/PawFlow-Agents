@@ -112,12 +112,12 @@ finalization paths.
 
 1. The simplified view is a real rendering mode, not CSS applied to the existing
    technical grouping.
-2. One activity block represents one user turn, not one block per intermediate
-   assistant message or per sub-agent.
-   Autonomous scheduled wakeups have no user row, so the poller assigns each one
-   a distinct runtime turn UUID. If the preceding block is already terminal, the
-   first resumed row opens a new positionally anchored activity block that stays
-   `Working` until that wakeup emits its own terminal event.
+2. One activity block represents the activity between two visible boundaries,
+   not one block per runtime identifier. User messages, durable scheduled-wakeup
+   messages, and authoritative final assistant messages (`done`) are boundaries.
+   A `done` closes the block above it; activity that follows opens a new block
+   below that final message. The poller persists each scheduled wake before its
+   SSE event and reuses the wake message UUID as the autonomous runtime turn id.
 3. The header identifies the primary agent and LLM service. Delegated agent
    identity remains visible inside detail rows.
 4. The tabs are live from the first event until terminal completion.
@@ -394,8 +394,9 @@ and the preempt test in `tests/js/turn_view_spec.js`.
 The mismatch guard protects a live successor, and "live" has exactly one
 truth: the active-agents set (`activeInteractions`, fed by the server's
 `list_active` poll). The guard therefore refuses a terminal event only when
-`_turnLiveSuccessorExists()` finds an active interaction running a turn other
-than the one the event ends. Without that condition, a block that adopted a
+`_turnLiveSuccessorExists()` finds any interaction left after the terminal
+handler removes the agent that just ended. The remaining agent may share the
+same top-level turn id and is still a live successor. Without that condition, a block that adopted a
 turn id the server never named (interrupted/drained turns do this) refused
 every `done` and ticked "working" forever after the answer was delivered.
 As a safety net, `syncActiveFromServer` calls `turnViewSyncActive()` after
@@ -407,10 +408,12 @@ Tests: `tests/test_turn_view_active_truth.py`.
 
 Two more invariants govern the reconciliation pass (`turnViewReconcile`):
 
-- **Boundaries.** The boundary BEFORE a detail block is either a message the
-  user sent or a scheduled wakeup's first assistant message — nothing else.
-  The boundary AFTER a detail block is the turn's last agent message, or a
-  user message when the user preempted before the answer — that is all.
+- **Boundaries.** User messages, persisted scheduled-wakeup user-role messages,
+  and authoritative final assistant rows are the only boundaries. A final row
+  is both the visible end of the block above and the anchor for the next block.
+  A derived legacy final remains provisional: it can be replaced or reopened by
+  live activity and therefore does not split the segment as an authoritative
+  `done` does.
   Consequences enforced by the pass:
   - Two detail blocks may NEVER sit adjacent. A turn-identity change opens a
     new block only when the current block has a last message to promote
@@ -424,22 +427,20 @@ Two more invariants govern the reconciliation pass (`turnViewReconcile`):
     head of the same tabs (DOM order is reading order) and the empty shell
     is removed. A non-filable top-level row (approval, error) between the
     two separates them and suppresses the merge.
-  - The only legal pair of consecutive top-level agent messages is a block's
-    last message followed by a wakeup boundary message.
+  - At most one block is animated. It is the last block and is `Working` if and
+    only if the active-agent set is non-empty. When the completed agent is
+    removed but another remains, the next animated block is opened immediately
+    below the final boundary.
   - A system-injected user-ROLE row — a delegate/flash result nudge
     (`source.delegate` / `source.name == 'system'`) or a background-tool
     result (`source {type:'system', name:'background'}`) — is agent
     activity, NOT a boundary: `messages_render.js` stamps it
     `data-system-injected` and the view files it with the tool rows.
-  The detector is turn identity: every rendered row carries `data-turn-id`
+  Every rendered row carries `data-turn-id`
   (stamped in `messages_render.js` from `turn_id`/`request_msg_id`), plus
   `data-agent-name`/`data-llm-service` so a block opened from bare rows is
-  titled with the agent identity. An assistant row WITH text naming an
-  unseen turn is a wakeup boundary and stays top level
-  (`_turnIsWakeupBoundary`); any other row naming an unseen turn closes the
-  previous block (if it has an answer to promote), opens the new turn's
-  block seeded from the row's own identity (`_turnRowSeedData`), and is
-  filed inside it. A page bringing back the older half of a turn whose
+  titled with the agent identity. Runtime identity never creates a visible
+  boundary by itself. A page bringing back the older half of a turn whose
   block is already on screen gets a derived fragment identity instead of
   clobbering the existing state — and the fragment keeps OWNING rows
   stamped with the turn's real id (`state.fragOf`): they file into the
@@ -463,10 +464,11 @@ Two more invariants govern the reconciliation pass (`turnViewReconcile`):
 
 Behavioural coverage: the load-more section of `tests/js/turn_view_spec.js`.
 
-A system notice — compact finished, git pruned — is not a turn, and it never
-opens a block. `/compact` while the agent is idle is the standing case: the
-notice arrives with no turn open, and nothing ever closes a block a notice
-opened (no `done` follows a notice), so an orphan block created for it sat in
+A system notice — compact finished, git pruned — is not a boundary. With no
+open positional segment it stays top-level; after a final boundary, later
+notices are filed into the next Detail block without becoming that block's
+outside message. `/compact` while the agent is idle is the standing case: the
+notice arrives with no turn open, so an orphan block created for it would sit in
 "working" with rain and a ticking clock forever (the reported "bloc detail
 runtime"). With a turn open the notice is filed into that block; with none it
 stays top level. See the `kind === 'system'` guards in `turnViewIngest` and

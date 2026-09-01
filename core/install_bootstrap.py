@@ -535,7 +535,9 @@ def ensure_install_bootstrap(port: int) -> bool:
             from core.deployment_registry import DeploymentRegistry
             registry = DeploymentRegistry.get_instance()
             registry.undeploy(INSTALLER_INSTANCE_ID)
-            registry.undeploy(MAIN_INSTANCE_ID)
+            registry.undeploy(MAIN_INSTANCE_ID, allow_required=True)
+            from core.runtime_readiness import reset_runtime_readiness
+            reset_runtime_readiness()
         except Exception:
             logger.warning("Failed to undeploy bootstrap flows during reset", exc_info=True)
 

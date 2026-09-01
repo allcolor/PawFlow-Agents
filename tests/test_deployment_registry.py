@@ -183,6 +183,18 @@ class TestDeploymentRegistry(unittest.TestCase):
         reg = self._get_reg()
         reg.undeploy("nonexistent")  # Should not raise
 
+    def test_required_system_flow_needs_explicit_internal_undeploy(self):
+        reg = self._get_reg()
+        reg.deploy(
+            template_path=str(self._template), instance_id="pawflow-agent")
+
+        with self.assertRaisesRegex(RuntimeError, "required system flow"):
+            reg.undeploy("pawflow-agent")
+        assert reg.get("pawflow-agent") is not None
+
+        reg.undeploy("pawflow-agent", allow_required=True)
+        assert reg.get("pawflow-agent") is None
+
     def test_update_status(self):
         reg = self._get_reg()
         iid = reg.deploy(template_path=str(self._template))

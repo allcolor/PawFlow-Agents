@@ -106,12 +106,32 @@ def _handle_agentres_k7(self, action, body, store, user_id, flowfile):
                         "because their external runtime is bound to the parent "
                         "conversation"),
                 }, 400)
+            # Managed frontend execution is publication-fixed (plan
+            # B1-X): it is set HERE and announced in the descriptor; a
+            # request can never select it. It needs an isolated context
+            # (the batch state is per-thread).
+            managed_mode = None
+            if "managed_mode" in body:
+                managed_raw = body["managed_mode"]
+                if not isinstance(managed_raw, bool):
+                    return _reply(flowfile, {
+                        "error": "managed_mode must be a boolean"}, 400)
+                managed_mode = managed_raw
+            if managed_mode and context_policy != "isolated":
+                return _reply(flowfile, {
+                    "error": "managed_mode requires context_policy="
+                             "'isolated'"}, 400)
+            ttl_raw = body.get("thread_ttl_seconds")
+            thread_ttl_seconds = (int(ttl_raw) if ttl_raw is not None
+                                  and str(ttl_raw).strip() != "" else None)
             publication = a2a_store.configure_publication(
                 owner, conversation_id, canonical,
                 label=str(body.get("label") or canonical).strip(),
                 description=str(body.get("description") or "").strip(),
                 context_policy=context_policy,
                 enabled=bool(body.get("enabled", True)),
+                thread_ttl_seconds=thread_ttl_seconds,
+                managed_mode=managed_mode,
             )
             from services.a2a_server_endpoint import ensure_a2a_routes
             ensure_a2a_routes()

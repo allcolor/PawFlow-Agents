@@ -19,13 +19,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import core.paths as _paths
+from core._a2a_turn_acquire import TurnAcquireMixin
+from core._a2a_turn_attach import TurnAttachMixin
+from core._a2a_turn_batch import TurnBatchMixin
+from core._a2a_turn_journal import TurnJournalMixin
+from core._a2a_turn_machine import TurnMachineMixin
 
 
 _CONTEXT_POLICIES = frozenset({"isolated", "shared"})
 _TARGET_KINDS = frozenset({"local", "remote"})
 
 
-class A2AStore:
+class A2AStore(TurnMachineMixin, TurnJournalMixin, TurnAcquireMixin,
+               TurnBatchMixin, TurnAttachMixin):
     """Thread-safe SQLite state for the PawFlow A2A transport."""
 
     _instance: Optional["A2AStore"] = None
@@ -139,11 +145,17 @@ class A2AStore:
                     ON a2a_targets(owner_user_id, source_conversation_id);
                 """
             )
+            self._initialize_turn_tables(connection)
+            self._initialize_journal_tables(connection)
+            self._initialize_acquire_tables(connection)
+            self._initialize_batch_tables(connection)
+            self._initialize_attach_tables(connection)
 
     @staticmethod
     def _publication_row(row: sqlite3.Row) -> Dict[str, Any]:
         data = dict(row)
         data["enabled"] = bool(data.get("enabled"))
+        data["managed_mode"] = bool(data.get("managed_mode"))
         return data
 
     @staticmethod
@@ -170,37 +182,72 @@ class A2AStore:
     def configure_publication(
         self, owner_user_id: str, conversation_id: str, agent_name: str, *,
         label: str = "", description: str = "", context_policy: str = "isolated",
-        enabled: bool = True,
+        enabled: bool = True, thread_ttl_seconds: Optional[int] = None,
+        managed_mode: Optional[bool] = None,
     ) -> Dict[str, Any]:
+        """Create or update a publication.
+
+        ``thread_ttl_seconds=None`` / ``managed_mode=None`` preserve the
+        stored values on update (defaults only apply on insert) — an
+        update that omits a parameter never silently resets it.
+        ``managed_mode`` is publication-fixed: requests can never select
+        the execution mode.
+        """
         if not owner_user_id or not conversation_id or not agent_name:
             raise ValueError("owner_user_id, conversation_id and agent_name are required")
         context_policy = str(context_policy or "").strip().lower()
         if context_policy not in _CONTEXT_POLICIES:
             raise ValueError("context_policy must be 'isolated' or 'shared'")
+        if thread_ttl_seconds is not None:
+            thread_ttl_seconds = max(0, int(thread_ttl_seconds))
         now = time.time()
         with self._lock, self._connect() as connection:
             row = connection.execute(
-                "SELECT publication_id, owner_user_id FROM a2a_publications "
+                "SELECT publication_id, owner_user_id, managed_mode "
+                "FROM a2a_publications "
                 "WHERE conversation_id = ? AND lower(agent_name) = lower(?)",
                 (conversation_id, agent_name),
             ).fetchone()
             if row and row["owner_user_id"] != owner_user_id:
                 raise PermissionError("A2A publication belongs to another owner")
+            effective_managed = (bool(managed_mode)
+                                 if managed_mode is not None
+                                 else bool(row["managed_mode"]) if row else False)
+            if effective_managed and context_policy != "isolated":
+                raise ValueError(
+                    "managed_mode requires context_policy='isolated'")
             if row:
                 publication_id = row["publication_id"]
-                connection.execute(
-                    "UPDATE a2a_publications SET agent_name=?, label=?, description=?, "
-                    "context_policy=?, enabled=?, updated_at=? WHERE publication_id=?",
-                    (agent_name, label or agent_name, description, context_policy,
-                     int(bool(enabled)), now, publication_id),
-                )
+                sets = ["agent_name=?", "label=?", "description=?",
+                        "context_policy=?", "enabled=?"]
+                params: List[Any] = [agent_name, label or agent_name,
+                                     description, context_policy,
+                                     int(bool(enabled))]
+                if thread_ttl_seconds is not None:
+                    sets.append("thread_ttl_seconds=?")
+                    params.append(thread_ttl_seconds)
+                if managed_mode is not None:
+                    sets.append("managed_mode=?")
+                    params.append(int(bool(managed_mode)))
+                sets.append("updated_at=?")
+                params.extend([now, publication_id])
+                # Every column fragment is selected from the fixed literals
+                # above; only values are caller-derived and remain parameterized.
+                update_sql = (
+                    "UPDATE a2a_publications SET " + ", ".join(sets) +  # nosec B608
+                    " WHERE publication_id=?")
+                connection.execute(update_sql, params)
             else:
                 publication_id = "a2ap_" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")
                 connection.execute(
-                    "INSERT INTO a2a_publications VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO a2a_publications (publication_id, owner_user_id, "
+                    "conversation_id, agent_name, label, description, context_policy, "
+                    "enabled, created_at, updated_at, thread_ttl_seconds, "
+                    "managed_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (publication_id, owner_user_id, conversation_id, agent_name,
                      label or agent_name, description, context_policy,
-                     int(bool(enabled)), now, now),
+                     int(bool(enabled)), now, now, thread_ttl_seconds or 0,
+                     int(bool(managed_mode))),
                 )
         result = self.get_publication(publication_id)
         if result is None:

@@ -1317,6 +1317,31 @@ class TestHTTPListenerIntegration:
         assert body["instance"] == _http_request._INSTANCE_ID
         assert body["instance"]
 
+    def test_builtin_health_is_unavailable_until_required_flow_is_ready(self):
+        from core.runtime_readiness import (
+            mark_required_flow_failed,
+            require_flow_readiness,
+            reset_runtime_readiness,
+        )
+
+        port = 19934
+        require_flow_readiness("pawflow-agent")
+        mark_required_flow_failed("pawflow-agent", "routes missing")
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+        svc.connect()
+        try:
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/health", timeout=5)
+            assert exc_info.value.code == 503
+            body = json.loads(exc_info.value.read().decode())
+            assert body["ok"] is False
+            assert body["required_flow"] == "pawflow-agent"
+            assert "routes missing" not in json.dumps(body)
+        finally:
+            svc.disconnect()
+            reset_runtime_readiness()
+
     def test_full_cycle(self):
         """Test: HTTP request -> httpReceiver -> handleHTTPResponse -> HTTP response."""
         port = 19883

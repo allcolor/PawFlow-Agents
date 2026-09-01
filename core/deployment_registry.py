@@ -192,8 +192,13 @@ class DeploymentRegistry:
                 return {}
             return dict(inst.layout)
 
-    def undeploy(self, instance_id: str) -> None:
+    def undeploy(self, instance_id: str, *, allow_required: bool = False) -> None:
         """Remove a deployed instance (stop if running + delete file)."""
+        from core.system_flow_guard import (
+            ensure_required_system_flow_action_allowed,
+        )
+        ensure_required_system_flow_action_allowed(
+            instance_id, "undeployed", allow_required=allow_required)
         self._ensure_loaded()
 
         with self._data_lock:
@@ -210,7 +215,7 @@ class DeploymentRegistry:
                 ex = reg.get(instance_id)
                 if ex:
                     ex.stop()
-                    reg.unregister(instance_id)
+                    reg.unregister(instance_id, allow_required=allow_required)
             except Exception as e:
                 logger.warning("Error stopping executor for '%s': %s", instance_id, e)
 

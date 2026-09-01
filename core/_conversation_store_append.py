@@ -16,6 +16,44 @@ from core._conversation_store_base import (  # noqa: F401,E402
 import core._conversation_store_base as _csb  # noqa: E402
 
 
+class MessageIdempotencyConflict(ValueError):
+    """The same ``msg_id`` was re-submitted with a DIFFERENT payload —
+    an idempotency key designates exactly one request; anything else is
+    an explicit conflict, never a silent duplicate (B1-O)."""
+
+    def __init__(self, msg_id: str) -> None:
+        super().__init__(
+            f"msg_id {msg_id} was already persisted with a different "
+            "payload — idempotency conflict")
+        self.msg_id = msg_id
+
+
+def _idempotency_fingerprint(msg: Dict) -> str:
+    """Canonical fingerprint of what a user submission MEANS: role,
+    content, target agent and attachment identities — not transport
+    metadata (timestamps, seq, channel)."""
+    import hashlib
+    import json as _json
+    source = msg.get("source") or {}
+    attachments = []
+    for attachment in (msg.get("attachments") or ()):
+        if isinstance(attachment, dict):
+            attachments.append(str(
+                attachment.get("file_id") or attachment.get("name")
+                or attachment.get("url") or ""))
+        else:
+            attachments.append(str(attachment))
+    basis = {
+        "role": str(msg.get("role") or ""),
+        "content": str(msg.get("content") or ""),
+        "target_agent": str(source.get("target_agent") or ""),
+        "attachments": attachments,
+    }
+    return hashlib.sha256(_json.dumps(
+        basis, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
 class _CsAppendMixin:
     """save/append_message/append_messages/delegate routing."""
 
@@ -137,8 +175,14 @@ class _CsAppendMixin:
         lock = self._get_conv_lock(cid)
         with lock:
             existing = self.load(cid, user_id=user_id) or []
-            if any(str(row.get("msg_id") or "") == msg_id
-                   for row in existing):
+            for row in existing:
+                if str(row.get("msg_id") or "") != msg_id:
+                    continue
+                # Same id, same MEANING → duplicate; same id, different
+                # payload → explicit conflict, never a silent dedupe.
+                if _idempotency_fingerprint(row) \
+                        != _idempotency_fingerprint(msg):
+                    raise MessageIdempotencyConflict(msg_id)
                 return False
             self.append_message(
                 cid, msg, agent_name=agent_name, user_id=user_id, ttl=ttl)

@@ -429,6 +429,10 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
         elif flow_action == "stop":
             try:
+                from core.system_flow_guard import (
+                    ensure_required_system_flow_action_allowed,
+                )
+                ensure_required_system_flow_action_allowed(flow_id, "stopped")
                 from core.executor_registry import ExecutorRegistry
                 reg = ExecutorRegistry.get_instance()
                 ex = reg.get(flow_id)
@@ -440,9 +444,14 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             except Exception as e:
                 flowfile.set_content(json.dumps(
                     {"error": f"Stop failed: {e}"}).encode())
+                flowfile.set_attribute("http.response.status", "409")
 
         elif flow_action == "delete":
             try:
+                from core.system_flow_guard import (
+                    ensure_required_system_flow_action_allowed,
+                )
+                ensure_required_system_flow_action_allowed(flow_id, "undeployed")
                 from core.executor_registry import ExecutorRegistry
                 reg = ExecutorRegistry.get_instance()
                 ex = reg.get(flow_id)
@@ -455,6 +464,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             except Exception as e:
                 flowfile.set_content(json.dumps(
                     {"error": f"Delete failed: {e}"}).encode())
+                flowfile.set_attribute("http.response.status", "409")
         else:
             flowfile.set_content(json.dumps(
                 {"error": f"Unknown action: {flow_action}"}).encode())

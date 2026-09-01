@@ -63,14 +63,53 @@ function _filteredViewAgentValue(node) {
   ).toLowerCase();
 }
 
+function _filteredViewClearAgentValue(node) {
+  if (!node || !node.removeAttribute) return;
+  node.removeAttribute('data-agent-name');
+  node.removeAttribute('data-agent');
+  node.removeAttribute('data-target-agent');
+}
+
+function _filteredViewRemoveChild(parent, child) {
+  if (child && child.remove) child.remove();
+  else if (parent && parent.removeChild) parent.removeChild(child);
+}
+
+// A foreign event can be the structural parent of a selected agent's nested
+// event (a parent tool call with sub-agent calls is the common case). Keep only
+// the DOM path to selected descendants; retaining the foreign row's own chrome
+// would still leak its tool/message into a supposedly strict projection.
+function _filteredViewKeepMatchingPaths(node, agentName) {
+  const children = Array.from((node && (node.childNodes || node.children)) || []);
+  children.forEach(function(child) {
+    if (!child || !child.dataset) {
+      _filteredViewRemoveChild(node, child);
+      return;
+    }
+    const direct = _filteredViewAgentValue(child);
+    if (direct === agentName) return;
+    if (_filteredViewAgentMatch(child, agentName)) {
+      _filteredViewKeepMatchingPaths(child, agentName);
+      return;
+    }
+    _filteredViewRemoveChild(node, child);
+  });
+}
+
+function _filteredViewAgentDescendantMatch(node, agentName) {
+  return Array.from((node && node.children) || []).some(function(child) {
+    return _filteredViewAgentMatch(child, agentName);
+  });
+}
+
 function _filteredViewAgentMatch(node, agentName) {
   if (!node || !node.dataset) return false;
   const wanted = String(agentName || '').toLowerCase();
   const direct = _filteredViewAgentValue(node);
-  if (direct) return direct === wanted;
-  return Array.from(node.children || []).some(function(child) {
-    return _filteredViewAgentMatch(child, wanted);
-  });
+  if (direct === wanted) return true;
+  // Aggregate roots are commonly stamped with the first agent that created
+  // them. That identity must not hide a later matching child.
+  return _filteredViewAgentDescendantMatch(node, wanted);
 }
 
 function _filteredViewWalk(root, callback) {
@@ -86,7 +125,9 @@ function _filteredViewIsAggregateBody(node) {
     || node.classList.contains('delegate-body')
     || node.classList.contains('delegate-sub-body')
     || node.classList.contains('technical-group-body')
-    || node.classList.contains('tc-children');
+    || node.classList.contains('tc-children')
+    || node.classList.contains('simple-turn-panel-scroll')
+    || node.classList.contains('simple-turn-ephemeral');
 }
 
 function _filteredViewInheritedAgent(node, root) {
@@ -104,8 +145,22 @@ function _filteredViewPruneAgents(clone, agentName) {
   const wanted = String(agentName || '').toLowerCase();
   _filteredViewWalk(clone, function(node) {
     const value = _filteredViewAgentValue(node);
-    if (value && value !== wanted) node.remove();
+    if (!value || value === wanted) return;
+    if (_filteredViewAgentDescendantMatch(node, wanted)) {
+      // The node is a structural mixed-agent wrapper. Its own first-agent tag
+      // cannot be inherited by the matching descendants kept below it.
+      _filteredViewClearAgentValue(node);
+      _filteredViewKeepMatchingPaths(node, wanted);
+      return;
+    }
+    node.remove();
   });
+  const rootValue = _filteredViewAgentValue(clone);
+  if (rootValue && rootValue !== wanted
+      && _filteredViewAgentDescendantMatch(clone, wanted)) {
+    _filteredViewClearAgentValue(clone);
+    _filteredViewKeepMatchingPaths(clone, wanted);
+  }
   _filteredViewWalk(clone, function(body) {
     if (!_filteredViewIsAggregateBody(body)) return;
     const inherited = _filteredViewInheritedAgent(body, clone);
@@ -113,7 +168,7 @@ function _filteredViewPruneAgents(clone, agentName) {
       const direct = _filteredViewAgentValue(child);
       const allowed = direct === wanted
         || (!direct && inherited === wanted)
-        || (!direct && !inherited && _filteredViewAgentMatch(child, wanted));
+        || _filteredViewAgentMatch(child, wanted);
       if (!allowed) child.remove();
     });
   });
@@ -145,6 +200,148 @@ function _filteredViewClone(node, info) {
   return _filteredViewPrune(clone, info);
 }
 
+function _filteredViewTurnKey(block, index) {
+  return String((block && block.dataset && block.dataset.turnId) || ('index-' + index));
+}
+
+function _filteredViewRememberTurnState(info, block, index) {
+  if (!info || !block) return;
+  if (!info.turnStates) info.turnStates = {};
+  const selected = Array.from(block.querySelectorAll('.simple-turn-tab')).find(function(tab) {
+    return tab.getAttribute('aria-selected') === 'true';
+  });
+  info.turnStates[_filteredViewTurnKey(block, index)] = {
+    expanded: block.classList.contains('expanded'),
+    activeTab: selected ? String(selected.dataset.filteredTurnTab || '') : '',
+  };
+}
+
+function _filteredViewCaptureTurnStates(info) {
+  if (!info || !info.body) return;
+  Array.from(info.body.querySelectorAll('.simple-turn-block')).forEach(function(block, index) {
+    _filteredViewRememberTurnState(info, block, index);
+  });
+}
+
+function _filteredViewSetTurnExpanded(info, block, index, expanded) {
+  const value = !!expanded;
+  block.classList.toggle('expanded', value);
+  const header = block.querySelector('.simple-turn-header');
+  if (header) header.setAttribute('aria-expanded', value ? 'true' : 'false');
+  _filteredViewRememberTurnState(info, block, index);
+}
+
+function _filteredViewActivateTurnTab(info, block, index, tabKey, focus) {
+  const tabs = Array.from(block.querySelectorAll('.simple-turn-tab'));
+  const panels = Array.from(block.querySelectorAll('.simple-turn-panel'));
+  let activeIndex = tabs.findIndex(function(tab) {
+    return tab.dataset.filteredTurnTab === tabKey;
+  });
+  if (activeIndex < 0) activeIndex = 0;
+  tabs.forEach(function(tab, tabIndex) {
+    const active = tabIndex === activeIndex;
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    tab.setAttribute('tabindex', active ? '0' : '-1');
+    if (active) tab.classList.remove('has-unread');
+  });
+  panels.forEach(function(panel, panelIndex) { panel.hidden = panelIndex !== activeIndex; });
+  if (focus && tabs[activeIndex] && tabs[activeIndex].focus) tabs[activeIndex].focus();
+  _filteredViewRememberTurnState(info, block, index);
+}
+
+function _filteredViewHydrateTurn(info, block, index) {
+  const key = _filteredViewTurnKey(block, index);
+  const saved = info.turnStates && info.turnStates[key];
+  const header = block.querySelector('.simple-turn-header');
+  const tabs = Array.from(block.querySelectorAll('.simple-turn-tab'));
+  const panels = Array.from(block.querySelectorAll('.simple-turn-panel'));
+  const idPrefix = 'filtered-' + _filteredViewToken(info.tabId) + '-turn-'
+    + _filteredViewToken(key);
+
+  if (info.agentName) {
+    const title = block.querySelector('.simple-turn-title');
+    if (title) title.textContent = displayAgentName(info.agentName);
+  }
+  tabs.forEach(function(tab, tabIndex) {
+    const controls = String(tab.getAttribute('aria-controls') || '');
+    const tabKey = tab.dataset.filteredTurnTab
+      || controls.split('-').pop() || String(tabIndex);
+    tab.dataset.filteredTurnTab = tabKey;
+    tab.id = idPrefix + '-tab-' + _filteredViewToken(tabKey);
+    const panel = panels[tabIndex];
+    if (panel) {
+      panel.id = idPrefix + '-panel-' + _filteredViewToken(tabKey);
+      panel.setAttribute('aria-labelledby', tab.id);
+      tab.setAttribute('aria-controls', panel.id);
+    }
+    tab.addEventListener('click', function() {
+      _filteredViewActivateTurnTab(info, block, index, tabKey, true);
+    });
+    tab.addEventListener('keydown', function(event) {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      let next = tabIndex;
+      if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = tabs.length - 1;
+      else if (event.key === 'ArrowLeft') next = (tabIndex - 1 + tabs.length) % tabs.length;
+      else next = (tabIndex + 1) % tabs.length;
+      _filteredViewActivateTurnTab(
+        info, block, index, tabs[next].dataset.filteredTurnTab, true);
+    });
+  });
+  if (header) {
+    header.addEventListener('click', function() {
+      _filteredViewSetTurnExpanded(
+        info, block, index, !block.classList.contains('expanded'));
+    });
+  }
+  const initialTab = saved && saved.activeTab
+    ? saved.activeTab
+    : ((tabs.find(function(tab) {
+      return tab.getAttribute('aria-selected') === 'true';
+    }) || tabs[0] || {}).dataset || {}).filteredTurnTab;
+  _filteredViewSetTurnExpanded(
+    info, block, index, saved ? saved.expanded : block.classList.contains('expanded'));
+  if (tabs.length) _filteredViewActivateTurnTab(info, block, index, initialTab || '', false);
+}
+
+function _filteredViewHydrateClone(info, clone) {
+  const turns = [];
+  if (clone.classList && clone.classList.contains('simple-turn-block')) turns.push(clone);
+  turns.push.apply(turns, Array.from(clone.querySelectorAll('.simple-turn-block')));
+  turns.forEach(function(block, index) { _filteredViewHydrateTurn(info, block, index); });
+  clone.querySelectorAll('.delegate-group-count').forEach(function(count) {
+    const group = count.parentElement && count.parentElement.parentElement;
+    const total = group ? group.querySelectorAll('.delegate-sub-block').length : 0;
+    if (total) count.textContent = total + (total === 1 ? ' agent' : ' agents');
+  });
+  return clone;
+}
+
+function _filteredViewIsLoadMoreBanner(node) {
+  return !!node && (node.id === 'loadMoreBanner'
+    || (node.dataset && node.dataset.conversationLocalId === 'loadMoreBanner')
+    || (node.classList && node.classList.contains('load-more-banner')));
+}
+
+function _filteredViewLoadMore(info) {
+  if (typeof withConversationSession !== 'function') {
+    throw new Error('BUG: filtered pagination requires ConversationSession');
+  }
+  return withConversationSession(info.conversationId, function() {
+    return loadMoreMessages();
+  });
+}
+
+function _filteredViewLoadMoreProxy(info, sourceBanner) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'load-more-banner workspace-filter-load-more';
+  button.textContent = sourceBanner.textContent || 'Load more messages';
+  button.addEventListener('click', function() { _filteredViewLoadMore(info); });
+  return button;
+}
+
 function _renderFilteredView(tabId) {
   const info = _taskTabRegistry[tabId];
   if (!info || !info.body) return;
@@ -153,11 +350,17 @@ function _renderFilteredView(tabId) {
 
   const body = info.body;
   const wasAtBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  _filteredViewCaptureTurnStates(info);
+  const sourceBanner = Array.from(source.children).find(_filteredViewIsLoadMoreBanner);
   body.innerHTML = '';
   Array.from(source.children).forEach(function(node) {
+    if (_filteredViewIsLoadMoreBanner(node)) return;
     const clone = _filteredViewClone(node, info);
-    if (clone) body.appendChild(clone);
+    if (clone) body.appendChild(_filteredViewHydrateClone(info, clone));
   });
+  if (sourceBanner) {
+    body.insertBefore(_filteredViewLoadMoreProxy(info, sourceBanner), body.firstChild);
+  }
 
   if (!body.children.length) {
     const empty = document.createElement('div');
@@ -281,6 +484,7 @@ function openAgentView(agentName, taskId) {
     source: sourceSession.messagesRoot,
     body: body,
     panel: panel,
+    turnStates: {},
   };
   _openTaskTabOrder.push(tabId);
   _activeTaskTabId = tabId;

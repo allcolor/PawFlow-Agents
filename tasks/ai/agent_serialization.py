@@ -454,12 +454,19 @@ class AgentSerializationMixin:
                     entry["timestamp"] = _display_ts
                 result.append(entry)
             elif role in ("user", "assistant"):
+                _src = m.get("source") or {}
+                _is_scheduled_wakeup = (
+                    role == "user" and isinstance(_src, dict)
+                    and _src.get("type") == "scheduled_wakeup"
+                )
                 # Skip internal system instructions injected as user messages
-                if role == "user" and isinstance(content, str) and content.startswith("[System:"):
+                if (role == "user" and isinstance(content, str)
+                        and content.startswith("[System:")
+                        and not _is_scheduled_wakeup):
                     continue
                 # Skip synthetic context messages (compaction acks, resume acks)
-                _src = m.get("source") or {}
-                if isinstance(_src, dict) and _src.get("type") == "context":
+                if (isinstance(_src, dict) and _src.get("type") == "context"
+                        and not _is_scheduled_wakeup):
                     continue
                 if role == "assistant" and not str(content).strip():
                     continue

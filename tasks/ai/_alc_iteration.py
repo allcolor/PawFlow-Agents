@@ -527,7 +527,9 @@ class _ALCIterationMixin:
             cancel_check=st.emitter.check_cancelled,
             event_cid=st.ctx.get("_event_cid", ""),
             permission_mode_override=st.ctx.get(
-                "permission_mode_override", ""))
+                "permission_mode_override", ""),
+            run_handle=st.ctx.get("run_handle", ""),
+            fence_token=st.ctx.get("run_fence_token"))
 
         # Another agent may have changed a file this one had read, while
         # these tools were running. Deliver the notice inside this turn

@@ -50,6 +50,26 @@ def test_a2a_store_supports_multiple_agents_and_hashes_keys(tmp_path):
     assert raw not in digest
 
 
+def test_managed_publications_require_isolated_context(tmp_path):
+    store = A2AStore(tmp_path / "a2a.sqlite3")
+    with pytest.raises(ValueError, match="managed_mode requires"):
+        store.configure_publication(
+            "alice", "conv-1", "Agent", context_policy="shared",
+            managed_mode=True)
+
+    publication = store.configure_publication(
+        "alice", "conv-1", "Agent", context_policy="isolated",
+        managed_mode=True)
+    # Omitting managed_mode preserves True, so changing only the policy
+    # must still fail closed instead of persisting an inconsistent row.
+    with pytest.raises(ValueError, match="managed_mode requires"):
+        store.configure_publication(
+            "alice", "conv-1", "Agent", context_policy="shared")
+    stored = store.get_publication(publication["publication_id"])
+    assert stored["managed_mode"] is True
+    assert stored["context_policy"] == "isolated"
+
+
 def test_a2a_contexts_and_tasks_are_scoped_to_client_key(tmp_path):
     store = A2AStore(tmp_path / "a2a.sqlite3")
     publication = store.configure_publication(
@@ -331,11 +351,16 @@ def test_a2a_ui_is_loaded_and_translated():
     assert "'/agui/' + encodeURIComponent(publicationId)" in source
     assert "t('a2aCopyAguiEndpoint')" in source
     assert "t('a2aAguiHint')" in source
+    assert 'id="a2aPubManaged"' in source
+    assert 'id="a2aPubThreadTtl"' in source
+    assert "managed_mode: document.getElementById('a2aPubManaged').checked" in source
+    assert "thread_ttl_seconds: ttlRaw === '' ? null : Number(ttlRaw)" in source
     for language in ("en", "fr", "es"):
         catalog = json.loads((
             root / f"tasks/io/chat_ui/i18n/{language}.json").read_text(encoding="utf-8"))
         for key in ("a2aConfigure", "a2aPublishAgent", "a2aTargets",
                     "a2aKeyOnce", "a2aAllowPrivate", "a2aAguiEndpoint",
-                    "a2aCopyAguiEndpoint", "a2aAguiHint"):
+                    "a2aCopyAguiEndpoint", "a2aAguiHint", "a2aManagedBadge",
+                    "a2aManagedMode", "a2aManagedModeHelp", "a2aThreadTtl"):
             assert catalog[key]
         assert "External AG-UI" in catalog["a2aAguiHint"]

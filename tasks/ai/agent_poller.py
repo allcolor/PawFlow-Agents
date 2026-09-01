@@ -90,26 +90,18 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         if runtime_kind not in {"external_mcp", "external_agui"}:
             return False
 
-        import uuid as _uuid
-        from core.conversation_writer import ConversationWriter
-        from core.llm_client import stamp_message
         content = (
             "[System: Scheduled wake-up. "
             + "; ".join(reasons or ["scheduled recheck"])
             + "]"
         )
-        message = stamp_message({
-            "role": "user", "content": content,
-            "source": {"type": "context", "target_agent": agent},
-            "msg_id": _uuid.uuid4().hex[:12],
-        }, conversation_id)
         try:
             meta = ConversationStore.instance().get_metadata(conversation_id)
             user_id = meta["user_id"] if meta else ""
         except Exception:
             user_id = ""
-        ConversationWriter.for_conversation(conversation_id).enqueue_message(
-            message, agent_name=agent, user_id=user_id, wait=True)
+        message = self._persist_scheduled_wakeup(
+            conversation_id, agent, content, user_id)
         from services.external_agent_runtime_router import route_external_agent_prompt
         _kind, routed = route_external_agent_prompt(
             conversation_id, agent, content, message["msg_id"], channel="web")

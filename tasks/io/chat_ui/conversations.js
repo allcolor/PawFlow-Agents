@@ -840,7 +840,7 @@ function loadMoreMessages() {
       // Non-task messages go into the fragment for insertion.
       const frag = document.createDocumentFragment();
       // Build elements first, then insert — prepending one-by-one reverses order
-      const _taskEls = {};  // taskId → [elements in order]
+      const _taskEls = {};  // block key → task metadata + elements in order
       const _fragEls = [];
       if (typeof suspendTechnicalMessageGrouping === 'function') suspendTechnicalMessageGrouping();
       try {
@@ -857,8 +857,14 @@ function loadMoreMessages() {
           if (_taskId) {
             const _iter = (m.source && m.source.task_iteration) || 1;
             const _blockKey = _taskId + '::iter' + _iter;
-            if (!_taskEls[_blockKey]) _taskEls[_blockKey] = [];
-            _taskEls[_blockKey].push({el, agentName: (m.source && m.source.name) || ''});
+            if (!_taskEls[_blockKey]) {
+              _taskEls[_blockKey] = {
+                taskId: _taskId, iteration: _iter, entries: [],
+              };
+            }
+            _taskEls[_blockKey].entries.push({
+              el, agentName: (m.source && m.source.name) || '',
+            });
           } else {
             _fragEls.push(el);
           }
@@ -867,10 +873,12 @@ function loadMoreMessages() {
         if (typeof resumeTechnicalMessageGrouping === 'function') resumeTechnicalMessageGrouping(false);
       }
       // Prepend task elements in correct order (as a batch)
-      for (const [tid, entries] of Object.entries(_taskEls)) {
-        let tb = _histTaskBlocks[tid];
+      for (const [blockKey, taskPage] of Object.entries(_taskEls)) {
+        const entries = taskPage.entries;
+        let tb = _histTaskBlocks[blockKey];
         if (!tb) {
-          tb = _getHistTaskBlock(tid, entries[0].agentName);
+          tb = _getHistTaskBlock(
+            taskPage.taskId, taskPage.iteration, entries[0].agentName);
           if (tb && tb.el.parentNode) tb.el.parentNode.removeChild(tb.el);
           if (tb) frag.appendChild(tb.el);
         }

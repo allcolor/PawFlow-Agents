@@ -58,6 +58,7 @@ function _a2aPublicationRows(publications) {
     return '<div style="border:1px solid var(--pf-border);border-radius:6px;padding:9px;margin:7px 0;">'
       + '<div style="display:flex;align-items:center;gap:7px;"><strong style="flex:1;">' + escapeHtml(pub.label || pub.agent_name) + '</strong>'
       + '<span style="font-size:10px;color:var(--pf-muted);">' + escapeHtml(pub.context_policy) + '</span>'
+      + (pub.managed_mode ? '<span style="font-size:10px;color:var(--pf-accent);">' + escapeHtml(t('a2aManagedBadge')) + '</span>' : '')
       + '<button type="button" onclick="_a2aEditPublication(' + _pfpJsArg(pub.publication_id) + ')">' + escapeHtml(t('a2aEdit')) + '</button>'
       + '<button type="button" style="color:var(--pf-danger);" onclick="_a2aDeletePublication(' + _pfpJsArg(pub.publication_id) + ')">' + escapeHtml(t('a2aDelete')) + '</button></div>'
       + '<div style="display:flex;gap:5px;margin-top:6px;"><input readonly value="' + _pfpAttr(cardUrl) + '" style="flex:1;font-size:11px;">'
@@ -122,6 +123,9 @@ function _a2aRender(state) {
     + '<label style="grid-column:1/3;">' + escapeHtml(t('a2aAgentDescription')) + '<input id="a2aPubDescription" value="' + _pfpAttr(edited ? edited.description : '') + '" style="display:block;width:100%;"></label>'
     + '<label>' + escapeHtml(t('a2aContextPolicy')) + '<select id="a2aPubPolicy" style="display:block;width:100%;"><option value="isolated"' + (!edited || edited.context_policy === 'isolated' ? ' selected' : '') + '>' + escapeHtml(t('a2aIsolated')) + '</option><option value="shared"' + (edited && edited.context_policy === 'shared' ? ' selected' : '') + '>' + escapeHtml(t('a2aShared')) + '</option></select></label>'
     + '<label style="display:flex;align-items:center;gap:6px;padding-top:18px;"><input id="a2aPubEnabled" type="checkbox"' + (!edited || edited.enabled ? ' checked' : '') + '> ' + escapeHtml(t('a2aEnabled')) + '</label></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">'
+    + '<label style="display:flex;align-items:center;gap:6px;" title="' + _pfpAttr(t('a2aManagedModeHelp')) + '"><input id="a2aPubManaged" type="checkbox"' + (edited && edited.managed_mode ? ' checked' : '') + '> ' + escapeHtml(t('a2aManagedMode')) + '</label>'
+    + '<label>' + escapeHtml(t('a2aThreadTtl')) + '<input id="a2aPubThreadTtl" type="number" min="0" step="1" value="' + _pfpAttr(edited && edited.thread_ttl_seconds != null ? String(edited.thread_ttl_seconds) : '0') + '" style="display:block;width:100%;"></label></div>'
     + '<div style="margin:8px 0;"><button type="button" onclick="_a2aSavePublication()">' + escapeHtml(t('a2aSavePublication')) + '</button>'
     + (edited ? ' <button type="button" onclick="_a2aCancelEdit()">' + escapeHtml(t('a2aCancelEdit')) + '</button>' : '') + '</div>'
     + _a2aPublicationRows(_a2aState.publications || [])
@@ -156,6 +160,7 @@ function _a2aCancelEdit() { delete _a2aState.edit_publication; _a2aRender(_a2aSt
 
 function _a2aSavePublication() {
   const edited = _a2aState.edit_publication || null;
+  const ttlRaw = document.getElementById('a2aPubThreadTtl').value;
   _a2aAction('a2a_publication_configure', {
     publication_id: edited ? edited.publication_id : '',
     agent_name: document.getElementById('a2aPubAgent').value,
@@ -163,6 +168,8 @@ function _a2aSavePublication() {
     description: document.getElementById('a2aPubDescription').value,
     context_policy: document.getElementById('a2aPubPolicy').value,
     enabled: document.getElementById('a2aPubEnabled').checked,
+    managed_mode: document.getElementById('a2aPubManaged').checked,
+    thread_ttl_seconds: ttlRaw === '' ? null : Number(ttlRaw),
   }, function() { _a2aRefresh(); });
 }
 

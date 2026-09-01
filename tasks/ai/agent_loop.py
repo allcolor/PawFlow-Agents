@@ -119,6 +119,24 @@ class AgentLoopTask(
     _calibrated_cpt: Dict[str, float] = {}               # service_id -> chars_per_token
     _calibrated_cpt_lock = threading.Lock()
     _interrupt_cooldowns: Dict[str, float] = {}
+    # Run fence (B1-O): one monotonic token per (conversation, agent).
+    # Every run captures the token at ITS start; a force stop bumps it,
+    # so a zombie run fails the check at the effect boundary while the
+    # successor (started after the bump) keeps passing — zombie and
+    # successor coexist without sharing a kill switch.
+    _run_fences: Dict[str, int] = {}
+    _run_fence_lock = threading.Lock()
+    # Run registry (B1-O): EVERY run — zombie and successor alike — has a
+    # row keyed by its run_handle for its whole life, from the streaming
+    # worker's marker to the final cleanup. This is the authority for
+    # handle-targeted operations: the (conversation, agent) registries
+    # below only cache the LIVE pointer.
+    _agent_runs: Dict[str, dict] = {}
+    _agent_runs_lock = threading.Lock()
+    # Which run_handle owns the entry in _active_claude_client — cleanups
+    # may only pop a client they own (a zombie must never evict its
+    # successor's live client).
+    _active_client_owners: Dict[str, str] = {}
 
 
     def __init__(self, config: Dict[str, Any]):
@@ -244,16 +262,157 @@ class AgentLoopTask(
                             conversation_id[:8], agent_name, e)
 
     @classmethod
-    def force_stop_agent(cls, conversation_id: str, agent_name: str):
+    def run_fence_token(cls, conversation_id: str, agent_name: str) -> int:
+        """Current fence token for (conversation, agent) — captured by a
+        run at its start (B1-O)."""
+        key = f"{conversation_id}:{agent_name}"
+        with cls._run_fence_lock:
+            return cls._run_fences.get(key, 0)
+
+    @classmethod
+    def bump_run_fence(cls, conversation_id: str, agent_name: str) -> int:
+        """Invalidate every run started before now; returns the new token.
+        The relay high-water is raised in the same movement so a request
+        already in flight with the old token is refused there too."""
+        key = f"{conversation_id}:{agent_name}"
+        with cls._run_fence_lock:
+            token = cls._run_fences.get(key, 0) + 1
+            cls._run_fences[key] = token
+        try:
+            from services.tool_relay_service import ToolRelayService
+            ToolRelayService.raise_fence_highwater(
+                conversation_id, agent_name, token)
+        except Exception:
+            logger.debug("fence highwater raise failed", exc_info=True)
+        try:
+            # Notify every connected relay of the new watermark NOW, so a
+            # relay already holding a superseded command frame refuses it
+            # at dispatch — without waiting for the successor's first
+            # request to carry the higher token (B1-O).
+            from services.filesystem_service import RelayService
+            RelayService.broadcast_fence_raise(
+                {f"{conversation_id}:{agent_name}": token})
+        except Exception:
+            logger.debug("fence_raise broadcast failed", exc_info=True)
+        return token
+
+    @classmethod
+    def run_fence_valid(cls, conversation_id: str, agent_name: str,
+                        token: int) -> bool:
+        """True while ``token`` is still the CURRENT fence."""
+        return int(token) == cls.run_fence_token(conversation_id, agent_name)
+
+    @classmethod
+    def register_agent_run(cls, conversation_id: str, agent_name: str,
+                           run_handle: str, *,
+                           fence_token: Optional[int] = None) -> None:
+        """Idempotently record a run in the run registry (B1-O). Called
+        as soon as the run has an identity — at the streaming worker's
+        marker, again (no-op) when the loop starts."""
+        if not run_handle:
+            return
+        with cls._agent_runs_lock:
+            row = cls._agent_runs.setdefault(run_handle, {
+                "conversation_id": conversation_id,
+                "agent_name": agent_name,
+                "started_at": time.time(),
+            })
+            if agent_name:
+                # The worker registers with its best guess; the loop
+                # refines once the agent is resolved.
+                row["agent_name"] = agent_name
+            if fence_token is not None:
+                row["fence_token"] = int(fence_token)
+
+    @classmethod
+    def finish_agent_run(cls, run_handle: str) -> None:
+        """Remove ONE run's registry row — a cleanup can only retire the
+        handle it owns, never a sibling's."""
+        if not run_handle:
+            return
+        with cls._agent_runs_lock:
+            cls._agent_runs.pop(run_handle, None)
+
+    @classmethod
+    def live_run_handles(cls, conversation_id: str,
+                         agent_name: str) -> list:
+        """Every live run of (conversation, agent), oldest first —
+        zombie and successor COEXIST here."""
+        with cls._agent_runs_lock:
+            rows = [(handle, row) for handle, row in cls._agent_runs.items()
+                    if row.get("conversation_id") == conversation_id
+                    and row.get("agent_name") == agent_name]
+        rows.sort(key=lambda item: item[1].get("started_at", 0.0))
+        return [handle for handle, _row in rows]
+
+    @classmethod
+    def current_run_handle(cls, conversation_id: str, agent_name: str) -> str:
+        """The NEWEST live run's handle for (conversation, agent), or ''.
+
+        Resolved from the run registry first — a successor still in
+        preparation (marker only, context not yet installed) is already
+        registered there, so a stop targeting its zombie can never
+        mistake it for the live run."""
+        handles = cls.live_run_handles(conversation_id, agent_name)
+        if handles:
+            return handles[-1]
+        inst = cls._live_instance
+        if not inst:
+            return ""
+        _key = f"{conversation_id}:{agent_name}" if agent_name \
+            else conversation_id
+        with inst._active_contexts_lock:
+            ctx = inst._active_contexts.get(_key)
+            turn = inst._active_turns.get(_key)
+        return str((ctx or {}).get("run_handle")
+                   or (turn or {}).get("run_handle") or "")
+
+    @classmethod
+    def force_stop_agent(cls, conversation_id: str, agent_name: str,
+                         run_handle: str = ""):
         """Force stop an agent — kill CC + bump gen + cancel relay.
 
         The relay cancel is cleared by uncancel_agent at the start of
         every new agent run (agent_core.py line 122). So a force stop
         never affects the NEXT run — only the current one.
+
+        ``run_handle`` targets ONE run (B1-O): when a NEWER run exists,
+        only the targeted run's own resources are cancelled — the shared
+        fence is NEVER bumped (that would fence out the successor).
         """
         inst = cls._live_instance
+        _key = f"{conversation_id}:{agent_name}" if agent_name \
+            else conversation_id
+        if run_handle:
+            live_handle = cls.current_run_handle(conversation_id, agent_name)
+            if live_handle and live_handle != run_handle:
+                logger.info(
+                    "[force-stop] run %s of %s/%s superseded by %s — "
+                    "cancelling only the targeted run's resources",
+                    run_handle[:8], conversation_id[:8], agent_name,
+                    live_handle[:8])
+                if inst:
+                    with inst._active_contexts_lock:
+                        _owner = cls._active_client_owners.get(_key, "")
+                        _cc = inst._active_claude_client.get(_key) \
+                            if _owner == run_handle else None
+                    if _cc is not None:
+                        from tasks.ai.actions.cancel_interrupt import (
+                            _cancel_provider_client)
+                        _cancel_provider_client(_cc, force=True)
+                try:
+                    from services.tool_relay_service import ToolRelayService
+                    ToolRelayService.cancel_agent(
+                        conversation_id, agent_name, run_handle=run_handle)
+                except Exception:
+                    logger.debug("exception suppressed", exc_info=True)
+                cls.finish_agent_run(run_handle)
+                return
+        # The fence bump is FIRST: from this point the stopped run can no
+        # longer cross the effect boundary, even while the cancels below
+        # are still propagating.
+        cls.bump_run_fence(conversation_id, agent_name)
         if inst:
-            _key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
             with inst._active_contexts_lock:
                 _cc = inst._active_claude_client.get(_key)
             inst.cancel_agent(conversation_id, agent_name=agent_name, silent=True)
@@ -272,7 +431,8 @@ class AgentLoopTask(
                 _cc._cc_catchup_idx = 0
         try:
             from services.tool_relay_service import ToolRelayService
-            ToolRelayService.cancel_agent(conversation_id, agent_name)
+            ToolRelayService.cancel_agent(conversation_id, agent_name,
+                                          run_handle=run_handle)
         except Exception:
             logger.debug("exception suppressed", exc_info=True)
 

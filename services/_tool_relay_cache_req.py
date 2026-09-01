@@ -509,8 +509,55 @@ class _ToolRelayCacheReqMixin:
                 return True
         return False
 
+    # ── run-fence high-water (B1-O) ─────────────────────────────────
+
     @classmethod
-    def cancel_agent(cls, conversation_id: str, agent_name: str):
+    def raise_fence_highwater(cls, conversation_id: str, agent_name: str,
+                              token: int) -> int:
+        """Monotonic CAS on the (conversation, agent) fence watermark —
+        a lower token never lowers it. Returns the current high-water."""
+        key = f"{conversation_id}:{agent_name}"
+        with cls._fence_highwater_lock:
+            current = cls._fence_highwater.get(key, 0)
+            if int(token) > current:
+                cls._fence_highwater[key] = int(token)
+                current = int(token)
+            return current
+
+    @classmethod
+    def fence_highwater_allows(cls, conversation_id: str, agent_name: str,
+                               token: int) -> bool:
+        """True while ``token`` is at least the recorded high-water — a
+        request carrying a lower (fenced-out) token is refused."""
+        key = f"{conversation_id}:{agent_name}"
+        with cls._fence_highwater_lock:
+            return int(token) >= cls._fence_highwater.get(key, 0)
+
+    @classmethod
+    def resync_fence_highwaters(cls) -> int:
+        """Idempotently re-arm the watermarks from the agent runtime's
+        current fences — called on every relay (re)connection BEFORE the
+        connection serves requests, so a relay restart cannot reopen a
+        fence. Returns how many watermarks were raised."""
+        try:
+            from tasks.ai.agent_loop import AgentLoopTask
+            with AgentLoopTask._run_fence_lock:
+                snapshot = dict(AgentLoopTask._run_fences)
+        except Exception:
+            logger.debug("fence resync could not read runtime fences",
+                         exc_info=True)
+            return 0
+        raised = 0
+        with cls._fence_highwater_lock:
+            for key, token in snapshot.items():
+                if int(token) > cls._fence_highwater.get(key, 0):
+                    cls._fence_highwater[key] = int(token)
+                    raised += 1
+        return raised
+
+    @classmethod
+    def cancel_agent(cls, conversation_id: str, agent_name: str,
+                     run_handle: str = ""):
         """Cancel all in-flight tool calls for a (conv, agent).
 
         Two-phase: 1) set cancel_event so cooperative loops abort,
@@ -526,7 +573,9 @@ class _ToolRelayCacheReqMixin:
             to_cancel = [(rid, info) for rid, info in cls._inflight.items()
                          if isinstance(info, dict)
                          and info.get("conv") == conversation_id
-                         and (not agent_name or info.get("agent") == agent_name)]
+                         and (not agent_name or info.get("agent") == agent_name)
+                         and (not run_handle
+                              or info.get("run_handle") == run_handle)]
         _hook_total = 0
         _hook_failed = 0
         for rid, info in to_cancel:

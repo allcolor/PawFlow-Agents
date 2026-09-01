@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Dict, List, Optional
 
 from core import FlowFile
@@ -18,6 +19,47 @@ logger = logging.getLogger(__name__)
 
 class _AgentPollCheckinMixin:
     """Poll-context + check-in payload builders for AgentPollerMixin."""
+
+    @staticmethod
+    def _persist_scheduled_wakeup(conversation_id: str, agent_name: str,
+                                  content: str, user_id: str,
+                                  msg_id: str = "") -> Dict:
+        """Persist and publish one visible boundary for an autonomous wake."""
+        if not agent_name:
+            raise ValueError("scheduled wakeup requires a target agent")
+        from core.conversation_writer import ConversationWriter
+        from core.llm_client import stamp_message
+
+        wake_id = msg_id or uuid.uuid4().hex[:12]
+        source = {
+            "type": "scheduled_wakeup",
+            "target_agent": agent_name,
+        }
+        message = stamp_message({
+            "role": "user",
+            "content": content,
+            "source": source,
+            "msg_id": wake_id,
+            "turn_id": wake_id,
+        }, conversation_id)
+        event = {"type": "new_message", "data": {
+            "role": "user",
+            "content": content,
+            "source": source,
+            "msg_id": wake_id,
+            "turn_id": wake_id,
+            "request_msg_id": wake_id,
+            "agent_name": agent_name,
+            "ts": message.get("ts"),
+        }}
+        ConversationWriter.for_conversation(conversation_id).enqueue_message(
+            message,
+            agent_name=agent_name,
+            user_id=user_id,
+            sse_events=[event],
+            wait=True,
+        )
+        return message
 
     def _build_poll_context(self, conversation_id: str,
                             messages_data: List[Dict],
@@ -88,8 +130,18 @@ class _AgentPollCheckinMixin:
             user_id=_poll_uid,
         )
         if checkin_content:
-            ctx["messages"].append(LLMMessage(role="user", content=checkin_content,
-                                               conversation_id=conversation_id))
+            target_agent = _active_agent or ctx.get("active_agent_name", "")
+            wake = self._persist_scheduled_wakeup(
+                conversation_id, target_agent, checkin_content, _poll_uid)
+            ctx["request_msg_id"] = wake["msg_id"]
+            ctx["messages"].append(LLMMessage(
+                role="user",
+                content=checkin_content,
+                source=wake.get("source"),
+                msg_id=wake["msg_id"],
+                timestamp=wake.get("ts"),
+                conversation_id=conversation_id,
+            ))
         ctx["_base_message_count"] = len(ctx["messages"])
 
         return ctx

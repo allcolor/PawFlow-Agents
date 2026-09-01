@@ -241,11 +241,31 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             }).encode("utf-8")
             _ws_frame_send(sock, reg_msg)
 
-            opcode, payload = _ws_frame_recv(sock)
-            if opcode == 0x01:
+            # The server interposes a fence_snapshot BEFORE the
+            # registration ack (B1-O): store the watermarks and
+            # acknowledge, so no effect command can ever run under a
+            # pre-restart fence. Handshake is single-threaded here.
+            _initial_fence_highwaters = {}
+            for _handshake_round in range(4):
+                opcode, payload = _ws_frame_recv(sock)
+                if opcode != 0x01:
+                    break
                 reg_resp = json.loads(payload.decode("utf-8"))
+                if reg_resp.get("type") == "fence_snapshot":
+                    for _fk, _fv in (reg_resp.get("highwaters")
+                                     or {}).items():
+                        try:
+                            _initial_fence_highwaters[_fk] = int(_fv)
+                        except (TypeError, ValueError):
+                            continue
+                    _ws_frame_send(sock, json.dumps({
+                        "type": "fence_ack",
+                        "count": len(_initial_fence_highwaters),
+                    }).encode("utf-8"))
+                    continue
                 if reg_resp.get("type") == "registered":
                     sys.stderr.write(f"[FSRelay] Registered as '{reg_resp.get('relay_id')}'\n")
+                break
 
             reconnect_delay = 1
             _KEEPALIVE_INTERVAL = 30
@@ -367,6 +387,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 term_send=_term_send, fuse_clients=_fuse_clients,
                 remote_mount_mgr=_remote_mount_mgr,
                 resolve_spawn_docker_env=_resolve_spawn_docker_env))
+            # Watermarks received during the handshake arm the session
+            # BEFORE any command can be dispatched.
+            _session.fence_highwaters.update(_initial_fence_highwaters)
             # Exposed for the reconnect handler's diagnostic logging below.
             _active_cmd_summary = _session.active_cmd_summary
             _disconnect_reason = _session.run()

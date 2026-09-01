@@ -105,15 +105,20 @@ def test_submitted_turn_carries_the_authenticated_principal(monkeypatch):
 
     monkeypatch.setattr(AgentLoopTask, "_live_instance", _Task())
 
-    AgentRuntimeAPI.submit_message(AgentRequest(
+    submission = AgentRuntimeAPI.submit_message(AgentRequest(
         user_id="botowner", conversation_id="conv1", message="hello",
-        msg_id="web:1", channel="web",
+        msg_id="web:1", channel="web", run_handle="run-exact",
         source_attributes={"web.session": "abc",
-                           "http.auth.principal": "visitor"}))
+                           "http.auth.principal": "visitor",
+                           "agent.run_handle": "attacker"}))
 
     ff = captured["ff"]
     assert ff.get_attribute("http.auth.principal") == "botowner"
     assert ff.get_attribute("web.session") == "abc", "provenance still travels"
+    assert ff.get_attribute("agent.run_handle") == "run-exact"
+    # A transport may omit the optional acknowledgement field, but it can
+    # never override the reserved request attribute through provenance.
+    assert submission.run_handle == ""
 
 
 def test_stream_done_payload_includes_transport_correlation():

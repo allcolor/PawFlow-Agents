@@ -69,6 +69,30 @@ function _turnId(data) {
   return String(data.turn_id || data.request_msg_id || src.turn_id || '').trim();
 }
 
+function _turnRuntimeId(state) {
+  return String((state && (state.runtimeTurnId || state.turnId)) || '').trim();
+}
+
+function _turnRuntimeHas(state) {
+  const id = _turnRuntimeId(state);
+  return !!id && _turnRuntime.has(id);
+}
+
+function _turnSegmentId(runtimeTurnId, boundaryEl) {
+  const ds = (boundaryEl && boundaryEl.dataset) || {};
+  const boundaryId = String(ds.msgid || ds.turnBoundaryId || '').trim()
+    || ('boundary-' + (++_turnSeq));
+  if (boundaryEl && boundaryEl.dataset) boundaryEl.dataset.turnBoundaryId = boundaryId;
+  return String(runtimeTurnId || 'turn') + '-after-' + boundaryId;
+}
+
+function _turnEventAgent(data, element) {
+  const src = (data && data.source) || {};
+  const dataset = (element && element.dataset) || {};
+  return String((data && data.agent_name) || src.name || src.from
+    || dataset.agentName || dataset.agent || '').trim();
+}
+
 function _turnSvg(kind) {
   const common = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
   if (kind === 'thinking') return '<svg ' + common + '><path d="M9 4a3 3 0 0 0-3 3v1a3 3 0 0 0-1 5.2A3 3 0 0 0 8 17h1m6-13a3 3 0 0 1 3 3v1a3 3 0 0 1 1 5.2A3 3 0 0 1 16 17h-1M9 4v16m6-16v16M9 9h3m0 5h3"/></svg>';
@@ -104,7 +128,8 @@ function turnViewSetRuntimeTurns(turns) {
 // out of it -- becomes a permanently "working" turn with a buried answer if the
 // entry outlives the turn. Both terminal paths retire it.
 function _turnRetireRuntime(state) {
-  if (state && state.turnId) _turnRuntime.delete(state.turnId);
+  const id = _turnRuntimeId(state);
+  if (id) _turnRuntime.delete(id);
 }
 
 // A user message is a boundary: it closes whatever turn was open and opens the
@@ -148,7 +173,8 @@ function turnViewRegisterUser(extra, element) {
 function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
   if (!userEl && !anchorBeforeEl) return null;
   const state = {
-    turnId, userMsgId: (userEl && userEl.dataset.msgid) || turnId, userEl: userEl || null,
+    turnId, runtimeTurnId: _turnId(data || {}) || turnId,
+    userMsgId: (userEl && userEl.dataset.msgid) || turnId, userEl: userEl || null,
     agentName: '', llmService: '',
     status: 'working', expanded: false, activeTab: 'messages', finalMsgId: '',
     finalEl: null, finalDetailEl: null,
@@ -161,11 +187,13 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
     // Runtime/provider ids that explicitly resumed this already-terminal
     // positional block. They may end it later, but never become boundaries.
     resumedTurnIds: new Set(),
+    afterFinalBoundary: !!(data && data._afterFinalBoundary),
+    activityCount: 0,
     elementsByMsgId: new Map(), toolElementsByCallId: new Map(),
     artifactElementsByFileId: new Map(), artifactFileIdByCallId: new Map(),
     transient: { cues: [], coalesceTimer: null, pendingText: '', pendingKind: '',
-                 deferredTool: null, deferredToolTimer: null,
-                 mcpSeen: false, cuedTools: new Set() },
+                 pendingAgent: '', deferredTools: new Map(),
+                 mcpSeenAgents: new Set(), cuedTools: new Set() },
     tabs: {},
   };
   const block = document.createElement('section');
@@ -207,7 +235,8 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
   details.appendChild(tablist); details.appendChild(panels); block.appendChild(details);
   state.blockEl = block; state.headerEl = header; state.ephemeralEl = ephemeral;
   state.elapsedEl = header.querySelector('.simple-turn-elapsed');
-  const runtime = _turnRuntime.get(turnId) || {};
+  if (state.runtimeTurnId) state.resumedTurnIds.add(state.runtimeTurnId);
+  const runtime = _turnRuntime.get(state.runtimeTurnId) || {};
   const runtimeStarted = Number(runtime.started_at || 0) * 1000;
   const runtimeDuration = Number(runtime.duration || 0) * 1000;
   state.startedAt = runtimeStarted || (runtimeDuration ? Date.now() - runtimeDuration : Date.now());
@@ -261,8 +290,7 @@ function _turnPlaceBlock(state) {
 }
 
 function _turnUpdateIdentity(state, data) {
-  const src = data.source || {};
-  const agentName = data.agent_name || src.name || state.agentName || '';
+  const agentName = _turnEventAgent(data) || state.agentName || '';
   const llmService = data.llm_service || data.model || state.llmService || '';
   // Called once per streamed token. Identity almost never changes mid-turn,
   // so re-rendering it per token is pure waste on the hot path.
@@ -433,6 +461,11 @@ function turnViewIngest(kind, data, element) {
   // normal assistant text underneath an old detail panel.
   const source = (data && data.source) || {};
   if (source.type === 'agent_delegate') kind = 'sub_agent_trace';
+  const eventAgent = _turnEventAgent(data, element);
+  if (element && element.dataset && eventAgent
+      && !element.dataset.agentName && !element.dataset.agent) {
+    element.dataset.agentName = eventAgent;
+  }
   // No open turn means the agent is working without a user row above it: a
   // history page that starts mid-turn, a provider that ended a turn and went
   // back to work, a delegate returning. That is still a turn, and its rows
@@ -467,6 +500,16 @@ function turnViewIngest(kind, data, element) {
   if (!state && kind === 'system') return false;
   state = state || _turnOpenOrphanTurn(element, data);
   if (!state || !state.blockEl.isConnected) return false;
+  // A segment can contain activity from several concurrently running agents.
+  // Admit a runtime id only when its row is positionally inside this segment;
+  // a stale done may name an older row above the block and must not gain the
+  // right to close the live successor merely by presenting that id.
+  if (element && _turnRowBelongsHere(state, element)) {
+    state.activityCount++;
+    if (incomingTurnId && (incomingTurnId === _turnRuntimeId(state) || eventAgent)) {
+      state.resumedTurnIds.add(incomingTurnId);
+    }
+  }
   _turnUpdateIdentity(state, data || {});
   // A row that did not come from a replayed page, or a replayed tool call the
   // server stamped live, is the turn talking -- now. That is the one thing a
@@ -526,7 +569,7 @@ function turnViewIngest(kind, data, element) {
       const spotFree = !state.finalEl || !state.finalEl.isConnected
         || (state.finalEl.dataset && state.finalEl.dataset.turnSystemNotice === '1');
       if (tabKey === 'messages' && !(data && data._history)
-          && (!isSystem || spotFree)) {
+          && (!isSystem || spotFree) && !(isSystem && state.afterFinalBoundary)) {
         if (isSystem && element.dataset) element.dataset.turnSystemNotice = '1';
         _turnPromoteLast(state, element);
       }
@@ -538,7 +581,9 @@ function turnViewIngest(kind, data, element) {
   }
   if (state.expanded && state.activeTab !== tabKey) { tab.unread++; tab.tabEl.classList.add('has-unread'); }
   const text = data && (data.text || data.content || data.response || '');
-  if (!(data && data._history)) _turnOfferTransient(state, tabKey, text, element);
+  if (!(data && data._history)) {
+    _turnOfferTransient(state, tabKey, text, element, eventAgent);
+  }
   return true;
 }
 
@@ -672,12 +717,17 @@ function turnViewHandleToolResult(data, resultElement) {
   if (state.expanded && state.activeTab !== 'artifacts') {
     state.tabs.artifacts.unread++; state.tabs.artifacts.tabEl.classList.add('has-unread');
   }
-  if (!(data && data._history)) _turnOfferTransient(state, 'artifacts', _turnText('turnPresentedArtifacts', 'Presented in Artifacts') + ': ' + artifact.filename);
+  if (!(data && data._history)) {
+    _turnOfferTransient(state, 'artifacts',
+      _turnText('turnPresentedArtifacts', 'Presented in Artifacts') + ': ' + artifact.filename,
+      resultElement || callEl, _turnEventAgent(data, resultElement || callEl));
+  }
   return true;
 }
 
-function _turnOfferTransient(state, kind, text, element) {
+function _turnOfferTransient(state, kind, text, element, agentName) {
   if (state.expanded || state.status !== 'working') return;
+  agentName = String(agentName || _turnEventAgent(null, element) || '').trim();
   let label = String(text || '').replace(/\s+/g, ' ').trim();
   // A tool call shows itself. "Calling tool..." named neither the tool nor its
   // arguments, so the one surface meant to say what is happening said the
@@ -685,7 +735,7 @@ function _turnOfferTransient(state, kind, text, element) {
   // rendered; the cue carries a copy of it, exactly as the classic view draws
   // it, and the original stays the tab's own.
   if (kind === 'tools') {
-    if (element) { _turnOfferToolCue(state, element); return; }
+    if (element) { _turnOfferToolCue(state, element, agentName); return; }
     label = label || _turnText('turnCallingTool', 'Calling tool...');
   }
   if (!label) return; label = label.slice(0, TURN_TRANSIENT_MAX_CHARS);
@@ -696,11 +746,14 @@ function _turnOfferTransient(state, kind, text, element) {
     // One buffer per kind. Sharing a single one meant a message arriving in the
     // same window overwrote the reasoning that preceded it, and the thinking
     // the reader was told they would see never reached the surface at all.
-    if (state.transient.pendingKind && state.transient.pendingKind !== kind) {
+    if (state.transient.pendingKind
+        && (state.transient.pendingKind !== kind
+          || state.transient.pendingAgent !== agentName)) {
       _turnFlushTransient(state);
     }
     state.transient.pendingKind = kind;
     state.transient.pendingText = label;
+    state.transient.pendingAgent = agentName;
     if (!state.transient.coalesceTimer) {
       state.transient.coalesceTimer = setTimeout(() => {
         state.transient.coalesceTimer = null;
@@ -709,14 +762,16 @@ function _turnOfferTransient(state, kind, text, element) {
     }
     return;
   }
-  _turnEnqueueTransient(state, { kind, text: label });
+  _turnEnqueueTransient(state, { kind, text: label, agentName });
 }
 
 function _turnFlushTransient(state) {
   const kind = state.transient.pendingKind; const text = state.transient.pendingText;
+  const agentName = state.transient.pendingAgent;
   state.transient.pendingKind = ''; state.transient.pendingText = '';
+  state.transient.pendingAgent = '';
   if (!text || state.expanded || state.status !== 'working') return;
-  _turnEnqueueTransient(state, { kind, text });
+  _turnEnqueueTransient(state, { kind, text, agentName });
 }
 
 // How long a native call waits to see whether it was only the wrapper around
@@ -766,23 +821,23 @@ function _turnToolRowIsDone(element) {
   return !!element.querySelector('.tc-result');
 }
 
-function _turnDropDeferredTool(state) {
-  if (state.transient.deferredToolTimer) {
-    clearTimeout(state.transient.deferredToolTimer);
-    state.transient.deferredToolTimer = null;
-  }
-  const held = state.transient.deferredTool;
-  state.transient.deferredTool = null;
-  return held;
+function _turnDropDeferredTool(state, agentKey) {
+  const key = String(agentKey || '').toLowerCase();
+  const deferred = state.transient.deferredTools.get(key);
+  if (!deferred) return null;
+  if (deferred.timer) clearTimeout(deferred.timer);
+  state.transient.deferredTools.delete(key);
+  return deferred;
 }
 
-function _turnEmitDeferredTool(state) {
-  _turnEmitHeldTool(state, _turnDropDeferredTool(state));
+function _turnEmitDeferredTool(state, agentKey) {
+  const deferred = _turnDropDeferredTool(state, agentKey);
+  if (deferred) _turnEmitHeldTool(state, deferred.element, deferred.agentName);
 }
 
-function _turnEmitHeldTool(state, held) {
+function _turnEmitHeldTool(state, held, agentName) {
   if (!held || state.expanded || state.status !== 'working') return;
-  _turnEnqueueTransient(state, { kind: 'tools', node: held });
+  _turnEnqueueTransient(state, { kind: 'tools', node: held, agentName });
 }
 
 // The cue surface is the one place that says what the agent is doing right
@@ -806,7 +861,7 @@ function _turnEmitHeldTool(state, held) {
 // through the relay, and the native rows around it are the transport carrying
 // it. They keep their row in Tool calls; they no longer take the surface that
 // says what is happening.
-function _turnOfferToolCue(state, element) {
+function _turnOfferToolCue(state, element, agentName) {
   // One cue per call, raised when the call appears. The tool_result offers the
   // same row a second time -- by then grown to hold its output -- and for a
   // code body that output is the whole `Script completed / Wall time / ...`
@@ -822,30 +877,35 @@ function _turnOfferToolCue(state, element) {
     }
     state.transient.cuedTools.add(key);
   }
+  agentName = String(agentName || _turnEventAgent(null, element) || '').trim();
+  const agentKey = agentName.toLowerCase();
   const origin = _turnToolCueOrigin(element);
   if (origin === 'native') {
-    if (state.transient.mcpSeen && _turnIsCodeModeWrapper(element)) return;
+    if (state.transient.mcpSeenAgents.has(agentKey)
+        && _turnIsCodeModeWrapper(element)) return;
     // A second native row means the first was not a wrapper after all.
-    _turnEmitDeferredTool(state);
-    state.transient.deferredTool = element;
-    state.transient.deferredToolTimer = setTimeout(() => {
-      state.transient.deferredToolTimer = null;
-      _turnEmitDeferredTool(state);
+    _turnEmitDeferredTool(state, agentKey);
+    const deferred = {element, agentName, timer: null};
+    deferred.timer = setTimeout(() => {
+      _turnEmitDeferredTool(state, agentKey);
     }, TURN_NATIVE_TOOL_DEFER_MS);
+    state.transient.deferredTools.set(agentKey, deferred);
     return;
   }
   if (origin === 'mcp') {
-    state.transient.mcpSeen = true;
+    state.transient.mcpSeenAgents.add(agentKey);
     // The native row waiting in front of this one is transport only if it is
     // the wrapper this call came out of. Dropping it unconditionally hid a
     // genuine native call -- a local_shell, an apply_patch -- for the single
     // reason that it happened to be the row before the turn's first MCP one:
     // the deferral window is a question about the wrapper, not a sentence on
     // whatever sits in it.
-    const held = _turnDropDeferredTool(state);
-    if (held && !_turnIsCodeModeWrapper(held)) _turnEmitHeldTool(state, held);
+    const deferred = _turnDropDeferredTool(state, agentKey);
+    if (deferred && !_turnIsCodeModeWrapper(deferred.element)) {
+      _turnEmitHeldTool(state, deferred.element, deferred.agentName);
+    }
   }
-  _turnEnqueueTransient(state, { kind: 'tools', node: element });
+  _turnEnqueueTransient(state, { kind: 'tools', node: element, agentName });
 }
 
 // Every attribute a cue copy must not keep. A copy is decoration: it shows
@@ -878,6 +938,8 @@ function _turnEnqueueTransient(state, item) {
   if (!state.ephemeralEl) return;
   const cue = document.createElement('span');
   cue.className = 'simple-turn-cue ' + item.kind;
+  const cueAgent = String(item.agentName || _turnEventAgent(null, item.node) || '').trim();
+  if (cueAgent) cue.dataset.agentName = cueAgent;
   const icons = document.createElement('span');
   icons.className = 'simple-turn-ephemeral-icons'; icons.setAttribute('aria-hidden', 'true');
   const icon = document.createElement('span');
@@ -1182,22 +1244,77 @@ function _turnStopTransient(state) {
   if (state.transient.coalesceTimer) clearTimeout(state.transient.coalesceTimer);
   state.transient.coalesceTimer = null;
   state.transient.pendingText = ''; state.transient.pendingKind = '';
+  state.transient.pendingAgent = '';
   // A native row held back waiting for its MCP calls is dropped, not flushed:
   // the surface is going away, and a cue arriving after it would have nothing
   // to condense onto.
-  _turnDropDeferredTool(state);
+  for (const agentKey of Array.from(state.transient.deferredTools.keys())) {
+    _turnDropDeferredTool(state, agentKey);
+  }
   while (state.transient.cues.length) _turnRetireCue(state, state.transient.cues[0]);
   if (state.idleEl && state.idleEl.parentNode) state.idleEl.parentNode.removeChild(state.idleEl);
   state.idleEl = null;
   _turnStopRain(state);
 }
 
+function _turnActiveSuccessor() {
+  if (typeof activeInteractions === 'undefined' || !activeInteractions) return null;
+  const active = Object.values(activeInteractions).filter(Boolean);
+  return active.length ? active[0] : null;
+}
+
+function _turnOpenAfterFinal(state, data) {
+  const boundary = state && state.finalEl;
+  if (!boundary || !boundary.isConnected) {
+    _turnOpen = null;
+    return null;
+  }
+  const ds = boundary.dataset || {};
+  ds.turnFinal = '1';
+  ds.turnBoundary = 'final';
+  const boundaryId = String((data && (data.final_msg_id || data.msg_id))
+    || ds.msgid || ds.turnBoundaryId || '').trim();
+  if (boundaryId) ds.turnBoundaryId = boundaryId;
+  const successor = _turnActiveSuccessor();
+  const runtimeTurnId = String((successor && successor.turnId)
+    || _turnId(data || {}) || _turnRuntimeId(state)).trim();
+  const segmentId = _turnSegmentId(runtimeTurnId, boundary);
+  const openData = {
+    turn_id: runtimeTurnId,
+    agent_name: (successor && successor.name) || '',
+    _afterFinalBoundary: true,
+  };
+  _turnOpen = {
+    turnId: segmentId,
+    userEl: boundary,
+    data: openData,
+    state: null,
+    afterFinalBoundaryId: boundaryId || ds.turnBoundaryId || '',
+  };
+  // The done handler removes its own agent from activeInteractions before it
+  // reaches us. If another agent remains, the reader must immediately see one
+  // (and only one) animated Detail block below the final boundary.
+  if (successor) _turnCurrentState(true);
+  return _turnOpen;
+}
+
 function turnViewFinalize(data) {
   if (!turnViewIsSimplified()) return false;
+  const requestedBoundaryId = String((data && (data.final_msg_id || data.msg_id)) || '');
+  // The live done path may first hand the final row to turnViewIngest and then
+  // call turnViewFinalize explicitly. The first call already opened the next
+  // segment; the second is the same boundary, not the end of that successor.
+  if (requestedBoundaryId && _turnOpen
+      && _turnOpen.afterFinalBoundaryId === requestedBoundaryId) return true;
   // The open turn, not the turn `data.turn_id` names: a done that arrives
   // after the reader has sent another message ends the turn they are looking
   // at. THE RULE at the top of this file.
   const state = _turnCurrentState(false); if (!state) return false;
+  // Once an authoritative done opened a successor segment, a page-local legacy
+  // guess for that same runtime belongs in Detail. It is older reconstructed
+  // activity, not another done boundary.
+  if (data && data.turn_final_derived && state.afterFinalBoundary
+      && (!_turnId(data) || _turnId(data) === _turnRuntimeId(state))) return false;
   // A done that names a DIFFERENT turn cannot close the turn that is
   // currently working. When the reader sends a new message while the agent
   // is still on the previous turn, the server preempts it and the old turn's
@@ -1214,8 +1331,9 @@ function turnViewFinalize(data) {
   // block ticking "working" forever whenever the block adopted a turn id
   // the server never named (interrupted/drained turns do this).
   const incomingTurnId = _turnId(data || {});
+  const stateRuntimeId = _turnRuntimeId(state);
   if (state.status === 'working' && incomingTurnId
-      && state.turnId && incomingTurnId !== state.turnId
+      && stateRuntimeId && incomingTurnId !== stateRuntimeId
       && !state.resumedTurnIds.has(incomingTurnId)
       && _turnLiveSuccessorExists(incomingTurnId)) return false;
   const finalId = String((data && (data.final_msg_id || data.msg_id)) || '');
@@ -1232,7 +1350,7 @@ function turnViewFinalize(data) {
   // guesses. Either one refuses the guess here. A `done` never carries this
   // flag, so nothing real is blocked.
   if (data && data.turn_final_derived
-      && (state.liveFed || _turnRuntime.has(state.turnId))) return false;
+      && (state.liveFed || _turnRuntimeHas(state))) return false;
   // A derived marker is a reconstruction guess, not an authority: pagination
   // classifies each page on its own, so an older page can derive a second
   // final for a turn whose real answer is already placed. Never let a guess
@@ -1259,6 +1377,10 @@ function turnViewFinalize(data) {
   state.closedByGuess = !!(data && data.turn_final_derived);
   _turnRetireRuntime(state);
   _turnStopTransient(state); _turnUpdateStatus(state, 'completed'); _turnPlaceBlock(state);
+  // A derived final is a reload heuristic, not a terminal event. Keep the
+  // positional segment open so fresh live activity can refute the guess and an
+  // authoritative done can replace its provisional outside message.
+  if (!(data && data.turn_final_derived)) _turnOpenAfterFinal(state, data || {});
   return true;
 }
 
@@ -1275,7 +1397,7 @@ function turnViewFail(turnId, status, message) {
   // live. Applying it here left the successor stuck "cancelled" -- no
   // animation -- over an agent still working.
   if (state.status === 'working' && turnId
-      && state.turnId && turnId !== state.turnId
+      && _turnRuntimeId(state) && turnId !== _turnRuntimeId(state)
       && !state.resumedTurnIds.has(turnId)
       && _turnLiveSuccessorExists(turnId)) return false;
   _turnRetireRuntime(state);
@@ -1291,8 +1413,10 @@ function turnViewFail(turnId, status, message) {
 // old, conservative behavior.
 function _turnLiveSuccessorExists(excludeTurnId) {
   if (typeof activeInteractions === 'undefined' || !activeInteractions) return true;
-  return Object.values(activeInteractions).some(
-    info => !excludeTurnId || !info.turnId || info.turnId !== excludeTurnId);
+  // Terminal handlers remove the completed agent before calling the turn view.
+  // Every remaining entry is therefore a successor, even when several agents
+  // share the same top-level turn id.
+  return Object.values(activeInteractions).some(Boolean);
 }
 
 // Reconcile the open block against the authoritative active-agents state
@@ -1307,6 +1431,13 @@ function turnViewSyncActive(hasActive) {
   if (hasActive || !turnViewIsSimplified()) return false;
   const state = _turnCurrentState(false);
   if (!state || state.status !== 'working') return false;
+  if (state.afterFinalBoundary && state.activityCount === 0) {
+    _turnStopTransient(state); _turnStopElapsed(state);
+    if (state.blockEl && state.blockEl.parentNode) state.blockEl.remove();
+    simplifiedTurns.delete(state.turnId);
+    if (_turnOpen && _turnOpen.state === state) _turnOpen.state = null;
+    return true;
+  }
   state.closedByGuess = true;
   _turnRetireRuntime(state);
   _turnStopTransient(state); _turnUpdateStatus(state, 'completed'); _turnPlaceBlock(state);
@@ -1331,6 +1462,16 @@ function _turnIsUserRow(el) {
   // tool result) is activity, never a boundary.
   return _turnRowRole(el) === 'user'
     && !(el.dataset && el.dataset.systemInjected);
+}
+
+function _turnIsFinalRow(el) {
+  return _turnRowRole(el) === 'assistant'
+    && !!(el.dataset && (el.dataset.turnFinal === '1'
+      || el.dataset.turnBoundary === 'final'));
+}
+
+function _turnIsBoundaryRow(el) {
+  return _turnIsUserRow(el) || _turnIsFinalRow(el);
 }
 
 // ── The display rule, enforced on the DOM ──────────────────────────────────
@@ -1537,25 +1678,37 @@ function turnViewReconcile() {
       }
       continue;
     }
-    if (_turnIsUserRow(el)) {
-      // A user boundary seen in the final chronological DOM closes the turn
+    if (_turnIsBoundaryRow(el)) {
+      const finalBoundary = _turnIsFinalRow(el);
+      // A boundary seen in the final chronological DOM closes the segment
       // before it. This also settles a historical page that ended mid-turn,
       // without touching the newest live turn (nothing follows that one).
-      if (state && state.status === 'working' && !_turnRuntime.has(state.turnId)) {
+      if (finalBoundary && state && state.finalEl !== el
+          && _turnRowBelongsHere(state, el)) {
+        _turnPromoteLast(state, el);
+      }
+      if (state && state.status === 'working' && !_turnRuntimeHas(state)) {
         _turnStopTransient(state);
         _turnUpdateStatus(state, 'completed');
       }
-      // A user row closes whatever came before and opens the next turn. Its
-      // block is built by the first row that follows: a user message nothing
-      // followed is not given an empty one.
-      const id = el.dataset.turnId || el.dataset.msgid || ('turn-' + (++_turnSeq));
-      el.dataset.turnId = id;
+      // A user or scheduled-wakeup row opens a turn. A final assistant row
+      // opens the next segment of the same visible conversation stretch. In
+      // both cases the block is built by the first row that follows unless a
+      // live successor is already known.
+      const runtimeId = el.dataset.turnId || el.dataset.msgid || ('turn-' + (++_turnSeq));
+      const id = finalBoundary ? _turnSegmentId(runtimeId, el) : runtimeId;
+      if (!finalBoundary) el.dataset.turnId = id;
       const existing = simplifiedTurns.get(id);
       if (existing && existing.blockEl.isConnected
           && el.nextSibling === existing.blockEl) {
         // The turn's block already sits right under this boundary: adopt it.
         state = existing; touched.add(existing);
-        open = { turnId: id, userEl: el, data: {}, state: existing };
+        open = {
+          turnId: id, userEl: el,
+          data: { turn_id: runtimeId, _afterFinalBoundary: finalBoundary },
+          state: existing,
+          afterFinalBoundaryId: finalBoundary ? (el.dataset.turnBoundaryId || '') : '',
+        };
       } else {
         // No block yet -- or the block sits FAR BELOW because a newer page
         // built it and this page brought back the turn's own user row and
@@ -1565,7 +1718,12 @@ function turnViewReconcile() {
         // turn unopened: the first row that follows opens its own fragment
         // block right here, exactly like a page starting mid-turn.
         state = null;
-        open = { turnId: id, userEl: el, data: {}, state: null };
+        open = {
+          turnId: id, userEl: el,
+          data: { turn_id: runtimeId, _afterFinalBoundary: finalBoundary },
+          state: null,
+          afterFinalBoundaryId: finalBoundary ? (el.dataset.turnBoundaryId || '') : '',
+        };
       }
       _turnOpen = open;
       // Rows that follow this newly encountered boundary may create its state.
@@ -1585,8 +1743,8 @@ function turnViewReconcile() {
       continue;
     }
     if (state && el === state.finalEl) continue;
-    // turn_id is metadata, never a DOM boundary. Only a rendered USER or
-    // SYSTEM WAKE MESSAGE row may end the current positional block.
+    // turn_id is metadata, never a DOM boundary. Only a rendered USER,
+    // SYSTEM WAKE MESSAGE or final assistant row ends the positional block.
     if (!state) {
       // A system notice never opens a block: with no turn open it stays top
       // level (see turnViewIngest -- the /compact notice case).
@@ -1615,7 +1773,7 @@ function turnViewReconcile() {
   for (const block of blocks) {
     const owner = simplifiedTurns.get((block.dataset && block.dataset.turnId) || '');
     if (!owner || owner.status !== 'working' || owner.liveFed
-        || _turnRuntime.has(owner.turnId)) continue;
+        || _turnRuntimeHas(owner)) continue;
     _turnStopTransient(owner);
     // No terminal event closed this block. A fresh SSE row or an in-flight
     // tool snapshot may arrive immediately after the history reconstruction
@@ -1650,7 +1808,12 @@ function turnViewReconcile() {
 function turnViewHydrateRuntimeTurns() {
   if (!turnViewIsSimplified()) return;
   for (const [turnId, runtime] of _turnRuntime.entries()) {
-    const state = simplifiedTurns.get(turnId);
+    let state = null;
+    for (const candidate of simplifiedTurns.values()) {
+      if (candidate.blockEl.isConnected && _turnRuntimeId(candidate) === turnId) {
+        state = candidate;
+      }
+    }
     if (!state || !state.blockEl.isConnected) continue;
     const startedAt = Number(runtime.started_at || 0) * 1000;
     const duration = Number(runtime.duration || 0) * 1000;

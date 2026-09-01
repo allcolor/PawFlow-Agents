@@ -254,7 +254,7 @@ def test_boot_reaps_zombies_with_the_same_code_as_shutdown():
     boot = start.index("reap_spawned_containers(log=logger.info)")
     # Before anything that can spawn a container or claim a credential slot.
     assert boot < start.index("register_all_tasks()")
-    assert boot < start.index("restore_from_disk()")
+    assert boot < start.index("restore_from_disk(")
     assert boot < start.index("[boot-recovery]")
 
 

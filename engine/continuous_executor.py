@@ -97,7 +97,8 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
                  enable_checkpoints: bool = True,
                  parameters: Optional[Dict[str, Any]] = None,
                  runtime_context: Optional[Dict[str, Any]] = None,
-                 enabled_one_shot_root_task_ids: Optional[List[str]] = None):
+                 enabled_one_shot_root_task_ids: Optional[List[str]] = None,
+                 strict_initialization: bool = False):
         self._flow = flow
         self._max_workers = max_workers
         self._max_retries = max_retries
@@ -138,6 +139,7 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
             ctx = ctx.with_overrides(parameters)
         self._parameter_context = ctx
         self._runtime_context = dict(runtime_context or {})
+        self._strict_initialization = bool(strict_initialization)
 
         # Debugger (attached externally via FlowDebugger.attach())
         self._debugger = None
@@ -183,22 +185,37 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
         # Resolve ${*} in service configs before connecting
         self._resolve_service_configs(flow)
 
-        # Initialize services
-        for service_id, service in flow.services.items():
+        # Initialize services and tasks. Mandatory system flows use strict mode:
+        # a partial listener without all of its routes is not a running flow.
+        if self._strict_initialization:
+            connected_services = []
             try:
-                service.connect()
-                logger.info(f"Service '{service_id}' connected")
+                for service_id, service in flow.services.items():
+                    service.connect()
+                    connected_services.append(service)
+                    logger.info(f"Service '{service_id}' connected")
+                for task_id, task in self._tasks.items():
+                    if hasattr(task, 'initialize'):
+                        task.initialize()
+                        logger.debug(f"Task '{task_id}' initialized")
             except Exception as e:
-                logger.error(f"Service '{service_id}' failed to connect: {e}")
-
-        # Initialize tasks (e.g. register HTTP routes) after services are ready
-        for task_id, task in self._tasks.items():
-            try:
-                if hasattr(task, 'initialize'):
-                    task.initialize()
-                    logger.debug(f"Task '{task_id}' initialized")
-            except Exception as e:
-                logger.error(f"Task '{task_id}' initialization failed: {e}")
+                logger.error("Flow initialization failed: %s", e)
+                self._rollback_initialization(connected_services)
+                raise
+        else:
+            for service_id, service in flow.services.items():
+                try:
+                    service.connect()
+                    logger.info(f"Service '{service_id}' connected")
+                except Exception as e:
+                    logger.error(f"Service '{service_id}' failed to connect: {e}")
+            for task_id, task in self._tasks.items():
+                try:
+                    if hasattr(task, 'initialize'):
+                        task.initialize()
+                        logger.debug(f"Task '{task_id}' initialized")
+                except Exception as e:
+                    logger.error(f"Task '{task_id}' initialization failed: {e}")
 
         # Detect persistent sources (listeners, pollers, cron triggers)
         self._has_persistent_sources = any(
@@ -212,6 +229,22 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
             "relations": flow.relations,
         }
         self._connections.build_from_flow(flow_dict)
+
+    def _rollback_initialization(self, services=None) -> None:
+        """Undo routes and service references acquired by a failed startup."""
+        for task in self._tasks.values():
+            if hasattr(task, "cleanup"):
+                try:
+                    task.cleanup()
+                except Exception:
+                    logger.warning("Task cleanup failed during startup rollback",
+                                   exc_info=True)
+        for service in reversed(list(services or self._flow.services.values())):
+            try:
+                service.disconnect()
+            except Exception:
+                logger.warning("Service disconnect failed during startup rollback",
+                               exc_info=True)
 
     def _inject_runtime_context(self, task: Task, *, task_id: str = ""):
         """Attach deployment runtime context to runtime-aware tasks."""
@@ -324,6 +357,55 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
     def get_task(self, task_id: str) -> Optional[Task]:
         return self._tasks.get(task_id)
 
+    def validate_startup_readiness(
+        self, *, require_http_routes: bool = False
+    ) -> bool:
+        """Validate live listener state and every declared HTTP receiver route."""
+        issues = []
+        if not self.is_running:
+            issues.append("executor is not running")
+
+        receivers = [
+            task for task in self._tasks.values()
+            if getattr(task, "TYPE", "") == "httpReceiver"
+        ]
+        if require_http_routes and not receivers:
+            issues.append("no httpReceiver task is configured")
+
+        for task in receivers:
+            service_id = str((getattr(task, "config", {}) or {}).get(
+                "service_id") or "")
+            listener = self._flow.services.get(service_id)
+            if listener is None:
+                issues.append(f"HTTP listener '{service_id}' is missing")
+                continue
+            if getattr(listener, "_server", None) is None:
+                issues.append(f"HTTP listener '{service_id}' is not serving")
+            thread = getattr(listener, "_server_thread", None)
+            if thread is None or not thread.is_alive():
+                issues.append(f"HTTP listener '{service_id}' thread is not alive")
+
+            owner_id = str(getattr(task, "_owner_id", "") or "")
+            if not getattr(task, "_registered", False) or not owner_id:
+                issues.append("httpReceiver routes are not registered")
+                continue
+            actual = {
+                (str(route.get("method") or "").upper(),
+                 str(route.get("pattern") or ""),
+                 str(route.get("owner") or ""))
+                for route in listener.get_routes()
+            }
+            for route in (getattr(task, "config", {}) or {}).get("routes", []):
+                method = str(task.resolve_value(
+                    route.get("method", "GET"))).upper()
+                pattern = str(task.resolve_value(route.get("pattern", "/")))
+                if (method, pattern, owner_id) not in actual:
+                    issues.append(f"missing HTTP route {method} {pattern}")
+
+        if issues:
+            raise RuntimeError("startup readiness failed: " + "; ".join(issues))
+        return True
+
     # -- Lifecycle --
 
     def start(self):
@@ -348,6 +430,9 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
                                 service_id, (time.monotonic() - _svc_t0) * 1000)
                 except Exception as e:
                     logger.error(f"Service '{service_id}' failed to connect: {e}")
+                    if self._strict_initialization:
+                        self._rollback_initialization()
+                        raise
         logger.debug("[startup-timing] executor service reconnect phase: %.1fms",
                     (time.monotonic() - _t0) * 1000)
 
@@ -362,6 +447,9 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
                                 task_id, (time.monotonic() - _task_t0) * 1000)
             except Exception as e:
                 logger.error(f"Task '{task_id}' initialization failed: {e}")
+                if self._strict_initialization:
+                    self._rollback_initialization()
+                    raise
         logger.debug("[startup-timing] executor task init phase: %.1fms",
                     (time.monotonic() - _t0) * 1000)
 

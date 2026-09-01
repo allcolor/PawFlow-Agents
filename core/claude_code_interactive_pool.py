@@ -1026,6 +1026,20 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         canonical_input = self._PREPARE_INTERRUPT_BEFORE_PASTE
         if canonical_input and not self._prepare_prompt_input(state):
             return False
+        if canonical_input:
+            # Escape is asynchronous in the Codex TUI. A pane redraw caused by
+            # cancelling the old turn is not evidence that the new paste reached
+            # an input box. Wait for the structural editable-composer signal
+            # before loading anything; on timeout the caller keeps the pending
+            # rescue queued and replays it after the old turn releases ownership.
+            if not self._wait_for_prompt_ready(state.name):
+                state.last_error = "TUI composer was not ready after interrupt"
+                logging.getLogger(__name__).warning(
+                    "[cci] refusing interrupt paste to %s because the TUI "
+                    "composer was not ready after interrupt%s",
+                    state.name, self._pane_diagnostic(state.name))
+                return False
+            state.prompt_ready = True
         self._remember_injected_prompt(state, text)
         event_service = self._remember_injected_prompt_for_event_service(
             state, text)
@@ -1058,9 +1072,9 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         if not canonical_input and settle > 0:
             time.sleep(settle)
         # _verify_submitted polls the tmux pane / submission receipts for up to
-        # PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS (default 6s) and only re-presses
-        # Enter if the paste was swallowed. It is best-effort and its result
-        # is unused, yet send_interrupt runs on the HTTP request thread
+        # PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS (default 6s). It is best-effort and
+        # its result is unused for Claude Code, yet send_interrupt runs on the
+        # HTTP request thread
         # (POST /api/agent -> send_user_message -> send_interrupt), so running
         # it inline made every preempt block ~6-8s before the ack returned.
         # Codex must prove the preempt before the caller marks its rescue as

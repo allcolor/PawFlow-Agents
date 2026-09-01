@@ -194,6 +194,12 @@ class ConversationWriter:
         if not evt.wait(timeout=30):
             raise TimeoutError("idempotent conversation write timed out")
         if item.get("_error") is not None:
+            from core._conversation_store_append import (
+                MessageIdempotencyConflict)
+            if isinstance(item["_error"], MessageIdempotencyConflict):
+                # The typed conflict IS the contract — callers turn it
+                # into a 409, never into a generic write failure.
+                raise item["_error"]
             raise RuntimeError("idempotent conversation write failed") from item["_error"]
         return bool(item.get("_inserted"))
 

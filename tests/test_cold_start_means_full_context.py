@@ -532,6 +532,7 @@ def _rebind_host():
         def __init__(self):
             self._active_contexts_lock = threading.Lock()
             self._active_claude_client = {}
+            self._active_client_owners = {}
 
     return _Host()
 
@@ -573,6 +574,7 @@ def test_the_rebuild_rebinds_the_whole_loop_not_four_fields():
     assert st.client._agent_name == "main"
     # cancel/preempt reaches the client that is actually running
     assert host._active_claude_client["conv1234:main"] is st.client
+    assert host._active_client_owners["conv1234:main"] == ""
     # the rebuilt context is a real cold start: the marker is gone
     assert st.client._pawflow_context_is_delta is False
 

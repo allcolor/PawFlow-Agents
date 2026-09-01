@@ -499,9 +499,20 @@ class _ALCClosures1Mixin:
         if st.use_conv_store and st.conversation_id and msg.role in ("assistant", "tool"):
             try:
                 from core.conversation_writer import ConversationWriter
+                _agent = (((msg.source or {}).get("name", "")
+                           or (msg.source or {}).get("from", ""))
+                          if isinstance(msg.source, dict) else "")
+                if not _agent:
+                    _agent = st.ctx.get("active_agent_name", "")
+                _event_source = (dict(msg.source)
+                                 if isinstance(msg.source, dict) else {})
+                if _agent and not (_event_source.get("name")
+                                   or _event_source.get("from")):
+                    _event_source.setdefault("type", "agent")
+                    _event_source["name"] = _agent
                 _store_msg = {
                     "role": msg.role, "content": msg.content,
-                    "source": msg.source,
+                    "source": _event_source,
                     "msg_id": getattr(msg, "msg_id", None),
                     "tool_call_id": getattr(msg, "tool_call_id", None),
                     # Carry CREATION ts + seq so order on disk reflects
@@ -540,10 +551,7 @@ class _ALCClosures1Mixin:
                 # content (tool_call, tool_result, new_message,
                 # thinking_content) out-of-band.
                 _sse = []
-                _agent = (msg.source or {}).get("name", "") if msg.source else ""
-                if not _agent:
-                    _agent = st.ctx.get("active_agent_name", "")
-                _svc = (msg.source or {}).get("llm_service", "") if msg.source else ""
+                _svc = _event_source.get("llm_service", "")
                 # Thinking: assistant block may carry a `thinking`
                 # payload (Anthropic extended thinking, CC thinking
                 # block). Emit as a separate thinking_content SSE so
@@ -557,7 +565,7 @@ class _ALCClosures1Mixin:
                         "msg_id": getattr(msg, "msg_id", ""),
                         "ts": getattr(msg, "timestamp", 0) or None,
                         "agent_name": _agent,
-                        "source": msg.source,
+                        "source": _event_source,
                     }})
                 # Assistant text → `new_message` so the UI renders it.
                 if (msg.role == "assistant"
@@ -568,7 +576,8 @@ class _ALCClosures1Mixin:
                         "content": msg.content,
                         "msg_id": getattr(msg, "msg_id", ""),
                         "ts": getattr(msg, "timestamp", 0) or None,
-                        "source": msg.source,
+                        "agent_name": _agent,
+                        "source": _event_source,
                     }})
                 # Assistant tool_calls → one tool_call SSE per tc.
                 if msg.role == "assistant" and msg.tool_calls:
@@ -581,7 +590,7 @@ class _ALCClosures1Mixin:
                             "agent_name": _agent, "llm_service": _svc,
                             "msg_id": getattr(msg, "msg_id", ""),
                             "ts": getattr(msg, "timestamp", 0) or None,
-                            "source": msg.source,
+                            "source": _event_source,
                         }
                         if getattr(tc, "tool_origin", ""):
                             _tc_data["tool_origin"] = tc.tool_origin
@@ -638,6 +647,7 @@ class _ALCClosures1Mixin:
                             "msg_id": getattr(msg, "msg_id", ""),
                             "ts": getattr(msg, "timestamp", 0) or None,
                             "agent_name": _agent, "llm_service": _svc,
+                            "source": _event_source,
                         }
                         if _raw_tool_origin:
                             _tr_data["tool_origin"] = _raw_tool_origin

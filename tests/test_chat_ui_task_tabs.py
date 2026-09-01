@@ -107,7 +107,8 @@ def test_filtered_webchats_match_tasks_agents_and_parallel_flash_blocks():
     assert "'[data-task-id=\"' + safe" in src
     assert "node.dataset.agentName || node.dataset.agent" in src
     assert "function _filteredViewAgentValue" in src
-    assert "if (direct) return direct === wanted" in src
+    assert "if (direct === wanted) return true" in src
+    assert "_filteredViewAgentMatch(child, wanted)" in src
 
     sse_state_src = (CHAT_UI / "sse_state.js").read_text(encoding="utf-8")
     assert "subEl.dataset.delegateTaskId = taskId" in sse_state_src
@@ -132,6 +133,7 @@ def test_filtered_agent_sources_tag_thinking_tools_and_delegate_rows():
     assert "tcEl.dataset.agent = tcAgent.toLowerCase()" in sse_handlers
     assert "_inner.dataset.agent = _from.toLowerCase()" in render
     assert "tool call missing agent identity" in render
+    assert "extra.agent_name" in render
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node")

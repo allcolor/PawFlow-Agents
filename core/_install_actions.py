@@ -229,9 +229,17 @@ def _start_main_flow_executor(instance_id: str) -> None:
     """Start the main PawFlow executor immediately after bootstrap finalization."""
     from core.deployment_registry import DeploymentRegistry
     from core.executor_registry import ExecutorRegistry
+    from core.runtime_readiness import (
+        mark_required_flow_ready,
+        require_flow_readiness,
+    )
 
     executors = ExecutorRegistry.get_instance()
-    if executors.get(instance_id) is not None:
+    require_flow_readiness(instance_id)
+    existing = executors.get(instance_id)
+    if existing is not None:
+        existing.validate_startup_readiness(require_http_routes=True)
+        mark_required_flow_ready(instance_id)
         return
 
     inst = DeploymentRegistry.get_instance().get(instance_id)
@@ -250,6 +258,8 @@ def _start_main_flow_executor(instance_id: str) -> None:
         owner=inst.owner or "",
         conversation_id=inst.conversation_id or "",
         agent_name=getattr(inst, "agent_name", "") or "",
+        strict_initialization=True,
+        require_http_routes=True,
     )
     if not ok:
         raise RuntimeError(f"failed to start main PawFlow executor: {instance_id}")
@@ -285,9 +295,13 @@ def _rollback_failed_finalization(
     """Remove runtime artifacts created by a finalization that did not pass checks."""
     try:
         from core.deployment_registry import DeploymentRegistry
-        DeploymentRegistry.get_instance().undeploy(MAIN_INSTANCE_ID)
+        DeploymentRegistry.get_instance().undeploy(
+            MAIN_INSTANCE_ID, allow_required=True)
     except Exception:
         logger.warning("Install finalization rollback failed to undeploy main flow", exc_info=True)
+
+    from core.runtime_readiness import reset_runtime_readiness
+    reset_runtime_readiness()
 
     try:
         if first_conversation_id:

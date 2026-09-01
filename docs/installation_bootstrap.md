@@ -234,6 +234,17 @@ If finalization fails before completion, the installer returns a JSON error and
 restores the pre-finalization system user/session/security, final certificate,
 and global-secret files after removing runtime artifacts it created.
 
+After finalization, `pawflow-agent` is a mandatory system deployment. Every
+server boot attempts it first even when its persisted status is `stopped` or
+`error`. Startup is considered ready only after the listener is serving and the
+complete route set declared by its `httpReceiver` is registered. Until then,
+the public `/health` endpoint returns HTTP 503, so Docker and replacement-image
+checks cannot accept a listener-only false positive. A failed attempt is marked
+`error`, cleaned up, logged with its cause, and retried on the next boot.
+Ordinary flow controls cannot stop or undeploy `pawflow-agent`; installer reset,
+failed-finalization rollback, and controlled internal restarts are the only
+explicitly authorized lifecycle mutations.
+
 ## Wizard Steps
 
 1. Admin user
@@ -327,7 +338,8 @@ and global-secret files after removing runtime artifacts it created.
    - selected LLM service exists and, for CLI providers, the OAuth pool has a
      usable non-expired credential
    - summarizer service resolves the selected LLM service
-   - `pawflow-agent` is deployed, marked running, and has a live executor
+   - `pawflow-agent` is deployed, marked running, has a live executor, and has
+     registered every declared HTTP route on its serving listener
    - the starter conversation exists and has `assistant` selected
 
 10. Finalize

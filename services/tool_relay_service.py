@@ -32,7 +32,7 @@ from core.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 from services._tool_relay_base import (  # noqa: F401,E402
-    _RELAY_TRANSPORT_RETRY_ATTEMPTS, _RELAY_TRANSPORT_RETRY_DELAY_SECONDS, _RELAY_TRANSPORT_RETRY_EXHAUSTED_MARKER, _RELAY_TRANSPORT_ERROR_MARKERS, _RELAY_TRANSPORT_RESULT_PREFIXES, _contains_relay_transport_marker, _is_relay_transport_result, _is_relay_transport_error, _resolve_vars_in_args, _redact_secrets, resolve_secrets_env, resolve_secret_values, _thread_local, _set_current_cancel_event, current_cancel_event, _set_current_kill_hooks, register_kill_hook)
+    _RELAY_TRANSPORT_RETRY_ATTEMPTS, _RELAY_TRANSPORT_RETRY_DELAY_SECONDS, _RELAY_TRANSPORT_RETRY_EXHAUSTED_MARKER, _RELAY_TRANSPORT_ERROR_MARKERS, _RELAY_TRANSPORT_RESULT_PREFIXES, _contains_relay_transport_marker, _is_relay_transport_result, _is_relay_transport_error, _resolve_vars_in_args, _redact_secrets, resolve_secrets_env, resolve_secret_values, _thread_local, _set_current_cancel_event, current_cancel_event, _set_current_kill_hooks, register_kill_hook, _set_current_run_identity, current_run_identity)
 from services._tool_relay_cache_req import _ToolRelayCacheReqMixin  # noqa: E402
 from services._tool_relay_registry import _ToolRelayRegistryMixin  # noqa: E402
 from services._tool_relay_tools import _ToolRelayToolsMixin  # noqa: E402
@@ -201,6 +201,14 @@ class ToolRelayService(
             _agent_name = reg.get('agent_name', '')
             logger.info('Tool relay connected: user=%s conv=%s agent=%s addr=%s',
                          _user_id, _conv_id, _agent_name, remote)
+            # Re-arm the run-fence high-waters BEFORE acknowledging the
+            # registration: a relay (re)connection must never serve an
+            # effect request under a pre-restart watermark (B1-O).
+            _raised = type(service).resync_fence_highwaters()
+            if _raised:
+                logger.info(
+                    '[tool-relay] fence high-waters resynced on connect: '
+                    '%d raised', _raised)
             await _send_tool_frame(json.dumps({
                 'type': 'registered', 'relay_id': relay_id}).encode())
             KEEPALIVE = 120
@@ -348,6 +356,12 @@ class ToolRelayService(
     # as soon as the row carries its result, so a stale entry costs nothing.
     _recently_finished: Dict[str, dict] = {}
     _inflight_lock = threading.Lock()
+    # Run-fence high-water per "conv:agent" (B1-O): monotonic, refuses any
+    # LOWER token at the effect gate. Resynced from the agent runtime on
+    # every relay (re)connection — a relay restart can never reopen the
+    # fence, because the server re-arms the watermark before serving.
+    _fence_highwater: Dict[str, int] = {}
+    _fence_highwater_lock = threading.Lock()
     _auto_bg_after_seconds: float = 0.0
 
 

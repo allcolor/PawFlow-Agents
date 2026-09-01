@@ -629,6 +629,7 @@ def _set_instance_config(inst, parameters=None, service_overrides=None,
 def _restart_running_flow_instance(instance_id: str, inst) -> bool:
     """Restart a currently running executor so saved deployment config applies."""
     from core.executor_registry import ExecutorRegistry
+    from core.system_flow_guard import REQUIRED_SYSTEM_FLOW_INSTANCE_ID
     reg = ExecutorRegistry.get_instance()
     ex = reg.get(instance_id)
     was_running = bool(ex and getattr(ex, "is_running", False))
@@ -637,8 +638,11 @@ def _restart_running_flow_instance(instance_id: str, inst) -> bool:
     try:
         ex.stop()
     finally:
-        reg.unregister(instance_id)
-    reg._restore_instance(
+        if instance_id == REQUIRED_SYSTEM_FLOW_INSTANCE_ID:
+            reg.unregister(instance_id, allow_required=True)
+        else:
+            reg.unregister(instance_id)
+    restored = reg._restore_instance(
         instance_id, inst.flow_path,
         inst.max_workers, inst.max_retries,
         flow_fqn=getattr(inst, "flow_fqn", "") or "",
@@ -649,7 +653,13 @@ def _restart_running_flow_instance(instance_id: str, inst) -> bool:
         owner=inst.owner or "",
         conversation_id=inst.conversation_id or "",
         agent_name=getattr(inst, "agent_name", "") or "",
+        strict_initialization=(
+            instance_id == REQUIRED_SYSTEM_FLOW_INSTANCE_ID),
+        require_http_routes=(
+            instance_id == REQUIRED_SYSTEM_FLOW_INSTANCE_ID),
     )
+    if not restored:
+        raise RuntimeError(f"failed to restart flow: {instance_id}")
     return True
 
 

@@ -77,6 +77,13 @@ class ConnSession:
          self.skills_fs_client) = ctx.fuse_clients
         self.inflight_cmds: dict = {}
         self.inflight_lock = threading.Lock()
+        # Run-fence high-waters (B1-O): armed by the server's
+        # fence_snapshot BEFORE registration completes, raised by
+        # fence_raise frames and monotonically by the tokens the
+        # commands themselves carry. A command with a LOWER token than
+        # the recorded watermark is refused WITHOUT executing.
+        self.fence_highwaters: dict = {}
+        self.fence_lock = threading.Lock()
         self.disconnect_reason = "unknown"
         self.close_info = ""
 
@@ -155,6 +162,8 @@ class ConnSession:
             self._handle_relay_response(msg)
         elif mtype == "cancel_request":
             self._handle_cancel_request(msg)
+        elif mtype in ("fence_snapshot", "fence_raise"):
+            self._handle_fence_update(msg)
         elif mtype == "remote_mount_manifest":
             self._handle_remote_mount_manifest(msg)
         elif mtype == "spawn_relay":
@@ -169,6 +178,43 @@ class ConnSession:
             self._handle_command(msg)
 
     # ── Per-message-type handlers ─────────────────────────────────────
+
+    def _handle_fence_update(self, msg: dict):
+        """Merge fence watermarks monotonically; acknowledge snapshots."""
+        highwaters = msg.get("highwaters") or {}
+        with self.fence_lock:
+            for key, token in highwaters.items():
+                try:
+                    token = int(token)
+                except (TypeError, ValueError):
+                    continue
+                if token > int(self.fence_highwaters.get(key, 0)):
+                    self.fence_highwaters[key] = token
+        if msg.get("type") == "fence_snapshot":
+            frame = json.dumps({
+                "type": "fence_ack",
+                "count": len(highwaters),
+            }).encode("utf-8")
+            with self.send_lock:
+                self.ws_frame_send(self.sock, frame)
+
+    def _fence_refuses(self, msg: dict) -> bool:
+        """Atomic relay-side admission: refuse a stale token, raise the
+        watermark otherwise — one lock, no window between the decision
+        and what later commands compare against."""
+        fence_key = msg.get("fence_key")
+        fence_token = msg.get("fence_token")
+        if not fence_key or fence_token is None:
+            return False
+        try:
+            fence_token = int(fence_token)
+        except (TypeError, ValueError):
+            return False
+        with self.fence_lock:
+            if fence_token < int(self.fence_highwaters.get(fence_key, 0)):
+                return True
+            self.fence_highwaters[fence_key] = fence_token
+        return False
 
     def _handle_relay_response(self, msg: dict):
         # Inverse-direction reply for a relay->server FS op. Wake the FUSE
@@ -237,6 +283,20 @@ class ConnSession:
     def _handle_command(self, msg: dict):
         request_id = msg.get("request_id", "")
         sys.stderr.write(f"[FSRelay] Command: {msg.get('action', '?')}\n")
+        if self._fence_refuses(msg):
+            sys.stderr.write(
+                f"[FSRelay] fence refuses {msg.get('action', '?')} "
+                f"rid={request_id[:8]} (stale token)\n")
+            resp = json.dumps({
+                "type": "result",
+                "request_id": request_id,
+                "data": {"ok": False,
+                         "error": ("fence_stale: run superseded — "
+                                   "action not executed")},
+            }).encode("utf-8")
+            with self.send_lock:
+                self.ws_frame_send(self.sock, resp)
+            return
         if msg.get("action") in ("cs_ws_send", "cs_ws_close"):
             self._run_command_sync(msg, request_id)
             return

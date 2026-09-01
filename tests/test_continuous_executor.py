@@ -2,6 +2,7 @@
 
 import pytest
 import time
+from types import SimpleNamespace
 
 from tasks import register_all_tasks
 register_all_tasks()
@@ -36,6 +37,75 @@ def make_flow(tasks_dict, relations):
 
 
 class TestContinuousFlowExecutor:
+
+    def test_strict_initialization_rolls_back_partial_resources(self):
+        events = []
+
+        class Service:
+            config = {}
+
+            def connect(self):
+                events.append("connect")
+
+            def disconnect(self):
+                events.append("disconnect")
+
+        class FailingTask:
+            TYPE = "strictFailure"
+            config = {}
+
+            def set_services(self, services):
+                self.services = services
+
+            def set_parameter_context(self, context):
+                self.context = context
+
+            def initialize(self):
+                events.append("initialize")
+                raise RuntimeError("route registration failed")
+
+            def cleanup(self):
+                events.append("cleanup")
+
+        flow = SimpleNamespace(
+            id="strict-flow", parameters={}, tasks={"bad": FailingTask()},
+            services={"listener": Service()}, source_dir="", relations=[])
+
+        with pytest.raises(RuntimeError, match="route registration failed"):
+            ContinuousFlowExecutor(
+                flow, enable_checkpoints=False, strict_initialization=True)
+
+        assert events == ["connect", "initialize", "cleanup", "disconnect"]
+
+    def test_http_readiness_requires_every_declared_route(self):
+        task = SimpleNamespace(
+            TYPE="httpReceiver",
+            config={
+                "service_id": "listener",
+                "routes": [
+                    {"method": "GET", "pattern": "/chat"},
+                    {"method": "POST", "pattern": "/api/ui"},
+                ],
+            },
+            _registered=True,
+            _owner_id="httpReceiver_main",
+            resolve_value=lambda value: value,
+        )
+        listener = SimpleNamespace(
+            _server=object(),
+            _server_thread=SimpleNamespace(is_alive=lambda: True),
+            get_routes=lambda: [{
+                "method": "GET", "pattern": "/chat",
+                "owner": "httpReceiver_main",
+            }],
+        )
+        executor = object.__new__(ContinuousFlowExecutor)
+        executor._stop_event = __import__("threading").Event()
+        executor._tasks = {"http_in": task}
+        executor._flow = SimpleNamespace(services={"listener": listener})
+
+        with pytest.raises(RuntimeError, match="POST /api/ui"):
+            executor.validate_startup_readiness(require_http_routes=True)
 
     def test_default_retries_run_until_retryable_task_succeeds(self):
         class RetryableFailure(RuntimeError):

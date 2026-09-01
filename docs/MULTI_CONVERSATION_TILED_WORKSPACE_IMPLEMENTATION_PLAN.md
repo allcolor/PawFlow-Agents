@@ -276,6 +276,14 @@ Filtered agent/task views become read-only projections of their owning
 ConversationSession, not of whichever conversation is focused. They survive
 focus changes and close only when explicitly closed or access is lost.
 
+An agent-filtered projection is fail-closed at event granularity: every visible
+message, thinking cue, tool call, and tool result must carry the selected agent's
+identity. Mixed task, delegate, technical, and simplified-turn containers may be
+retained as structure, but foreign and unidentified event branches are removed.
+Cloned simplified-turn controls are rehydrated after every projection refresh,
+and filtered history pagination always executes in the owning
+ConversationSession rather than the currently focused conversation.
+
 OpenSpace mirrors the transcript of its bound session.
 
 ## 10. Workspace board and ordering

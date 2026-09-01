@@ -189,15 +189,42 @@ def parse_run_input(run_input: Dict[str, Any]) -> Dict[str, Any]:
     tools: List[Dict[str, Any]] = []
     for tool in run_input.get("tools") or []:
         if isinstance(tool, dict) and str(tool.get("name") or "").strip():
+            # WebMCP `registerTool` declares `inputSchema`; plain AG-UI
+            # clients send `parameters`. Accept both, inputSchema first.
+            schema = tool.get("inputSchema")
+            if not isinstance(schema, dict):
+                schema = tool.get("parameters")
             tools.append({
                 "name": str(tool.get("name")).strip(),
                 "description": str(tool.get("description") or ""),
-                "parameters": tool.get("parameters")
-                if isinstance(tool.get("parameters"), dict) else None,
+                "parameters": schema if isinstance(schema, dict) else None,
+                # Unverified client hints (readOnlyHint & co) — surfaced
+                # to the agent as presentation only, never a permission.
+                "annotations": tool.get("annotations")
+                if isinstance(tool.get("annotations"), dict) else None,
+                # Managed frontend execution (B1-X 4): the client pins each
+                # tool's catalogue identity (host stable id + exact version)
+                # so a reload/toolchange between emission and begin is
+                # caught. Classic mode ignores these fields.
+                "catalogue_id": str(tool.get("catalogueId") or "").strip(),
+                "catalogue_version": str(
+                    tool.get("catalogueVersion") or "").strip(),
             })
 
     forwarded_props = run_input.get("forwardedProps")
     state = run_input["state"] if run_input.get("state") is not None else _UNSET
+    # `parentRunId` references the completed managed batch this run consumes
+    # (B1-X 6); empty for the first run of a thread or in classic mode.
+    parent_run_id = str(run_input.get("parentRunId") or "").strip()
+    # `threadGeneration` is the generation the client PRESENTS (B1-T:
+    # issued by the thread bootstrap, checked first at acquire — a stale
+    # one is a real 409 thread_rotated). Absent → generation 0.
+    try:
+        generation = int(run_input.get("threadGeneration") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("threadGeneration must be an integer")
+    if generation < 0:
+        raise ValueError("threadGeneration must be >= 0")
 
     return {
         "thread_id": thread_id,
@@ -210,6 +237,8 @@ def parse_run_input(run_input: Dict[str, Any]) -> Dict[str, Any]:
         "tools": tools,
         "forwarded_props": forwarded_props,
         "state": state,
+        "parent_run_id": parent_run_id,
+        "generation": generation,
     }
 
 

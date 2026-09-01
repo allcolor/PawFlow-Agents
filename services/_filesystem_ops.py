@@ -62,7 +62,7 @@ class _RelayFsOpsMixin:
         return execute_server_local(action, path, kwargs, on_output=on_output)
 
     def _send_to_pool(self, pool: List[Dict], payload: bytes,
-                      request_id: str = ""):
+                      request_id: str = "", fence_guard=None):
         """Send `payload` over the WS pool, most-recently-connected first.
 
         Returns None on success, the last exception on total failure.
@@ -72,6 +72,13 @@ class _RelayFsOpsMixin:
         the two would route some requests to the dying socket. Multi-
         relay is handled at the conversation level via core/relay_bindings
         (link_relay + set_default_relay), not inside this pool.
+
+        ``fence_guard`` is ``(lock, check)`` (B1-O): the frame is
+        SCHEDULED under ``lock`` and only if ``check()`` returns falsy —
+        the same lock the fence bump holds when it raises the watermark.
+        A bump therefore either wins the lock first (``check`` refuses,
+        nothing is scheduled) or loses it (the frame was already decided
+        before the bump). The blocking wait happens OUTSIDE the lock.
         """
         last_err = None
         for conn in reversed(pool):
@@ -92,7 +99,20 @@ class _RelayFsOpsMixin:
                         return Exception("Relay disconnected")
                     entry[1]["_relay_reader"] = conn["reader"]
             try:
-                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)
+                if fence_guard is not None:
+                    _guard_lock, _guard_check = fence_guard
+                    with _guard_lock:
+                        _stale = _guard_check()
+                        if _stale:
+                            return _stale
+                        # Scheduling the send while holding the bump's
+                        # own lock makes check-and-schedule atomic.
+                        _future = asyncio.run_coroutine_threadsafe(
+                            _send(), loop)
+                    _future.result(timeout=10)
+                else:
+                    asyncio.run_coroutine_threadsafe(
+                        _send(), loop).result(timeout=10)
                 return None
             except Exception as e:
                 last_err = e
@@ -163,6 +183,41 @@ class _RelayFsOpsMixin:
         holder: Dict[str, Any] = {}
         holder["_action"] = action
 
+        # Run fence (B1-O): the dispatching agent thread's identity rides
+        # on the command, checked server-side BEFORE the send and again
+        # relay-side at dispatch — a fenced-out zombie's command is
+        # refused at both places.
+        _fence_fields: Dict[str, Any] = {}
+        _fence_conv = _fence_agent = ""
+        _fence_token = None
+        try:
+            from services._tool_relay_base import current_run_identity
+            _identity = current_run_identity()
+        except Exception:
+            _identity = None
+        if _identity and _identity[1] is not None:
+            _run_handle, _fence_token, _fence_conv, _fence_agent = _identity
+            _fence_fields = {
+                "fence_key": f"{_fence_conv}:{_fence_agent}",
+                "fence_token": int(_fence_token),
+                "run_handle": str(_run_handle),
+            }
+
+        def _fence_lost() -> bool:
+            if _fence_token is None:
+                return False
+            try:
+                from services.tool_relay_service import ToolRelayService
+                return not ToolRelayService.fence_highwater_allows(
+                    _fence_conv, _fence_agent, int(_fence_token))
+            except Exception:
+                return False
+
+        if _fence_lost():
+            raise Exception(
+                f"run superseded (fence lost) — relay action "
+                f"'{action}' was NOT sent.")
+
         with self._pending_lock:
             self._pending[request_id] = (evt, holder)
 
@@ -171,14 +226,49 @@ class _RelayFsOpsMixin:
             "request_id": request_id,
             "action": action,
             "path": path,
+            **_fence_fields,
             **kwargs,
         }).encode("utf-8")
 
-        last_err = self._send_to_pool(pool, payload, request_id=request_id)
+        # The final check and the send are made ATOMIC with the fence
+        # bump: the frame is scheduled under the SAME lock the bump holds
+        # to raise the watermark (B1-O). Either the bump wins the lock —
+        # this check refuses, nothing is scheduled — or it loses it — the
+        # frame was decided before the bump. No check-then-send window
+        # remains.
+        _fence_guard = None
+        if _fence_token is not None:
+            try:
+                from services.tool_relay_service import ToolRelayService
+                _hw_key = f"{_fence_conv}:{_fence_agent}"
+
+                def _guard_check():
+                    # Called WHILE holding _fence_highwater_lock — read
+                    # the map DIRECTLY, never re-enter the lock.
+                    if int(_fence_token) < ToolRelayService._fence_highwater.get(
+                            _hw_key, 0):
+                        with self._pending_lock:
+                            self._pending.pop(request_id, None)
+                        return Exception(
+                            f"run superseded (fence lost) — relay action "
+                            f"'{action}' was NOT sent.")
+                    return None
+
+                _fence_guard = (
+                    ToolRelayService._fence_highwater_lock, _guard_check)
+            except Exception:
+                _fence_guard = None
+
+        last_err = self._send_to_pool(
+            pool, payload, request_id=request_id, fence_guard=_fence_guard)
 
         if last_err:
             with self._pending_lock:
                 self._pending.pop(request_id, None)
+            # A fence refusal is surfaced verbatim (it already reads
+            # "fence lost"), not wrapped as a transport failure.
+            if "fence lost" in str(last_err):
+                raise Exception(str(last_err))
             raise Exception(f"Failed to send to relay: {last_err}")
 
         # Register a kill hook so a FORCE STOP at the tool-relay layer

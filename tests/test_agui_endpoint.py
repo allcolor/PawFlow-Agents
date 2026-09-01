@@ -56,13 +56,34 @@ def test_parse_run_input_takes_the_trailing_segment_only():
                                   "[AG-UI image attachment: https://x/img.png]"]
     assert spec["tools"] == [{"name": "confirm",
                               "description": "ask the user",
-                              "parameters": None}]
+                              "parameters": None,
+                              "annotations": None,
+                              "catalogue_id": "",
+                              "catalogue_version": ""}]
     prompt = agui._assemble_prompt(spec, [], frontend_tools_live=True)
     assert "look at this" in prompt
     assert "older question" not in prompt   # server keeps its own history
     assert "page: /checkout" in prompt
     assert "confirm: ask the user" in prompt
     assert "available as real tools" in prompt
+
+
+def test_parse_run_input_accepts_input_schema_and_annotations():
+    # WebMCP registerTool declares `inputSchema` (preferred over
+    # `parameters`) and unverified `annotations` hints.
+    spec = parse_run_input({
+        "threadId": "t1", "runId": "r1",
+        "messages": [{"id": "1", "role": "user", "content": "hi"}],
+        "tools": [{"name": "confirm", "description": "ask",
+                   "inputSchema": {"type": "object",
+                                   "properties": {"q": {"type": "string"}}},
+                   "parameters": {"type": "object", "properties": {}},
+                   "annotations": {"readOnlyHint": True}}],
+    })
+    tool = spec["tools"][0]
+    assert tool["parameters"] == {"type": "object",
+                                  "properties": {"q": {"type": "string"}}}
+    assert tool["annotations"] == {"readOnlyHint": True}
 
 
 def test_parse_run_input_collects_frontend_tool_results():
@@ -417,7 +438,74 @@ def test_agui_routes_register_idempotently():
     register_agui_routes(listener)
     patterns = [(m, p) for m, p, *_ in listener.routes]
     assert patterns == [("GET", "/agui/{publication_id}"),
-                        ("POST", "/agui/{publication_id}")]
+                        ("POST", "/agui/{publication_id}"),
+                        ("DELETE", "/agui/{publication_id}")]
+
+
+def test_publication_configure_wires_managed_mode_and_ttl(tmp_path):
+    from unittest.mock import MagicMock, patch
+    from core import FlowFile
+    from core.a2a_store import A2AStore
+    from tasks.ai.actions._agentres_k7 import _handle_agentres_k7
+
+    conv_store = MagicMock()
+    conv_store.resolve_owner.return_value = "user"
+    a2a = A2AStore(database_path=tmp_path / "a2a.db")
+    patches = lambda: (
+        patch("core.a2a_store.A2AStore.instance", return_value=a2a),
+        patch("core.conv_agent_config.get_all_agent_configs",
+              return_value={"helper": {"runtime_kind": "llm"}}),
+        patch("core.conv_agent_config.get_agent_config",
+              return_value={"runtime_kind": "llm"}),
+        patch("services.a2a_server_endpoint.ensure_a2a_routes"),
+        patch("services.agui_server_endpoint.ensure_agui_routes"),
+    )
+
+    flowfile = FlowFile()
+    p1, p2, p3, p4, p5 = patches()
+    with p1, p2, p3, p4, p5:
+        _handle_agentres_k7(None, "a2a_publication_configure", {
+            "conversation_id": "conv", "agent_name": "helper",
+            "managed_mode": True, "thread_ttl_seconds": 3600,
+        }, conv_store, "user", flowfile)
+    publication = json.loads(flowfile.content)["publication"]
+    assert publication["managed_mode"] is True
+    assert publication["thread_ttl_seconds"] == 3600
+
+    # Omitting both fields preserves the stored values (None = keep).
+    flowfile = FlowFile()
+    p1, p2, p3, p4, p5 = patches()
+    with p1, p2, p3, p4, p5:
+        _handle_agentres_k7(None, "a2a_publication_configure", {
+            "conversation_id": "conv", "agent_name": "helper",
+        }, conv_store, "user", flowfile)
+    publication = json.loads(flowfile.content)["publication"]
+    assert publication["managed_mode"] is True
+    assert publication["thread_ttl_seconds"] == 3600
+
+    # Managed mode is meaningless on a shared context: fail closed.
+    flowfile = FlowFile()
+    p1, p2, p3, p4, p5 = patches()
+    with p1, p2, p3, p4, p5:
+        _handle_agentres_k7(None, "a2a_publication_configure", {
+            "conversation_id": "conv", "agent_name": "helper",
+            "context_policy": "shared", "managed_mode": True,
+        }, conv_store, "user", flowfile)
+    assert flowfile.get_attribute("http.response.status") == "400"
+    assert "isolated" in json.loads(flowfile.content)["error"]
+
+    # JSON strings must not be coerced with bool("false") and silently
+    # enable the publication-level execution mode.
+    flowfile = FlowFile()
+    p1, p2, p3, p4, p5 = patches()
+    with p1, p2, p3, p4, p5:
+        _handle_agentres_k7(None, "a2a_publication_configure", {
+            "conversation_id": "conv", "agent_name": "helper",
+            "managed_mode": "false",
+        }, conv_store, "user", flowfile)
+    assert flowfile.get_attribute("http.response.status") == "400"
+    assert json.loads(flowfile.content) == {
+        "error": "managed_mode must be a boolean"}
 
 
 def test_publication_creation_installs_agui_routes():

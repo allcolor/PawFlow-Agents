@@ -29,6 +29,7 @@ _RESERVED_REQUEST_ATTRIBUTES = frozenset({
     "agent.client_channel",
     "agent.request_msg_id",
     "agent.permission_mode",
+    "agent.run_handle",
 })
 
 
@@ -43,6 +44,7 @@ class AgentRequest:
     channel: str = "web"
     runtime_port: str = ""
     permission_mode: str = ""
+    run_handle: str = ""
     source_attributes: Dict[str, str] = field(default_factory=dict)
     live_callback: Optional[Callable[[str, str, Any], None]] = None
 
@@ -55,6 +57,14 @@ class AgentSubmission:
     target_agent: str = ""
     server_start_time: float = 0.0
     wait_for_done: bool = True
+    # True when this turn_id was already durably ingressed: the retry was
+    # acknowledged as the original submission and NO second turn started.
+    duplicate: bool = False
+    # Filled on a duplicate whose original turn ALREADY finished: the
+    # durable terminal is replayed here (wait_for_done is False then).
+    response: str = ""
+    final_msg_id: str = ""
+    run_handle: str = ""
 
 
 @dataclass
@@ -150,12 +160,24 @@ class AgentResultWaiter:
         self._sweep_stale()
         key = self._key(conversation_id, turn_id)
         with self._pending_lock:
+            existing = self._pending.get(key)
+            if existing is not None:
+                # NEVER replace: a second waiter (idempotent retry) joins
+                # the same entry — and if the turn already finished, the
+                # retained terminal result answers it immediately instead
+                # of blanking a resolved wait (B1-O idempotent ingress).
+                if live_callback is not None:
+                    existing.setdefault("live_callbacks", []).append(
+                        live_callback)
+                existing["last_activity"] = time.time()
+                return
             self._pending[key] = {
                 "event": threading.Event(),
                 "result": None,
                 "created_at": time.time(),
                 "last_activity": time.time(),
-                "live_callback": live_callback,
+                "live_callbacks": ([live_callback]
+                                   if live_callback is not None else []),
             }
 
     def wait(self, conversation_id: str, turn_id: str,
@@ -175,8 +197,9 @@ class AgentResultWaiter:
                 # Swept/cancelled while waiting: nothing will ever arrive.
                 return None
             if item["event"].is_set():
-                with self._pending_lock:
-                    item = self._pending.pop(key, item)
+                # The resolved entry is RETAINED (until the TTL sweep):
+                # concurrent and late waiters of the same turn all read
+                # the same terminal instead of racing over one pop.
                 return item.get("result")
             if deadline is not None and time.time() >= deadline:
                 return None
@@ -225,14 +248,14 @@ class AgentResultWaiter:
                 item = matches[0] if len(matches) == 1 else None
         if not item:
             return
-        live_callback = item.get("live_callback")
-        if live_callback and event_type not in {"done", "error_event"}:
-            try:
-                live_callback(conversation_id, event_type, data)
-            except Exception:
-                import logging
-                logging.getLogger(__name__).debug(
-                    "Agent runtime live callback failed", exc_info=True)
+        if event_type not in {"done", "error_event"}:
+            for live_callback in list(item.get("live_callbacks") or ()):
+                try:
+                    live_callback(conversation_id, event_type, data)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).debug(
+                        "Agent runtime live callback failed", exc_info=True)
         if event_type not in {"done", "error_event"}:
             # Any live event proves the turn is still running: refresh its
             # activity stamp so the TTL sweep/wait bound never mistakes a
@@ -288,6 +311,8 @@ class AgentRuntimeAPI:
         ff.set_attribute("http.auth.principal", request.user_id)
         ff.set_attribute("agent.client_channel", request.channel or "web")
         ff.set_attribute("agent.request_msg_id", turn_id)
+        if request.run_handle:
+            ff.set_attribute("agent.run_handle", request.run_handle)
         if request.permission_mode:
             if request.permission_mode not in {"read_only", "default"}:
                 raise ValueError("AgentRequest.permission_mode must be read_only or default")
@@ -349,6 +374,10 @@ class AgentRuntimeAPI:
             target_agent=request.target_agent,
             server_start_time=float(ack.get("server_start_time") or 0.0),
             wait_for_done=bool(ack.get("wait_for_done", True)),
+            duplicate=bool(ack.get("duplicate", False)),
+            response=str(ack.get("response") or ""),
+            final_msg_id=str(ack.get("final_msg_id") or ""),
+            run_handle=str(ack.get("run_handle") or ""),
         )
 
     @staticmethod

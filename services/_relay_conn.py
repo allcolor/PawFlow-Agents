@@ -47,6 +47,58 @@ _MANAGED_RECONNECT_STABLE_SECONDS = 5.0
 class _RelayConnMixin:
     """Connection, relay-session and dispatch methods for RelayService."""
 
+    # Live relay services with at least one connected relay (B1-O): a run
+    # fence bump broadcasts the new watermark to every one of them mid-
+    # session, so a relay already holding an old command frame refuses it
+    # at dispatch even before the superseding run sends its first request.
+    _live_relay_services: "set" = set()
+    _live_relay_services_lock = threading.Lock()
+
+    @classmethod
+    def broadcast_fence_raise(cls, highwaters: dict) -> int:
+        """Push a ``fence_raise`` to every connected relay. Best-effort
+        and non-blocking — a missed frame only means the relay learns the
+        new watermark from the next command token instead. Returns the
+        number of services notified."""
+        if not highwaters:
+            return 0
+        with cls._live_relay_services_lock:
+            services = list(cls._live_relay_services)
+        notified = 0
+        for service in services:
+            try:
+                if service.push_fence_raise(highwaters):
+                    notified += 1
+            except Exception:
+                logger.debug('fence_raise push failed', exc_info=True)
+        return notified
+
+    def push_fence_raise(self, highwaters: dict) -> bool:
+        """Send a ``fence_raise`` frame to this service's relay pool."""
+        with self._relay_pool_lock:
+            pool = self._relay_pool[:]
+        if not pool:
+            return False
+        payload = json.dumps({
+            "type": "fence_raise",
+            "highwaters": {str(k): int(v) for k, v in highwaters.items()},
+        }).encode("utf-8")
+        for conn in pool:
+            writer, loop = conn["writer"], conn["loop"]
+            send_lock = conn.get("send_lock")
+
+            async def _send(w=writer, lk=send_lock):
+                if lk is not None:
+                    async with lk:
+                        await _ws_send_frame(w, payload)
+                else:
+                    await _ws_send_frame(w, payload)
+            try:
+                asyncio.run_coroutine_threadsafe(_send(), loop)
+            except Exception:
+                logger.debug('fence_raise send failed', exc_info=True)
+        return True
+
     def connect(self):
         from services.http_listener_service import HTTPListenerService
         instances = HTTPListenerService.all_instances()
@@ -353,6 +405,40 @@ class _RelayConnMixin:
             if reg_info:
                 service._relay_info = reg_info
             service._relay_addr = remote
+            # B1-O: transmit the run-fence high-waters and require the
+            # relay's acknowledgement BEFORE the registration ack — a
+            # relay (re)connection may never serve an effect command
+            # under a pre-restart watermark. Fail closed: no ack, no
+            # registration.
+            try:
+                from services.tool_relay_service import ToolRelayService
+                ToolRelayService.resync_fence_highwaters()
+                with ToolRelayService._fence_highwater_lock:
+                    _fence_snapshot = dict(ToolRelayService._fence_highwater)
+            except Exception:
+                logger.debug('fence snapshot build failed', exc_info=True)
+                _fence_snapshot = {}
+            async with send_lock:
+                await _ws_send_frame(writer, json.dumps({
+                    'type': 'fence_snapshot',
+                    'highwaters': _fence_snapshot}).encode())
+            try:
+                _ack_op, _ack_payload = await asyncio.wait_for(
+                    _ws_recv_frame(reader), timeout=15)
+                _fence_ack = json.loads(_ack_payload.decode('utf-8')) \
+                    if _ack_op == 0x01 else {}
+            except Exception:
+                _fence_ack = {}
+            if _fence_ack.get('type') != 'fence_ack':
+                logger.error(
+                    'Relay %s did not acknowledge the fence snapshot — '
+                    'refusing the registration (fail closed)', relay_id)
+                async with send_lock:
+                    await _ws_send_frame(writer, json.dumps({
+                        'type': 'error',
+                        'message': 'fence snapshot not acknowledged'
+                    }).encode())
+                return
             async with send_lock:
                 await _ws_send_frame(writer, json.dumps({
                     'type': 'registered', 'relay_id': relay_id}).encode())
@@ -734,6 +820,8 @@ class _RelayConnMixin:
                                       "connected_at": connected_at})
             count = len(self._relay_pool)
             self._relay_available.set()
+        with _RelayConnMixin._live_relay_services_lock:
+            _RelayConnMixin._live_relay_services.add(self)
         logger.debug("Relay pool: %d connection(s) for '%s'", count, self._service_id)
         _invalidate_tool_relay_registry_cache()
         self.push_remote_fs_manifest()
@@ -811,6 +899,9 @@ class _RelayConnMixin:
             alive = len(self._relay_pool)
             if alive == 0:
                 self._relay_available.clear()
+        if alive == 0:
+            with _RelayConnMixin._live_relay_services_lock:
+                _RelayConnMixin._live_relay_services.discard(self)
         removed_readers = {conn.get("reader") for conn in removed}
         for conn in removed:
             for task in list(conn.get("tasks") or ()):

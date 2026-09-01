@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.257] — 2026-09-01
+
+### Added
+
+- Added an opt-in, fail-fast SQLite bootstrap canary and corruption-diagnostics
+  guide that fingerprint both SQLite stores at four startup boundaries without
+  mutating the database or its WAL/SHM evidence.
+
+### Changed
+
+- CLI-backed providers now honor the configured `api`, `full`,
+  `api_readonly`, and `full_readonly` tool-exposure modes through the exact
+  MCP surface advertised by the relay.
+
+### Fixed
+
+- Corrupt ephemeral ScratchDir metadata is quarantined with its WAL/SHM
+  sidecars and recreated lazily, while durable published-MCP metadata remains
+  fail-closed; both stores now use WAL, full synchronous durability, and
+  cell-size validation.
+- Multi-conversation workspaces now restore titles, themes, and transcript
+  scroll positions per session, and background callbacks can no longer repaint
+  shared active-agent surfaces belonging to the focused conversation.
+
+### Security
+
+- Read-only tool exposure is filtered during discovery and schema lookup and is
+  enforced again for direct, forged, and hook-replaced execution requests.
+
 ## [1.0.0-beta.256] — 2026-09-01
 
 ### Added

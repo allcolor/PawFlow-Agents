@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.256] — 2026-09-01
+
+### Added
+
+- Added a durable managed AG-UI/WebMCP execution runtime with transactional
+  turn acquisition, journal replay, attach/cancel credentials, run and batch
+  claims, terminal deposits, subscriber takeover epochs, catalog identity, and
+  restart-safe key-version state.
+- Added conversation-owned agent/task Webchat projections with scoped history
+  loading, plus explicit runtime-readiness and main-flow guardrails.
+
+### Changed
+
+- The simplified live view now treats each top-level user message, scheduled
+  wake-up, and terminal result as a positional boundary, preserving ordered
+  multi-agent finals with matching live, reload, and pagination behavior.
+- Exact run handles now flow from agent admission through streaming and tool
+  relay execution; relay high-water fencing and managed subscribers revalidate
+  authority at the effect and frame boundaries.
+
+### Fixed
+
+- Scheduled wake-ups now persist their visible turn boundary before streaming,
+  and filtered task/agent projections route actions through their owning
+  conversation session.
+- Codex Interactive now requires an exact `UserPromptSubmit` or matching MITM
+  receipt in production; it retries Enter only when a structurally recognized
+  composer still holds the pasted prompt, and live preempts wait for that
+  composer before pasting.
+
+### Security
+
+- Managed AG-UI admission, attachment, cancellation, batching, and terminal
+  publication now fail closed for stale leases, superseded subscribers,
+  mismatched catalog identities, and workers that lose execution authority.
+
 ## [1.0.0-beta.255] — 2026-08-31
 
 ### Added

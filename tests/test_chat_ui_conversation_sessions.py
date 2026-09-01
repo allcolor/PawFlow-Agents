@@ -40,6 +40,56 @@ def test_open_conversation_titles_stay_synchronized_with_sidebar_and_sse():
     assert "workspaceSetConversationTitle(session.conversationId, title)" in sessions
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_boot_caches_conversations_before_resuming_the_first_session():
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+const context = {
+  console,
+  window: null,
+  conversationId: null,
+  URLSearchParams,
+  t: key => key === 'newConversation' ? 'New conversation' : key,
+  renderConvList: rows => {
+    if (rows.length !== 1 || rows[0].title !== 'Server title') {
+      throw new Error('sidebar did not receive the server conversation');
+    }
+  },
+  _setInputEnabled: () => {},
+  loadResources: () => {},
+};
+context.window = context;
+context.location = { search: '' };
+context.action$ = () => ({
+  subscribe: callback => callback({
+    conversations: [{ conversation_id: 'A', title: 'Server title' }],
+  }),
+});
+context.resumeConv = cid => {
+  context.resumedTitle = context._conversationTitle(cid, 'New conversation');
+  context.conversationId = cid;
+};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const explorer = fs.readFileSync(process.argv[2], 'utf8');
+const boot = explorer.slice(explorer.indexOf(
+  '// Load conversations and auto-resume the first one'));
+vm.runInContext(boot, context);
+if (context.resumedTitle !== 'Server title') {
+  throw new Error('boot resumed with stale fallback title: ' + context.resumedTitle);
+}
+"""
+    result = subprocess.run(
+        ["node", "-e", harness, str(SESSIONS_JS),
+         str(CHAT_UI / "file_explorer.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_each_conversation_root_owns_scroll_state_and_handlers():
     sessions = SESSIONS_JS.read_text(encoding="utf-8")
     markdown = (CHAT_UI / "messages_markdown.js").read_text(encoding="utf-8")

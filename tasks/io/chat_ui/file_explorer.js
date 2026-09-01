@@ -441,7 +441,8 @@ updateActiveAgentBadge();
 
 // Load conversations and auto-resume the first one
 action$('list_conversations', {}).subscribe(data => {
-  const convs = data.conversations || [];
+  window._ownConvs = data.conversations || [];
+  const convs = window._ownConvs;
   renderConvList(convs);
   const requestedCid = new URLSearchParams(window.location.search).get('conversation_id') || '';
   if (requestedCid && !conversationId) {

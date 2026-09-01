@@ -402,10 +402,16 @@ Timing controls are read once when the provider modules are imported:
   the paste.
 - `PAWFLOW_CCI_SUBMIT_DELAY_SECONDS` sets the delay between repeated submit
   keys. Claude Code defaults to `1.0` second. Codex uses at most `0.2`
-  seconds and submits both normal prompts and live preempts with the fixed
-  sequence `Escape`, `Escape`, paste, 200ms, `Enter`, 200ms, `Enter`.
-  Codex submission verification is observation-only and never appends another
-  key after this sequence.
+  seconds. A live Codex preempt waits for the structural editable-composer
+  signal after `Escape`, `Escape`; if it never returns, the paste is refused
+  and the pending rescue remains queued. Codex then submits both normal prompts
+  and live preempts with the fixed sequence `Escape`, `Escape`, paste, 200ms,
+  `Enter`, 200ms, `Enter`.
+  In production only the exact `UserPromptSubmit` digest or matching MITM
+  request confirms submission. If the structurally recognised composer still
+  holds the pasted chip, verification may send up to three evidence-gated
+  `Enter` retries within the same bounded verification budget. Unknown chrome,
+  stale transcript chips and running turns never authorize another key.
 - `PAWFLOW_CCI_IDLE_TTL_SECONDS` controls Claude Code idle container eviction;
   `PAWFLOW_CODEX_INTERACTIVE_IDLE_TTL_SECONDS` controls the equivalent Codex
   Interactive pool. **There is no default**: unset, or `0`, means containers

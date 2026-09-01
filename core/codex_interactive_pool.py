@@ -356,8 +356,8 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     # text-based detector; nothing here changes that pool.
     _PROMPT_READY_SECONDS = 12.0
     # Codex can drop the first Enter after a pasted prompt. The transport sends
-    # two Enters 200ms apart; verification remains observation-only and never
-    # injects any additional key into the live TUI.
+    # two Enters 200ms apart. Verification may retry Enter only when the real
+    # composer is structurally recognised and still holds the pasted chip.
     _INITIAL_SUBMIT_ENTERS = 2
     _SUBMIT_DELAY_DEFAULT = 0.2
     # A Codex live preempt is not accepted until UserPromptSubmit or the MITM
@@ -505,15 +505,14 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     def _verify_submitted(self, state: InteractiveContainer, text: str, *,
                           event_service=None,
                           submit_marker=(0, 0)):
-        """Prove submission, retrying Enter when no proof arrives.
+        """Prove submission, retrying only a visibly stranded pasted chip.
 
         Codex collapses pasted text into a chip, so the inherited
-        ``fragment absent == submitted`` rule is never valid here.  When a new
-        Codex release boxes the composer and the chip probe cannot locate it,
-        absence of a running marker is inconclusive. In that case the pasted
-        prompt may still be waiting in a composer whose current layout PawFlow
-        cannot recognise, so retry Enter up to three times and require proof.
-        A silent verifier is never accepted as a successful submission.
+        fragment-absence rule is never valid here. Production submission is
+        confirmed only by the exact UserPromptSubmit digest or the corresponding
+        MITM request. Pane state can authorize an Enter retry only when the
+        structurally recognised composer still holds the pasted chip. Unknown
+        chrome, a stale transcript and a running turn never authorize input.
         """
         configured = os.environ.get("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "")
         try:
@@ -575,52 +574,60 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                     continue
                 pane = self._pane_text(state.name)
                 holds = self._pane_holds_unsent_paste(pane) if pane else None
-                if holds is False or (pane and self._pane_shows_running(pane)):
+                if holds is True and enter_retries < max_enter_retries:
+                    enter_retries += 1
                     logger.warning(
-                        "[codex-interactive] no hook/MITM receipt for %s, but "
-                        "the tmux pane confirms submission", state.name)
-                    return True
+                        "[codex-interactive] prompt remains in the composer "
+                        "for %s; pressing evidence-gated Enter (retry %d/%d)",
+                        state.name, enter_retries, max_enter_retries)
+                    if not self.send_keys(state, ["Enter"]):
+                        if not state.last_error:
+                            state.last_error = (
+                                "failed to retry stranded Codex prompt")
+                        return False
+                    continue
                 if holds is True:
                     reason = "the prompt remains in the composer"
+                elif holds is False or (
+                        pane and self._pane_shows_running(pane)):
+                    reason = (
+                        "the pane looks submitted but no hook/MITM receipt "
+                        "arrived")
                 else:
                     reason = "the submission pane is inconclusive"
-                if enter_retries >= max_enter_retries:
-                    state.last_error = (
-                        "Codex prompt submission was not confirmed after "
-                        f"{max_enter_retries} Enter retries ({reason})")
-                    logger.error(
-                        "[codex-interactive] prompt unsubmitted for %s after "
-                        "%d Enter retries (%s)", state.name,
-                        enter_retries, reason)
-                    return False
-                enter_retries += 1
-                logger.warning(
-                    "[codex-interactive] no submission proof for %s (%s); "
-                    "pressing Enter again (retry %d/%d)", state.name, reason,
-                    enter_retries, max_enter_retries)
-                if not self.send_keys(state, ["Enter"]):
-                    if not state.last_error:
-                        state.last_error = "failed to retry Codex prompt submission"
-                    return False
+                state.last_error = (
+                    "Codex prompt submission was not confirmed after the "
+                    f"canonical Enter sequence ({reason})")
+                logger.error(
+                    "[codex-interactive] prompt submission not confirmed for "
+                    "%s after the canonical Enter sequence (%s)",
+                    state.name, reason)
+                return False
 
         # No event service is available only in isolated diagnostics/tests.
-        # Observe the pane without ever mutating the send sequence.
         interval = 0.3
         polls = max(1, int(proof_window / interval))
-        for retry in range(max_enter_retries + 1):
+        reason = "the submission pane is inconclusive"
+        enter_retries = 0
+        while True:
+            last_holds = None
             for _ in range(polls):
                 pane = self._pane_text(state.name)
                 holds = self._pane_holds_unsent_paste(pane) if pane else None
+                last_holds = holds
                 if holds is False or (pane and self._pane_shows_running(pane)):
                     return True
+                if holds is True:
+                    reason = "the prompt remains in the composer"
                 time.sleep(interval)
-            if retry == max_enter_retries:
+            if last_holds is not True or enter_retries >= max_enter_retries:
                 break
+            enter_retries += 1
             if not self.send_keys(state, ["Enter"]):
                 return False
         state.last_error = (
-            "Codex prompt submission was not confirmed after "
-            f"{max_enter_retries} Enter retries")
+            "Codex prompt submission was not confirmed after the canonical "
+            f"Enter sequence ({reason})")
         return False
 
     def __init__(self):

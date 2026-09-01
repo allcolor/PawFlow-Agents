@@ -13,6 +13,7 @@ var _workspaceStorageKey = 'pawflow.workspace.state.v2';
 var _workspaceLegacyStorageKey = 'pawflow.workspace.layout.v1';
 var _workspaceRestoredOrder = [];
 var _workspaceRestoredSelection = '';
+var _workspaceRestoredSurfaces = {};
 var _workspaceHydrating = false;
 var _workspaceMaxStoredSurfaces = 64;
 
@@ -62,6 +63,8 @@ function _workspaceSaveState() {
         surfaceId: tabId,
         type: entry.type || '',
         conversationId: entry.conversationId || '',
+        title: entry.title || '',
+        conversationTitle: entry.conversationTitle || '',
       };
     });
   const state = {
@@ -79,11 +82,20 @@ function _workspaceLoadState() {
   try { state = JSON.parse(localStorage.getItem(_workspaceStorageKey) || 'null'); }
   catch (_error) {}
   if (state && state.version === 2 && Array.isArray(state.surfaces)) {
-    _workspaceRestoredOrder = state.surfaces.slice(0, _workspaceMaxStoredSurfaces)
-      .map(function(surface) {
-        return surface && typeof surface.surfaceId === 'string'
-          && surface.surfaceId.length <= 256 ? surface.surfaceId : '';
-      }).filter(Boolean);
+    _workspaceRestoredOrder = [];
+    _workspaceRestoredSurfaces = {};
+    state.surfaces.slice(0, _workspaceMaxStoredSurfaces).forEach(function(surface) {
+      const surfaceId = surface && typeof surface.surfaceId === 'string'
+        && surface.surfaceId.length <= 256 ? surface.surfaceId : '';
+      if (!surfaceId) return;
+      _workspaceRestoredOrder.push(surfaceId);
+      _workspaceRestoredSurfaces[surfaceId] = {
+        title: typeof surface.title === 'string' && surface.title.length <= 512
+          ? surface.title : '',
+        conversationTitle: typeof surface.conversationTitle === 'string'
+          && surface.conversationTitle.length <= 512 ? surface.conversationTitle : '',
+      };
+    });
     _workspaceRestoredSelection = typeof state.selectedSurfaceId === 'string'
       && state.selectedSurfaceId.length <= 256 ? state.selectedSurfaceId : '';
     const layout = parseInt(state.layout, 10);
@@ -94,6 +106,11 @@ function _workspaceLoadState() {
   catch (_error) {}
   return Number.isFinite(legacyLayout) && legacyLayout >= 1 && legacyLayout <= 6
     ? legacyLayout : 1;
+}
+
+function workspaceRestoredSurfaceTitle(tabId) {
+  const restored = _workspaceRestoredSurfaces[String(tabId || '')];
+  return restored ? restored.title : '';
 }
 
 function _workspaceInsertAfter(board, panel, anchor) {
@@ -223,9 +240,10 @@ function workspaceRegisterSurface(panel, options) {
   if (!board) return panel;
   const firstRegistration = !_workspaceSurfaces[tabId];
   const previous = _workspaceSurfaces[tabId] || {};
+  const restored = _workspaceRestoredSurfaces[tabId] || {};
   _workspaceSurfaces[tabId] = {
     panel: panel,
-    title: options.title || previous.title || tabId,
+    title: options.title || previous.title || restored.title || tabId,
     icon: options.icon || previous.icon || '',
     close: options.close || previous.close || null,
     closable: options.closable !== undefined ? options.closable : previous.closable,
@@ -238,6 +256,7 @@ function workspaceRegisterSurface(panel, options) {
   };
   _workspaceSurfaces[tabId].conversationTitle = options.conversationTitle
     || previous.conversationTitle
+    || restored.conversationTitle
     || _workspaceConversationTitle(_workspaceSurfaces[tabId].conversationId);
 
   panel.dataset.tab = tabId;

@@ -88,6 +88,7 @@ function _newConversationSession(conversationId) {
     compactPending: {},
     statusText: typeof t === 'function' ? t('ready') : 'Ready',
     autoScroll: true,
+    scrollTop: 0,
     suppressTopLoadUntil: 0,
   };
 }
@@ -118,6 +119,11 @@ function isFocusedConversationSession(sessionOrId) {
   var session = typeof sessionOrId === 'string'
     ? getConversationSession(sessionOrId) : sessionOrId;
   return !!session && session === _conversationFocusedSession;
+}
+
+function canProjectConversationSharedSurfaces() {
+  var session = captureConversationSession();
+  return !session || isFocusedConversationSession(session);
 }
 
 function _transferConversationRuntimeOwnership(previousSession, nextSession) {
@@ -224,6 +230,7 @@ function _saveConversationSessionState(session) {
   var status = document.getElementById('status');
   if (status) session.statusText = status.textContent || '';
   session.autoScroll = _autoScroll;
+  if (session.messagesRoot) session.scrollTop = session.messagesRoot.scrollTop;
   session.suppressTopLoadUntil = _suppressTopLoadUntil;
 }
 
@@ -278,6 +285,7 @@ function _applyConversationSessionState(session) {
   var status = document.getElementById('status');
   if (status) status.textContent = session.statusText || '';
   _autoScroll = session.autoScroll;
+  if (session.messagesRoot) session.messagesRoot.scrollTop = session.scrollTop;
   _suppressTopLoadUntil = session.suppressTopLoadUntil;
   if (document.documentElement && document.documentElement.classList) {
     document.documentElement.classList.toggle(
@@ -533,7 +541,9 @@ function ensureConversationSession(conversationId, options) {
     return session;
   }
   session = _newConversationSession(cid);
-  session.title = _conversationTitle(cid, options && options.title);
+  var restoredTitle = typeof workspaceRestoredSurfaceTitle === 'function'
+    ? workspaceRestoredSurfaceTitle(session.surfaceId) : '';
+  session.title = _conversationTitle(cid, (options && options.title) || restoredTitle);
   _conversationSessions.set(cid, session);
   ensureConversationSurface(session);
   return session;
@@ -558,15 +568,14 @@ function _projectFocusedConversation(session) {
   if (typeof updateActivePanel === 'function') updateActivePanel();
   if (typeof renderAttachments === 'function') renderAttachments();
   if (typeof loadResources === 'function') loadResources(session.conversationId);
-  // Per-conversation surfaces living OUTSIDE the tile (theme <style>, cost
-  // badge, confirmations, context gauges, UI surface stack) must follow the
-  // focus. A fresh load rehydrates them in loadConversationSession, so only
-  // an already-loaded session re-projects here.
+  // The global theme <style> must follow focus even before a restored session
+  // has loaded its transcript. The remaining remote surfaces rehydrate after
+  // loadConversationSession completes.
   // Blank the cost badge at once (hydratedFor mismatch hides it) so the
   // previous conversation's total never lingers while hydration is in flight.
   if (typeof renderUsageCostBadge === 'function') renderUsageCostBadge();
+  if (typeof loadThemeSelector === 'function') loadThemeSelector();
   if (session.loaded) {
-    if (typeof loadThemeSelector === 'function') loadThemeSelector();
     if (typeof hydrateContextUsage === 'function') hydrateContextUsage();
     if (typeof hydrateUsageCost === 'function') hydrateUsageCost();
     if (typeof hydrateConfirmations === 'function') hydrateConfirmations();

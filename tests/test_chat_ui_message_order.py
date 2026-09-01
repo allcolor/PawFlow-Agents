@@ -430,7 +430,8 @@ def test_chat_scroll_container_has_stable_flex_height_and_post_render_refresh():
     assert "window.requestAnimationFrame(settle)" in MESSAGES_JS
     assert "refreshMessagesScrollMetrics(!!force)" in MESSAGES_JS
     assert "const themeLoad = typeof loadThemeSelector === 'function' ? loadThemeSelector() : null" in CONVERSATIONS_JS
-    assert "refreshMessagesScrollMetrics(true)" in CONVERSATIONS_JS
+    assert "scrollBottom(true)" in CONVERSATIONS_JS
+    assert "refreshMessagesScrollMetrics(false)" in CONVERSATIONS_JS
 
 
 def test_tool_results_carry_tc_id_for_reload_grouping():

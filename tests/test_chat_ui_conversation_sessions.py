@@ -43,12 +43,21 @@ def test_open_conversation_titles_stay_synchronized_with_sidebar_and_sse():
 def test_each_conversation_root_owns_scroll_state_and_handlers():
     sessions = SESSIONS_JS.read_text(encoding="utf-8")
     markdown = (CHAT_UI / "messages_markdown.js").read_text(encoding="utf-8")
+    conversations = (CHAT_UI / "conversations.js").read_text(encoding="utf-8")
 
     assert "autoScroll:" in sessions
+    assert "scrollTop:" in sessions
     assert "suppressTopLoadUntil:" in sessions
+    assert "session.scrollTop = session.messagesRoot.scrollTop" in sessions
+    assert "session.messagesRoot.scrollTop = session.scrollTop" in sessions
     assert "installMessagesRootHandlers(messages, session)" in sessions
     assert "function installMessagesRootHandlers" in markdown
     assert "_wrapConversationSessionCallback(session" in markdown
+    theme_settle = conversations[
+        conversations.index("if (themeLoad && typeof themeLoad.then"):
+        conversations.index("document.getElementById('input').focus()")]
+    assert "refreshMessagesScrollMetrics(false)" in theme_settle
+    assert "refreshMessagesScrollMetrics(true)" not in theme_settle
 
 
 def test_conversation_session_lives_until_its_last_bound_surface_closes():
@@ -159,6 +168,7 @@ function root(name) {
     id: name,
     dataset: { conversationLocalId: 'messages' },
     items: [],
+    scrollTop: 0,
     querySelectorAll: () => [],
   };
 }
@@ -250,15 +260,21 @@ if (titleUpdates.length !== 1
 context.focusConversationSession(a, { project: false });
 context.selectedAgent = 'agent-a';
 context.document.getElementById('status').textContent = 'status-a';
+a.messagesRoot.scrollTop = 111;
 context._saveConversationSessionState(a);
 context.focusConversationSession(b, { project: false });
 context.selectedAgent = 'agent-b';
 context.document.getElementById('status').textContent = 'status-b';
+b.messagesRoot.scrollTop = 222;
 context._saveConversationSessionState(b);
+a.messagesRoot.scrollTop = 999;
 
 const onA = context._wrapConversationSessionCallback(a, () => {
   const messages = context.document.getElementById('messages');
   if (messages !== a.messagesRoot) throw new Error('A did not own canonical messages');
+  if (messages.scrollTop !== 111) {
+    throw new Error('A scroll position was not restored before its callback');
+  }
   messages.items.push('event-a');
   context.selectedAgent = 'agent-a-updated';
   context.document.getElementById('status').textContent = 'working-a';
@@ -270,6 +286,9 @@ if (a.messagesRoot.items.join(',') !== 'event-a') {
 }
 if (context.document.getElementById('messages') !== b.messagesRoot) {
   throw new Error('focused transcript was not restored to B');
+}
+if (b.messagesRoot.scrollTop !== 222) {
+  throw new Error('focused B scroll position was not restored after background A');
 }
 if (context.selectedAgent !== 'agent-b') {
   throw new Error('focused agent projection was not restored to B');
@@ -340,17 +359,77 @@ def test_tile_focus_reprojects_out_of_tile_conversation_surfaces():
     project = sessions[
         sessions.index("function _projectFocusedConversation"):
         sessions.index("function focusConversationSession")]
-    # Theme, cost badge, confirmations, context gauges and UI surfaces live
-    # outside the tile and must follow a tile switch (loaded sessions only:
-    # a fresh load rehydrates them in loadConversationSession).
+    # Theme CSS is global and must switch immediately even before a restored
+    # session has loaded its transcript. The other remote surfaces rehydrate
+    # after the session load completes.
     assert "if (session.loaded)" in project
-    for hook in ("loadThemeSelector()", "hydrateContextUsage()",
-                 "hydrateUsageCost()", "hydrateConfirmations()",
-                 "loadUiSurfaces(session.conversationId)"):
+    assert project.index("loadThemeSelector()") < project.index("if (session.loaded)")
+    for hook in ("hydrateContextUsage()", "hydrateUsageCost()",
+                 "hydrateConfirmations()", "loadUiSurfaces(session.conversationId)"):
         assert hook in project, hook
     assert "renderUsageCostBadge()" in project
     # A stale 'new conversation' fallback title re-resolves on focus.
     assert "_conversationTitle(session.conversationId, session.title)" in project
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_background_session_cannot_paint_shared_agent_surfaces():
+    cmd_agent = (CHAT_UI / "cmd_agent.js").read_text(encoding="utf-8")
+    active_agents = (CHAT_UI / "active_agents.js").read_text(encoding="utf-8")
+    composer = (CHAT_UI / "file_mention.js").read_text(encoding="utf-8")
+    assert "!canProjectConversationSharedSurfaces()) return;" in active_agents
+    assert "!canProjectConversationSharedSurfaces()) return;" in composer
+    assert "selectedAgent = data.active_agent || selectedAgent" in (
+        CHAT_UI / "conversations.js").read_text(encoding="utf-8")
+
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+function node() { return { style: {}, innerHTML: '', textContent: '' }; }
+const nodes = {
+  activeAgentBadge: node(),
+  ctxGaugeWrap: node(),
+  ctxGaugeFill: node(),
+  ctxGaugePct: node(),
+};
+let allowPaint = false;
+let composerPaints = 0;
+let grabs = 0;
+const context = {
+  console,
+  window: null,
+  selectedAgent: 'agent-b',
+  document: { getElementById: id => nodes[id] || null },
+  canProjectConversationSharedSurfaces: () => allowPaint,
+  grabOnAgentSwitch: () => { grabs += 1; },
+  updateComposerAgentBadge: () => { composerPaints += 1; },
+  displayAgentName: value => value,
+  escapeHtml: value => value,
+  t: key => key,
+};
+context.window = context;
+context._contextUsage = { 'agent-b': { used: 5, max: 10, pct: 0.5 } };
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+context.updateActiveAgentBadge();
+if (nodes.activeAgentBadge.innerHTML || nodes.ctxGaugeFill.style.height
+    || composerPaints || grabs) {
+  throw new Error('background session painted a shared agent surface');
+}
+allowPaint = true;
+context.updateActiveAgentBadge();
+if (!nodes.activeAgentBadge.innerHTML || nodes.ctxGaugeFill.style.height !== '50%'
+    || composerPaints !== 1 || grabs !== 1) {
+  throw new Error('focused session did not paint every shared agent surface');
+}
+"""
+    result = subprocess.run(
+        ["node", "-e", harness, str(CHAT_UI / "cmd_agent.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node")

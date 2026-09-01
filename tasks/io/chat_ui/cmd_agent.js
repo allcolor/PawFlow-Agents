@@ -202,6 +202,8 @@ function cmdAgentCreate() {
 // showResourceCreator and _saveResourceCreate are defined in resources.js
 
 function updateActiveAgentBadge() {
+  if (typeof canProjectConversationSharedSurfaces === 'function'
+      && !canProjectConversationSharedSurfaces()) return;
   // Every agent switch lands here — a held tmux belongs to the agent it was
   // grabbed on, so it is released when the selection moves.
   if (typeof grabOnAgentSwitch === 'function') grabOnAgentSwitch();

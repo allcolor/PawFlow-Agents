@@ -49,6 +49,62 @@ def test_workspace_layouts_persist_and_extend_horizontally():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_workspace_persists_and_restores_conversation_titles():
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+let stored = null;
+const context = {
+  console,
+  localStorage: {
+    setItem: (key, value) => {
+      if (key === 'pawflow.workspace.state.v2') stored = value;
+    },
+    getItem: key => key === 'pawflow.workspace.state.v2' ? stored : null,
+  },
+  document: {
+    readyState: 'loading',
+    addEventListener: () => {},
+    getElementById: () => null,
+    querySelectorAll: () => [],
+  },
+  matchMedia: () => ({ matches: false }),
+};
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+context._workspaceSurfaces = {
+  'webchat-A': {
+    title: 'Conversation Alpha',
+    conversationTitle: 'Conversation Alpha',
+    type: 'webchat',
+    conversationId: 'A',
+  },
+};
+context._workspaceSaveState();
+const state = JSON.parse(stored);
+const saved = state.surfaces[0];
+if (saved.title !== 'Conversation Alpha'
+    || saved.conversationTitle !== 'Conversation Alpha') {
+  throw new Error('workspace state dropped the persisted conversation title');
+}
+context._workspaceRestoredOrder = [];
+context._workspaceRestoredSurfaces = {};
+context._workspaceLoadState();
+if (context.workspaceRestoredSurfaceTitle('webchat-A') !== 'Conversation Alpha') {
+  throw new Error('workspace restore did not expose the persisted title');
+}
+"""
+    result = subprocess.run(
+        ["node", "-e", harness, str(CHAT_UI / "workspace.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
 def test_workspace_scrolls_only_beyond_the_visible_tile_capacity():
     harness = r"""
 const fs = require('fs');

@@ -119,6 +119,8 @@ function hydrateContextUsage() {
 }
 
 function _refreshGaugeSurfaces(key) {
+  if (typeof canProjectConversationSharedSurfaces === 'function'
+      && !canProjectConversationSharedSurfaces()) return;
   if (typeof updateActiveAgentBadge === 'function'
       && typeof selectedAgent !== 'undefined'
       && agentKey(selectedAgent) === key) {

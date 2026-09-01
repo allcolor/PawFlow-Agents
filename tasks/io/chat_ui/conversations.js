@@ -705,8 +705,8 @@ function _renderHistory(data) {
   scrollBottom(true);
   if (themeLoad && typeof themeLoad.then === 'function') {
     themeLoad.then(
-      () => { if (typeof refreshMessagesScrollMetrics === 'function') refreshMessagesScrollMetrics(true); },
-      () => { if (typeof refreshMessagesScrollMetrics === 'function') refreshMessagesScrollMetrics(true); }
+      () => { if (typeof refreshMessagesScrollMetrics === 'function') refreshMessagesScrollMetrics(false); },
+      () => { if (typeof refreshMessagesScrollMetrics === 'function') refreshMessagesScrollMetrics(false); }
     );
   }
   document.getElementById('input').focus();

@@ -385,6 +385,7 @@ function installMessagesRootHandlers(m, session) {
   }));
 
   m.addEventListener('scroll', bind(() => {
+    if (session) session.scrollTop = m.scrollTop;
     if (atBottom()) {
       _autoScroll = true;
     } else if (hasUserScrollIntent()) {
@@ -402,7 +403,11 @@ function installMessagesRootHandlers(m, session) {
 
 function setMessagesScrollTop(value) {
   const m = document.getElementById('messages');
-  if (m) m.scrollTop = value;
+  if (!m) return;
+  m.scrollTop = value;
+  const session = typeof captureConversationSession === 'function'
+    ? captureConversationSession() : null;
+  if (session) session.scrollTop = m.scrollTop;
 }
 
 function refreshMessagesScrollMetrics(forceBottom) {

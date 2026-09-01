@@ -62,6 +62,8 @@ function _composerAgentPickerElement() {
 }
 
 function updateComposerAgentBadge() {
+  if (typeof canProjectConversationSharedSurfaces === 'function'
+      && !canProjectConversationSharedSurfaces()) return;
   const overlay = document.getElementById('composerAgentOverlay');
   const badge = document.getElementById('composerAgentBadge');
   const label = document.getElementById('composerAgentBadgeLabel');

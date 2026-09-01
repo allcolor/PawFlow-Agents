@@ -285,7 +285,16 @@ function _applyConversationSessionState(session) {
   var status = document.getElementById('status');
   if (status) status.textContent = session.statusText || '';
   _autoScroll = session.autoScroll;
-  if (session.messagesRoot) session.messagesRoot.scrollTop = session.scrollTop;
+  if (session.messagesRoot) {
+    // A stored absolute coordinate is only meaningful after explicit user
+    // navigation. While following the live tail, DOM growth makes yesterday's
+    // bottom an arbitrary point higher in the transcript.
+    if (session.autoScroll) {
+      session.messagesRoot.scrollTop = session.messagesRoot.scrollHeight;
+    } else {
+      session.messagesRoot.scrollTop = session.scrollTop;
+    }
+  }
   _suppressTopLoadUntil = session.suppressTopLoadUntil;
   if (document.documentElement && document.documentElement.classList) {
     document.documentElement.classList.toggle(

@@ -413,11 +413,24 @@ function setMessagesScrollTop(value) {
 function refreshMessagesScrollMetrics(forceBottom) {
   const m = document.getElementById('messages');
   if (!m) return;
-  if (forceBottom) _autoScroll = true;
-  const settle = () => {
-    if (forceBottom || _autoScroll) setMessagesScrollTop(m.scrollHeight);
+  const session = typeof captureConversationSession === 'function'
+    ? captureConversationSession() : null;
+  if (forceBottom) {
+    _autoScroll = true;
+    if (session) session.autoScroll = true;
+  }
+  const settleCurrentSession = () => {
+    // Re-check the live intent on every frame. A wheel/touch/key/scrollbar
+    // gesture between frames wins immediately, including after a forced jump.
+    if (_autoScroll) setMessagesScrollTop(m.scrollHeight);
     updateScrollNav();
   };
+  // requestAnimationFrame callbacks run after withConversationSession() has
+  // restored the focused tile. Bind every delayed settle to the transcript
+  // that created it so two open conversations can never scroll each other.
+  const settle = session && typeof _wrapConversationSessionCallback === 'function'
+    ? _wrapConversationSessionCallback(session, settleCurrentSession)
+    : settleCurrentSession;
   settle();
   window.requestAnimationFrame(() => {
     settle();

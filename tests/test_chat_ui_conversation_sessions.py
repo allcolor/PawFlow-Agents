@@ -214,16 +214,27 @@ const fs = require('fs');
 const vm = require('vm');
 function classes() { return { toggle: () => {} }; }
 function root(name) {
-  return {
+  let scrollTop = 0;
+  const node = {
     id: name,
     dataset: { conversationLocalId: 'messages' },
     items: [],
-    scrollTop: 0,
+    scrollHeight: 2000,
+    clientHeight: 200,
     querySelectorAll: () => [],
   };
+  Object.defineProperty(node, 'scrollTop', {
+    get: () => scrollTop,
+    set: value => {
+      scrollTop = Math.max(0, Math.min(Number(value) || 0,
+        node.scrollHeight - node.clientHeight));
+    },
+  });
+  return node;
 }
 const roots = [];
 const titleUpdates = [];
+const animationFrames = [];
 const status = { id: 'status', textContent: '' };
 const context = {
   console,
@@ -237,6 +248,10 @@ const context = {
   clearTimeout,
   setInterval,
   clearInterval,
+  requestAnimationFrame: callback => {
+    animationFrames.push(callback);
+    return animationFrames.length;
+  },
   workspaceSetSurfaceTitle: (tabId, title) => titleUpdates.push([tabId, title]),
 };
 context.window = context;
@@ -288,6 +303,7 @@ Object.assign(context, {
 });
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), context);
 
 const a = context._newConversationSession('A');
 const b = context._newConversationSession('B');
@@ -310,11 +326,13 @@ if (titleUpdates.length !== 1
 context.focusConversationSession(a, { project: false });
 context.selectedAgent = 'agent-a';
 context.document.getElementById('status').textContent = 'status-a';
+context.scrollMessagesTop();
 a.messagesRoot.scrollTop = 111;
 context._saveConversationSessionState(a);
 context.focusConversationSession(b, { project: false });
 context.selectedAgent = 'agent-b';
 context.document.getElementById('status').textContent = 'status-b';
+context.scrollMessagesTop();
 b.messagesRoot.scrollTop = 222;
 context._saveConversationSessionState(b);
 a.messagesRoot.scrollTop = 999;
@@ -362,6 +380,41 @@ if (a.selectedAgent !== 'agent-a-updated') {
   throw new Error('focus-changing callback corrupted its previous session');
 }
 
+function flushAnimationFrames() {
+  let count = 0;
+  while (animationFrames.length) {
+    animationFrames.shift()();
+    count += 1;
+    if (count > 10) throw new Error('animation frame loop did not settle');
+  }
+}
+
+// A delayed bottom-settle created while A is active must never run against B.
+// This is the real two-tile failure: the active-agent poll refreshes one
+// conversation every ten seconds while the user reads or scrolls the other.
+a.messagesRoot.scrollHeight = 800;
+b.messagesRoot.scrollHeight = 2000;
+b.autoScroll = false;
+b.scrollTop = 222;
+b.messagesRoot.scrollTop = 222;
+context._applyConversationSessionState(b);
+context.withConversationSession(a, () => context.scrollBottom(true));
+flushAnimationFrames();
+if (b.messagesRoot.scrollTop !== 222 || b.autoScroll !== false) {
+  throw new Error('background A animation frame moved user-scrolled B');
+}
+
+b.autoScroll = true;
+b.messagesRoot.scrollTop = b.messagesRoot.scrollHeight;
+b.scrollTop = b.messagesRoot.scrollTop;
+context._applyConversationSessionState(b);
+context.withConversationSession(a, () => context.scrollBottom(true));
+flushAnimationFrames();
+const bBottom = b.messagesRoot.scrollHeight - b.messagesRoot.clientHeight;
+if (b.messagesRoot.scrollTop !== bBottom || b.autoScroll !== true) {
+  throw new Error('background A animation frame moved bottom-following B');
+}
+
 a.panel = { remove: () => {}, querySelectorAll: () => [] };
 context._workspaceSurfaces = {
   [a.surfaceId]: { conversationId: 'A' },
@@ -381,7 +434,8 @@ if (context.getConversationSession('A')) {
 }
 """
     result = subprocess.run(
-        ["node", "-e", harness, str(SESSIONS_JS)],
+        ["node", "-e", harness, str(SESSIONS_JS),
+         str(CHAT_UI / "messages_markdown.js")],
         capture_output=True,
         text=True,
         check=False,

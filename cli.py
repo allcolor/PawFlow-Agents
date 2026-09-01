@@ -257,6 +257,7 @@ def cmd_start(args):
     # Tracing is opt-in: no endpoint configured, or no SDK installed, and this
     # is a no-op. It cannot fail the boot -- configure_tracing never raises.
     from core.observability import configure_tracing
+    from core.sqlite_boot_canary import run_sqlite_boot_canary
     configure_tracing()
 
     try:
@@ -291,9 +292,11 @@ def cmd_start(args):
     from core.paths import CAPABILITIES_FILE
     _init_capabilities(CAPABILITIES_FILE)
 
+    run_sqlite_boot_canary("before_task_registration")
     logger.info("Registering tasks...")
     from tasks import register_all_tasks
     register_all_tasks()
+    run_sqlite_boot_canary("after_task_registration")
 
     try:
         from core.install_bootstrap import (
@@ -314,6 +317,7 @@ def cmd_start(args):
     required_instance_id = MAIN_INSTANCE_ID if install_complete else ""
     if required_instance_id:
         require_flow_readiness(required_instance_id)
+    run_sqlite_boot_canary("before_flow_restore")
     try:
         er.restore_from_disk(required_instance_id=required_instance_id)
     except Exception as _restore_err:
@@ -322,6 +326,7 @@ def cmd_start(args):
             "unavailable and the next boot will retry: %s", _restore_err,
             exc_info=True)
         raise
+    run_sqlite_boot_canary("after_flow_restore")
 
     # FRPS calls this private route before accepting service-tunnel clients and
     # STCP proxies. The registration is disabled when no signing key is set.

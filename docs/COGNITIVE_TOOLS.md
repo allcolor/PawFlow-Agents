@@ -37,6 +37,19 @@ They are interconnected:
   links fail closed. Filesystem handlers validate a cached scoped ticket against
   the current store epoch before reuse, so `clear` followed by `ensure`
   immediately rebinds instead of retaining a stale facade.
+- ScratchDir metadata is disposable by contract. If SQLite reports a proven
+  corruption signature, PawFlow renames the metadata database and any WAL/SHM
+  companions with a `.corrupt-<timestamp>` suffix for forensic inspection,
+  then creates an empty ScratchDir store. This recovery is deliberately limited
+  to ScratchDir: durable stores are never discarded or recreated automatically.
+  The ScratchDir manager is opened only when that tool is executed, so damaged
+  temporary metadata cannot prevent unrelated MCP filesystem tools from being
+  wired and used. ScratchDir SQLite connections use WAL journaling, full
+  synchronous durability, and cell-size validation. Startup runs a
+  `PRAGMA quick_check` canary before the store is exposed; WAL moves commit-time
+  page writes into the log but does not by itself identify the source of prior
+  page corruption. See [SQLite corruption diagnostics](SQLITE_CORRUPTION_DIAGNOSTICS.md)
+  for the opt-in, fail-fast bootstrap canary.
 
 ---
 

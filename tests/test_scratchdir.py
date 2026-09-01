@@ -1,9 +1,11 @@
 """Unit tests for ScratchDir contracts and durable metadata."""
 
 import json
+import sqlite3
 
 import pytest
 
+import core.scratchdir_manager as scratchdir_manager_module
 from core import paths
 from core.handlers.scratchdir import ScratchDirHandler
 from core.scratchdir_models import (
@@ -26,6 +28,27 @@ def store(tmp_path, monkeypatch):
     value = ScratchDirStore.instance()
     yield value
     ScratchDirStore._instance = None
+
+
+def test_existing_delete_journal_store_migrates_to_wal(
+        tmp_path, monkeypatch):
+    metadata_dir = tmp_path / "scratchdirs"
+    database = metadata_dir / "scratchdirs.sqlite3"
+    metadata_dir.mkdir(parents=True)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+        connection.execute("CREATE TABLE legacy_probe (value TEXT)")
+
+    monkeypatch.setattr(paths, "SCRATCHDIRS_DIR", metadata_dir)
+    ScratchDirStore._instance = None
+    try:
+        migrated = ScratchDirStore.instance()
+        with migrated._connect() as connection:
+            assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+            assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
+            assert connection.execute("PRAGMA cell_size_check").fetchone()[0] == 1
+    finally:
+        ScratchDirStore._instance = None
 
 
 def test_scope_ttl_and_quota_validation():
@@ -174,3 +197,70 @@ def test_handler_delegates_authenticated_scope_to_manager():
 
 def test_default_registry_exposes_scratchdir():
     assert create_default_registry().get("scratchdir") is not None
+
+
+def test_corrupt_ephemeral_metadata_is_quarantined_and_recreated(
+        tmp_path, monkeypatch, caplog):
+    metadata_dir = tmp_path / "scratchdirs"
+    monkeypatch.setattr(paths, "SCRATCHDIRS_DIR", metadata_dir)
+    ScratchDirStore._instance = None
+    try:
+        store = ScratchDirStore.instance()
+        store.activate(
+            "u", "c", "a", "r", locator="opaque", operation_id="op")
+        database = metadata_dir / "scratchdirs.sqlite3"
+        corrupted = bytearray(database.read_bytes())
+        assert corrupted[:16] == b"SQLite format 3\x00"
+        corrupted[44:48] = (0x7E6D322D).to_bytes(4, "big")
+        database.write_bytes(corrupted)
+        wal = database.with_name(database.name + "-wal")
+        shm = database.with_name(database.name + "-shm")
+        wal.write_bytes(b"preserved WAL evidence")
+        shm.write_bytes(b"preserved SHM evidence")
+
+        ScratchDirStore._instance = None
+        recovered = ScratchDirStore.instance()
+
+        assert recovered.get("u", "c", "a", "r") is None
+        quarantined = list(metadata_dir.glob("scratchdirs.sqlite3.corrupt-*"))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_bytes() == bytes(corrupted)
+        quarantined_wal = list(
+            metadata_dir.glob("scratchdirs.sqlite3-wal.corrupt-*"))
+        quarantined_shm = list(
+            metadata_dir.glob("scratchdirs.sqlite3-shm.corrupt-*"))
+        assert [item.read_bytes() for item in quarantined_wal] == [
+            b"preserved WAL evidence"]
+        assert [item.read_bytes() for item in quarantined_shm] == [
+            b"preserved SHM evidence"]
+        with sqlite3.connect(database) as connection:
+            assert connection.execute("PRAGMA quick_check").fetchall() == [("ok",)]
+        assert "quarantined corrupt ephemeral ScratchDir metadata" in caplog.text
+    finally:
+        ScratchDirStore._instance = None
+
+
+def test_handler_opens_scratchdir_store_only_when_executed(monkeypatch):
+    attempts = []
+
+    class BrokenManager:
+        def __init__(self, service):
+            attempts.append(service)
+            raise sqlite3.DatabaseError("unsupported file format")
+
+    monkeypatch.setattr(
+        scratchdir_manager_module, "ScratchDirManager", BrokenManager)
+    service = object()
+    handler = ScratchDirHandler()
+
+    handler.set_fs_service(service)
+
+    assert attempts == []
+    assert handler.parameters_schema["required"] == ["action"]
+    handler.set_user_id("u")
+    handler.set_conversation_id("c")
+    handler.set_agent_name("a")
+    result = handler.execute({"action": "status"})
+    assert attempts == [service]
+    assert "scratchdir_unavailable" in result
+    assert "unsupported file format" in result

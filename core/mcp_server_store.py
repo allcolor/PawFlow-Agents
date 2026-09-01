@@ -154,6 +154,9 @@ class MCPServerStore:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 5000")
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = FULL")
+        connection.execute("PRAGMA cell_size_check = ON")
         return connection
 
     def _preflight(self) -> None:

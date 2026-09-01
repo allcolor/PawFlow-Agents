@@ -32,7 +32,11 @@ Published-server configuration and hashed API keys are stored in
 `data/system/mcp_servers.sqlite3`. PawFlow runs `PRAGMA quick_check` before any
 schema initialization or migration. If SQLite cannot open the database, or the
 check reports corruption, the published-MCP store becomes unavailable for the
-rest of that server process:
+rest of that server process. Healthy connections use WAL journaling,
+`synchronous=FULL`, and `cell_size_check=ON`; WAL keeps commit-time page writes
+in the log, but is a mitigation rather than proof of the physical corruption
+source. See [SQLite corruption diagnostics](SQLITE_CORRUPTION_DIAGNOSTICS.md)
+for the opt-in, fail-fast bootstrap canary:
 
 - MCP authentication fails closed and publication-management actions return
   HTTP 503;

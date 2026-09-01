@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 import time
@@ -16,6 +17,16 @@ from core.scratchdir_models import (
     validate_quotas,
     validate_ttl,
 )
+
+_CORRUPTION_MARKERS = (
+    "unsupported file format",
+    "file is not a database",
+    "database disk image is malformed",
+    "malformed database schema",
+    "quick_check failed",
+)
+
+logger = logging.getLogger(__name__)
 
 
 class ScratchDirStore:
@@ -34,7 +45,18 @@ class ScratchDirStore:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._initialize()
+        try:
+            self._initialize()
+        except sqlite3.DatabaseError as exc:
+            if not self._is_corruption(exc):
+                raise
+            quarantined = self._quarantine_corrupt_database()
+            logger.critical(
+                "quarantined corrupt ephemeral ScratchDir metadata at %s; "
+                "a fresh store will be created. reason=%s: %s",
+                quarantined, type(exc).__name__, exc,
+            )
+            self._initialize()
 
     @property
     def _database_path(self):
@@ -45,9 +67,57 @@ class ScratchDirStore:
         connection = sqlite3.connect(self._database_path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 5000")
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = FULL")
+        connection.execute("PRAGMA cell_size_check = ON")
         return connection
 
+    @staticmethod
+    def _is_corruption(exc: sqlite3.DatabaseError) -> bool:
+        lowered = str(exc).lower()
+        return any(marker in lowered for marker in _CORRUPTION_MARKERS)
+
+    def _quarantine_corrupt_database(self):
+        database = self._database_path
+        suffix = f".corrupt-{time.time_ns()}"
+        quarantined = database.with_name(database.name + suffix)
+        for artifact in (
+            database.with_name(database.name + "-wal"),
+            database.with_name(database.name + "-shm"),
+            database,
+        ):
+            if not artifact.exists():
+                continue
+            target = artifact.with_name(artifact.name + suffix)
+            artifact.rename(target)
+            if artifact == database:
+                quarantined = target
+        return quarantined
+
+    def _preflight(self) -> None:
+        database = self._database_path
+        if not database.exists():
+            return
+        connection = sqlite3.connect(
+            database.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
+        try:
+            self._quick_check(connection)
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _quick_check(connection: sqlite3.Connection) -> None:
+        results = [
+            str(row[0])
+            for row in connection.execute("PRAGMA quick_check").fetchall()
+        ]
+        if results != ["ok"]:
+            raise sqlite3.DatabaseError(
+                "ScratchDir store quick_check failed: "
+                + "; ".join(results[:10]))
+
     def _initialize(self) -> None:
+        self._preflight()
         with self._lock, self._connect() as connection:
             connection.executescript(
                 """
@@ -80,6 +150,7 @@ class ScratchDirStore:
                     ON scratchdirs (id);
                 """
             )
+            self._quick_check(connection)
 
     @staticmethod
     def _record(row: sqlite3.Row) -> ScratchDirRecord:

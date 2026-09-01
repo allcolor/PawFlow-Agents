@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any
 
 from core.scratchdir_models import MAX_TTL_HOURS, ScratchDirError
@@ -17,6 +18,7 @@ class ScratchDirHandler(ToolHandler):
         self._conversation_id = ""
         self._agent_name = ""
         self._manager = None
+        self._fs_service = None
 
     @property
     def name(self) -> str:
@@ -71,23 +73,23 @@ class ScratchDirHandler(ToolHandler):
         self._manager = manager
 
     def set_fs_service(self, service) -> None:
-        if service is None:
-            self._manager = None
-            return
-        from core.scratchdir_manager import ScratchDirManager
-        self._manager = ScratchDirManager(service)
+        self._fs_service = service
+        self._manager = None
 
     def execute(self, arguments: dict[str, Any]) -> str:
         if not self._user_id or not self._conversation_id or not self._agent_name:
             return (
                 "Error [scratchdir_context_missing]: user_id, conversation_id "
                 "and agent_name are required")
-        if self._manager is None:
-            return (
-                "Error [scratchdir_unavailable]: ScratchDir lifecycle is not "
-                "available for the current relay")
         action = str(arguments.get("action") or "").strip()
         try:
+            if self._manager is None:
+                if self._fs_service is None:
+                    return (
+                        "Error [scratchdir_unavailable]: ScratchDir lifecycle "
+                        "is not available for the current relay")
+                from core.scratchdir_manager import ScratchDirManager
+                self._manager = ScratchDirManager(self._fs_service)
             value = self._manager.execute(
                 action=action,
                 user_id=self._user_id,
@@ -98,5 +100,7 @@ class ScratchDirHandler(ToolHandler):
             return json.dumps(value, ensure_ascii=False, sort_keys=True)
         except ScratchDirError as exc:
             return f"Error [{exc.code}]: {exc}"
+        except sqlite3.DatabaseError as exc:
+            return f"Error [scratchdir_unavailable]: {exc}"
         except (TypeError, ValueError) as exc:
             return f"Error [scratchdir_invalid_request]: {exc}"

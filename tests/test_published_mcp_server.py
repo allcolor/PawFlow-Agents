@@ -38,6 +38,21 @@ def _corrupt_sqlite_schema_format(database: Path) -> bytes:
     return bytes(content)
 
 
+def test_existing_delete_journal_store_migrates_to_wal(tmp_path):
+    database = tmp_path / "published.sqlite3"
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+        connection.execute("CREATE TABLE legacy_probe (value TEXT)")
+
+    store = MCPServerStore(database)
+
+    assert store.available is True
+    with store._connect() as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
+        assert connection.execute("PRAGMA cell_size_check").fetchone()[0] == 1
+
+
 def test_corrupt_store_is_preserved_and_mcp_fails_closed(tmp_path, caplog):
     database = tmp_path / "published.sqlite3"
     healthy = MCPServerStore(database)

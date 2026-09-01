@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_exposure(conversation_id: str, agent_name: str,
-                     service_config: dict, is_cli_provider: bool) -> tuple:
+                     service_config: dict, _is_cli_provider: bool) -> tuple:
     """Return ``(resolved_mode, agent_override)`` for this turn.
 
     The agent's own setting wins, then the llmConnection default, then ``api``
@@ -32,17 +32,9 @@ def resolve_exposure(conversation_id: str, agent_name: str,
                      exc_info=True)
     mode = resolve_mode(agent_override, (service_config or {}).get(
         "tool_exposure"))
-    # CLI providers do not reach their tools through tool_defs at all: they go
-    # through the stdio MCP bridge, which advertises exactly get_tool_schema +
-    # use_tool (tools/mcp_bridge.py). Honouring another mode there means
-    # changing the bridge, so refuse it loudly rather than letting the setting
-    # look applied while nothing changes.
-    if is_cli_provider and mode != "api":
-        logger.warning(
-            "[context:%s] tool_exposure=%s ignored: CLI providers reach tools "
-            "through the MCP bridge, which only advertises get_tool_schema + "
-            "use_tool", (conversation_id or "")[:8], mode)
-        mode = "api"
+    # CLI providers consume the same resolved value through ToolRelayService;
+    # their stdio bridge asks that server for the exact MCP surface. Keep the
+    # argument for the shared caller signature, but never rewrite the mode.
     return mode, agent_override
 
 

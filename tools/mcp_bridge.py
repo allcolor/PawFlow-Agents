@@ -2,7 +2,7 @@
 """MCP Bridge — connects Claude Code to PawFlow tools via WebSocket relay.
 
 Dual role:
-  - MCP stdio server (for Claude Code) — exposes get_tool_schema + use_tool
+  - MCP stdio server — exposes the agent's configured PawFlow tool surface
   - WebSocket client (to PawFlow server) — executes tools via tool relay
 
 Same pattern as the filesystem relay: connects to PawFlow server via
@@ -34,9 +34,8 @@ TOOL_RELAY_RETRY_ATTEMPTS = 5
 TOOL_RELAY_RETRY_DELAY_SECONDS = 5.0
 
 # Aliases for tool names a model may invent. Applied both to use_tool's
-# `tool_name` and to direct (non-wrapper) MCP calls, which are rerouted through
-# use_tool. We expose ONLY use_tool + get_tool_schema as MCP tools — these are
-# name aliases, NOT additional exposed tools.
+# `tool_name` and to direct MCP calls. These are name aliases, not additional
+# tools in the advertised surface.
 _BRIDGE_TOOL_ALIASES = {
     "run_command": "bash", "shell": "bash", "execute": "bash",
     "run": "bash", "terminal": "bash", "exec": "bash",
@@ -381,42 +380,9 @@ def _log(msg):
         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
-def main():
-    relay_url = os.environ.get("PAWFLOW_TOOL_RELAY_URL", "")
-    relay_token = os.environ.get("PAWFLOW_TOOL_RELAY_TOKEN", "")
-    internal_token = os.environ.get("PAWFLOW_INTERNAL_TOKEN", "")
-    user_id = os.environ.get("PAWFLOW_USER_ID", "")
-    conv_id = os.environ.get("PAWFLOW_CONVERSATION_ID", "")
-    agent_name = os.environ.get("PAWFLOW_AGENT_NAME", "")
-
-    # Log presence (NOT value) of every PawFlow env var at boot — the
-    # codex / gemini MCP integrations have a history of dropping `env =
-    # {...}` from config.toml / settings.json silently when the bridge
-    # subprocess inherits an empty env. With this log we can confirm at
-    # a glance whether codex actually forwarded the env table or not.
-    _log(f"env-check: relay_url={'set' if relay_url else 'MISSING'} "
-         f"relay_token={'set' if relay_token else 'MISSING'} "
-         f"internal_token={'set' if internal_token else 'MISSING'} "
-         f"user_id={user_id or 'MISSING'} conv_id={conv_id or 'MISSING'} "
-         f"agent={agent_name or 'MISSING'}")
-    _log(f"Starting MCP bridge: relay={relay_url}, user={user_id}, "
-         f"conv={conv_id}, agent={agent_name}")
-
-    # Connect to PawFlow tool relay
-    client = None
-    if relay_url and relay_token:
-        try:
-            client = ToolRelayClient(
-                relay_url, relay_token, user_id, conv_id, agent_name)
-            client.connect()
-        except Exception as e:
-            _log(f"Failed to connect to tool relay: {e}")
-            client = None
-    else:
-        _log("No PAWFLOW_TOOL_RELAY_URL/TOKEN — tools unavailable")
-
-    # MCP tools: get_tool_schema + use_tool (same lazy tools pattern)
-    mcp_tools = [
+def _api_mcp_tools() -> list:
+    """The narrow fail-closed surface used until the relay can answer."""
+    return [
         {
             "name": "get_tool_schema",
             "description": (
@@ -475,7 +441,65 @@ def main():
         },
     ]
 
-    _log(f"MCP bridge ready: {len(mcp_tools)} tools, "
+
+def _load_mcp_surface(relay_client) -> dict:
+    """Ask the server for the exact mode-dependent MCP surface."""
+    fallback = {"mode": "api", "tools": _api_mcp_tools()}
+    if not relay_client:
+        return fallback
+    try:
+        surface = relay_client.request("list_exposed_tools")
+    except Exception as exc:
+        _log(f"Failed to load MCP surface: {exc}")
+        return fallback
+    if (not isinstance(surface, dict)
+            or not isinstance(surface.get("tools"), list)
+            or not surface.get("mode")):
+        _log(f"Invalid MCP surface from relay: {str(surface)[:200]}")
+        return fallback
+    return surface
+
+
+def main():
+    relay_url = os.environ.get("PAWFLOW_TOOL_RELAY_URL", "")
+    relay_token = os.environ.get("PAWFLOW_TOOL_RELAY_TOKEN", "")
+    internal_token = os.environ.get("PAWFLOW_INTERNAL_TOKEN", "")
+    user_id = os.environ.get("PAWFLOW_USER_ID", "")
+    conv_id = os.environ.get("PAWFLOW_CONVERSATION_ID", "")
+    agent_name = os.environ.get("PAWFLOW_AGENT_NAME", "")
+
+    # Log presence (NOT value) of every PawFlow env var at boot — the
+    # codex / gemini MCP integrations have a history of dropping `env =
+    # {...}` from config.toml / settings.json silently when the bridge
+    # subprocess inherits an empty env. With this log we can confirm at
+    # a glance whether codex actually forwarded the env table or not.
+    _log(f"env-check: relay_url={'set' if relay_url else 'MISSING'} "
+         f"relay_token={'set' if relay_token else 'MISSING'} "
+         f"internal_token={'set' if internal_token else 'MISSING'} "
+         f"user_id={user_id or 'MISSING'} conv_id={conv_id or 'MISSING'} "
+         f"agent={agent_name or 'MISSING'}")
+    _log(f"Starting MCP bridge: relay={relay_url}, user={user_id}, "
+         f"conv={conv_id}, agent={agent_name}")
+
+    # Connect to PawFlow tool relay
+    client = None
+    if relay_url and relay_token:
+        try:
+            client = ToolRelayClient(
+                relay_url, relay_token, user_id, conv_id, agent_name)
+            client.connect()
+        except Exception as e:
+            _log(f"Failed to connect to tool relay: {e}")
+            client = None
+    else:
+        _log("No PAWFLOW_TOOL_RELAY_URL/TOKEN — tools unavailable")
+
+    # MCP tools: get_tool_schema + use_tool in api modes, direct schemas in full.
+    mcp_surface = _load_mcp_surface(client)
+    mcp_tools = mcp_surface["tools"]
+
+    _log(f"MCP bridge ready: mode={mcp_surface['mode']} "
+         f"tools={len(mcp_tools)}, "
          f"relay={'connected' if client else 'unavailable'}")
 
     def _ensure_relay_client():
@@ -537,19 +561,20 @@ def main():
                     break
             else:
                 break
-        # Direct (non-wrapper) MCP call to an aliased name: we expose only
-        # use_tool + get_tool_schema, so a model that calls e.g. `image` as a
-        # top-level MCP tool would otherwise hit "unknown tool". Reroute it
-        # through use_tool with the canonical name — purely an alias, no extra
-        # tool is exposed in tools/list.
+        # In api mode, preserve the historical direct-alias recovery by routing
+        # it through use_tool. In full mode aliases stay direct calls.
         if name not in ("use_tool", "get_tool_schema"):
             _canon = (_BRIDGE_TOOL_ALIASES.get(name)
                       or _BRIDGE_TOOL_ALIASES.get(str(name).lower()))
             if _canon:
-                _log(f"DIRECT alias: {name}(...) -> use_tool(tool_name={_canon})")
-                args = {"tool_name": _canon,
-                        "arguments": args if isinstance(args, dict) else {}}
-                name = "use_tool"
+                if str(mcp_surface.get("mode", "api")).startswith("full"):
+                    _log(f"DIRECT alias: {name}(...) -> {_canon}(...)")
+                    name = _canon
+                else:
+                    _log(f"DIRECT alias: {name}(...) -> use_tool(tool_name={_canon})")
+                    args = {"tool_name": _canon,
+                            "arguments": args if isinstance(args, dict) else {}}
+                    name = "use_tool"
 
         _log(f"CALL {name}({json.dumps(args)[:300]})")
 
@@ -664,6 +689,14 @@ def main():
                                 arguments=tool_args)
                         if result is None or result == "":
                             result = "(no output)"
+        elif str(mcp_surface.get("mode", "api")).startswith("full"):
+            if not isinstance(args, dict):
+                result = f"Error: arguments for {name} must be a JSON object"
+            else:
+                result = relay_client.request(
+                    "execute_tool", tool_name=name, arguments=args)
+                if result is None or result == "":
+                    result = "(no output)"
         else:
             result = f"Error: unknown tool '{name}'"
 
@@ -719,6 +752,8 @@ def main():
         elif method == "notifications/initialized":
             _log("MCP initialized")
         elif method == "tools/list":
+            mcp_surface = _load_mcp_surface(_ensure_relay_client())
+            mcp_tools = mcp_surface["tools"]
             _respond(req_id, {"tools": mcp_tools})
         elif method == "tools/call":
             def _run_tool_call():

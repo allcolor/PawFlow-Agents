@@ -309,15 +309,42 @@ class _ToolRelayToolsMixin:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 
-    def _handle_list_tools(self, request_id: str,
-                           user_id: str, conversation_id: str) -> dict:
-        registry = self._get_registry(user_id, conversation_id)
+    @staticmethod
+    def _mcp_definition(handler) -> dict:
+        try:
+            from core.handlers.meta_tools import _schema_with_local
+            schema = _schema_with_local(handler)
+        except Exception:
+            schema = handler.parameters_schema
+        return {
+            "name": handler.name,
+            "description": handler.description or "",
+            "inputSchema": schema,
+        }
+
+    def _visible_exposure_handlers(self, user_id: str, conversation_id: str,
+                                   agent_name: str):
+        registry = self._get_registry(user_id, conversation_id, agent_name)
         from core.workflow_tool_scope import workflow_tool_visible_names
         visible = workflow_tool_visible_names(conversation_id)
-        tools = []
-        for h in registry.list_tools():
-            if visible is not None and h.name not in visible:
+        mode = self._active_tool_exposure(
+            user_id, conversation_id, agent_name)
+        from core.tool_exposure import is_read_only_tool, is_readonly_mode
+        handlers = []
+        for handler in registry.list_tools():
+            if visible is not None and handler.name not in visible:
                 continue
+            if is_readonly_mode(mode) and not is_read_only_tool(handler.name):
+                continue
+            handlers.append(handler)
+        return registry, mode, handlers
+
+    def _handle_list_tools(self, request_id: str, user_id: str,
+                           conversation_id: str, agent_name: str = "") -> dict:
+        _registry, _mode, handlers = self._visible_exposure_handlers(
+            user_id, conversation_id, agent_name)
+        tools = []
+        for h in handlers:
             tools.append({
                 "name": h.name,
                 "display_name": h.display_name,
@@ -325,10 +352,39 @@ class _ToolRelayToolsMixin:
             })
         return {"type": "result", "request_id": request_id, "data": tools}
 
+    def _handle_list_exposed_tools(self, request_id: str, user_id: str,
+                                   conversation_id: str,
+                                   agent_name: str = "") -> dict:
+        """Return the exact MCP tools/list surface for one CLI agent."""
+        registry, mode, handlers = self._visible_exposure_handlers(
+            user_id, conversation_id, agent_name)
+        from core.tool_exposure import is_full_mode
+        if is_full_mode(mode):
+            meta_names = {"get_tool_schema", "use_tool"}
+            tools = [
+                self._mcp_definition(handler)
+                for handler in handlers if handler.name not in meta_names
+            ]
+        else:
+            from core.handlers.meta_tools import (
+                GetToolSchemaHandler, UseToolHandler)
+            tools = [
+                self._mcp_definition(handler)
+                for handler in (
+                    GetToolSchemaHandler(registry), UseToolHandler(registry))
+            ]
+        return {
+            "type": "result",
+            "request_id": request_id,
+            "data": {"mode": mode, "tools": tools},
+        }
+
     def _handle_get_schema(self, request_id: str, tool_name: str,
                            user_id: str = "",
-                           conversation_id: str = "") -> dict:
-        registry = self._get_registry(user_id, conversation_id)
+                           conversation_id: str = "",
+                           agent_name: str = "") -> dict:
+        registry = self._get_registry(
+            user_id, conversation_id, agent_name)
         from core.workflow_tool_scope import workflow_tool_visible_names
         visible = workflow_tool_visible_names(conversation_id)
         if visible is not None and tool_name not in visible:
@@ -336,9 +392,21 @@ class _ToolRelayToolsMixin:
                 "type": "error", "request_id": request_id,
                 "error": f"Tool '{tool_name}' is not allowed in this workflow phase",
             }
+        mode = self._active_tool_exposure(
+            user_id, conversation_id, agent_name)
+        from core.tool_exposure import is_read_only_tool, is_readonly_mode
+        if is_readonly_mode(mode) and not is_read_only_tool(tool_name):
+            return {
+                "type": "error", "request_id": request_id,
+                "error": (
+                    f"Tool '{tool_name}' is not available in read-only "
+                    f"tool exposure mode '{mode}'"),
+            }
         handler = registry.get(tool_name)
         if not handler:
-            available = [h.name for h in registry.list_tools()]
+            _registry, _mode, handlers = self._visible_exposure_handlers(
+                user_id, conversation_id, agent_name)
+            available = [h.name for h in handlers]
             return {"type": "error", "request_id": request_id,
                     "error": f"Unknown tool '{tool_name}'. Available: {', '.join(available)}"}
         try:

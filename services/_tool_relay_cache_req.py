@@ -631,11 +631,16 @@ class _ToolRelayCacheReqMixin:
         dispatch_started_at = time.perf_counter()
 
         if method == "list_tools":
-            return self._handle_list_tools(request_id, user_id, conversation_id)
+            return self._handle_list_tools(
+                request_id, user_id, conversation_id, agent_name)
+        elif method == "list_exposed_tools":
+            return self._handle_list_exposed_tools(
+                request_id, user_id, conversation_id, agent_name)
         elif method == "get_tool_schema":
             return self._handle_get_schema(request_id, msg.get("tool_name", ""),
                                            user_id=user_id,
-                                           conversation_id=conversation_id)
+                                           conversation_id=conversation_id,
+                                           agent_name=agent_name)
         elif method == "execute_tool":
             _raw_args = msg.get("arguments", {})
             _tool = msg.get("tool_name", "")
@@ -733,3 +738,27 @@ class _ToolRelayCacheReqMixin:
         value = (getattr(sdef, "config", {}) or {}).get("tool_result_max_chars", 0)
         max_chars = int(value or 0)
         return max_chars if max_chars > 0 else None
+
+    @classmethod
+    def _active_tool_exposure(cls, user_id: str, conversation_id: str,
+                              agent_name: str) -> str:
+        """Resolve the bridge surface from agent override then LLM service."""
+        from core.tool_exposure import resolve_mode
+
+        conv_id = cls._root_conversation_id(conversation_id)
+        if not (conv_id and agent_name):
+            return resolve_mode("", "")
+        from core.conv_agent_config import get_agent_config
+        cfg = get_agent_config(conv_id, agent_name) or {}
+        service_config = {}
+        llm_service = str(cfg.get("llm_service") or "").strip()
+        if llm_service and user_id:
+            from core.service_registry import ServiceRegistry
+            sdef = ServiceRegistry.get_instance().resolve_definition(
+                llm_service, user_id=user_id, conv_id=conv_id)
+            if sdef:
+                service_config = getattr(sdef, "config", {}) or {}
+        return resolve_mode(
+            cfg.get("tool_exposure", ""),
+            service_config.get("tool_exposure", ""),
+        )

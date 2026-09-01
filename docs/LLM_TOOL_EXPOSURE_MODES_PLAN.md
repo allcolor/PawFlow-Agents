@@ -168,19 +168,18 @@ So what shipped is the **mode** at both levels; *which* tools exist stays with
 already allowed. MCP publications keep their own `tool_allowlist` because they
 have no access to conversation filters.
 
-### CLI providers cannot honour the mode yet, and say so
+### CLI providers use the same four modes
 
-`tools/mcp_bridge.py` hardcodes the two meta tools for CLI providers: they do
-not receive `tool_defs` at all, they talk to a stdio MCP bridge. Honouring
-`full` there means changing the bridge, which is its own piece of work.
+`tools/mcp_bridge.py` obtains its exact `tools/list` surface from
+`ToolRelayService`. `api` modes expose the two meta tools; `full` modes expose
+the agent-filtered tools and their complete schemas directly. The relay resolves
+the agent override over the linked LLM-service default, carries `agent_name`
+through discovery and schema requests, and enforces readonly again at execution
+so a forged call cannot bypass the advertised surface. This single path covers
+Codex, Claude Code, Gemini/Antigravity, and every other CLI using the bridge.
 
-Rather than let the setting look applied while nothing changes,
-`tasks/ai/_agentctx_p3.py` forces `api` for CLI providers and logs a warning
-naming the ignored mode. That also means the prompt-contradiction risk flagged
-as WP3 does not arise yet: the two hardcoded blocks (CRITICAL TOOL RULES in
-`_agentctx_p3.py`, the Bootstrap Contract in `cli_shared.py`) sit on CLI paths
-where "only get_tool_schema + use_tool" is still true. They must be revisited
-in the same change that teaches the bridge about modes.
+The shared CLI prompts describe both possible shapes and tell the model to
+follow the tools actually advertised by the `pawflow` MCP server.
 
 ### What shipped
 
@@ -194,3 +193,4 @@ in the same change that teaches the bridge about modes.
 | UI | agent dialog select in `tasks/io/chat_ui/resources_menus.js` + en/fr/es labels; the service dialog is generated from the parameter schema, so it needed no UI change |
 | Server-side validation | `tasks/ai/actions/_agentres_k5.py` — the field allowlist plus a mode check, since an unknown value would otherwise be silently dropped |
 | Tests | `tests/test_tool_exposure.py` (25) |
+| CLI bridge parity | Server-resolved dynamic surface plus readonly execution guard in `ToolRelayService` and `tools/mcp_bridge.py` |

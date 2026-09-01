@@ -129,3 +129,228 @@ class TestSettingIsDeclaredAtBothLevels:
         assert AGENT_CONFIG_DEFAULTS["tool_exposure"] == ""
         assert resolve_mode(
             AGENT_CONFIG_DEFAULTS["tool_exposure"], "full") == "full"
+
+
+class _Handler:
+    def __init__(self, name):
+        self.name = name
+        self.display_name = name.title()
+        self.description = f"{name} description"
+        self.parameters_schema = {
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+        }
+
+
+class _Registry:
+    def __init__(self, include_meta=False):
+        self.handlers = {
+            "read": _Handler("read"),
+            "write": _Handler("write"),
+        }
+        if include_meta:
+            self.handlers.update({
+                "get_tool_schema": _Handler("get_tool_schema"),
+                "use_tool": _Handler("use_tool"),
+            })
+
+    def list_tools(self):
+        return list(self.handlers.values())
+
+    def get(self, name):
+        return self.handlers.get(name)
+
+
+class TestCliBridgeExposure:
+
+    def test_cli_provider_keeps_the_resolved_mode(self, monkeypatch):
+        from tasks.ai._agentctx_tools import resolve_exposure
+
+        monkeypatch.setattr(
+            "core.conv_agent_config.get_agent_config",
+            lambda *_args: {"tool_exposure": "full"},
+        )
+
+        assert resolve_exposure("conv", "assistant", {}, True) == (
+            "full", "full")
+
+    def test_server_resolves_service_default_and_agent_override(self, monkeypatch):
+        from services.tool_relay_service import ToolRelayService
+
+        class _ServiceRegistry:
+            @staticmethod
+            def resolve_definition(service_id, user_id="", conv_id=""):
+                assert (service_id, user_id, conv_id) == (
+                    "llm", "user", "conv")
+                return type("ServiceDef", (), {
+                    "config": {"tool_exposure": "full_readonly"},
+                })()
+
+        configs = [{"llm_service": "llm"}, {
+            "llm_service": "llm", "tool_exposure": "api_readonly"}]
+        monkeypatch.setattr(
+            "core.conv_agent_config.get_agent_config",
+            lambda *_args: configs.pop(0),
+        )
+        monkeypatch.setattr(
+            "core.service_registry.ServiceRegistry.get_instance",
+            lambda: _ServiceRegistry(),
+        )
+
+        service = ToolRelayService({})
+        assert service._active_tool_exposure(
+            "user", "conv", "assistant") == "full_readonly"
+        assert service._active_tool_exposure(
+            "user", "conv", "assistant") == "api_readonly"
+
+    @pytest.mark.parametrize(("mode", "expected"), [
+        ("api", ["get_tool_schema", "use_tool"]),
+        ("api_readonly", ["get_tool_schema", "use_tool"]),
+        ("full", ["read", "write"]),
+        ("full_readonly", ["read"]),
+    ])
+    def test_server_builds_the_exact_cli_surface(
+            self, monkeypatch, mode, expected):
+        from services.tool_relay_service import ToolRelayService
+
+        service = ToolRelayService({})
+        monkeypatch.setattr(
+            service, "_get_registry", lambda *_args: _Registry(include_meta=True))
+        monkeypatch.setattr(
+            service, "_active_tool_exposure", lambda *_args: mode,
+            raising=False)
+        monkeypatch.setattr(
+            "core.workflow_tool_scope.workflow_tool_visible_names",
+            lambda *_args: None)
+
+        response = service._handle_list_exposed_tools(
+            "request", "user", "conv", "assistant")
+
+        assert response["data"]["mode"] == mode
+        assert [tool["name"] for tool in response["data"]["tools"]] == expected
+        assert all("inputSchema" in tool for tool in response["data"]["tools"])
+
+    def test_discovery_uses_agent_registry_and_hides_writes_in_readonly(
+            self, monkeypatch):
+        from services.tool_relay_service import ToolRelayService
+
+        calls = []
+        service = ToolRelayService({})
+        monkeypatch.setattr(
+            service, "_get_registry",
+            lambda *args: calls.append(args) or _Registry())
+        monkeypatch.setattr(
+            service, "_active_tool_exposure",
+            lambda *_args: "api_readonly", raising=False)
+        monkeypatch.setattr(
+            "core.workflow_tool_scope.workflow_tool_visible_names",
+            lambda *_args: None)
+
+        response = service._handle_list_tools(
+            "request", "user", "conv", "assistant")
+
+        assert calls == [("user", "conv", "assistant")]
+        assert [tool["name"] for tool in response["data"]] == ["read"]
+
+    def test_schema_hides_write_tool_in_readonly(self, monkeypatch):
+        from services.tool_relay_service import ToolRelayService
+
+        service = ToolRelayService({})
+        monkeypatch.setattr(
+            service, "_get_registry", lambda *_args: _Registry())
+        monkeypatch.setattr(
+            service, "_active_tool_exposure",
+            lambda *_args: "full_readonly", raising=False)
+        monkeypatch.setattr(
+            "core.workflow_tool_scope.workflow_tool_visible_names",
+            lambda *_args: None)
+
+        response = service._handle_get_schema(
+            "request", "write", "user", "conv", "assistant")
+
+        assert response["type"] == "error"
+        assert "read-only" in response["error"]
+
+    def test_execute_rejects_forged_write_in_readonly(self, monkeypatch):
+        from services.tool_relay_service import ToolRelayService
+
+        executed = []
+        service = ToolRelayService({})
+        monkeypatch.setattr(
+            service, "_active_tool_exposure",
+            lambda *_args: "full_readonly", raising=False)
+        monkeypatch.setattr(
+            service, "_do_execute",
+            lambda *_args, **_kwargs: executed.append(True) or {
+                "type": "result", "request_id": "request", "data": "ran"})
+
+        response = service._handle_execute(
+            "request", "write", {}, "user", "conv", "assistant")
+
+        assert response["data"].startswith("Error:")
+        assert "tool_exposure=full_readonly" in response["data"]
+        assert executed == []
+
+    def test_hook_cannot_replace_read_with_write_in_readonly(self, monkeypatch):
+        from services.tool_relay_service import ToolRelayService
+
+        class _HookRunner:
+            def __init__(self, **_kwargs):
+                pass
+
+            @staticmethod
+            def run(*_args, **_kwargs):
+                return {
+                    "decision": "replace",
+                    "payload": {"tool_name": "write", "arguments": {}},
+                }
+
+        service = ToolRelayService({})
+        monkeypatch.setattr(
+            service, "_active_tool_exposure",
+            lambda *_args: "full_readonly", raising=False)
+        monkeypatch.setattr(
+            service, "_get_registry", lambda *_args: _Registry())
+        monkeypatch.setattr(
+            service, "_conversation_has_hooks", lambda *_args: True)
+        monkeypatch.setattr(
+            service, "_publish_code_mode_call", lambda *_args: "")
+        monkeypatch.setattr("core.agent_hooks.AgentHookRunner", _HookRunner)
+
+        response = service._handle_execute(
+            "request", "read", {}, "user", "conv", "assistant")
+
+        assert response["data"].startswith("Error:")
+        assert "tool 'write'" in response["data"]
+        assert "tool_exposure=full_readonly" in response["data"]
+
+    def test_bridge_loads_its_surface_from_the_relay(self):
+        from tools import mcp_bridge
+
+        expected = {
+            "mode": "full",
+            "tools": [{
+                "name": "read",
+                "description": "Read",
+                "inputSchema": {"type": "object", "properties": {}},
+            }],
+        }
+
+        class _Client:
+            def __init__(self):
+                self.calls = []
+
+            def request(self, method):
+                self.calls.append(method)
+                return expected
+
+        client = _Client()
+        assert mcp_bridge._load_mcp_surface(client) == expected
+        assert client.calls == ["list_exposed_tools"]
+
+    def test_shared_cli_prompt_describes_both_shapes(self):
+        from core.agent_prompt_policy import CLI_MCP_SYSTEM_PROMPT
+
+        assert "get_tool_schema" in CLI_MCP_SYSTEM_PROMPT
+        assert "directly advertised" in CLI_MCP_SYSTEM_PROMPT
+        assert "Follow the tool surface advertised" in CLI_MCP_SYSTEM_PROMPT

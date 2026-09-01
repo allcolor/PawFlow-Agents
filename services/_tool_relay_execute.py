@@ -118,6 +118,29 @@ class _ToolRelayExecuteMixin:
                 "data": f"Error: {exc}",
             }
 
+        try:
+            exposure_mode = self._active_tool_exposure(
+                user_id, conversation_id, agent_name)
+            from core.tool_exposure import is_read_only_tool, is_readonly_mode
+            exposure_denied = (
+                is_readonly_mode(exposure_mode)
+                and not is_read_only_tool(tool_name))
+        except Exception as exc:
+            logger.error(
+                "Tool exposure check failed; denying relay tool: %s", exc,
+                exc_info=True)
+            return {
+                "type": "result", "request_id": request_id,
+                "data": "Error: tool exposure check failed; denied for safety.",
+            }
+        if exposure_denied:
+            return {
+                "type": "result", "request_id": request_id,
+                "data": (
+                    f"Error: tool '{tool_name}' is not allowed by "
+                    f"tool_exposure={exposure_mode}."),
+            }
+
         def _record_workflow_result(result):
             if workflow_call_name:
                 from core.workflow_tool_scope import record_workflow_tool_result
@@ -557,6 +580,20 @@ class _ToolRelayExecuteMixin:
         # Tool Approval Gate — reads permission_mode from conversation
         # For task sub-conversations (conv::task::tid), inherit parent's permissions
         try:
+            # A pre-tool hook may replace a read tool with a write tool. Reapply
+            # the exposure boundary after replacement. This lives inside the
+            # fail-closed approval block so a store/config failure also denies.
+            from core.tool_exposure import is_read_only_tool, is_readonly_mode
+            exposure_mode = self._active_tool_exposure(
+                user_id, conversation_id, agent_name)
+            if (is_readonly_mode(exposure_mode)
+                    and not is_read_only_tool(tool_name)):
+                return {
+                    "type": "result", "request_id": request_id,
+                    "data": (
+                        f"Error: tool '{tool_name}' is not allowed by "
+                        f"tool_exposure={exposure_mode}."),
+                }
             approval_started = time.perf_counter()
             _perm_mode = "default"
             _tool_perm = ""

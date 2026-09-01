@@ -352,6 +352,10 @@ class _PACPhase3Mixin:
         # real windows are a hard cap when known, but do not override a
         # smaller PawFlow budget.
         st._svc_cfg = (getattr(st.resolved_svc, 'config', {}) or {})
+        from tasks.ai._agentctx_tools import build_tool_defs, resolve_exposure
+        st._tool_exposure, st._agent_tool_exposure = resolve_exposure(
+            st.conversation_id or "", st._active_agent_name or "",
+            st._svc_cfg, getattr(st, "_is_cli_provider", False))
         st._svc_max = int(st._svc_cfg.get("max_context_size", 0) or 0)
         st._agent_max = int((st._selected_agent_def or {}).get("max_context_size", 0) or 0)
         st._task_max = int(self.config.get("max_context_size", 0) or 0)
@@ -422,16 +426,21 @@ class _PACPhase3Mixin:
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
+            from core.tool_exposure import is_full_mode
+            if is_full_mode(st._tool_exposure):
+                st._cli_tool_rules = (
+                    "\n- Use the tools directly advertised by the 'pawflow' "
+                    "MCP server. Do not assume get_tool_schema/use_tool exists.")
+            else:
+                st._cli_tool_rules = (
+                    "\n- Use the 'pawflow' MCP server's get_tool_schema and "
+                    "use_tool tools. Inspect a schema before execution.")
             st.system_prompt += (
                 "\n\nCRITICAL TOOL RULES:"
-                "\n- You MUST ONLY use MCP tools from the 'pawflow' server: "
-                "mcp__pawflow__get_tool_schema and mcp__pawflow__use_tool."
-                "\n- NEVER use built-in tools (Read, Write, Edit, Bash, Glob, "
+                + st._cli_tool_rules
+                + "\n- NEVER use built-in tools (Read, Write, Edit, Bash, Glob, "
                 "Grep, Agent, Task, ToolSearch, etc.) — they access the wrong "
                 "filesystem (server, not the user's machine)."
-                "\n- Call mcp__pawflow__get_tool_schema() first to discover "
-                "available tools, then mcp__pawflow__use_tool(tool_name, arguments) "
-                "to execute them."
                 "\n- For file operations use tools: read, write, edit, bash, glob, grep, etc. "
                 "Set the source/destination/relay parameter to the relay service name."
                 "\n- The user's files are ONLY accessible through the MCP pawflow tools."
@@ -448,11 +457,7 @@ class _PACPhase3Mixin:
 
         # How the tools are advertised. The mode decides the SHAPE of the
         # surface only; which tools exist was settled by tool_mcp_filters.
-        from tasks.ai._agentctx_tools import build_tool_defs, resolve_exposure
         from core.handlers.meta_tools import GetToolSchemaHandler, UseToolHandler
-        st._tool_exposure, st._agent_tool_exposure = resolve_exposure(
-            st.conversation_id or "", st._active_agent_name or "",
-            st._svc_cfg, getattr(st, "_is_cli_provider", False))
         st._gts = GetToolSchemaHandler(st.registry)
         st._ut = UseToolHandler(st.registry)
         st.registry.register(st._gts)

@@ -55,6 +55,7 @@ RUNTIME_TOOL_HIDDEN_IMPORTS = [
     "urllib.request",
     "uuid",
 ]
+RUNTIME_TOOL_COLLECT_SUBMODULES = ["pkg_resources._vendor"]
 
 
 def _run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None) -> None:
@@ -201,6 +202,8 @@ def build_binary(python: str, version: str) -> Path:
     ]
     for module in RUNTIME_TOOL_HIDDEN_IMPORTS:
         command[-1:-1] = ["--hidden-import", module]
+    for module in RUNTIME_TOOL_COLLECT_SUBMODULES:
+        command[-1:-1] = ["--collect-submodules", module]
     _run(command, env=env)
     if not exe_path.exists():
         raise RuntimeError(f"Relay binary was not produced: {exe_path}")

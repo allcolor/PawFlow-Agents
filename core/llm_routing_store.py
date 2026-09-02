@@ -19,6 +19,10 @@ from core.llm_routing_types import (
     HealthRecord,
     ResolvedServiceRef,
 )
+from core.sqlite_store_guard import (
+    SqliteStoreGuard,
+    is_corruption_error,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -138,16 +142,25 @@ class LLMRoutingStore:
         self.clock = clock
         self.event_retention = max(100, int(event_retention))
         self._lock = threading.RLock()
+        self._guard = SqliteStoreGuard("LLM routing")
+        self._guard.preflight(self.path)
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        with self._lock:
+        with self._guard.runtime(self.path), self._lock:
             self._conn.executescript(_SCHEMA)
             try:
                 self._conn.execute("PRAGMA journal_mode=WAL")
-            except sqlite3.DatabaseError:
+            except sqlite3.DatabaseError as exc:
+                if is_corruption_error(exc):
+                    raise
                 logger.debug("LLM routing WAL is unavailable", exc_info=True)
             self._conn.commit()
         self.cleanup()
+
+    @property
+    def available(self) -> bool:
+        """Return whether the store is safe to read or write."""
+        return self._guard.available
 
     def close(self) -> None:
         with self._lock:
@@ -168,7 +181,7 @@ class LLMRoutingStore:
             revision=row["revision"])
 
     def get_health(self, key: CandidateKey) -> HealthRecord:
-        with self._lock:
+        with self._guard.runtime(self.path), self._lock:
             row = self._conn.execute(
                 "SELECT * FROM router_health WHERE "
                 "router_scope=? AND router_scope_id=? AND router_service_id=? "
@@ -181,7 +194,7 @@ class LLMRoutingStore:
 
     def record_success(self, key: CandidateKey) -> HealthRecord:
         now = float(self.clock())
-        with self._lock, self._conn:
+        with self._guard.runtime(self.path), self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO router_health VALUES (?,?,?,?,?,?,?,?,'healthy',0,?,0,0,'',0,1,?) "
                 "ON CONFLICT(router_scope,router_scope_id,router_service_id,"
@@ -199,7 +212,7 @@ class LLMRoutingStore:
                        transient_threshold: int = 3) -> HealthRecord:
         now = float(self.clock())
         threshold = max(1, int(transient_threshold))
-        with self._lock, self._conn:
+        with self._guard.runtime(self.path), self._lock, self._conn:
             row = self._conn.execute(
                 "SELECT consecutive_failures FROM router_health WHERE "
                 "router_scope=? AND router_scope_id=? AND router_service_id=? "
@@ -236,7 +249,7 @@ class LLMRoutingStore:
         return self.get_health(key)
 
     def clear_health(self, key: CandidateKey) -> None:
-        with self._lock, self._conn:
+        with self._guard.runtime(self.path), self._lock, self._conn:
             self._conn.execute(
                 "DELETE FROM router_health WHERE "
                 "router_scope=? AND router_scope_id=? AND router_service_id=? "
@@ -245,7 +258,7 @@ class LLMRoutingStore:
 
     def next_counter(self, router_key: tuple[str, str, str]) -> int:
         now = float(self.clock())
-        with self._lock, self._conn:
+        with self._guard.runtime(self.path), self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO router_counters VALUES (?,?,?,1,?) "
                 "ON CONFLICT(router_scope,router_scope_id,router_service_id) "
@@ -258,7 +271,7 @@ class LLMRoutingStore:
         return int(row[0]) - 1
 
     def get_affinity(self, key: AffinityKey) -> Optional[AffinityRecord]:
-        with self._lock:
+        with self._guard.runtime(self.path), self._lock:
             row = self._conn.execute(
                 "SELECT * FROM router_affinity WHERE "
                 "router_scope=? AND router_scope_id=? AND router_service_id=? "
@@ -279,7 +292,7 @@ class LLMRoutingStore:
             record.child.scope, record.child.scope_id, record.child.service_id,
             record.child.definition_revision, int(record.successful_turns),
             float(record.last_selected_at), float(record.expires_at))
-        with self._lock, self._conn:
+        with self._guard.runtime(self.path), self._lock, self._conn:
             if expected_revision is None:
                 self._conn.execute(
                     "INSERT INTO router_affinity VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1) "
@@ -303,7 +316,7 @@ class LLMRoutingStore:
             return cursor.rowcount == 1
 
     def clear_affinity(self, key: AffinityKey) -> None:
-        with self._lock, self._conn:
+        with self._guard.runtime(self.path), self._lock, self._conn:
             self._conn.execute(
                 "DELETE FROM router_affinity WHERE router_scope=? "
                 "AND router_scope_id=? AND router_service_id=? AND user_id=? "
@@ -317,7 +330,7 @@ class LLMRoutingStore:
         now = float(self.clock())
         lease_id = str(uuid.uuid4())
         health_key = self.health_key_text(key)
-        with self._lock, self._conn:
+        with self._guard.runtime(self.path), self._lock, self._conn:
             self._conn.execute(
                 "DELETE FROM router_probe_leases WHERE health_key=? AND expires_at<=?",
                 (health_key, now))
@@ -330,7 +343,7 @@ class LLMRoutingStore:
         return lease_id
 
     def release_probe(self, key: CandidateKey, lease_id: str) -> bool:
-        with self._lock, self._conn:
+        with self._guard.runtime(self.path), self._lock, self._conn:
             cursor = self._conn.execute(
                 "DELETE FROM router_probe_leases WHERE health_key=? AND lease_id=?",
                 (self.health_key_text(key), str(lease_id or "")))
@@ -356,7 +369,7 @@ class LLMRoutingStore:
         uuid.UUID(event_id)
         timestamp = float(ts if ts is not None else self.clock())
         child_values = child.key if child else ("", "", "")
-        with self._lock, self._conn:
+        with self._guard.runtime(self.path), self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO router_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (event_id, timestamp, str(event_type), *router_key, plan_id,
@@ -372,7 +385,7 @@ class LLMRoutingStore:
     def last_selected_map(
             self, router_key: tuple[str, str, str]) -> dict[tuple[str, str, str], float]:
         """Latest selection timestamp per child, for one router only."""
-        with self._lock:
+        with self._guard.runtime(self.path), self._lock:
             rows = self._conn.execute(
                 "SELECT child_scope, child_scope_id, child_service_id, "
                 "MAX(ts) AS ts FROM router_events WHERE router_scope=? "
@@ -402,7 +415,7 @@ class LLMRoutingStore:
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY ts DESC,id DESC LIMIT ?"
-        with self._lock:
+        with self._guard.runtime(self.path), self._lock:
             rows = self._conn.execute(query, args + (limit,)).fetchall()
         result = []
         for row in rows:
@@ -413,7 +426,7 @@ class LLMRoutingStore:
 
     def cleanup(self) -> None:
         now = float(self.clock())
-        with self._lock, self._conn:
+        with self._guard.runtime(self.path), self._lock, self._conn:
             self._conn.execute(
                 "DELETE FROM router_affinity WHERE expires_at<=?", (now,))
             self._conn.execute(

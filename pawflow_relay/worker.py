@@ -84,7 +84,10 @@ from pawflow_relay._relay_dispatch import (  # noqa: E402
     execute_command as _dispatch_execute,
 )
 from pawflow_relay._relay_fs_setup import setup_combined_fs as _setup_combined_fs  # noqa: E402
-from pawflow_relay._relay_conn import connect_and_handshake as _connect_and_handshake  # noqa: E402
+from pawflow_relay._relay_conn import (  # noqa: E402
+    connect_and_handshake as _connect_and_handshake,
+    shutdown_socket as _shutdown_socket,
+)
 from pawflow_relay._relay_session import (  # noqa: E402
     build_connection_params as _build_connection_params,
     attach_fuse_clients as _attach_fuse_clients,
@@ -208,6 +211,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
     reconnect_delay = 1
     while True:
+        sock = None
         _disconnect_reason = "connect setup"
         _last_activity = [time.time()]
         if _host_helper:
@@ -292,7 +296,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         parts.append(f"{key}={value}")
                 return ";".join(parts) or "none"
 
-            # Watchdog: force-close socket if no activity for _DEAD_TIMEOUT
+            # Watchdog: interrupt socket I/O if no activity for _DEAD_TIMEOUT.
+            # The reconnect owner closes only after all concurrent sends leave
+            # the shared send lock.
             _watchdog_stop = _threading.Event()
             def _watchdog():
                 while not _watchdog_stop.is_set():
@@ -314,10 +320,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     if idle > _DEAD_TIMEOUT:
                         _socket_diag["local_close"] = f"watchdog idle={idle:.0f}s"
                         sys.stderr.write(f"[FSRelay] Watchdog: no activity for {idle:.0f}s, forcing reconnect\n")
-                        try:
-                            sock.close()
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                        _shutdown_socket(sock)
                         break
             _wd_thread = _threading.Thread(target=_watchdog, daemon=True, name="relay-watchdog")
             _wd_thread.start()
@@ -409,7 +412,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     sys.stderr.write(f"[FSRelay] combined-fs stop: {_se}\n")
             try:
                 _socket_diag["local_close"] = "keyboard_interrupt"
-                sock.close()
+                _shutdown_socket(sock)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return
@@ -453,15 +456,29 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _watchdog_stop.set()
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            # Interrupt recv/write without releasing the descriptor. A worker
+            # may still be inside SSL_write and must leave the send lock before
+            # this connection owner closes the socket.
+            try:
+                _shutdown_socket(sock)
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             _cmd_pool = locals().get('_pool')
             if _cmd_pool is not None:
                 try:
                     _cmd_pool.shutdown(wait=False, cancel_futures=True)
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-            # Always close socket before reconnecting — prevents socket leak
+            # Always close before reconnecting, serialized with every writer.
             try:
-                sock.close()
+                _close_lock = locals().get('_send_lock')
+                if _close_lock is None:
+                    if sock is not None:
+                        sock.close()
+                else:
+                    with _close_lock:
+                        if sock is not None:
+                            sock.close()
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 

@@ -383,6 +383,11 @@ class _LLMClientDriverMixin:
                 abort_http_connection(conn)
             except Exception:
                 logger.debug("LLM abort connection shutdown failed", exc_info=True)
+        try:
+            from core.sqlite_boot_canary import run_sqlite_abort_canary
+            run_sqlite_abort_canary()
+        except Exception:
+            logger.debug("SQLite post-abort canary failed", exc_info=True)
 
     def reset_abort(self):
         """Clear the abort signal before a new call."""

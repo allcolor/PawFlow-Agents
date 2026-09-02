@@ -584,14 +584,25 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
             body.extend(["## Serialized Conversation Context", "", prior_context.strip(), ""])
         elif user_text and not latest:
             body.extend(["## Serialized Conversation Context", "", user_text.strip(), ""])
+        from core.sqlite_store_guard import SqliteStoreUnavailableError
         from core.todo_store import TodoStore
-        todo_context = TodoStore.instance().context_text(
-            user_id, conversation_id, agent_name)
+        try:
+            todo_store = TodoStore.instance()
+            todo_context = (todo_store.context_text(
+                user_id, conversation_id, agent_name)
+                if todo_store.available else "")
+        except SqliteStoreUnavailableError:
+            todo_context = ""
         if todo_context:
             body.extend(["## Durable Todo List", "", todo_context, ""])
         from core.scratchpad_store import ScratchpadStore
-        scratchpad_hint = ScratchpadStore.instance().context_hint(
-            user_id, conversation_id, agent_name)
+        try:
+            scratchpad_store = ScratchpadStore.instance()
+            scratchpad_hint = (scratchpad_store.context_hint(
+                user_id, conversation_id, agent_name)
+                if scratchpad_store.available else "")
+        except SqliteStoreUnavailableError:
+            scratchpad_hint = ""
         if scratchpad_hint:
             body.extend(["## Scratchpad Hint", "", scratchpad_hint, ""])
         # Unconditional, unlike the Scratchpad hint: a cold-started CLI has no

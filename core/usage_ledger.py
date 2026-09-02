@@ -40,6 +40,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import core.paths as _paths
+from core.sqlite_store_guard import (
+    SqliteStoreGuard,
+    SqliteStoreUnavailableError,
+    is_corruption_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +125,12 @@ class UsageLedger:
         self._path = Path(path or str(_paths.USAGE_DB_FILE))
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._db_lock = threading.Lock()
+        self._guard = SqliteStoreGuard("Usage ledger")
+        self._guard.preflight(self._path)
         self._conn = sqlite3.connect(str(self._path),
                                      check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        with self._db_lock:
+        with self._guard.runtime(self._path), self._db_lock:
             self._conn.executescript(_SCHEMA)
             existing = {
                 row[1] for row in self._conn.execute(
@@ -145,10 +152,17 @@ class UsageLedger:
                         f"ALTER TABLE usage_events ADD COLUMN {name} {declaration}")
             try:
                 self._conn.execute("PRAGMA journal_mode=WAL")
-            except sqlite3.DatabaseError:
+            except sqlite3.DatabaseError as exc:
+                if is_corruption_error(exc):
+                    raise
                 logger.debug("WAL not available", exc_info=True)
             self._conn.commit()
         self._migrate_legacy_json()
+
+    @property
+    def available(self) -> bool:
+        """Return whether the ledger is safe to read or write."""
+        return self._guard.available
 
     @classmethod
     def instance(cls) -> "UsageLedger":
@@ -163,7 +177,8 @@ class UsageLedger:
         with cls._lock:
             if cls._instance is not None:
                 try:
-                    cls._instance._conn.close()
+                    with cls._instance._db_lock:
+                        cls._instance._conn.close()
                 except Exception:
                     logger.debug("close failed", exc_info=True)
             cls._instance = None
@@ -217,7 +232,7 @@ class UsageLedger:
         day = time.strftime("%Y-%m-%d", time.localtime(ts))
         event_id = str(event_id or uuid.uuid4())
         inserted = False
-        with self._db_lock:
+        with self._guard.runtime(self._path), self._db_lock:
             cursor = self._conn.execute(
                 "INSERT OR IGNORE INTO usage_events (id, ts, day, user_id, "
                 "conversation_id, agent_name, llm_service, model, provider, "
@@ -289,7 +304,7 @@ class UsageLedger:
                 params)
 
     def _query(self, sql: str, params) -> List[sqlite3.Row]:
-        with self._db_lock:
+        with self._guard.runtime(self._path), self._db_lock:
             return self._conn.execute(sql, params).fetchall()
 
     # -- reads ------------------------------------------------------------

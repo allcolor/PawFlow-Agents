@@ -33,6 +33,10 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import core.paths as _paths
+from core.sqlite_store_guard import (
+    SqliteStoreGuard,
+    is_corruption_error,
+)
 from core._conversation_store_base import TRANSCRIPT_GENERATION
 
 logger = logging.getLogger(__name__)
@@ -111,12 +115,16 @@ class ConversationIndex:
             Path(str(_paths.CONVERSATION_INDEX_DIR)) / f"{_safe_name(user_id)}.db")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._db_lock = threading.Lock()
+        self._guard = SqliteStoreGuard("Conversation index")
+        self._guard.preflight(self._path)
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        with self._db_lock:
+        with self._guard.runtime(self._path), self._db_lock:
             try:
                 self._conn.executescript(_SCHEMA)
             except sqlite3.OperationalError as exc:
+                if is_corruption_error(exc):
+                    raise
                 self._conn.close()
                 raise FTSUnavailable(
                     f"SQLite FTS5 is not available: {exc}") from exc
@@ -128,12 +136,21 @@ class ConversationIndex:
                 self._conn.execute(
                     "ALTER TABLE indexed_conversations "
                     "ADD COLUMN source_generation INTEGER NOT NULL DEFAULT -1")
-            except sqlite3.OperationalError:
+            except sqlite3.OperationalError as exc:
+                if is_corruption_error(exc):
+                    raise
                 pass  # already there
             try:
                 self._conn.execute("PRAGMA journal_mode=WAL")
-            except sqlite3.DatabaseError:
+            except sqlite3.DatabaseError as exc:
+                if is_corruption_error(exc):
+                    raise
                 logger.debug("WAL unavailable for %s", self._path, exc_info=True)
+
+    @property
+    def available(self) -> bool:
+        """Return whether the index is safe to read or write."""
+        return self._guard.available
 
     @classmethod
     def for_user(cls, user_id: str) -> "ConversationIndex":
@@ -231,7 +248,7 @@ class ConversationIndex:
         return stats
 
     def _known(self) -> Dict[str, Dict[str, Any]]:
-        with self._db_lock:
+        with self._guard.runtime(self._path), self._db_lock:
             rows = self._conn.execute(
                 "SELECT conversation_id, title, rows_indexed, source_updated_at, "
                 "source_generation FROM indexed_conversations"
@@ -321,7 +338,7 @@ class ConversationIndex:
                 float(msg.get("ts") or 0.0),
             ))
 
-        with self._db_lock:
+        with self._guard.runtime(self._path), self._db_lock:
             if title:
                 # A renamed conversation must stop reporting its old title,
                 # on the rows already indexed as much as on the new ones.
@@ -353,7 +370,7 @@ class ConversationIndex:
 
     def purge(self, cid: str) -> None:
         """Forget a conversation entirely (deleted, or newly encrypted)."""
-        with self._db_lock:
+        with self._guard.runtime(self._path), self._db_lock:
             self._conn.execute(
                 "DELETE FROM messages WHERE conversation_id = ?", (cid,))
             self._conn.execute(
@@ -363,7 +380,7 @@ class ConversationIndex:
 
     def _purge_all(self) -> None:
         """Fail-closed reset used when the source listing is unreadable."""
-        with self._db_lock:
+        with self._guard.runtime(self._path), self._db_lock:
             self._conn.execute("DELETE FROM messages")
             self._conn.execute("DELETE FROM indexed_conversations")
             self._conn.commit()
@@ -395,7 +412,7 @@ class ConversationIndex:
         sql += " ORDER BY rank LIMIT ?"
         params.append(limit)
 
-        with self._db_lock:
+        with self._guard.runtime(self._path), self._db_lock:
             try:
                 rows = self._conn.execute(sql, params).fetchall()
             except sqlite3.OperationalError:
@@ -407,7 +424,7 @@ class ConversationIndex:
         return [dict(r) for r in rows]
 
     def stats(self) -> Dict[str, int]:
-        with self._db_lock:
+        with self._guard.runtime(self._path), self._db_lock:
             convs = self._conn.execute(
                 "SELECT COUNT(*) FROM indexed_conversations").fetchone()[0]
             msgs = self._conn.execute(

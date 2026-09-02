@@ -54,6 +54,34 @@ def test_relay_cli_installer_bundles_frpc():
     assert "download_frpc(binary.parent)" in source
 
 
+def test_relay_cli_collects_pkg_resources_vendor(monkeypatch, tmp_path):
+    builder = _relay_builder()
+    builder.DIST_ROOT = tmp_path / "dist"
+    builder.BUILD_ROOT = tmp_path / "build"
+    builder.ENTRY = tmp_path / "relay-bin-entry.py"
+    builder.ENTRY.write_text("pass\n", encoding="utf-8")
+    commands = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        binary = (
+            builder.DIST_ROOT
+            / f"pawflow-relay-cli-1.2.3-{builder.platform_tag()}"
+            / "bin"
+            / builder.executable_name()
+        )
+        binary.write_bytes(b"binary")
+
+    monkeypatch.setattr(builder, "ensure_pyinstaller", lambda _python: None)
+    monkeypatch.setattr(builder, "_run", fake_run)
+
+    builder.build_binary("python", "1.2.3")
+
+    command = commands[0]
+    collect_flag = command.index("--collect-submodules")
+    assert command[collect_flag + 1] == "pkg_resources._vendor"
+
+
 def test_relay_desktop_downloads_and_verifies_frpc():
     package = (ROOT / "pawflow-relay-desktop" / "package.json").read_text(
         encoding="utf-8")

@@ -8,7 +8,8 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -75,15 +76,20 @@ class AgentInboxStore:
         return self._database_path_override or (
             _paths.RUNTIME_DIR / "agent_inbox.sqlite3")
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         self._guard.require_available()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.database_path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout = 10000")
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA journal_mode = WAL")
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         with self._lock, self._connect() as connection:

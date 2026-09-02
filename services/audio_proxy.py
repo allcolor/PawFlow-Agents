@@ -15,6 +15,8 @@ import time
 import uuid
 from typing import Dict, Tuple, Optional
 
+from core.socket_teardown import shutdown_socket
+
 logger = logging.getLogger(__name__)
 
 _audio_sources: Dict[str, dict] = {}
@@ -107,14 +109,8 @@ def kill_audio_proxies(session_id: str):
 def _kill_proxies(proxies):
     for stop_ev, backend_sock in proxies:
         stop_ev.set()
-        try:
-            backend_sock.shutdown(socket.SHUT_RDWR)
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-        try:
-            backend_sock.close()
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        # The proxy handler owns final close after its relay threads exit.
+        shutdown_socket(backend_sock)
     if proxies:
         logger.info("Audio proxy: killed %d active proxy(ies)", len(proxies))
 
@@ -197,6 +193,8 @@ def _audio_ws_relay_proxy(client_sock, session_id: str, source: dict):
         "relay_session_id": relay_session_id,
         "browser_sock": client_sock,
         "stop": stop,
+        "send_lock": threading.Lock(),
+        "closed": False,
     }
     with _audio_lock:
         if _audio_sources.get(session_id) is not source:
@@ -244,10 +242,15 @@ def _audio_ws_relay_proxy(client_sock, session_id: str, source: dict):
                 entries.remove(proxy)
             if not entries:
                 _active_relay_proxies.pop(session_id, None)
-        try:
-            client_sock.close()
-        except Exception:
-            logger.debug("Ignored exception", exc_info=True)
+        # A dispatcher may already have captured this proxy before it was
+        # removed from the registry. Serialize final close with that send and
+        # mark the proxy closed so a queued dispatcher cannot send afterward.
+        with proxy["send_lock"]:
+            proxy["closed"] = True
+            try:
+                client_sock.close()
+            except Exception:
+                logger.debug("Ignored exception", exc_info=True)
         logger.info("Audio relay tunnel disconnected: relay=%s session=%s",
                     relay_id, relay_session_id)
 
@@ -266,9 +269,12 @@ def dispatch_audio_data(relay_id: str, relay_session_id: str,
                      relay_id, relay_session_id)
         return
     try:
-        from services.vnc_proxy import _ws_build_frame
-        proxy["browser_sock"].sendall(
-            _ws_build_frame(base64.b64decode(data_b64), opcode=0x02))
+        with proxy["send_lock"]:
+            if proxy["closed"]:
+                return
+            from services.vnc_proxy import _ws_build_frame
+            proxy["browser_sock"].sendall(
+                _ws_build_frame(base64.b64decode(data_b64), opcode=0x02))
     except Exception as exc:
         logger.warning("desktop_audio_data send failed: %s", exc)
         proxy["stop"].set()
@@ -291,7 +297,7 @@ def dispatch_audio_close(relay_id: str, relay_session_id: str) -> None:
                 break
     if proxy:
         proxy["stop"].set()
-        _ws_close(proxy["browser_sock"], 1000, "Audio backend closed")
+        shutdown_socket(proxy["browser_sock"])
 
 
 def _audio_ws_direct_proxy(client_sock, session_id: str,
@@ -442,27 +448,18 @@ def _audio_ws_direct_proxy(client_sock, session_id: str,
     stop.wait()
     queue_event.set()
 
-    # shutdown() forces any blocked recv() to fail immediately,
-    # even on Windows where close() alone may not unblock it
-    # when PulseAudio keeps streaming data.
-    try:
-        backend_sock.shutdown(socket.SHUT_RDWR)
-    except Exception:
-        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+    # Both sockets are shared across relay threads. shutdown() interrupts all
+    # reads/writes without freeing an fd; only after every worker exits may
+    # this handler close the backend and return the browser socket to the HTTP
+    # listener for its final close.
+    shutdown_socket(backend_sock)
+    shutdown_socket(client_sock)
+    for thread in (t0, t1, t2):
+        thread.join()
     try:
         backend_sock.close()
     except Exception:
         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-    try:
-        _ws_close(client_sock, 1000, "")
-    except Exception:
-        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
-    t0.join(timeout=2)
-    t1.join(timeout=2)
-    t2.join(timeout=2)
-    if t0.is_alive():
-        logger.warning("Audio proxy: reader thread still alive for %s", session_id)
 
     # Unregister this proxy from the active list
     with _audio_lock:

@@ -11,6 +11,7 @@ Coverage:
 import base64
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -411,6 +412,64 @@ class TestLifecycle(_FsCase):
         # Subsequent ops on this handler don't crash; the fh table is empty
         r = self.fs.handle("sfs.read", {"fh": fh, "offset": 0, "size": 1})
         self.assertEqual(r.get("error"), "EBADF")
+
+    def test_release_waits_for_inflight_fd_operations(self):
+        cases = (
+            ("sfs.read", {"offset": 0, "size": 1}, "lseek", os.O_RDONLY),
+            ("sfs.write", {
+                "offset": 0,
+                "data_b64": base64.b64encode(b"x").decode("ascii"),
+            }, "lseek", os.O_RDWR),
+            ("sfs.truncate", {"length": 1}, "ftruncate", os.O_RDWR),
+        )
+        for method, args, syscall_name, flags in cases:
+            with self.subTest(method=method):
+                opened = self.fs.handle(
+                    "sfs.open", {"path": "convA/claude/hello.txt",
+                                 "flags": flags})
+                fh = opened["data"]["fh"]
+                entered = threading.Event()
+                proceed = threading.Event()
+                close_called = threading.Event()
+                real_syscall = getattr(os, syscall_name)
+                real_close = os.close
+
+                def blocking_syscall(*call_args):
+                    entered.set()
+                    self.assertTrue(proceed.wait(2))
+                    return real_syscall(*call_args)
+
+                def observed_close(fd):
+                    close_called.set()
+                    return real_close(fd)
+
+                operation_result = []
+                release_result = []
+                op_args = {"fh": fh, **args}
+                with mock.patch(
+                        f"services.relay_server_fs.os.{syscall_name}",
+                        side_effect=blocking_syscall), mock.patch(
+                            "services.relay_server_fs.os.close",
+                            side_effect=observed_close):
+                    operation = threading.Thread(
+                        target=lambda: operation_result.append(
+                            self.fs.handle(method, op_args)))
+                    operation.start()
+                    self.assertTrue(entered.wait(1))
+                    release = threading.Thread(
+                        target=lambda: release_result.append(
+                            self.fs.handle("sfs.release", {"fh": fh})))
+                    release.start()
+                    closed_during_io = close_called.wait(0.1)
+                    proceed.set()
+                    operation.join(timeout=2)
+                    release.join(timeout=2)
+
+                self.assertFalse(operation.is_alive())
+                self.assertFalse(release.is_alive())
+                self.assertFalse(closed_during_io)
+                self.assertIn("data", operation_result[0])
+                self.assertEqual(release_result[0].get("data"), {})
 
 
 class TestCrossUserIsolation(unittest.TestCase):

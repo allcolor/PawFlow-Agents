@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
 
 import core.paths as _paths
+from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
 
 
 TODO_STATUSES = ("pending", "in_progress", "completed")
@@ -43,13 +44,23 @@ class TodoStore:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._initialize()
+        self._guard = SqliteStoreGuard("Todo")
+        try:
+            self._guard.initialize(self._database_path, self._initialize)
+        except SqliteStoreUnavailableError:
+            pass
+
+    @property
+    def available(self) -> bool:
+        """Return whether the store is safe to read or write."""
+        return self._guard.available
 
     @property
     def _database_path(self) -> Path:
         return _paths.TODOLISTS_DIR / "todos.sqlite3"
 
     def _connect(self) -> sqlite3.Connection:
+        self._guard.require_available()
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._database_path)
         connection.row_factory = sqlite3.Row

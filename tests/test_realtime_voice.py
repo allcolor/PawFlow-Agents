@@ -187,6 +187,35 @@ class TestOpenAIRealtimeAdapter:
 
 class TestRealtimeWSClient:
 
+    def test_shutdown_interrupts_without_releasing_socket(self):
+        class _TrackedSocket:
+            def __init__(self):
+                self.shutdown_calls = []
+                self.close_calls = 0
+                self.sent = []
+
+            def shutdown(self, how):
+                self.shutdown_calls.append(how)
+
+            def sendall(self, data):
+                self.sent.append(bytes(data))
+
+            def close(self):
+                self.close_calls += 1
+
+        sock = _TrackedSocket()
+        client = RealtimeWSClient("ws://provider/", {})
+        client._sock = sock
+
+        assert client.shutdown() is True
+        assert sock.shutdown_calls == [socket.SHUT_RDWR]
+        assert sock.close_calls == 0
+        assert client._sock is sock
+
+        client.close()
+        assert sock.close_calls == 1
+        assert client._sock is None
+
     def _fake_server(self, received):
         """Minimal RFC 6455 server: handshake, echo one event, read frames."""
         srv = socket.socket()
@@ -570,6 +599,7 @@ class _FakeAdapter:
         self.commits = 0
         self.tool_results = []
         self.closed = False
+        self.shutdowns = 0
 
     def send_audio(self, chunk):
         self.sent_audio.append(bytes(chunk))
@@ -591,6 +621,9 @@ class _FakeAdapter:
 
     def close(self):
         self.closed = True
+
+    def shutdown(self):
+        self.shutdowns += 1
 
 
 class _FakeService:
@@ -639,6 +672,54 @@ class TestRealtimeSessionBridge:
                 if msg.get("type") == want_type:
                     return msg, audio
         raise AssertionError(f"never received {want_type}")
+
+    def test_provider_pump_owns_adapter_close(self):
+        class _BlockingAdapter(_FakeAdapter):
+            def __init__(self):
+                super().__init__([])
+                self.recv_started = threading.Event()
+                self.interrupted = threading.Event()
+                self.recv_thread = None
+                self.shutdown_threads = []
+                self.close_thread = None
+
+            def recv_event(self, timeout=1.0):
+                self.recv_thread = threading.get_ident()
+                self.recv_started.set()
+                self.interrupted.wait(2)
+                return None
+
+            def shutdown(self):
+                super().shutdown()
+                self.shutdown_threads.append(threading.get_ident())
+                self.interrupted.set()
+
+            def close(self):
+                self.closed = True
+                self.close_thread = threading.get_ident()
+                self.interrupted.set()
+
+        adapter = _BlockingAdapter()
+        service = _FakeService(adapter)
+        server_sock, client_sock = socket.socketpair()
+        bridge = RealtimeSessionBridge(server_sock, "conv1", "claude",
+                                       "quentin", service)
+        bridge._persist = lambda role, text: None
+        runner = threading.Thread(target=bridge.run, daemon=True)
+        runner.start()
+        try:
+            self._read_until(client_sock, "ready")
+            assert adapter.recv_started.wait(1)
+            bridge.stop("test_stop")
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+            assert adapter.shutdowns >= 1
+            assert adapter.close_thread == adapter.recv_thread
+            assert any(thread_id != adapter.close_thread
+                       for thread_id in adapter.shutdown_threads)
+        finally:
+            adapter.interrupted.set()
+            client_sock.close()
 
     def test_full_session_flow(self):
         persisted = []

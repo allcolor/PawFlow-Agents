@@ -208,6 +208,12 @@ class GeminiLiveAdapter(RealtimeAdapter):
             "turnComplete": True,
         }})
 
+    def shutdown(self):
+        ws = self._ws
+        if ws is not None:
+            return ws.shutdown()
+        return False
+
     def close(self):
         ws, self._ws = self._ws, None
         if ws is not None:

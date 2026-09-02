@@ -20,6 +20,8 @@ import os
 import socket
 import threading
 
+from core.socket_teardown import shutdown_socket
+
 logger = logging.getLogger(__name__)
 
 _BACKEND_HOST = "127.0.0.1"
@@ -110,6 +112,13 @@ def livekit_signal_ws_proxy(client_sock, path_params: dict, meta: dict):
     t1.start()
     t2.start()
     stop.wait()
+    # Both workers touch both sockets (one recv direction, one send
+    # direction). Interrupt without freeing either fd, then wait until no
+    # worker can still be inside SSL_read/SSL_write before final close.
+    for s in (client_sock, backend):
+        shutdown_socket(s)
+    for thread in (t1, t2):
+        thread.join()
     for s in (client_sock, backend):
         try:
             s.close()

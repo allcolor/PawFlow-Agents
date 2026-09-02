@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from core._cci_pool_spawn import InteractiveContainer
+from core._llm_types import LLMCallError
 from core.codex_interactive_pool import (
     CodexInteractivePool, _CodexInteractiveSpawnMixin)
 from core.llm_client import CCCompactDetected, LLMClient
@@ -542,6 +543,92 @@ def test_responses_coordinator_hands_native_compaction_to_pawflow(hook_name):
     # common agent loop catches CCCompactDetected and rebuilds from PawFlow's
     # own forced compact instead.
     assert events.queue.qsize() == 1
+
+
+def test_responses_coordinator_survives_a_failed_exchange_codex_retries(
+        monkeypatch):
+    # Observed 2026-09-02 on the WebSocket transport (Codex 0.152.1): the
+    # upstream sent `error` then `response.failed`, Codex retried the sampling
+    # request on a new WebSocket 200ms later and finished the turn, while the
+    # coordinator raised at once and the webchat showed "LLM call failed".
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    text = []
+    failure = "An error occurred while processing your request."
+    events = _Events([
+        {"type": "request_start", "path": "/backend-api/codex/responses"},
+        {"type": "sse", "payload": {"type": "response.created",
+                                    "response": {"model": "gpt-test"}}},
+        {"type": "sse", "payload": {"type": "error",
+                                    "error": {"message": failure}}},
+        {"type": "sse", "payload": {"type": "response.failed", "response": {
+            "status": "failed", "error": {"message": failure}}}},
+        {"type": "request_stop"},
+        {"type": "request_start", "path": "/backend-api/codex/responses"},
+        {"type": "sse", "payload": {"type": "response.created",
+                                    "response": {"model": "gpt-test"}}},
+        {"type": "sse", "payload": {"type": "response.output_text.delta",
+                                    "delta": "hello"}},
+        {"type": "sse", "payload": {"type": "response.completed", "response": {
+            "model": "gpt-test", "usage": {
+                "input_tokens": 5, "output_tokens": 1, "total_tokens": 6}}}},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(
+        events, "session", callback=text.append)
+
+    response = coordinator.run()
+
+    assert response.content == "hello"
+    assert "".join(text) == "hello"
+    assert coordinator._failed_exchange_detail == ""
+
+
+@pytest.mark.parametrize("detail, category", [
+    (("An error occurred while processing your request. Please include the "
+      "request ID 79cf9489 in your message."), "unknown"),
+    ("429 Too Many Requests: rate limit reached", "rate_limited"),
+])
+def test_responses_coordinator_fails_the_turn_when_codex_gives_up(
+        detail, category):
+    events = _Events([
+        {"type": "request_start", "path": "/backend-api/codex/responses"},
+        {"type": "sse", "payload": {"type": "response.created",
+                                    "response": {"model": "gpt-test"}}},
+        {"type": "sse", "payload": {"type": "response.failed", "response": {
+            "status": "failed", "error": {"message": detail}}}},
+        {"type": "request_stop"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(events, "session")
+
+    with pytest.raises(LLMCallError) as excinfo:
+        coordinator.run()
+
+    assert detail in str(excinfo.value)
+    assert excinfo.value.retryable is False
+    assert excinfo.value.category == category
+    assert excinfo.value.provider == "codex-interactive"
+
+
+def test_responses_coordinator_fails_the_turn_when_no_retry_arrives(
+        monkeypatch):
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(
+        turn_mod, "_FAILED_EXCHANGE_RETRY_GRACE_SECONDS", 0.0)
+    events = _Events([
+        {"type": "request_start", "path": "/backend-api/codex/responses"},
+        {"type": "sse", "payload": {"type": "response.created",
+                                    "response": {"model": "gpt-test"}}},
+        {"type": "sse", "payload": {"type": "response.failed", "response": {
+            "status": "failed", "error": {"message": "upstream down"}}}},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(events, "session")
+
+    with pytest.raises(LLMCallError, match="upstream down"):
+        coordinator.run()
 
 
 def test_responses_coordinator_shows_the_native_calls_too(monkeypatch):

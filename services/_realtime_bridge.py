@@ -381,6 +381,28 @@ class RealtimeSessionBridge:
             logger.debug("[realtime] control %s failed", ctype, exc_info=True)
 
     def _provider_pump(self):
+        try:
+            self._provider_pump_loop()
+        finally:
+            # This thread owns provider recv(), so it is the only thread that
+            # may release the provider socket descriptor. shutdown() is safe
+            # to repeat and also interrupts an in-flight tool/audio send.
+            adapter = self._adapter
+            if adapter is not None:
+                try:
+                    adapter.shutdown()
+                except Exception:
+                    logger.debug("[realtime] provider shutdown failed",
+                                 exc_info=True)
+                try:
+                    adapter.close()
+                except Exception:
+                    logger.debug("[realtime] provider close failed",
+                                 exc_info=True)
+                if self._adapter is adapter:
+                    self._adapter = None
+
+    def _provider_pump_loop(self):
         while not self._stop_ev.is_set():
             if (self._deadline is not None
                     and time.monotonic() > self._deadline):
@@ -498,6 +520,10 @@ class RealtimeSessionBridge:
             self._reconnecting = False
             return False
         try:
+            adapter.shutdown()
+        except Exception:
+            logger.debug("Ignored exception", exc_info=True)
+        try:
             adapter.close()
         except Exception:
             logger.debug("Ignored exception", exc_info=True)
@@ -588,13 +614,19 @@ class RealtimeSessionBridge:
     def _teardown(self, pump: threading.Thread):
         try:
             if self._adapter is not None:
-                self._adapter.close()
+                # Interrupt only. The provider pump retains ownership of the
+                # descriptor and closes it in its own finally block.
+                self._adapter.shutdown()
         except Exception:
             logger.debug("Ignored exception", exc_info=True)
         try:
             pump.join(timeout=3)
         except Exception:
             logger.debug("Ignored exception", exc_info=True)
+        if pump.is_alive():
+            logger.warning("[realtime] provider pump did not stop for cid=%s; "
+                           "leaving its socket owned by that thread",
+                           self._cid[:8])
         # Assistant finals still waiting for a user transcript must not be
         # lost when the session ends.
         try:

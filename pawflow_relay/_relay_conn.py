@@ -16,6 +16,18 @@ import ssl
 _log = logging.getLogger(__name__)
 
 
+def shutdown_socket(sock) -> bool:
+    """Interrupt relay socket I/O without releasing its descriptor number."""
+    if sock is None:
+        return False
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError as exc:
+        _log.debug("Relay socket shutdown skipped: %s", exc)
+        return False
+    return True
+
+
 def connect_and_handshake(host, port, path, use_ssl, gateway_cookie,
                           session_token, gateway_key):
     sock = socket.create_connection((host, port), timeout=10)

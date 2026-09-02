@@ -160,7 +160,13 @@ class HTTPListenerService(BaseService):
             from services.mcp_server_endpoint import register_mcp_routes
             register_mcp_routes(self)
         from core.a2a_store import A2AStore
-        if (A2AStore.instance().has_publications()
+        from core.sqlite_store_guard import SqliteStoreUnavailableError
+        a2a_store = A2AStore.instance()
+        try:
+            has_a2a_publications = a2a_store.has_publications()
+        except SqliteStoreUnavailableError:
+            has_a2a_publications = False
+        if (has_a2a_publications
                 and not HTTPListenerService.all_instances()):
             from services.a2a_server_endpoint import register_a2a_routes
             register_a2a_routes(self)

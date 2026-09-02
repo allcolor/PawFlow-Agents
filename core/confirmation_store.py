@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import core.paths as _paths
+from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -299,9 +300,19 @@ class UserInteractionStore:
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._sweeper_started = False
-        self._initialize()
+        self._guard = SqliteStoreGuard("Confirmation")
+        try:
+            self._guard.initialize(self._database_path, self._initialize)
+        except SqliteStoreUnavailableError:
+            pass
+
+    @property
+    def available(self) -> bool:
+        """Return whether the store is safe to read or write."""
+        return self._guard.available
 
     def _connect(self) -> sqlite3.Connection:
+        self._guard.require_available()
         connection = sqlite3.connect(self._database_path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")

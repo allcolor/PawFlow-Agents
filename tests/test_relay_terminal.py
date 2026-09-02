@@ -14,6 +14,7 @@ import time
 import pytest
 
 from pawflow_relay._relay_terminal import TerminalManager
+from pawflow_relay import _relay_terminal as terminal_module
 
 pytestmark = pytest.mark.skipif(
     not hasattr(os, "forkpty"), reason="PTY terminals require os.forkpty (Unix only)"
@@ -121,3 +122,29 @@ def test_close_all_clears_sessions(tmp_path):
     assert mgr.sessions == {}
     for sid in sids:
         assert _wait(lambda s=sid: sink.has_exit(s))
+
+
+def test_reader_owns_single_master_close_and_late_write_fails(
+        tmp_path, monkeypatch):
+    mgr = TerminalManager(str(tmp_path), _Sink())
+    sid = mgr.open(shell="/bin/sh")
+    session = mgr.sessions[sid]
+    master_fd = session["master_fd"]
+    reader = session["reader"]
+    real_close = os.close
+    closed = []
+
+    def tracked_close(descriptor):
+        if descriptor == master_fd:
+            closed.append(descriptor)
+        return real_close(descriptor)
+
+    monkeypatch.setattr(terminal_module.os, "close", tracked_close)
+
+    assert mgr.close(sid) is True
+    reader.join(timeout=2)
+    assert not reader.is_alive()
+    assert closed == [master_fd]
+    ok, error = mgr.write(sid, _b64("late"))
+    assert ok is False
+    assert "not found" in error

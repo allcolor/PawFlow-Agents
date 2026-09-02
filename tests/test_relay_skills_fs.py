@@ -15,10 +15,13 @@ Coverage:
 
 import base64
 import errno
+import os
 import stat as _stat
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import core.paths as _paths
 from services.relay_skills_fs import RelaySkillsFs
@@ -146,6 +149,51 @@ class TestFileIO(_SkillsCase):
         r = self.fs.handle("skfs.open", {
             "path": "/global/pdf-tools/SKILL.md", "flags": os.O_WRONLY})
         self.assertEqual(r["errno"], errno.EROFS)
+
+    def test_release_waits_for_inflight_read(self):
+        opened = self.fs.handle(
+            "skfs.open", {"path": "/global/pdf-tools/scripts/run.py"})
+        fh = opened["data"]["fh"]
+        entered = threading.Event()
+        proceed = threading.Event()
+        close_called = threading.Event()
+        real_lseek = os.lseek
+        real_close = os.close
+
+        def blocking_lseek(*args):
+            entered.set()
+            self.assertTrue(proceed.wait(2))
+            return real_lseek(*args)
+
+        def observed_close(fd):
+            close_called.set()
+            return real_close(fd)
+
+        read_result = []
+        release_result = []
+        with mock.patch("services.relay_skills_fs.os.lseek",
+                        side_effect=blocking_lseek), mock.patch(
+                            "services.relay_skills_fs.os.close",
+                            side_effect=observed_close):
+            reader = threading.Thread(
+                target=lambda: read_result.append(self.fs.handle(
+                    "skfs.read", {"fh": fh, "offset": 0, "size": 4})))
+            reader.start()
+            self.assertTrue(entered.wait(1))
+            release = threading.Thread(
+                target=lambda: release_result.append(
+                    self.fs.handle("skfs.release", {"fh": fh})))
+            release.start()
+            closed_during_read = close_called.wait(0.1)
+            proceed.set()
+            reader.join(timeout=2)
+            release.join(timeout=2)
+
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(release.is_alive())
+        self.assertFalse(closed_during_read)
+        self.assertIn("data", read_result[0])
+        self.assertEqual(release_result[0].get("data"), {})
 
 
 class TestMethodAllowlist(_SkillsCase):

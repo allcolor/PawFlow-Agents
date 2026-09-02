@@ -5,6 +5,7 @@ the WS upgrade 101 response with the first frame bytes into one TCP segment,
 those extra bytes must be replayed to the next recv() calls intact — even
 when the caller reads them in chunks smaller than the leftover.
 """
+import os
 import socket
 
 from pawflow_relay import _relay_conn
@@ -80,3 +81,19 @@ def test_no_leftover_uses_real_recv(monkeypatch):
     sock = _connect(monkeypatch, b"")
     # No leftover -> recv is not patched; underlying fake returns EOF.
     assert sock.recv(4096) == b""
+
+
+def test_relay_shutdown_interrupts_without_releasing_descriptor():
+    left, right = socket.socketpair()
+    try:
+        descriptor = left.fileno()
+        assert _relay_conn.shutdown_socket(left) is True
+        assert left.fileno() == descriptor
+        probe = os.open(os.devnull, os.O_RDONLY)
+        try:
+            assert probe != descriptor
+        finally:
+            os.close(probe)
+    finally:
+        left.close()
+        right.close()

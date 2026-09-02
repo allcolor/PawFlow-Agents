@@ -245,3 +245,63 @@ class TestSignalProxyGate:
         assert len(sent) == 1
         assert sent[0][0] == 0x88
         assert int.from_bytes(sent[0][2:4], "big") == 4404
+
+    def test_proxy_joins_both_relays_before_closing_sockets(
+            self, manager, monkeypatch):
+        monkeypatch.setattr(RealtimeStackManager, "_instance", manager)
+        monkeypatch.setattr(manager, "has_state", lambda: True)
+        from services import livekit_signal_proxy as proxy
+
+        class _RelaySocket:
+            def __init__(self, backend=False):
+                self.backend = backend
+                self.handshake = backend
+                self.recv_started = threading.Event()
+                self.release_recv = threading.Event()
+                self.receiving = False
+                self.shutdown_calls = []
+                self.closed = False
+                self.closed_while_receiving = False
+
+            def settimeout(self, _timeout):
+                pass
+
+            def sendall(self, _data):
+                pass
+
+            def recv(self, _size):
+                if self.handshake:
+                    self.handshake = False
+                    return b"HTTP/1.1 101 Switching Protocols\r\n\r\n"
+                if not self.backend:
+                    assert backend.recv_started.wait(2)
+                    return b""
+                self.receiving = True
+                self.recv_started.set()
+                self.release_recv.wait(2)
+                self.receiving = False
+                return b""
+
+            def shutdown(self, how):
+                self.shutdown_calls.append(how)
+                self.release_recv.set()
+
+            def close(self):
+                self.closed_while_receiving |= self.receiving
+                self.closed = True
+                self.release_recv.set()
+
+        backend = _RelaySocket(backend=True)
+        browser = _RelaySocket()
+        monkeypatch.setattr(proxy.socket, "create_connection",
+                            lambda *_args, **_kwargs: backend)
+
+        proxy.livekit_signal_ws_proxy(
+            browser, {"path": "rtc"}, {"query": "token=x"})
+
+        assert backend.recv_started.wait(1)
+        assert backend.closed is True
+        assert browser.closed is True
+        assert backend.closed_while_receiving is False
+        assert backend.shutdown_calls
+        assert browser.shutdown_calls

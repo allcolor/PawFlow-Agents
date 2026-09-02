@@ -13,6 +13,7 @@ from typing import Any
 
 import core.paths as _paths
 from core.resource_identity import ResourceRef
+from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
 
 FLOW_RUN_TERMINALS = frozenset({
     "completed", "failed", "cancelled", "timed_out", "force_stopped",
@@ -75,13 +76,23 @@ class FlowRunStore:
             raise TypeError("before_live_write must be callable")
         self._before_live_write = before_live_write
         self._lock = threading.RLock()
-        self._initialize()
+        self._guard = SqliteStoreGuard("Flow run")
+        try:
+            self._guard.initialize(self.database_path, self._initialize)
+        except SqliteStoreUnavailableError:
+            pass
+
+    @property
+    def available(self) -> bool:
+        """Return whether the store is safe to read or write."""
+        return self._guard.available
 
     @property
     def database_path(self) -> Path:
         return self._database_path or (_paths.RUNTIME_DIR / "flow_runs.sqlite3")
 
     def _connect(self) -> sqlite3.Connection:
+        self._guard.require_available()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.database_path, timeout=10)
         connection.row_factory = sqlite3.Row

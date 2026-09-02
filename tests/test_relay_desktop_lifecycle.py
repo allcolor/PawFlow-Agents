@@ -111,6 +111,32 @@ def test_desktop_cleanup_terminates_and_clears(monkeypatch):
     assert "DISPLAY" not in dt.os.environ
 
 
+def test_audio_stream_close_only_shuts_down_reader_owned_socket():
+    class Backend:
+        shutdown_calls = 0
+        close_calls = 0
+
+        def shutdown(self, how):
+            assert how == dt.socket.SHUT_RDWR
+            self.shutdown_calls += 1
+
+        def close(self):
+            self.close_calls += 1
+
+    backend = Backend()
+    stop = threading.Event()
+    state = types.SimpleNamespace(desktop_audio_sessions={
+        "audio-1": {"sock": backend, "stop": stop},
+    })
+
+    assert dt.audio_stream_close(
+        state, {"session_id": "audio-1"}) == {"ok": True}
+    assert stop.is_set()
+    assert backend.shutdown_calls == 1
+    assert backend.close_calls == 0
+    assert state.desktop_audio_sessions == {}
+
+
 def test_watchdog_never_cleans_a_replacement_session(monkeypatch):
     st = _state()
     old_procs = [FakeProc(True)]

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from urllib.parse import urlsplit
 
+from core._llm_types import LLMCallError
 from core.llm_providers._cci_turn import (
-    _CCITurnCoordinator, _event_tool_args, _NO_PROXY_EVENT_TIMEOUT_SECONDS,
-    _POST_STOP_IDLE_DRAIN_SECONDS)
+    _CCITurnCoordinator, _env_seconds, _event_tool_args,
+    _NO_PROXY_EVENT_TIMEOUT_SECONDS, _POST_STOP_IDLE_DRAIN_SECONDS)
 from tools.cc_interactive_filters import (
     code_mode_body, observed_call_ids, observed_call_item)
 
@@ -19,6 +21,35 @@ logger = logging.getLogger(__name__)
 # as much as the bytes it replaces, and a short string ('ok', a bare count)
 # is exactly the kind that collides with unrelated prose by accident.
 _MIN_ECHOED_RESULT_CHARS = 40
+
+# How long a failed Responses exchange may wait for Codex's own retry before
+# PawFlow gives up on the turn. Codex treats an upstream ``error`` followed by
+# ``response.failed`` as a disconnected stream and retries the sampling request
+# itself (five attempts, backoff) on a new WebSocket. Only an upstream that
+# stays down leaves the TUI on its last error, and that path fires no Stop
+# hook, so the deadline has to exist.
+_FAILED_EXCHANGE_RETRY_GRACE_SECONDS = _env_seconds(
+    ("PAWFLOW_CODEX_FAILED_EXCHANGE_RETRY_GRACE_SECONDS",),
+    ("PAWFLOW_CODEX_FAILED_EXCHANGE_RETRY_GRACE_MS",),
+    default=120.0,
+)
+
+
+def _failed_exchange_error(detail: str, why: str) -> LLMCallError:
+    """Build the terminal error for a failed exchange Codex did not recover.
+
+    Not retryable by the driver: the prompt is consumed by the TUI, so the
+    failure must reach the user instead of being replayed.
+    """
+    lowered = detail.lower()
+    rate_limited = bool(
+        re.search(r"\b429\b", detail)
+        or "rate limit" in lowered or "rate_limit" in lowered
+        or "usage limit" in lowered)
+    return LLMCallError(
+        f"Codex interactive turn failed ({why}): {detail}",
+        category="rate_limited" if rate_limited else "unknown",
+        retryable=False, provider="codex-interactive")
 
 
 def elide_echoed_results(result: str, echoed: list) -> str:
@@ -100,6 +131,28 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         # appeared while it ran; valued because eliding its output needs to
         # know what those rows actually say.
         self._mcp_row_results: dict = {}
+        # A ``response.failed`` exchange Codex has not yet retried past. Empty
+        # again once a later ``response.created`` proves the retry is live.
+        self._failed_exchange_detail = ""
+        self._failed_exchange_at = 0.0
+
+    def _defer_failed_exchange(self, detail: str) -> None:
+        self._failed_exchange_detail = detail
+        self._failed_exchange_at = time.time()
+        logger.warning(
+            "[codex-interactive] session=%s exchange failed; waiting up to "
+            "%.0fs for Codex's own retry before failing the turn: %s",
+            self.session_token[:8], _FAILED_EXCHANGE_RETRY_GRACE_SECONDS,
+            detail)
+
+    def _raise_if_failed_exchange_overdue(self) -> None:
+        if not self._failed_exchange_detail or self._stop_seen:
+            return
+        waited = time.time() - self._failed_exchange_at
+        if waited < _FAILED_EXCHANGE_RETRY_GRACE_SECONDS:
+            return
+        raise _failed_exchange_error(
+            self._failed_exchange_detail, f"no retry within {waited:.0f}s")
 
     def _record_context_tokens(self, usage) -> None:
         measured = observed_context_tokens(usage)
@@ -282,6 +335,7 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                       _POST_STOP_IDLE_DRAIN_SECONDS):
                     self._finish_turn_if_ready()
                     break
+                self._raise_if_failed_exchange_overdue()
                 continue
 
             if self.touch_callback:
@@ -301,9 +355,13 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
             if etype == "request_start":
                 self._saw_proxy_event = True
                 path = event.get("path", "") or ""
-                if (urlsplit(path).path.rstrip("/").endswith("/responses")
-                        and not event.get("ignore_reason")
-                        and self._stop_seen):
+                is_responses = (
+                    urlsplit(path).path.rstrip("/").endswith("/responses")
+                    and not event.get("ignore_reason"))
+                if is_responses and self._failed_exchange_detail:
+                    # Codex is retrying: the deadline counts from this attempt.
+                    self._failed_exchange_at = time.time()
+                if is_responses and self._stop_seen:
                     logger.info(
                         "[codex-interactive] new Responses request after Stop; "
                         "turn continues (session=%s)",
@@ -333,6 +391,11 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                     raise CCCompactDetected(
                         f"Codex interactive {hook_name} hook detected")
                 if hook_name == "Stop":
+                    if self._failed_exchange_detail:
+                        # Codex ended the turn with no live retry: it gave up
+                        # (its own attempts are spent). Terminal for PawFlow.
+                        raise _failed_exchange_error(
+                            self._failed_exchange_detail, "Codex gave up")
                     self._stop_seen = True
                     self._post_stop_last_event_at = time.time()
                 continue
@@ -350,6 +413,13 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
             if ptype in {"response.created", "response.in_progress"}:
                 if ptype == "response.created":
                     self._finalize_message_text()
+                    if self._failed_exchange_detail:
+                        logger.info(
+                            "[codex-interactive] session=%s Codex retried the "
+                            "failed exchange; turn continues",
+                            self.session_token[:8])
+                        self._failed_exchange_detail = ""
+                        self._failed_exchange_at = 0.0
                 response = payload.get("response") or {}
                 if response.get("model"):
                     self.effective_model = str(response["model"])
@@ -400,7 +470,11 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                     error = response.get("error") or {}
                     detail = (error.get("message") if isinstance(error, dict)
                               else str(error or ""))
-                    raise RuntimeError(
+                    # One exchange failed, not the turn: Codex retries the
+                    # sampling request itself. Raising here closed the PawFlow
+                    # turn with "LLM call failed" while the TUI kept running
+                    # the same prompt on a new WebSocket.
+                    self._defer_failed_exchange(
                         detail or "Codex Responses request failed")
 
         self._finalize_message_text()

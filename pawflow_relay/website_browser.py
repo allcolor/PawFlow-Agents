@@ -86,11 +86,17 @@ class CdpPipeTransport:
         self._lock = threading.Lock()
 
     def close(self) -> None:
-        for descriptor in (self.read_fd, self.write_fd):
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
+        with self._lock:
+            descriptors = (self.read_fd, self.write_fd)
+            self.read_fd = -1
+            self.write_fd = -1
+            for descriptor in descriptors:
+                if descriptor < 0:
+                    continue
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
 
     def _message(self, timeout: float) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
@@ -122,6 +128,8 @@ class CdpPipeTransport:
         self, method: str, params: dict[str, Any], *, session_id: str = "", timeout: float = 10,
     ) -> dict[str, Any]:
         with self._lock:
+            if self.read_fd < 0 or self.write_fd < 0:
+                raise ConnectionError("Chromium CDP pipe is closed")
             request_id = self._next_id
             self._next_id += 1
             message: dict[str, Any] = {"id": request_id, "method": method, "params": params}

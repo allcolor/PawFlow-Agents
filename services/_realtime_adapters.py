@@ -28,6 +28,8 @@ import struct
 import threading
 import urllib.parse
 
+from core.socket_teardown import shutdown_socket
+
 logger = logging.getLogger(__name__)
 
 # Sanity cap on a single WS message (frame or reassembled fragments): a
@@ -188,8 +190,6 @@ class RealtimeWSClient:
             return None, b""
 
     def _send_frame(self, opcode: int, payload: bytes):
-        if self._sock is None:
-            raise ConnectionError("Realtime WS not connected")
         mask = os.urandom(4)
         hdr = bytearray([0x80 | opcode])
         n = len(payload)
@@ -204,7 +204,10 @@ class RealtimeWSClient:
         hdr.extend(mask)
         masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
         with self._send_lock:
-            self._sock.sendall(bytes(hdr) + masked)
+            sock = self._sock
+            if sock is None:
+                raise ConnectionError("Realtime WS not connected")
+            sock.sendall(bytes(hdr) + masked)
 
     def send_text(self, text: str):
         self._send_frame(0x1, text.encode("utf-8"))
@@ -212,21 +215,27 @@ class RealtimeWSClient:
     def send_pong(self, payload: bytes = b""):
         self._send_frame(0xA, payload)
 
+    def shutdown(self):
+        """Interrupt in-flight I/O without releasing the socket descriptor."""
+        return shutdown_socket(self._sock)
+
     def close(self):
-        sock, self._sock = self._sock, None
-        if sock is None:
-            return
-        try:
-            payload = struct.pack("!H", 1000)
-            mask = os.urandom(4)
-            masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
-            sock.sendall(bytes(bytearray([0x88, 0x80 | len(payload)]) + mask) + masked)
-        except Exception:
-            logger.debug("Realtime WS close frame failed", exc_info=True)
-        try:
-            sock.close()
-        except Exception:
-            logger.debug("Ignored exception", exc_info=True)
+        with self._send_lock:
+            sock, self._sock = self._sock, None
+            if sock is None:
+                return
+            try:
+                payload = struct.pack("!H", 1000)
+                mask = os.urandom(4)
+                masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+                sock.sendall(bytes(
+                    bytearray([0x88, 0x80 | len(payload)]) + mask) + masked)
+            except Exception:
+                logger.debug("Realtime WS close frame failed", exc_info=True)
+            try:
+                sock.close()
+            except Exception:
+                logger.debug("Ignored exception", exc_info=True)
 
 
 # ── Adapter interface ───────────────────────────────────────────────
@@ -270,6 +279,10 @@ class RealtimeAdapter:
     def recv_event(self, timeout: float = 1.0):
         """Next normalized event dict, None on timeout, or raises
         ConnectionError when the provider socket is gone."""
+        raise NotImplementedError
+
+    def shutdown(self) -> None:
+        """Interrupt in-flight provider I/O without closing its descriptor."""
         raise NotImplementedError
 
     def close(self) -> None:
@@ -395,6 +408,12 @@ class OpenAIRealtimeAdapter(RealtimeAdapter):
             },
         })
         self._create_response()
+
+    def shutdown(self):
+        ws = self._ws
+        if ws is not None:
+            return ws.shutdown()
+        return False
 
     def close(self):
         ws, self._ws = self._ws, None

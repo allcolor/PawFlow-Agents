@@ -2251,11 +2251,25 @@ def test_done_hotpath_does_not_compute_context_usage():
 
 def test_relay_reconnect_shuts_down_command_pool():
     src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
+    close_marker = "# Always close before reconnecting, serialized with every writer."
     cleanup = src[
         src.index("# Stop watchdog"):
-        src.index("# Always close socket before reconnecting")]
+        src.index(close_marker)]
     assert "locals().get('_pool')" in cleanup
     assert "shutdown(wait=False, cancel_futures=True)" in cleanup
+    assert cleanup.index("_shutdown_socket(sock)") < cleanup.index(
+        "shutdown(wait=False, cancel_futures=True)")
+    close = src[src.index(close_marker):]
+    assert "with _close_lock:" in close
+
+
+def test_relay_watchdog_never_closes_foreign_owned_socket():
+    src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
+    watchdog = src[
+        src.index("def _watchdog():"):
+        src.index("_wd_thread =", src.index("def _watchdog():"))]
+    assert "_shutdown_socket(sock)" in watchdog
+    assert "sock.close()" not in watchdog
 
 
 def test_codex_app_marks_terminal_turn_callback_after_turn_completed():

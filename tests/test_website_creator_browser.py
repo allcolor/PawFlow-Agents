@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +16,7 @@ from core.handlers.browser_console_extract import BrowserConsoleExtractHandler
 from pawflow_relay.website_browser import (
     MAX_EXTRACTION_BYTES,
     BrowserSession,
+    CdpPipeTransport,
     build_chromium_command,
     cleanup_sessions,
     extract_session,
@@ -315,3 +318,52 @@ def test_cleanup_sessions_terminates_process_closes_transport_and_removes_profil
     assert transport.closed is True
     assert not profile.exists()
     assert state.website_browser_sessions == {}
+
+
+def test_cdp_close_waits_for_request_and_invalidates_descriptors(monkeypatch):
+    read_fd, response_write = os.pipe()
+    request_read, write_fd = os.pipe()
+    transport = CdpPipeTransport(read_fd, write_fd)
+    entered = threading.Event()
+    proceed = threading.Event()
+    close_called = threading.Event()
+    real_write = os.write
+    real_close = os.close
+
+    def blocking_write(descriptor, data):
+        if descriptor == write_fd:
+            entered.set()
+            assert proceed.wait(2)
+            real_write(response_write, b'{"id":1,"result":{}}\0')
+            return len(data)
+        return real_write(descriptor, data)
+
+    def tracked_close(descriptor):
+        if descriptor in {read_fd, write_fd}:
+            close_called.set()
+        return real_close(descriptor)
+
+    monkeypatch.setattr("pawflow_relay.website_browser.os.write", blocking_write)
+    monkeypatch.setattr("pawflow_relay.website_browser.os.close", tracked_close)
+    result = []
+    request = threading.Thread(
+        target=lambda: result.append(transport.request("Runtime.evaluate", {})))
+    request.start()
+    assert entered.wait(1)
+    closer = threading.Thread(target=transport.close)
+    closer.start()
+    assert close_called.wait(0.1) is False
+    proceed.set()
+    request.join(timeout=2)
+    closer.join(timeout=2)
+    try:
+        assert not request.is_alive()
+        assert not closer.is_alive()
+        assert result == [{"id": 1, "result": {}}]
+        assert transport.read_fd == -1
+        assert transport.write_fd == -1
+        with pytest.raises(ConnectionError, match="closed"):
+            transport.request("Runtime.evaluate", {})
+    finally:
+        real_close(response_write)
+        real_close(request_read)

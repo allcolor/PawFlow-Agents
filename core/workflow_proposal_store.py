@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import core.paths as _paths
+from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
 
 PLANNER_DRAFTING = "planner_drafting"
 USER_REVIEW = "user_review"
@@ -87,9 +88,19 @@ class WorkflowProposalStore:
             raise TypeError("before_live_write must be callable")
         self._before_live_write = before_live_write
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+        self._guard = SqliteStoreGuard("Workflow proposal")
+        try:
+            self._guard.initialize(self.database_path, self._initialize)
+        except SqliteStoreUnavailableError:
+            pass
+
+    @property
+    def available(self) -> bool:
+        """Return whether the store is safe to read or write."""
+        return self._guard.available
 
     def _connect(self) -> sqlite3.Connection:
+        self._guard.require_available()
         connection = sqlite3.connect(
             str(self.database_path), timeout=30, isolation_level=None)
         connection.row_factory = sqlite3.Row

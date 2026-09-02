@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 CORRUPTION_MARKERS = (
@@ -154,6 +155,18 @@ class SqliteStoreGuard:
             open_schema()
         except sqlite3.DatabaseError as exc:
             if not is_corruption_error(exc):
+                raise
+            self.trip(exc, database)
+            self.require_available()
+
+    @contextmanager
+    def runtime(self, database: Path):
+        """Trip on a storage failure raised by one complete DB operation."""
+        self.require_available()
+        try:
+            yield
+        except sqlite3.DatabaseError as exc:
+            if not is_store_failure(exc):
                 raise
             self.trip(exc, database)
             self.require_available()

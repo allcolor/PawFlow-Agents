@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import core.paths as _paths
+from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
 from core._workflow_run_store_llm import (
     WorkflowBudgetExceeded,
     WorkflowRunStoreLLMMixin,
@@ -73,7 +74,16 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
         self._database_path_override = (
             Path(database_path) if database_path is not None else None)
         self._lock = threading.RLock()
-        self._initialize()
+        self._guard = SqliteStoreGuard("Workflow run")
+        try:
+            self._guard.initialize(self.database_path, self._initialize)
+        except SqliteStoreUnavailableError:
+            pass
+
+    @property
+    def available(self) -> bool:
+        """Return whether the store is safe to read or write."""
+        return self._guard.available
 
     @property
     def database_path(self) -> Path:
@@ -81,6 +91,7 @@ class WorkflowRunStore(WorkflowRunStoreLLMMixin):
             _paths.RUNTIME_DIR / "workflow_runs.sqlite3")
 
     def _connect(self) -> sqlite3.Connection:
+        self._guard.require_available()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.database_path, timeout=10)
         connection.row_factory = sqlite3.Row

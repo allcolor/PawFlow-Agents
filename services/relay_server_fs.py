@@ -358,10 +358,10 @@ class RelayServerFs:
                                     f"size {size} exceeds {self.MAX_READ_CHUNK}")
         with self._fd_lock:
             fd = self._fds.get(fh)
-        if fd is None:
-            return _errno_response(errno.EBADF, f"unknown fh {fh}")
-        os.lseek(fd, offset, os.SEEK_SET)
-        chunk = os.read(fd, size)
+            if fd is None:
+                return _errno_response(errno.EBADF, f"unknown fh {fh}")
+            os.lseek(fd, offset, os.SEEK_SET)
+            chunk = os.read(fd, size)
         return {"data": {"data_b64": base64.b64encode(chunk).decode("ascii")}}
 
     def _op_release(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -436,8 +436,8 @@ class RelayServerFs:
             meta = self._open_meta.get(fh)
             if meta is not None:
                 self._open_meta[fh] = (meta[0], True, meta[2])
-        os.lseek(fd, offset, os.SEEK_SET)
-        n = os.write(fd, data)
+            os.lseek(fd, offset, os.SEEK_SET)
+            n = os.write(fd, data)
         return {"data": {"bytes_written": n}}
 
     def _op_truncate(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -452,7 +452,7 @@ class RelayServerFs:
                 meta = self._open_meta.get(fh)
                 if meta is not None:
                     self._open_meta[fh] = (meta[0], True, meta[2])
-            os.ftruncate(fd, length)
+                os.ftruncate(fd, length)
         else:
             rel = args.get("path", "")
             provider, target, _root = self._resolve_entry(rel)

@@ -1170,6 +1170,22 @@ one upstream exchange; the documented Codex `Stop` hook terminates the visible
 PawFlow turn. `UserPromptSubmit` also mirrors manual tmux prompts into the
 conversation and activates the same orphan-turn capture used by Claude Code.
 
+A failed exchange is not a failed turn. When the upstream answers an `error`
+event followed by `response.failed` (observed on the WebSocket transport with
+Codex 0.152: `An error occurred while processing your request ... request ID
+...`), Codex treats the stream as disconnected and retries the sampling request
+itself, up to five times with backoff, on a new WebSocket. The coordinator used
+to raise on `response.failed` immediately: the webchat showed `LLM call failed`,
+the turn was closed with an error and its consumer detached while the TUI kept
+working on the very same prompt. The coordinator now records the failure and
+keeps reading. A later `response.created` clears it (the retry is live); a
+`request_start` for `/responses` refreshes its deadline. The turn fails with
+that detail only when the `Stop` hook arrives with the failure still standing
+(Codex gave up) or when no retry starts within
+`PAWFLOW_CODEX_FAILED_EXCHANGE_RETRY_GRACE_SECONDS` (default 120; `_MS` variant
+accepted). The raised `LLMCallError` is not retryable by the driver: the prompt
+is consumed, and `429`/rate-limit wording classifies it as `rate_limited`.
+
 Cold and warm context follow the same binary rule as every CLI provider. A live
 container receives only the delta. If no matching live container exists, the
 new TUI must receive the complete PawFlow initial context. Context edits and

@@ -289,10 +289,6 @@ def audio_stream_close(state, msg):
                 backend.shutdown(socket.SHUT_RDWR)
             except Exception:
                 _log.debug("Ignored exception", exc_info=True)
-            try:
-                backend.close()
-            except Exception:
-                _log.debug("Ignored exception", exc_info=True)
     return {"ok": True}
 
 

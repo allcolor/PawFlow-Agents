@@ -87,6 +87,12 @@ def test_pawcode_binary_copies_distribution_metadata(monkeypatch, tmp_path):
     command = commands[0]
     metadata_flag = command.index("--copy-metadata")
     assert command[metadata_flag + 1] == "pawflow"
+    exclusions = {
+        command[index + 1]
+        for index, argument in enumerate(command)
+        if argument == "--exclude-module"
+    }
+    assert exclusions == {"IPython", "pydantic.v1._hypothesis_plugin"}
 
 
 def test_release_assets_workflow_publishes_all_installers():

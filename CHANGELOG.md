@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex interactive no longer fails the PawFlow turn on a `response.failed`
+  exchange. On the WebSocket Responses transport (Codex 0.152) a transient
+  upstream error (`An error occurred while processing your request ...
+  request ID ...`) is followed by `response.failed`; Codex retries the sampling
+  request itself and continues, while PawFlow raised immediately and showed
+  `LLM call failed` for a turn the TUI was still running. The coordinator now
+  defers the failure: a later `response.created` clears it, and the turn only
+  fails with that detail when the `Stop` hook arrives with the failure standing
+  or no retry starts within `PAWFLOW_CODEX_FAILED_EXCHANGE_RETRY_GRACE_SECONDS`
+  (default 120).
+- PawCode standalone builds exclude optional Pydantic and Rich developer
+  integrations, preventing unrelated scientific and CUDA stacks from entering
+  the executable and exhausting build memory.
+- Relay CLI standalone builds include the vendored `pkg_resources` helpers
+  required by its PyInstaller runtime hook, so the packaged executable starts
+  reliably across setuptools layouts.
+
 ## [1.0.0-beta.259] — 2026-09-02
 
 ### Fixed

@@ -40,6 +40,7 @@ class TerminalManager:
         # shared send lock before writing to the socket).
         self._root_dir = root_dir
         self._send_frame = send_frame
+        self._lock = threading.RLock()
         self.sessions = {}  # session_id -> {master_fd, pid, reader, shell}
 
     def open(self, cols=80, rows=24, shell=None):
@@ -73,14 +74,14 @@ class TerminalManager:
         reader = threading.Thread(
             target=self._pty_reader, args=(master_fd, sid),
             daemon=True, name=f"pty-reader-{sid}")
-        reader.start()
-
-        self.sessions[sid] = {
-            "master_fd": master_fd,
-            "pid": pid,
-            "reader": reader,
-            "shell": _shell,
-        }
+        with self._lock:
+            self.sessions[sid] = {
+                "master_fd": master_fd,
+                "pid": pid,
+                "reader": reader,
+                "shell": _shell,
+            }
+            reader.start()
         _log.debug("Terminal opened: %s (shell=%s)", sid, _shell)
         return sid
 
@@ -99,6 +100,14 @@ class TerminalManager:
         except OSError:
             pass
         finally:
+            with self._lock:
+                current = self.sessions.get(sid)
+                if current and current.get("master_fd") == fd:
+                    self.sessions.pop(sid, None)
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             try:
                 frame = json.dumps({
                     "type": "terminal_exit",
@@ -114,14 +123,15 @@ class TerminalManager:
         Returns (ok, error). ok=False with a message when the session is
         unknown or the write fails.
         """
-        sess = self.sessions.get(session_id)
-        if not sess:
-            return False, f"Terminal session not found: {session_id}"
-        try:
-            os.write(sess["master_fd"], base64.b64decode(data_b64 or ""))
-            return True, ""
-        except OSError as e:
-            return False, str(e)
+        with self._lock:
+            sess = self.sessions.get(session_id)
+            if not sess:
+                return False, f"Terminal session not found: {session_id}"
+            try:
+                os.write(sess["master_fd"], base64.b64decode(data_b64 or ""))
+                return True, ""
+            except OSError as e:
+                return False, str(e)
 
     def resize(self, session_id, cols=80, rows=24):
         """Resize the session's PTY. Returns (ok, error)."""
@@ -129,40 +139,44 @@ class TerminalManager:
         import termios
         import array
 
-        sess = self.sessions.get(session_id)
-        if not sess:
-            return False, f"Terminal session not found: {session_id}"
-        try:
-            winsize = array.array("H", [rows, cols, 0, 0])
-            fcntl.ioctl(sess["master_fd"], termios.TIOCSWINSZ, winsize)
-            return True, ""
-        except Exception as e:
-            return False, str(e)
+        with self._lock:
+            sess = self.sessions.get(session_id)
+            if not sess:
+                return False, f"Terminal session not found: {session_id}"
+            try:
+                winsize = array.array("H", [rows, cols, 0, 0])
+                fcntl.ioctl(sess["master_fd"], termios.TIOCSWINSZ, winsize)
+                return True, ""
+            except Exception as e:
+                return False, str(e)
 
     def close(self, session_id):
-        """Close one session (fd + kill child). Returns True if it existed."""
-        sess = self.sessions.pop(session_id, None)
+        """Stop one child and let its reader close the PTY master."""
+        with self._lock:
+            sess = self.sessions.pop(session_id, None)
         if not sess:
             return False
-        try:
-            os.close(sess["master_fd"])
-        except OSError:
-            pass
         try:
             os.kill(sess["pid"], 9)
             os.waitpid(sess["pid"], os.WNOHANG)
         except (OSError, ChildProcessError):
             pass
+        reader = sess.get("reader")
+        if reader is not threading.current_thread():
+            reader.join(timeout=2)
         _log.debug("Terminal closed: %s", session_id)
         return True
 
     def close_all(self):
-        for sid in list(self.sessions):
+        with self._lock:
+            session_ids = list(self.sessions)
+        for sid in session_ids:
             self.close(sid)
 
     def list(self):
         """List open sessions as [{session_id, shell}]."""
-        return [
-            {"session_id": sid, "shell": s["shell"]}
-            for sid, s in self.sessions.items()
-        ]
+        with self._lock:
+            return [
+                {"session_id": sid, "shell": s["shell"]}
+                for sid, s in self.sessions.items()
+            ]

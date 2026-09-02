@@ -59,14 +59,22 @@ database on their own: the file is evidence.
 
 - `data/system/mcp_servers.sqlite3` checks its main file before schema work
   and disables MCP publication on failure.
-- `data/runtime/ui_surfaces.sqlite3` and `data/runtime/agent_inbox.sqlite3`
-  use `core.sqlite_store_guard.SqliteStoreGuard`: the main file is checked
-  read-only (`mode=ro&immutable=1`, `PRAGMA quick_check`) before the store
-  opens it, and a corruption signature raised while creating the schema also
-  trips the guard. A tripped store logs one CRITICAL line with sizes, mtimes
-  and SHA-256 digests of the database and sidecars, keeps its singleton alive,
-  and raises `SqliteStoreUnavailableError` on every later call. The
-  `ui_surface_list` action maps that error to HTTP 503.
+- All PawFlow-owned durable stores use
+  `core.sqlite_store_guard.SqliteStoreGuard`: A2A, confirmations, flow and
+  workflow runs, workflow proposals and parent invocations, media projects,
+  todos, scratchpads, UI surfaces, agent inboxes, usage, LLM routing, and
+  per-user conversation indexes. The main file is checked read-only
+  (`mode=ro&immutable=1`, `PRAGMA quick_check`) before schema work. A
+  corruption signature raised during schema creation also trips the guard.
+- Short-lived connection stores keep their singleton alive after a startup
+  failure. Long-lived usage, routing, and conversation-index connections also
+  guard complete runtime operations, including fetch and commit, so a later
+  storage failure trips once rather than producing a traceback on every call.
+  A tripped store logs one CRITICAL line with sizes, mtimes and SHA-256 digests
+  of the database and sidecars, then raises `SqliteStoreUnavailableError` on
+  every later access. UI surfaces map it to HTTP 503; server route discovery
+  and CLI cold-start context assembly treat unavailable optional stores as
+  empty.
 - `data/runtime/scratchdirs/scratchdirs.sqlite3` holds disposable metadata
   only. A proven corruption signature quarantines the database and its
   WAL/SHM sidecars before an empty store is created.
@@ -74,6 +82,13 @@ database on their own: the file is evidence.
 The MCP, ScratchDir, and guarded stores use WAL journaling; MCP and ScratchDir
 add `synchronous=FULL` and `cell_size_check=ON`. WAL is a mitigation for
 commit-time page writes and not evidence about the corruption mechanism.
+
+`immutable=1` deliberately prevents SQLite from reading or recovering WAL.
+That keeps forensic evidence untouched, but it has a diagnostic limitation: a
+main file whose latest valid state exists only in an unapplied WAL may fail the
+check, while damage confined to a WAL frame may not be seen. Always preserve
+and inspect the main file and both sidecars together before deciding which
+artifact is damaged.
 
 ## Repairing a damaged store
 
@@ -100,8 +115,11 @@ evidence.
 ## Opt-in bootstrap canary
 
 Set `PAWFLOW_SQLITE_BOOT_CANARY=1` only while diagnosing corruption. The server
-then checks the existing main files of `mcp_servers`, `scratchdirs`,
-`ui_surfaces`, and `agent_inbox` at four ordered checkpoints:
+then checks every existing PawFlow-owned SQLite main file at four ordered
+checkpoints. This includes MCP, ScratchDir, UI surface, inbox, A2A,
+confirmation, flow/workflow, media, todo, scratchpad, usage, routing, and all
+per-user conversation-index databases. User-selected SQLite data sources are
+not included.
 
 1. before task and service registration;
 2. after task and service registration;
@@ -119,8 +137,14 @@ stops startup at the named checkpoint, preserving the files for analysis. With
 the environment variable absent, all four calls return immediately and do no
 filesystem work.
 
+The same flag enables a cheaper pass after every `LLMClient.abort()`. It reads
+only page-one bytes and sidecar metadata, recognizes the TLS-record signature
+at offset 39, and never opens SQLite. It logs corruption at CRITICAL but does
+not raise, so a force stop remains an immediate non-error operation.
+
 Interpretation:
 
 - failure before registration means the damaged main file predates this boot;
-- four green checkpoints do not exclude a later runtime mutation, which is
-  the case described above.
+- four green checkpoints do not exclude a later runtime mutation; the
+  post-abort header pass narrows that observation gap for the known TLS
+  descriptor-reuse signature.

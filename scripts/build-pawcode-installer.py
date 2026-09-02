@@ -37,6 +37,7 @@ HIDDEN_IMPORTS = [
 ]
 
 COLLECT_SUBMODULES = ["cryptography", "prompt_toolkit", "rich", "PIL"]
+EXCLUDED_MODULES = ["IPython", "pydantic.v1._hypothesis_plugin"]
 
 
 def _run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None) -> None:
@@ -138,6 +139,8 @@ def build_binary(python: str, version: str) -> Path:
     for module in COLLECT_SUBMODULES:
         if _module_available(python, module):
             command.extend(["--collect-submodules", module])
+    for module in EXCLUDED_MODULES:
+        command.extend(["--exclude-module", module])
     command.append(str(ENTRY))
 
     env = os.environ.copy()

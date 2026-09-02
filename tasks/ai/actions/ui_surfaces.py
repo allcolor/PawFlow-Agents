@@ -22,6 +22,7 @@ def _handle_ui_surfaces(self, action, body, store, user_id, flowfile):
     if not conversation_id:
         return _reply({"error": "conversation_id is required"}, "400")
     try:
+        from core.sqlite_store_guard import SqliteStoreUnavailableError
         from core.ui_surface_store import UiSurfaceStore
         return _reply({
             "surfaces": UiSurfaceStore.instance().list(
@@ -29,6 +30,8 @@ def _handle_ui_surfaces(self, action, body, store, user_id, flowfile):
         })
     except ValueError as exc:
         return _reply({"error": str(exc)}, "400")
+    except SqliteStoreUnavailableError as exc:
+        return _reply({"error": str(exc)}, "503")
 
 
 __all__ = ["_handle_ui_surfaces"]

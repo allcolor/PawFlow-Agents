@@ -24,6 +24,8 @@ def _database_targets() -> tuple[tuple[str, Path], ...]:
     return (
         ("mcp_servers", paths.SYSTEM_DIR / "mcp_servers.sqlite3"),
         ("scratchdirs", paths.SCRATCHDIRS_DIR / "scratchdirs.sqlite3"),
+        ("ui_surfaces", paths.RUNTIME_DIR / "ui_surfaces.sqlite3"),
+        ("agent_inbox", paths.RUNTIME_DIR / "agent_inbox.sqlite3"),
     )
 
 

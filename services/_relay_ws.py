@@ -13,6 +13,8 @@ import os
 import struct
 import threading
 
+from core.socket_teardown import shutdown_socket
+
 # Hard cap on a single WebSocket frame (relay-declared length). A connected
 # relay is user-run and holds a token; a huge declared frame must not be
 # read into unbounded memory.
@@ -162,6 +164,18 @@ def _attach_sync_sock_to_loop(sock, loop):
     sock.setblocking(True)
     reader = asyncio.StreamReader(loop=loop)
     stop_event = threading.Event()
+    # The pump thread owns the descriptor: it is the only thread allowed to
+    # close() the socket, because it may be inside recv() (SSL_read) with the
+    # raw descriptor number captured by OpenSSL. Every other thread only shuts
+    # the socket down and lets the pump release it (core/socket_teardown.py).
+    owner_lock = threading.Lock()
+    owner_state = {"pump_alive": True, "close_requested": False}
+
+    def _release_socket():
+        try:
+            sock.close()
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _call_reader(method, *args):
         if stop_event.is_set() or loop.is_closed():
@@ -185,6 +199,12 @@ def _attach_sync_sock_to_loop(sock, loop):
                 _call_reader(reader.feed_data, data)
         except Exception as e:
             _call_reader(reader.set_exception, e)
+        finally:
+            with owner_lock:
+                owner_state["pump_alive"] = False
+                close_now = owner_state["close_requested"]
+            if close_now:
+                _release_socket()
 
     threading.Thread(
         target=_read_pump, daemon=True,
@@ -214,10 +234,16 @@ def _attach_sync_sock_to_loop(sock, loop):
                 return
             self._closed = True
             self._stop_event.set()
-            try:
-                self._sock.close()
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            with owner_lock:
+                owner_state["close_requested"] = True
+                pump_alive = owner_state["pump_alive"]
+            if pump_alive:
+                # Unblock the pump's recv(); the pump closes the socket when
+                # it exits, so the descriptor number is never freed while
+                # a read is still running on it.
+                shutdown_socket(self._sock)
+            else:
+                _release_socket()
 
     return reader, _SockWriter(sock, stop_event)
 

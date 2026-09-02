@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import core.paths as _paths
+from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
 from core.ui_surface import validate_ui_surface
 
 
@@ -39,6 +40,21 @@ class UiSurfaceStore:
         self.database_path = Path(
             database_path or (_paths.RUNTIME_DIR / "ui_surfaces.sqlite3"))
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self._guard = SqliteStoreGuard("UI surface")
+        try:
+            self._guard.initialize(self.database_path, self._create_schema)
+        except SqliteStoreUnavailableError:
+            # The guard preserved and described the database. Keep the
+            # singleton alive so every later call fails fast instead of
+            # reopening the damaged file with a traceback per request.
+            pass
+
+    @property
+    def available(self) -> bool:
+        """Return whether the store is safe to read or write."""
+        return self._guard.available
+
+    def _create_schema(self) -> None:
         with self._connect() as connection:
             connection.executescript(
                 """
@@ -58,6 +74,7 @@ class UiSurfaceStore:
                 """)
 
     def _connect(self) -> sqlite3.Connection:
+        self._guard.require_available()
         connection = sqlite3.connect(
             str(self.database_path), timeout=30, isolation_level=None)
         connection.row_factory = sqlite3.Row

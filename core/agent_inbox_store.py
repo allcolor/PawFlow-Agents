@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import core.paths as _paths
+from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
 from core.workflow_agent_contracts import AgentInboxClaim, AgentInboxItem
 
 
@@ -55,7 +56,19 @@ class AgentInboxStore:
         self._database_path_override = (
             Path(database_path) if database_path is not None else None)
         self._lock = threading.RLock()
-        self._initialize()
+        self._guard = SqliteStoreGuard("Agent inbox")
+        try:
+            self._guard.initialize(self.database_path, self._initialize)
+        except SqliteStoreUnavailableError:
+            # The guard preserved and described the database. Keep the
+            # singleton alive so every later call fails fast instead of
+            # reopening the damaged file with a traceback per request.
+            pass
+
+    @property
+    def available(self) -> bool:
+        """Return whether the inbox is safe to read or write."""
+        return self._guard.available
 
     @property
     def database_path(self) -> Path:
@@ -63,6 +76,7 @@ class AgentInboxStore:
             _paths.RUNTIME_DIR / "agent_inbox.sqlite3")
 
     def _connect(self) -> sqlite3.Connection:
+        self._guard.require_available()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.database_path, timeout=10)
         connection.row_factory = sqlite3.Row

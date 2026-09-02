@@ -373,10 +373,16 @@ class _LLMClientDriverMixin:
                 logger.debug("Antigravity interactive abort failed", exc_info=True)
         conn = getattr(self, "_active_http_conn", None)
         if conn is not None:
+            # Never close() from here: the streaming thread owns the socket
+            # and may be inside SSL_read. close() frees the descriptor number
+            # while OpenSSL still uses it, and the next file opened by any
+            # thread (a SQLite store) gets a TLS alert written into it. See
+            # core/socket_teardown.py and docs/SQLITE_CORRUPTION_DIAGNOSTICS.md.
+            from core.socket_teardown import abort_http_connection
             try:
-                conn.close()
+                abort_http_connection(conn)
             except Exception:
-                logger.debug("LLM abort connection close failed", exc_info=True)
+                logger.debug("LLM abort connection shutdown failed", exc_info=True)
 
     def reset_abort(self):
         """Clear the abort signal before a new call."""

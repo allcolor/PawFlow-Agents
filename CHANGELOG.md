@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Root cause of the recurring SQLite header corruption (`unsupported file
+  format` on `mcp_servers`, `scratchdirs`, `ui_surfaces`, `agent_inbox`):
+  aborting an in-flight LLM stream closed its TLS socket from another thread,
+  the freed descriptor number was reused by the next SQLite store to open,
+  and OpenSSL wrote a TLS alert record into page 1 of that database.
+  Cross-thread interruption now uses `shutdown()` and only the owning thread
+  releases the descriptor (`core/socket_teardown.py`), for LLM stream aborts
+  and the relay WebSocket bridge alike.
+- `UiSurfaceStore` and `AgentInboxStore` check their main file read-only
+  before schema work and fail closed with one CRITICAL log line and a typed
+  `SqliteStoreUnavailableError` (HTTP 503 for `ui_surface_list`) instead of a
+  traceback on every request; damaged files are preserved untouched.
+- The opt-in bootstrap SQLite canary also covers `ui_surfaces` and
+  `agent_inbox`, and the diagnostics document records the signature, the
+  reproduction, and the header repair procedure.
+
 ## [1.0.0-beta.258] — 2026-09-02
 
 ### Added

@@ -2601,7 +2601,12 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     assert "ToolRelayService.uncancel_agent(" in core_src
     assert "self._active_http_conn = conn" in openai_src
     assert "self._active_http_conn = conn" in anthropic_src
-    assert "conn.close()" in llm_client_src
+    # abort() must interrupt the stream with shutdown() and never close() the
+    # socket from a foreign thread: close() frees the descriptor number while
+    # the worker is inside SSL_read, and the next SQLite store to open gets a
+    # TLS alert written into it (docs/SQLITE_CORRUPTION_DIAGNOSTICS.md).
+    assert "abort_http_connection(conn)" in llm_client_src
+    assert "conn.close()" not in llm_client_src
     assert "self._abort.is_set()" in openai_src
     assert "self._abort.is_set()" in anthropic_src
     assert "self._abort.is_set()" in codex_app_src

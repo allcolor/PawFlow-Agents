@@ -3,20 +3,30 @@
 
 let _a2aState = null;
 
-function _a2aAction(action, payload, onSuccess) {
+function _a2aAction(action, payload, onSuccess, onError) {
   action$(action, Object.assign({ conversation_id: conversationId }, payload || {})).subscribe({
     next: function(data) {
-      if (data && data.error) { addMsg('error', data.error); return; }
+      if (data && data.error) {
+        if (onError) onError(data.error, data);
+        else addMsg('error', data.error);
+        return;
+      }
       if (onSuccess) onSuccess(data || {});
     },
-    error: function(error) { addMsg('error', String(error && error.message || error)); },
+    error: function(error) {
+      const message = String(error && error.message || error);
+      if (onError) onError(message, error);
+      else addMsg('error', message);
+    },
   });
 }
 
 function _a2aClose() {
+  const opener = _a2aState && _a2aState.opener;
   const overlay = document.getElementById('a2aConfigOverlay');
   if (overlay) overlay.remove();
   _a2aState = null;
+  if (opener && document.contains(opener)) opener.focus();
 }
 
 function _a2aEndpoint(publicationId) {
@@ -50,7 +60,9 @@ function _a2aPublicationRows(publications) {
     const keys = Array.isArray(pub.keys) ? pub.keys : [];
     const keyRows = keys.length ? keys.map(function(key) {
       return '<div style="display:flex;gap:6px;align-items:center;margin-top:4px;">'
-        + '<span style="flex:1;font-size:11px;">' + escapeHtml(key.label || key.prefix) + '</span>'
+        + '<span style="flex:1;font-size:11px;"><span style="display:block;">'
+        + escapeHtml(key.label || key.prefix) + '</span><span style="display:block;font-size:9px;color:var(--pf-muted);">'
+        + escapeHtml(_standardApiKeyMetadata(key)) + '</span></span>'
         + '<code style="font-size:10px;color:var(--pf-muted);">' + escapeHtml(key.revoked ? t('a2aRevoked') : key.prefix + '...') + '</code>'
         + (key.revoked ? '' : '<button type="button" onclick="_a2aRevokeKey(' + _pfpJsArg(pub.publication_id) + ',' + _pfpJsArg(key.key_id) + ')">' + escapeHtml(t('a2aRevoke')) + '</button>')
         + '</div>';
@@ -61,12 +73,16 @@ function _a2aPublicationRows(publications) {
       + (pub.managed_mode ? '<span style="font-size:10px;color:var(--pf-accent);">' + escapeHtml(t('a2aManagedBadge')) + '</span>' : '')
       + '<button type="button" onclick="_a2aEditPublication(' + _pfpJsArg(pub.publication_id) + ')">' + escapeHtml(t('a2aEdit')) + '</button>'
       + '<button type="button" style="color:var(--pf-danger);" onclick="_a2aDeletePublication(' + _pfpJsArg(pub.publication_id) + ')">' + escapeHtml(t('a2aDelete')) + '</button></div>'
+      + _standardApiPublicationStatus(pub, _a2aState)
       + '<div style="display:flex;gap:5px;margin-top:6px;"><input readonly value="' + _pfpAttr(cardUrl) + '" style="flex:1;font-size:11px;">'
       + '<button type="button" onclick="_a2aCopyValue(' + _pfpJsArg(cardUrl) + ')">' + escapeHtml(t('a2aCopyCard')) + '</button>'
       + '<button type="button" onclick="_a2aCopyValue(' + _pfpJsArg(endpoint) + ')">' + escapeHtml(t('a2aCopyEndpoint')) + '</button></div>'
       + '<div style="display:flex;gap:5px;margin-top:4px;align-items:center;"><span style="font-size:10px;color:var(--pf-muted);white-space:nowrap;">' + escapeHtml(t('a2aAguiEndpoint')) + '</span>'
       + '<input readonly value="' + _pfpAttr(aguiEndpoint) + '" style="flex:1;font-size:11px;">'
       + '<button type="button" onclick="_a2aCopyValue(' + _pfpJsArg(aguiEndpoint) + ')">' + escapeHtml(t('a2aCopyAguiEndpoint')) + '</button></div>'
+      + _standardApiTransportPanel(pub, _a2aState)
+      + '<div style="font-size:10px;color:var(--pf-muted);margin-top:7px;">'
+      + escapeHtml(t('standardApiSharedKeysHelp')) + '</div>'
       + keyRows
       + '<div style="display:flex;gap:5px;margin-top:6px;"><input id="a2aKeyLabel_' + _pfpAttr(pub.publication_id) + '" placeholder="' + _pfpAttr(t('a2aKeyLabel')) + '" style="flex:1;">'
       + '<button type="button" onclick="_a2aCreateKey(' + _pfpJsArg(pub.publication_id) + ')">' + escapeHtml(t('a2aCreateKey')) + '</button></div>'
@@ -89,7 +105,10 @@ function _a2aTargetRows(targets) {
 }
 
 function _a2aRender(state) {
+  const prior = _a2aState;
+  const focusedId = document.activeElement && document.activeElement.id;
   _a2aState = state || { publications: [], targets: [], local_choices: [] };
+  if (!_a2aState.opener && prior && prior.opener) _a2aState.opener = prior.opener;
   let overlay = document.getElementById('a2aConfigOverlay');
   if (!overlay) {
     overlay = document.createElement('div'); overlay.id = 'a2aConfigOverlay';
@@ -113,19 +132,21 @@ function _a2aRender(state) {
   const localHtml = localOptions.map(function(item) {
     return '<option value="' + item.index + '">' + escapeHtml(item.label) + '</option>';
   }).join('');
-  overlay.innerHTML = '<div class="exec-dialog" style="width:min(820px,94vw);max-height:90vh;overflow:auto;">'
-    + '<h3>' + escapeHtml(t('a2aTitle')) + '</h3><div style="font-size:12px;color:var(--pf-muted);margin-bottom:6px;">' + escapeHtml(t('a2aDescription')) + '</div>'
+  overlay.innerHTML = '<div class="exec-dialog" role="dialog" aria-modal="true" aria-labelledby="a2aDialogTitle" style="width:min(820px,94vw);max-height:90vh;overflow:auto;">'
+    + '<h3 id="a2aDialogTitle">' + escapeHtml(t('a2aTitle')) + '</h3><div style="font-size:12px;color:var(--pf-muted);margin-bottom:6px;">' + escapeHtml(t('a2aDescription')) + '</div>'
     + '<div style="font-size:11px;color:var(--pf-muted);margin-bottom:12px;">' + escapeHtml(t('a2aAguiHint')) + '</div>'
     + '<h4>' + escapeHtml(t('a2aPublishAgent')) + '</h4>'
     + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
     + '<label>' + escapeHtml(t('agent')) + '<select id="a2aPubAgent"' + (edited ? ' disabled' : '') + ' style="display:block;width:100%;">' + agentOptions + '</select></label>'
     + '<label>' + escapeHtml(t('a2aLabel')) + '<input id="a2aPubLabel" value="' + _pfpAttr(edited ? edited.label : selectedAgent) + '" style="display:block;width:100%;"></label>'
     + '<label style="grid-column:1/3;">' + escapeHtml(t('a2aAgentDescription')) + '<input id="a2aPubDescription" value="' + _pfpAttr(edited ? edited.description : '') + '" style="display:block;width:100%;"></label>'
-    + '<label>' + escapeHtml(t('a2aContextPolicy')) + '<select id="a2aPubPolicy" style="display:block;width:100%;"><option value="isolated"' + (!edited || edited.context_policy === 'isolated' ? ' selected' : '') + '>' + escapeHtml(t('a2aIsolated')) + '</option><option value="shared"' + (edited && edited.context_policy === 'shared' ? ' selected' : '') + '>' + escapeHtml(t('a2aShared')) + '</option></select></label>'
+    + '<label>' + escapeHtml(t('a2aContextPolicy')) + '<select id="a2aPubPolicy" onchange="_standardApiContextPolicyChanged()" style="display:block;width:100%;"><option value="isolated"' + (!edited || edited.context_policy === 'isolated' ? ' selected' : '') + '>' + escapeHtml(t('a2aIsolated')) + '</option><option value="shared"' + (edited && edited.context_policy === 'shared' ? ' selected' : '') + '>' + escapeHtml(t('a2aShared')) + '</option></select></label>'
     + '<label style="display:flex;align-items:center;gap:6px;padding-top:18px;"><input id="a2aPubEnabled" type="checkbox"' + (!edited || edited.enabled ? ' checked' : '') + '> ' + escapeHtml(t('a2aEnabled')) + '</label></div>'
     + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">'
     + '<label style="display:flex;align-items:center;gap:6px;" title="' + _pfpAttr(t('a2aManagedModeHelp')) + '"><input id="a2aPubManaged" type="checkbox"' + (edited && edited.managed_mode ? ' checked' : '') + '> ' + escapeHtml(t('a2aManagedMode')) + '</label>'
     + '<label>' + escapeHtml(t('a2aThreadTtl')) + '<input id="a2aPubThreadTtl" type="number" min="0" step="1" value="' + _pfpAttr(edited && edited.thread_ttl_seconds != null ? String(edited.thread_ttl_seconds) : '0') + '" style="display:block;width:100%;"></label></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+    + _standardApiFieldset(edited, _a2aState) + '</div>'
     + '<div style="margin:8px 0;"><button type="button" onclick="_a2aSavePublication()">' + escapeHtml(t('a2aSavePublication')) + '</button>'
     + (edited ? ' <button type="button" onclick="_a2aCancelEdit()">' + escapeHtml(t('a2aCancelEdit')) + '</button>' : '') + '</div>'
     + _a2aPublicationRows(_a2aState.publications || [])
@@ -140,11 +161,20 @@ function _a2aRender(state) {
     + '<button type="button" style="margin:8px 0;" onclick="_a2aSaveTarget()">' + escapeHtml(t('a2aAddTarget')) + '</button>'
     + _a2aTargetRows(_a2aState.targets || [])
     + '<div class="exec-btns" style="margin-top:14px;"><button class="exec-deny" type="button" onclick="_a2aClose()">' + escapeHtml(t('close')) + '</button></div></div>';
+  _standardApiContextPolicyChanged();
+  if (focusedId) {
+    const restored = document.getElementById(focusedId);
+    if (restored) restored.focus();
+  }
 }
 
 function showA2AConfigDialog() {
   if (!conversationId) { addMsg('error', t('a2aSelectConversation')); return; }
-  _a2aAction('a2a_get', {}, function(data) { _a2aRender(data); });
+  const opener = document.activeElement;
+  _a2aAction('a2a_get', {}, function(data) {
+    data.opener = opener;
+    _a2aRender(data);
+  });
 }
 
 function _a2aRefresh(mutator) {
@@ -161,16 +191,32 @@ function _a2aCancelEdit() { delete _a2aState.edit_publication; _a2aRender(_a2aSt
 function _a2aSavePublication() {
   const edited = _a2aState.edit_publication || null;
   const ttlRaw = document.getElementById('a2aPubThreadTtl').value;
-  _a2aAction('a2a_publication_configure', {
+  const contextPolicy = document.getElementById('a2aPubPolicy').value;
+  const publicationEnabled = document.getElementById('a2aPubEnabled').checked;
+  const standardPayload = _standardApiCollectPayload();
+  const standardErrors = _standardApiValidatePayload(
+    standardPayload, contextPolicy, _standardApiCapabilities(_a2aState));
+  if (Object.keys(standardErrors).length) {
+    _standardApiShowErrors(standardErrors);
+    return;
+  }
+  if (!_standardApiConfirmSave(edited, standardPayload, {
+    contextPolicy: contextPolicy,
+    publicationEnabled: publicationEnabled,
+  })) return;
+  const payload = Object.assign({
     publication_id: edited ? edited.publication_id : '',
     agent_name: document.getElementById('a2aPubAgent').value,
     label: document.getElementById('a2aPubLabel').value,
     description: document.getElementById('a2aPubDescription').value,
-    context_policy: document.getElementById('a2aPubPolicy').value,
-    enabled: document.getElementById('a2aPubEnabled').checked,
+    context_policy: contextPolicy,
+    enabled: publicationEnabled,
     managed_mode: document.getElementById('a2aPubManaged').checked,
     thread_ttl_seconds: ttlRaw === '' ? null : Number(ttlRaw),
-  }, function() { _a2aRefresh(); });
+  }, standardPayload);
+  _a2aAction('a2a_publication_configure', payload, function() {
+    _a2aRefresh();
+  }, _standardApiShowServerError);
 }
 
 function _a2aDeletePublication(publicationId) {
@@ -180,11 +226,23 @@ function _a2aDeletePublication(publicationId) {
 
 function _a2aCreateKey(publicationId) {
   const input = document.getElementById('a2aKeyLabel_' + publicationId);
-  _a2aAction('a2a_publication_create_key', { publication_id: publicationId, label: input ? input.value : '' }, function(created) {
+  const label = input ? input.value.trim() : '';
+  if (!label) {
+    addMsg('error', t('standardApiKeyLabelRequired'));
+    if (input) input.focus();
+    return;
+  }
+  _a2aAction('a2a_publication_create_key', { publication_id: publicationId, label: label }, function(created) {
     _a2aAction('a2a_get', {}, function(data) {
       _a2aRender(data);
       const box = document.getElementById('a2aNewKey_' + publicationId);
-      if (box) box.innerHTML = '<div style="color:var(--pf-danger);font-size:11px;margin-top:6px;">' + escapeHtml(t('a2aKeyOnce')) + '</div><div style="display:flex;gap:5px;"><input readonly value="' + _pfpAttr(created.api_key || '') + '" style="flex:1;"><button type="button" onclick="_a2aCopyValue(' + _pfpJsArg(created.api_key || '') + ')">' + escapeHtml(t('copy')) + '</button></div>';
+      const publication = (data.publications || []).find(function(row) {
+        return row.publication_id === publicationId;
+      });
+      const snippet = publication ? _standardApiConfiguredSnippet(publication) : '';
+      if (box) box.innerHTML = '<div style="color:var(--pf-danger);font-size:11px;margin-top:6px;">' + escapeHtml(t('a2aKeyOnce')) + '</div><div style="display:flex;gap:5px;"><input readonly value="' + _pfpAttr(created.api_key || '') + '" style="flex:1;"><button type="button" onclick="_a2aCopyValue(' + _pfpJsArg(created.api_key || '') + ')">' + escapeHtml(t('copy')) + '</button>'
+        + (snippet ? '<button type="button" onclick="_a2aCopyValue(' + _pfpJsArg(snippet) + ')">' + escapeHtml(t('standardApiCopyConfiguredSnippet')) + '</button>' : '')
+        + '</div>';
     });
   });
 }

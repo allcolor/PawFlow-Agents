@@ -611,12 +611,21 @@ def test_mitm_ack_confirms_the_canonical_enter(monkeypatch):
     assert keys == []
 
 
+def test_cold_restart_waits_the_full_window_for_a_late_mitm_ack(monkeypatch):
+    result, state, service, keys = _verify_with_signals(
+        monkeypatch, "", "", "request", pane=SUBMITTED_PANE)
+    assert result is True
+    assert state.last_error == ""
+    assert keys == []
+    assert len(service.calls) == 3
+
+
 def test_missing_ack_fails_without_appending_enter(monkeypatch):
     result, state, service, keys = _verify_with_signals(
         monkeypatch, "")
     assert result is False
     assert keys == []
-    assert len(service.calls) == 1
+    assert len(service.calls) == 4
     assert service.calls[0][2]["timeout"] == 0.3
     assert "not confirmed" in state.last_error
 
@@ -626,7 +635,7 @@ def test_missing_ack_is_not_replaced_by_visual_pane_inference(monkeypatch):
         monkeypatch, "", pane=SUBMITTED_PANE)
     assert result is False
     assert keys == []
-    assert len(service.calls) == 1
+    assert len(service.calls) == 4
     assert "not confirmed" in state.last_error
 
 

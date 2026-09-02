@@ -544,6 +544,9 @@ class TestAgentLoopStreaming(unittest.TestCase):
             def __init__(self):
                 self.tools = []
 
+            def fork(self):
+                return _EmptyRegistry()
+
             def list_tools(self):
                 return list(self.tools)
 

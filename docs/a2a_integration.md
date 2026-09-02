@@ -27,6 +27,11 @@ brings the published agent into user-facing applications with streaming SSE
 runs, frontend tools, shared state, and interrupts. See
 [AG-UI Integration](agui_integration.md).
 
+The same publication record is also the configuration authority for the
+OpenAI- and Anthropic-compatible transports. Standard API export is
+independently disabled by default and does not alter existing A2A behavior.
+See [Standard Agent APIs](standard_agent_api.md).
+
 ## Implemented V1
 
 PawFlow currently implements the A2A 1.0 HTTP+JSON core:
@@ -107,7 +112,7 @@ The implementation persists A2A state in `data/system/a2a.sqlite3` (through
 The database contains:
 
 ```text
-a2a_publications  — agent publication and context policy
+a2a_publications  — agent publication, context policy, and standard API policy
 a2a_api_keys      — hashed Bearer keys (raw values are never persisted)
 a2a_contexts      — opaque external-to-internal context mapping per client key
 a2a_tasks         — correlated runtime turn and A2A task state

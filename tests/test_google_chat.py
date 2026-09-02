@@ -297,8 +297,8 @@ def test_agent_runtime_permission_override_is_reserved(monkeypatch):
 
     monkeypatch.setattr(AgentLoopTask, "_live_instance", Runtime())
     AgentRuntimeAPI.submit_message(AgentRequest(
-        user_id="owner", message="hello", channel="google_chat",
-        permission_mode="read_only",
+        user_id="owner", conversation_id="conv", message="hello",
+        channel="google_chat", permission_mode="read_only",
         source_attributes={"agent.permission_mode": "default"}))
     assert captured["ff"].get_attribute("agent.permission_mode") == "read_only"
 

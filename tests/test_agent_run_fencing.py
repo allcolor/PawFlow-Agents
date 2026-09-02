@@ -64,10 +64,25 @@ def _call(tc_id="tc-1"):
 
 def _exec(registry, tc_id="tc-1", *, run_handle, fence_token,
           conv="c1", agent="helper"):
-    return _Agent()._execute_tool_calls(
-        [_call(tc_id)], registry, {}, 100,
-        agent_name=agent, conversation_id=conv,
-        run_handle=run_handle, fence_token=fence_token)
+    result = []
+    errors = []
+
+    def _run():
+        try:
+            result.append(_Agent()._execute_tool_calls(
+                [_call(tc_id)], registry, {}, 100,
+                agent_name=agent, conversation_id=conv,
+                run_handle=run_handle, fence_token=fence_token))
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+    assert not worker.is_alive(), "tool execution did not finish"
+    if errors:
+        raise errors[0]
+    return result[0]
 
 
 # ── fence tokens ─────────────────────────────────────────────────────
@@ -189,13 +204,15 @@ def test_two_runs_with_the_same_provider_tc_id_never_collide():
 
     threads = [
         threading.Thread(target=_exec, args=(_Sync(), "tc-same"),
-                         kwargs={"run_handle": handle, "fence_token": None})
+                         kwargs={"run_handle": handle, "fence_token": None},
+                         daemon=True)
         for handle in ("run-A", "run-B")
     ]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
     assert sorted(keys_during[0]) == ["run-A:tc-same", "run-B:tc-same"]
 
 
@@ -276,6 +293,131 @@ def test_duplicate_turn_id_is_refused_by_the_durable_boundary(
         ConversationStore.reset()
 
 
+def test_structured_ingress_batch_is_atomically_idempotent(
+        monkeypatch, tmp_path):
+    import core.paths as paths
+    from core.conversation_store import ConversationStore
+    from core.conversation_writer import ConversationWriter
+    from core._conversation_store_append import MessageIdempotencyConflict
+    from core._llm_seq import stamp_message
+
+    monkeypatch.setattr(paths, "CONVERSATIONS_DIR", tmp_path / "conversations")
+    ConversationStore.reset()
+    try:
+        writer = ConversationWriter.for_conversation("conv-batch")
+        items = [
+            {
+                "msg": stamp_message({
+                    "role": "tool", "content": "sunny",
+                    "tool_call_id": "call_weather", "msg_id": "batch-tool",
+                    "source": {"type": "api_client_tool_result",
+                               "target_agent": "helper"}}, "conv-batch"),
+                "agent_name": "helper", "user_id": "u1",
+            },
+            {
+                "msg": stamp_message({
+                    "role": "user", "content": "summarize",
+                    "msg_id": "batch-user",
+                    "source": {"type": "user", "target_agent": "helper"}},
+                    "conv-batch"),
+                "agent_name": "helper", "user_id": "u1",
+            },
+        ]
+
+        assert writer.enqueue_messages_if_absent(items) is True
+        assert writer.enqueue_messages_if_absent(items) is False
+        rows = ConversationStore.instance().load("conv-batch", user_id="u1")
+        assert [row["msg_id"] for row in rows] == ["batch-tool", "batch-user"]
+
+        divergent = [{**item, "msg": dict(item["msg"])} for item in items]
+        divergent[0]["msg"]["content"] = "rainy"
+        with pytest.raises(MessageIdempotencyConflict):
+            writer.enqueue_messages_if_absent(divergent)
+        assert [row["msg_id"] for row in ConversationStore.instance().load(
+            "conv-batch", user_id="u1")] == ["batch-tool", "batch-user"]
+    finally:
+        ConversationStore.reset()
+
+
+def test_streaming_structured_ingress_is_durable_before_ack(
+        monkeypatch, tmp_path):
+    import core.paths as paths
+    from core import FlowFile
+    from core.agent_runtime_router import AgentRuntimeRouter
+    from core.conversation_store import ConversationStore
+    from core.conversation_writer import ConversationWriter
+
+    monkeypatch.setattr(paths, "CONVERSATIONS_DIR", tmp_path / "conversations")
+    ConversationStore.reset()
+    try:
+        store = ConversationStore.instance()
+        store.save("conv-structured", [], user_id="owner")
+        # Start the durable writer before making agent worker threads execute
+        # synchronously in this test.
+        ConversationWriter.for_conversation("conv-structured")
+        monkeypatch.setattr(
+            AgentRuntimeRouter.instance(), "resolve", lambda *_args: None)
+        task = AgentLoopTask({
+            "streaming": True,
+            "conversation_store": True,
+        })
+        monkeypatch.setattr(
+            task, "_prepare_agent_context",
+            lambda _ff: {"active_agent_name": "helper"})
+        monkeypatch.setattr(
+            task, "_streaming_agent_loop",
+            lambda ctx, cid, _bus: task._decrement_active(cid, ctx))
+
+        real_start = threading.Thread.start
+
+        def start_now(thread):
+            if thread.name.startswith("agent-stream-"):
+                thread.run()
+                return None
+            return real_start(thread)
+
+        monkeypatch.setattr(threading.Thread, "start", start_now)
+        body = {
+            "conversation_id": "conv-structured",
+            "target_agent": "helper",
+            "msg_id": "turn-structured",
+            "ingress_messages": [
+                {"role": "tool", "content": "sunny",
+                 "tool_call_id": "call-weather", "msg_id": "msg-tool",
+                 "ts": 10.0},
+                {"role": "user", "content": "Summarize it",
+                 "msg_id": "msg-user", "ts": 10.000001},
+            ],
+        }
+
+        def submit():
+            ff = FlowFile(content=json.dumps(body).encode("utf-8"))
+            ff.set_attribute("http.auth.principal", "owner")
+            ff.set_attribute("agent.client_channel", "standard_api")
+            ff.set_attribute("agent.request_msg_id", "turn-structured")
+            return json.loads(task._execute_streaming(ff)[0].get_content())
+
+        first = submit()
+        assert first["status"] == "accepted"
+        rows = store.load("conv-structured", user_id="owner")
+        assert [(row["role"], row["msg_id"]) for row in rows] == [
+            ("tool", "msg-tool"), ("user", "msg-user")]
+        assert rows[0]["tool_call_id"] == "call-weather"
+        assert rows[0]["source"] == {
+            "type": "api_client_tool_result", "target_agent": "helper"}
+        assert rows[1]["source"]["type"] == "user"
+        assert rows[1]["source"]["target_agent"] == "helper"
+
+        retry = submit()
+        assert retry["status"] == "accepted"
+        assert retry["duplicate"] is True
+        assert [(row["role"], row["msg_id"]) for row in store.load(
+            "conv-structured", user_id="owner")] == [
+                ("tool", "msg-tool"), ("user", "msg-user")]
+    finally:
+        ConversationStore.reset()
+
+
 def test_streaming_ingress_branches_on_the_programmatic_turn_id():
     src = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
     # The programmatic flag is captured BEFORE stamping copies the web
@@ -287,7 +429,7 @@ def test_streaming_ingress_branches_on_the_programmatic_turn_id():
     # (accepted + duplicate) and NEVER starts a second worker.
     i_if_absent = src.index("enqueue_message_if_absent",
                             src.index("elif not _skip_pre_persist"))
-    i_duplicate = src.index('"duplicate": True')
+    i_duplicate = src.index('"duplicate": True', i_if_absent)
     assert i_if_absent < i_duplicate
     # Ack-after-persist: a failed durable write refuses the submission.
     assert "ingress_persistence_failed" in src
@@ -367,7 +509,20 @@ def test_mid_execution_bump_reaches_the_running_tool(monkeypatch):
             return "ran"
 
     token = AgentLoopTask.run_fence_token("c1", "helper")
-    _exec(_Bumpy(), "tc-1", run_handle="r1", fence_token=token)
+    worker = threading.Thread(
+        target=_exec,
+        args=(_Bumpy(), "tc-1"),
+        kwargs={"run_handle": "r1", "fence_token": token},
+        daemon=True,
+    )
+    worker.start()
+    worker.join(timeout=5)
+    if worker.is_alive():
+        import sys
+        import traceback
+        stack = "".join(traceback.format_stack(
+            sys._current_frames()[worker.ident]))
+        pytest.fail("mid-execution bump did not finish:\n" + stack)
     assert observed["cancelled"] is True
 
 
@@ -442,7 +597,7 @@ def test_duplicate_ack_replays_the_durable_terminal():
     i_return = src.index("return [flowfile]", i_dup)
     block = src[i_dup - 4000:i_return]
     assert 'turn_final' in block
-    assert '"wait_for_done": not bool(_final)' in block
+    assert '"wait_for_done": not bool(final)' in block
 
 
 def test_targeted_cancel_reaches_the_internal_relay_entry():

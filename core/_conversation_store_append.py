@@ -188,6 +188,52 @@ class _CsAppendMixin:
                 cid, msg, agent_name=agent_name, user_id=user_id, ttl=ttl)
             return True
 
+    def append_messages_if_absent(
+            self, cid: str, items: List[Dict[str, Any]]) -> bool:
+        """Atomically deduplicate then append one ordered ingress batch.
+
+        The duplicate check and the FIFO append share the conversation lock.
+        A retry therefore observes either the complete original batch or none
+        of it; it can never append a second suffix for the same turn.
+        """
+        if not items:
+            raise ValueError("idempotent message batch must not be empty")
+
+        message_ids = []
+        for item in items:
+            msg = item.get("msg") or {}
+            self._validate_message(msg)
+            msg_id = str(msg.get("msg_id") or "").strip()
+            if not msg_id:
+                raise ValueError("msg_id is required for idempotent append")
+            if msg_id in message_ids:
+                raise ValueError(
+                    f"duplicate msg_id {msg_id} inside idempotent batch")
+            message_ids.append(msg_id)
+
+        lock = self._get_conv_lock(cid)
+        with lock:
+            user_id = str(items[0].get("user_id") or "")
+            existing = {
+                str(row.get("msg_id") or ""): row
+                for row in (self.load(cid, user_id=user_id) or [])
+                if str(row.get("msg_id") or "") in message_ids
+            }
+            for item, msg_id in zip(items, message_ids):
+                row = existing.get(msg_id)
+                if row is None:
+                    continue
+                if _idempotency_fingerprint(row) != _idempotency_fingerprint(
+                        item["msg"]):
+                    raise MessageIdempotencyConflict(msg_id)
+            if len(existing) == len(items):
+                return False
+            if existing:
+                raise ValueError(
+                    "idempotent message batch is only partially persisted")
+            self.append_messages(cid, items)
+            return True
+
     def append_message(self, cid: str, msg: Dict, agent_name: str = "",
                        user_id: str = "", ttl: int = 0) -> None:
         """Persist one message to every target file it belongs in.

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -364,3 +365,70 @@ def test_a2a_ui_is_loaded_and_translated():
                     "a2aManagedMode", "a2aManagedModeHelp", "a2aThreadTtl"):
             assert catalog[key]
         assert "External AG-UI" in catalog["a2aAguiHint"]
+
+
+def test_standard_api_ui_is_unified_capability_driven_and_translated():
+    root = Path(__file__).parents[1]
+    chat_ui = root / "tasks/io/chat_ui"
+    serve = (root / "tasks/io/serve_chat_ui.py").read_text(encoding="utf-8")
+    coordinator = (chat_ui / "resources_a2a.js").read_text(encoding="utf-8")
+    standard_path = chat_ui / "resources_standard_api.js"
+
+    assert standard_path.exists()
+    assert serve.index('"resources_standard_api.js"') < serve.index(
+        '"resources_a2a.js"')
+
+    source = standard_path.read_text(encoding="utf-8")
+    for function in (
+        "_standardApiFieldset",
+        "_standardApiCollectPayload",
+        "_standardApiValidatePayload",
+        "_standardApiPublicationStatus",
+        "_standardApiTransportPanel",
+        "_standardApiResetSessions",
+        "_standardApiConfiguredSnippet",
+        "_standardApiKeyMetadata",
+    ):
+        assert f"function {function}" in source
+
+    for field in (
+        "standard_api_enabled",
+        "api_model_id",
+        "api_permission_mode",
+        "api_session_ttl_seconds",
+        "api_max_sessions_per_key",
+        "api_max_concurrent_runs_per_key",
+        "strict_fields",
+        "api_request_overrides_json",
+        "api_input_modalities_json",
+        "api_chat_completions_enabled",
+        "api_responses_enabled",
+        "api_anthropic_messages_enabled",
+        "api_disconnect_policy",
+    ):
+        assert field in source
+
+    assert "capabilities.dialects" in source
+    assert "contextPolicy !== 'isolated'" in source
+    assert "Number.parseInt" in source
+    assert "a2a_publication_reset_api_sessions" in source
+    assert "'/openai/'" in source
+    assert "'/anthropic/'" in source
+    assert "from anthropic import Anthropic" in source
+    assert "anthropic-version: 2023-06-01" in source
+    assert "max_tokens=1024" in source
+    assert "PAWFLOW_API_KEY" in source
+    assert "data-raw-key" not in source
+    assert "_standardApiFieldset(edited, _a2aState)" in coordinator
+    assert "_standardApiCollectPayload()" in coordinator
+    assert "_standardApiTransportPanel(pub" in coordinator
+    assert "_standardApiPublicationStatus(pub" in coordinator
+
+    keys = set(re.findall(r"\bt\('([A-Za-z][A-Za-z0-9]+)'\)", source))
+    assert keys
+    for language in ("en", "fr", "es"):
+        catalog = json.loads((chat_ui / f"i18n/{language}.json").read_text(
+            encoding="utf-8"))
+        assert "API" in catalog["a2aRepository"]
+        for key in keys:
+            assert catalog.get(key), f"missing {language} translation for {key}"

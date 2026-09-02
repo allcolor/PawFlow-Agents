@@ -56,7 +56,10 @@ class _PACPhase1Mixin:
             )
         # _is_claude_code and _claude_has_session are set after agent resolution below
 
-        st.registry = self.get_tool_registry()
+        # Every turn owns its handler state. Request-scoped client tools and
+        # conversation-scoped dynamic handlers must never mutate the task's
+        # shared base registry or leak into a concurrent/later request.
+        st.registry = self.get_tool_registry().fork()
         # Handlers are fully configured later (after conversation_id/user_id are known)
         if st.client and hasattr(st.client, "set_tool_registry"):
             st.client.set_tool_registry(st.registry)
@@ -201,8 +204,16 @@ class _PACPhase1Mixin:
         if st.raw_body.strip().startswith("{"):
             try:
                 st.body_json = json.loads(st.raw_body)
-                if isinstance(st.body_json, dict) and "message" in st.body_json:
-                    st.user_text = st.body_json["message"]
+                if (isinstance(st.body_json, dict)
+                        and ("message" in st.body_json
+                             or "ingress_messages" in st.body_json)):
+                    # Structured ingress was persisted as native PawFlow rows
+                    # before this context build. Loading the conversation is
+                    # authoritative; the JSON envelope must not be injected as
+                    # a second user message.
+                    st.user_text = (
+                        st.body_json.get("message", "")
+                        if "message" in st.body_json else "")
                     st.conversation_id = st.body_json.get("conversation_id") or ""
                     st.attachments = st.body_json.get("attachments", [])
                     # Per-conversation TTL override from chat UI

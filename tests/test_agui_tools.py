@@ -8,6 +8,9 @@ import core.agui_tools as agui_tools
 from core.agui_tools import (
     AguiFrontendToolHandler, AguiInterruptHandler, AguiStateHandler,
     apply_json_patch, register_agui_conversation_tools)
+from core.client_tools import (
+    ClientToolHandler, partition_client_tool_calls, register_client_tools)
+from core.llm_client import LLMToolCall
 from core.tool_registry import ToolRegistry
 
 
@@ -76,6 +79,48 @@ def test_frontend_tool_handler_returns_placeholder():
     assert "batch further frontend tool calls" in result
     assert handler._origin == "agui"
     assert handler._origin_scope == "agui:conv1"
+    assert isinstance(handler, ClientToolHandler)
+
+
+def test_client_tools_validate_collisions_and_partition_mixed_batches():
+    class _Builtin:
+        name = "read"
+        description = "server read"
+        parameters_schema = {"type": "object", "properties": {}}
+
+        def execute(self, arguments):
+            return "server"
+
+    registry = ToolRegistry()
+    registry.register(_Builtin())
+    assert register_client_tools(registry, "conv1", "turn1", [{
+        "name": "lookup",
+        "description": "Look up a value",
+        "parameters": {"type": "object", "properties": {
+            "q": {"type": "string"}}},
+    }]) == 1
+
+    server, client = partition_client_tool_calls([
+        LLMToolCall(id="srv_1", name="read", arguments={"path": "x"}),
+        LLMToolCall(id="cli_1", name="lookup", arguments={"q": "x"}),
+    ], registry)
+    assert [call.id for call in server] == ["srv_1"]
+    assert client == [{
+        "id": "cli_1", "name": "lookup", "arguments": {"q": "x"}}]
+    assert registry.get("lookup")._origin == "client"
+    assert registry.get("lookup")._origin_scope == "client:conv1:turn1"
+
+    with pytest.raises(ValueError, match="collides"):
+        register_client_tools(registry, "conv1", "turn1", [{
+            "name": "READ", "description": "shadow",
+            "parameters": {"type": "object"}}])
+    with pytest.raises(ValueError, match="name"):
+        register_client_tools(registry, "conv1", "turn1", [{
+            "name": "x" * 65, "description": "too long",
+            "parameters": {"type": "object"}}])
+    with pytest.raises(ValueError, match="JSON Schema"):
+        register_client_tools(registry, "conv1", "turn1", [{
+            "name": "broken", "description": "bad", "parameters": []}])
 
 
 def test_frontend_tool_annotations_are_unverified_scalar_hints():

@@ -40,6 +40,7 @@ import core._conversation_store_base as _csb  # noqa: E402
 from core._conversation_store_paths import _CsPathsMixin  # noqa: E402
 from core._conversation_store_encryption import _CsEncryptionMixin  # noqa: E402
 from core._conversation_store_git import _CsGitMixin  # noqa: E402
+from core._conversation_store_checkpoints import _CsCheckpointMixin  # noqa: E402
 from core._conversation_store_ctxio import _CsCtxIoMixin  # noqa: E402
 from core._conversation_store_cache import _CsCacheMixin  # noqa: E402
 from core._conversation_store_append import _CsAppendMixin  # noqa: E402
@@ -53,6 +54,7 @@ class ConversationStore(
     _CsPathsMixin,
     _CsEncryptionMixin,
     _CsGitMixin,
+    _CsCheckpointMixin,
     _CsCtxIoMixin,
     _CsCacheMixin,
     _CsAppendMixin,

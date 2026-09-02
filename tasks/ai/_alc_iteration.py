@@ -514,10 +514,14 @@ class _ALCIterationMixin:
         st.emitter.on_tool_calls(
             st.response.tool_calls, st.response.content or "",
             st.response.thinking or "", st.poll_silent)
+        from core.client_tools import partition_client_tool_calls
+        st._server_tool_calls, st._pending_client_tool_calls = (
+            partition_client_tool_calls(
+                st.response.tool_calls, st.registry))
         # Update running agent with tool info
         st._tool_names = [tc.name for tc in st.response.tool_calls]
         st.results = self._execute_tool_calls(
-            st.response.tool_calls, st.registry, st._consecutive_tool,
+            st._server_tool_calls, st.registry, st._consecutive_tool,
             st._max_consec, parallel=st.emitter.is_streaming,
             agent_name=st.ctx.get("active_agent_name") or "",
             agent_svc=st.ctx.get("active_llm_service", ""),
@@ -585,6 +589,15 @@ class _ALCIterationMixin:
             st._prev = st.result_text[:2000] if isinstance(st.result_text, str) else str(st.result_text)[:2000]
             st.emitter.on_tool_result(st.display_tc, st.result_text, st._prev)
 
+        if st._pending_client_tool_calls:
+            st.client_tool_calls = list(st._pending_client_tool_calls)
+            st.outcome = "client_tool_pending"
+            st.finish_reason = "client_tool_pending"
+            st.response_content = _strip_context_ack(
+                st.response.content or "")
+            st.tools_called.extend(
+                call["name"] for call in st._pending_client_tool_calls)
+
         # Check only after publishing the whole result batch.
         # Compact, cancel, and preempt paths can interrupt while
         # tools are in-flight; _execute_tool_calls returns
@@ -629,6 +642,8 @@ class _ALCIterationMixin:
             st.max_rounds, st.tools_called)
         st.emitter.drain_pending(st.messages, st._append, st.iteration)
         st.emitter.check_cancelled()
+        if st._pending_client_tool_calls:
+            return _ALC_BREAK
         # Gauge refresh between tool rounds, for every CLI provider. A CLI
         # turn streams from the provider's own loop: the emitter does not see
         # per-round appends, and the final-turn _patch_cc_turn_gauge only

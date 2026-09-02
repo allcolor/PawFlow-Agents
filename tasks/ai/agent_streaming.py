@@ -135,11 +135,29 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             or flowfile.get_attribute("agent.conversation_id")
             or ""
         )
-        _user_text = _body.get("message", "")
+        _has_structured_ingress = (
+            isinstance(_body, dict) and "ingress_messages" in _body)
+        _ingress_body = (
+            _body.get("ingress_messages") if _has_structured_ingress else [])
+        if _has_structured_ingress and (
+                not isinstance(_ingress_body, list) or not _ingress_body):
+            flowfile.set_content(json.dumps({
+                "error": "ingress_messages must be a non-empty array",
+            }).encode("utf-8"))
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        _user_text = str(_body.get("message", "") or "")
+        if _has_structured_ingress:
+            _user_text = next((
+                str(item.get("content") or "")
+                for item in reversed(_ingress_body)
+                if isinstance(item, dict) and item.get("role") == "user"
+            ), "")
         _target = _body.get("target_agent", "") or _body.get("agent_name", "")
         _attachments_body = _body.get("attachments", []) if isinstance(_body, dict) else []
         _channel = flowfile.get_attribute("agent.client_channel") or "web"
-        if (_user_text.strip() or _attachments_body) and not _target:
+        if (_has_structured_ingress or _user_text.strip()
+                or _attachments_body) and not _target:
             flowfile.set_content(json.dumps({
                 "error": "target_agent is required for user messages",
             }).encode("utf-8"))
@@ -184,6 +202,42 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                     conversation_id, "_meta_msg_count", 0) or 0)
             except Exception:
                 return 0
+
+        def _duplicate_programmatic_ack():
+            # A late retry may arrive AFTER the original turn finished: replay
+            # the durable terminal instead of waiting for a past done event.
+            final = {}
+            try:
+                rows = ConversationStore.instance().load(
+                    conversation_id, user_id=_uid) or []
+                for row in reversed(rows):
+                    if (str(row.get("turn_id") or "")
+                            == _programmatic_turn_id
+                            and row.get("turn_final")):
+                        final = {
+                            "response": str(row.get("content") or ""),
+                            "final_msg_id": str(row.get("msg_id") or ""),
+                            "agent_name": str(
+                                row.get("agent") or _target or ""),
+                        }
+                        break
+            except Exception:
+                logger.debug(
+                    "terminal replay lookup failed", exc_info=True)
+            payload = {
+                "status": "accepted",
+                "duplicate": True,
+                "conversation_id": conversation_id,
+                "message_count": _ack_message_count(),
+                "server_start_time": SERVER_START_TIME,
+                "run_handle": flowfile.get_attribute(
+                    "agent.run_handle") or "",
+                "wait_for_done": not bool(final),
+            }
+            payload.update(final)
+            flowfile.set_content(json.dumps(payload).encode("utf-8"))
+            flowfile.set_attribute("agent.conversation_id", conversation_id)
+            return [flowfile]
 
         _stream_mark("body_parsed")
 
@@ -247,6 +301,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
         # in-memory session and is lost from PawFlow's on-disk state
         # (transcript/shared/agent ctx) the moment CC compacts or dies.
         from core.conversation_writer import ConversationWriter
+        from core._conversation_store_append import MessageIdempotencyConflict
         from core.llm_client import stamp_message
         _uid = flowfile.get_attribute("http.auth.principal") or ""
         _stamped_user = None
@@ -269,7 +324,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 _persisted_source["target_agent"] = _target or None
         except Exception:
             logger.debug("invalid internal message_source ignored", exc_info=True)
-        def _stamp_authority(msg):
+        def _stamp_authority(msg, content=None):
             """Record the user-mandate lineage (policy gating) on the stamped row.
 
             A message addressed to an agent whose turn is active revises that
@@ -282,13 +337,175 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                     agent_name=_target or "",
                     message_id=str(msg.get("msg_id") or ""),
                     turn_id=str(msg.get("msg_id") or ""),
-                    content=_user_text, steering=bool(_already_active))
+                    content=(_user_text if content is None else content),
+                    steering=bool(_already_active))
                 if _ref is not None:
                     msg.setdefault("source", {})["authorization"] = _ref.to_dict()
             except Exception:
                 logger.debug("authorization ingress record failed", exc_info=True)
 
-        if _user_text.strip() or _attachments_body:
+        def _apply_pre_user_hook(msg, attachments):
+            from core.agent_hooks import AgentHookRunner
+            hook_started = _t_stream.monotonic()
+            result = AgentHookRunner(
+                user_id=_uid,
+                conversation_id=conversation_id,
+                agent_name=_target or "",
+            ).run("pre_user_message", {
+                "message": dict(msg),
+                "content": msg.get("content", ""),
+                "attachments": attachments,
+                "target_agent": _target or "",
+                "channel": _channel,
+            }, fail_policy="closed")
+            _stream_step(
+                "pre_user_hook", hook_started,
+                decision=result.get("decision"))
+            if result.get("decision") == "block":
+                raise PermissionError(
+                    result.get("reason") or "blocked by hook")
+            if result.get("decision") == "replace":
+                payload = result.get("payload") or {}
+                replacement = payload.get("message")
+                if isinstance(replacement, dict):
+                    msg.update(replacement)
+                elif "content" in payload:
+                    msg["content"] = payload.get("content")
+
+        if _has_structured_ingress:
+            try:
+                _stamped_ingress = []
+                for _ingress_raw in _ingress_body:
+                    if not isinstance(_ingress_raw, dict):
+                        raise ValueError(
+                            "Each ingress message must be an object")
+                    _ingress_role = str(
+                        _ingress_raw.get("role") or "")
+                    if _ingress_role not in {"user", "tool"}:
+                        raise ValueError(
+                            "Structured ingress role must be user or tool")
+                    _ingress_msg = dict(_ingress_raw)
+                    _ingress_attachments = (
+                        _ingress_msg.get("attachments") or [])
+                    if (_ingress_role == "user"
+                            and not _ingress_msg.get("content")
+                            and not _ingress_attachments):
+                        raise ValueError(
+                            "User ingress requires content or attachments")
+                    if (_ingress_role == "tool"
+                            and not str(_ingress_msg.get(
+                                "tool_call_id") or "").strip()):
+                        raise ValueError(
+                            "Tool ingress requires tool_call_id")
+                    _ingress_source = _ingress_msg.get("source")
+                    if not isinstance(_ingress_source, dict):
+                        _ingress_source = {}
+                    else:
+                        _ingress_source = dict(_ingress_source)
+                    _ingress_source.setdefault(
+                        "type", "user" if _ingress_role == "user"
+                        else "api_client_tool_result")
+                    if _ingress_role == "user":
+                        _ingress_source.setdefault("name", _uid)
+                    _ingress_source["target_agent"] = _target or None
+                    _ingress_msg["source"] = _ingress_source
+                    _ingress_msg["channel"] = _channel
+                    _ingress_msg = stamp_message(
+                        _ingress_msg, conversation_id)
+                    if _ingress_role == "user":
+                        _stamp_authority(
+                            _ingress_msg,
+                            content=_ingress_msg.get("content", ""))
+                        _apply_pre_user_hook(
+                            _ingress_msg, _ingress_attachments)
+                    _stamped_ingress.append(_ingress_msg)
+                flowfile.set_attribute(
+                    "pre_user_message_hook_applied", "1")
+
+                from core.agent_runtime_router import (
+                    AgentRuntimeRouter,
+                    AgentRuntimeRoutingError,
+                )
+                try:
+                    _runtime = AgentRuntimeRouter.instance().resolve(
+                        conversation_id, _target)
+                except AgentRuntimeRoutingError as _routing_error:
+                    flowfile.set_content(json.dumps({
+                        "error": str(_routing_error),
+                        "code": _routing_error.code,
+                        "conversation_id": conversation_id,
+                    }).encode("utf-8"))
+                    flowfile.set_attribute("http.response.status", "503")
+                    flowfile.set_attribute(
+                        "agent.conversation_id", conversation_id)
+                    return [flowfile]
+
+                _cw = ConversationWriter.for_conversation(conversation_id)
+                _batch_items = []
+                for _ingress_msg in _stamped_ingress:
+                    _event_data = {
+                        "role": _ingress_msg.get("role", ""),
+                        "content": _ingress_msg.get("content", ""),
+                        "msg_id": _ingress_msg.get("msg_id", ""),
+                        "ts": _ingress_msg.get("ts"),
+                        "source": _ingress_msg.get("source") or {},
+                        "channel": _channel,
+                        "attachments": _ingress_msg.get("attachments") or [],
+                    }
+                    if _ingress_msg.get("tool_call_id"):
+                        _event_data["tool_call_id"] = (
+                            _ingress_msg["tool_call_id"])
+                    _batch_items.append({
+                        "msg": dict(_ingress_msg),
+                        "agent_name": _target or "",
+                        "user_id": _uid,
+                        "sse_events": [{
+                            "type": "new_message",
+                            "data": _event_data,
+                        }],
+                    })
+                try:
+                    _inserted = _cw.enqueue_messages_if_absent(
+                        _batch_items)
+                except MessageIdempotencyConflict as _ic:
+                    flowfile.set_content(json.dumps({
+                        "error": str(_ic),
+                        "code": "idempotency_conflict",
+                        "conversation_id": conversation_id,
+                    }).encode("utf-8"))
+                    flowfile.set_attribute("http.response.status", "409")
+                    flowfile.set_attribute(
+                        "agent.conversation_id", conversation_id)
+                    return [flowfile]
+                if not _inserted:
+                    return _duplicate_programmatic_ack()
+                _stamped_user = next((
+                    msg for msg in reversed(_stamped_ingress)
+                    if msg.get("role") == "user"
+                ), _stamped_ingress[-1])
+                _stream_mark("pre_persist_enqueue")
+            except PermissionError as _hook_err:
+                flowfile.set_content(json.dumps({
+                    "error": str(_hook_err),
+                }).encode("utf-8"))
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
+            except Exception as _pe:
+                logger.exception(
+                    "[agent:%s] structured ingress persistence failed",
+                    conversation_id[:8])
+                flowfile.set_content(json.dumps({
+                    "error": str(_pe),
+                    "code": "ingress_persistence_failed",
+                    "conversation_id": conversation_id,
+                }).encode("utf-8"))
+                flowfile.set_attribute("http.response.status", "503")
+                flowfile.set_attribute(
+                    "agent.conversation_id", conversation_id)
+                return [flowfile]
+
+        if (not _has_structured_ingress
+                and (_user_text.strip() or _attachments_body)):
             _stamped_user = stamp_message({
                 "role": "user",
                 "content": _user_text,

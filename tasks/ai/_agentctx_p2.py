@@ -442,6 +442,21 @@ class _PACPhase2Mixin:
             except Exception as e:
                 logger.error("Error loading agent persona/skills: %s", e, exc_info=True)
 
+        # Standard API tools are untrusted capabilities scoped to this exact
+        # request. The registry is an execution-local fork (phase 1), so these
+        # handlers disappear with the turn and can never leak to another one.
+        st._client_tool_defs = (
+            st.body_json.get("client_tools") or []
+            if isinstance(st.body_json, dict) else [])
+        if st._client_tool_defs:
+            from core.client_tools import register_client_tools
+            register_client_tools(
+                st.registry,
+                st.conversation_id or "",
+                st.flowfile.get_attribute("agent.request_msg_id") or "",
+                st._client_tool_defs,
+            )
+
         # Rebuild tool_defs from registry (now includes MCP + dynamic tools)
         # then apply agent's allowlist/denylist filter.
         # Skip rebuild if custom tools were provided via JSON config.

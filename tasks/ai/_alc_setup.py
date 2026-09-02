@@ -43,6 +43,8 @@ class _ALCSetupMixin:
         st.finish_reason = ""
         st.response_content = ""
         st.final_msg_id = ""
+        st.outcome = "completed"
+        st.client_tool_calls = []
         # Per-turn reset: without it, a turn that persists no visible text
         # inherits the PREVIOUS turn's last message id and names it final.
         if hasattr(st, "client") and st.client is not None:

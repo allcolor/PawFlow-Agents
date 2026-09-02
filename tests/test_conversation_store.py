@@ -435,6 +435,53 @@ class TestCreateConversation:
         with cs_mod._GIT_RETENTION_RUNNING_LOCK:
             cs_mod._GIT_RETENTION_RUNNING.discard(cid)
 
+    def test_api_checkpoint_forks_exact_immutable_transcript(
+            self, store, monkeypatch):
+        try:
+            subprocess.run(["git", "--version"], check=True,
+                           capture_output=True, text=True, timeout=5)
+        except Exception:
+            pytest.skip("git unavailable")
+
+        cid = store.generate_id()
+        first = _msg(
+            content="checkpointed",
+            source={"type": "user", "target_agent": "bot"},
+        )
+        store.save(cid, [first], user_id="alice")
+
+        checkpoint_id = store.create_api_checkpoint(cid, "standard API head")
+        assert store.verify_api_checkpoint(cid, checkpoint_id) is True
+
+        store.append_message(
+            cid,
+            _msg(content="later", source={
+                "type": "user", "target_agent": "bot"}),
+            agent_name="bot",
+            user_id="alice",
+        )
+        monkeypatch.setattr(
+            "core._conversation_store_base._GIT_RETENTION_DAYS", 0)
+        monkeypatch.setattr(
+            "core._conversation_store_base._GIT_RETENTION_COMMITS", 0)
+        store.git_snapshot(cid, "advanced live head")
+        monkeypatch.setattr(
+            "core._conversation_store_base._GIT_RETENTION_COMMITS", 1)
+        store.prune_git_history_now(cid)
+
+        assert store.verify_api_checkpoint(cid, checkpoint_id) is True
+        forked = store.fork_at_checkpoint(
+            cid, checkpoint_id, user_id="alice")
+
+        assert [message["content"] for message in store.load(forked)] == [
+            "checkpointed"]
+        assert [message["content"] for message in store.load(cid)] == [
+            "checkpointed", "later"]
+        assert store.get_extra(forked, "forked_from_checkpoint") == checkpoint_id
+
+        assert store.discard_api_checkpoint(cid, checkpoint_id) is True
+        assert store.verify_api_checkpoint(cid, checkpoint_id) is False
+
     def test_is_temporary_reflects_ttl(self, conv):
         store, cid, _uid = conv
         assert store.is_temporary(cid) is False

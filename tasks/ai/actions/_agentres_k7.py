@@ -10,6 +10,7 @@ _ACTIONS = {
     "a2a_publication_configure",
     "a2a_publication_create_key",
     "a2a_publication_revoke_key",
+    "a2a_publication_reset_api_sessions",
     "a2a_publication_delete",
     "a2a_target_save",
     "a2a_target_delete",
@@ -47,6 +48,8 @@ def _publications(a2a_store, conversation_id):
     for publication in a2a_store.list_publications(conversation_id):
         item = dict(publication)
         item["keys"] = a2a_store.list_keys(publication["publication_id"])
+        item["runtime"] = a2a_store.get_standard_api_runtime_summary(
+            publication["publication_id"])
         rows.append(item)
     return rows
 
@@ -80,10 +83,12 @@ def _handle_agentres_k7(self, action, body, store, user_id, flowfile):
     from core.a2a_store import A2AStore
     a2a_store = A2AStore.instance()
     if action == "a2a_get":
+        from core.standard_api_config import get_standard_api_capabilities
         return _reply(flowfile, {
             "publications": _publications(a2a_store, conversation_id),
             "targets": a2a_store.list_targets(conversation_id),
             "local_choices": _local_choices(store, owner),
+            "standard_api_capabilities": get_standard_api_capabilities(),
         })
 
     if action == "a2a_publication_configure":
@@ -124,6 +129,12 @@ def _handle_agentres_k7(self, action, body, store, user_id, flowfile):
             ttl_raw = body.get("thread_ttl_seconds")
             thread_ttl_seconds = (int(ttl_raw) if ttl_raw is not None
                                   and str(ttl_raw).strip() != "" else None)
+            from core.standard_api_config import STANDARD_API_FIELDS
+            standard_api_config = {
+                field: body[field]
+                for field in STANDARD_API_FIELDS
+                if field in body
+            }
             publication = a2a_store.configure_publication(
                 owner, conversation_id, canonical,
                 label=str(body.get("label") or canonical).strip(),
@@ -132,15 +143,22 @@ def _handle_agentres_k7(self, action, body, store, user_id, flowfile):
                 enabled=bool(body.get("enabled", True)),
                 thread_ttl_seconds=thread_ttl_seconds,
                 managed_mode=managed_mode,
+                standard_api_config=standard_api_config,
             )
             from services.a2a_server_endpoint import ensure_a2a_routes
             ensure_a2a_routes()
             # The same publication is reachable through AG-UI as well.
             from services.agui_server_endpoint import ensure_agui_routes
             ensure_agui_routes()
+            from services.standard_api_endpoint import ensure_standard_api_routes
+            ensure_standard_api_routes()
         except (ValueError, PermissionError) as exc:
             return _reply(flowfile, {"error": str(exc)}, 400)
-        return _reply(flowfile, {"publication": publication})
+        return _reply(flowfile, {
+            "publication": publication,
+            "runtime": a2a_store.get_standard_api_runtime_summary(
+                publication["publication_id"]),
+        })
 
     publication_id = str(body.get("publication_id") or "").strip()
     if action.startswith("a2a_publication_"):
@@ -158,9 +176,24 @@ def _handle_agentres_k7(self, action, body, store, user_id, flowfile):
         if action == "a2a_publication_revoke_key":
             return _reply(flowfile, {"revoked": a2a_store.revoke_key(
                 publication_id, str(body.get("key_id") or ""))})
-        if action == "a2a_publication_delete":
+        if action == "a2a_publication_reset_api_sessions":
+            try:
+                reset = a2a_store.reset_api_sessions(publication_id)
+            except ValueError as exc:
+                return _reply(flowfile, {"error": str(exc)}, 400)
             return _reply(flowfile, {
-                "deleted": a2a_store.delete_publication(publication_id)})
+                "publication": reset,
+                "runtime": a2a_store.get_standard_api_runtime_summary(
+                    publication_id),
+            })
+        if action == "a2a_publication_delete":
+            deleting = a2a_store.request_publication_delete(publication_id)
+            return _reply(flowfile, {
+                "deleting": True,
+                "publication": deleting,
+                "runtime": a2a_store.get_standard_api_runtime_summary(
+                    publication_id),
+            })
 
     if action == "a2a_target_save":
         kind = str(body.get("kind") or "").strip().lower()

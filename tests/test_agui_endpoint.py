@@ -459,11 +459,12 @@ def test_publication_configure_wires_managed_mode_and_ttl(tmp_path):
               return_value={"runtime_kind": "llm"}),
         patch("services.a2a_server_endpoint.ensure_a2a_routes"),
         patch("services.agui_server_endpoint.ensure_agui_routes"),
+        patch("services.standard_api_endpoint.ensure_standard_api_routes"),
     )
 
     flowfile = FlowFile()
-    p1, p2, p3, p4, p5 = patches()
-    with p1, p2, p3, p4, p5:
+    p1, p2, p3, p4, p5, p6 = patches()
+    with p1, p2, p3, p4, p5, p6:
         _handle_agentres_k7(None, "a2a_publication_configure", {
             "conversation_id": "conv", "agent_name": "helper",
             "managed_mode": True, "thread_ttl_seconds": 3600,
@@ -474,8 +475,8 @@ def test_publication_configure_wires_managed_mode_and_ttl(tmp_path):
 
     # Omitting both fields preserves the stored values (None = keep).
     flowfile = FlowFile()
-    p1, p2, p3, p4, p5 = patches()
-    with p1, p2, p3, p4, p5:
+    p1, p2, p3, p4, p5, p6 = patches()
+    with p1, p2, p3, p4, p5, p6:
         _handle_agentres_k7(None, "a2a_publication_configure", {
             "conversation_id": "conv", "agent_name": "helper",
         }, conv_store, "user", flowfile)
@@ -485,8 +486,8 @@ def test_publication_configure_wires_managed_mode_and_ttl(tmp_path):
 
     # Managed mode is meaningless on a shared context: fail closed.
     flowfile = FlowFile()
-    p1, p2, p3, p4, p5 = patches()
-    with p1, p2, p3, p4, p5:
+    p1, p2, p3, p4, p5, p6 = patches()
+    with p1, p2, p3, p4, p5, p6:
         _handle_agentres_k7(None, "a2a_publication_configure", {
             "conversation_id": "conv", "agent_name": "helper",
             "context_policy": "shared", "managed_mode": True,
@@ -497,8 +498,8 @@ def test_publication_configure_wires_managed_mode_and_ttl(tmp_path):
     # JSON strings must not be coerced with bool("false") and silently
     # enable the publication-level execution mode.
     flowfile = FlowFile()
-    p1, p2, p3, p4, p5 = patches()
-    with p1, p2, p3, p4, p5:
+    p1, p2, p3, p4, p5, p6 = patches()
+    with p1, p2, p3, p4, p5, p6:
         _handle_agentres_k7(None, "a2a_publication_configure", {
             "conversation_id": "conv", "agent_name": "helper",
             "managed_mode": "false",

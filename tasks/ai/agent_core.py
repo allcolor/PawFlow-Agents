@@ -337,7 +337,9 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                 or st.ctx.get("active_llm_provider") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini")
                 or getattr(st.client, "provider", "") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini")
             )
-            if not st.response_content and not st._fatal_error and not st._is_cli_provider:
+            if (not st.response_content and not st._fatal_error
+                    and not st._is_cli_provider
+                    and st.outcome != "client_tool_pending"):
                 logger.warning(f"[agent:{st.conversation_id[:8]}] empty response — forcing synthesis")
                 st._pre = len(st.messages)
                 st.content, st.ti, st.to, st.fm = self._force_synthesis(
@@ -379,7 +381,9 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     all_msg_ids=st.all_assistant_msg_ids,
                     final_msg_id=st.final_msg_id if _is_final else "",
                     is_final=_is_final,
-                    cost_usd=st._turn_cost_ref[0])
+                    cost_usd=st._turn_cost_ref[0],
+                    outcome=st.outcome,
+                    client_tool_calls=list(st.client_tool_calls))
 
             # Final drain: pick up any messages that arrived during the last turn
             st._had_preempts = getattr(st.client, '_had_preempts_this_turn', False)

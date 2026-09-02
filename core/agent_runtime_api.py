@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from core import FlowFile
 
@@ -31,6 +31,85 @@ _RESERVED_REQUEST_ATTRIBUTES = frozenset({
     "agent.permission_mode",
     "agent.run_handle",
 })
+
+_INGRESS_MESSAGE_NAMESPACE = uuid.UUID("c6eb6800-32a7-47ea-94e8-c33de6aed2ec")
+
+
+@dataclass(frozen=True)
+class AgentIngressMessage:
+    """One native PawFlow message appended before a structured agent wake."""
+
+    role: str
+    content: Any = ""
+    tool_call_id: str = ""
+    msg_id: str = ""
+    source: Mapping[str, Any] = field(default_factory=dict)
+    attachments: Tuple[Mapping[str, Any], ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.role not in {"user", "tool"}:
+            raise ValueError("AgentIngressMessage.role must be user or tool")
+        if self.role == "tool" and not str(self.tool_call_id or "").strip():
+            raise ValueError("Tool ingress requires tool_call_id")
+        if self.role == "user" and not self.content and not self.attachments:
+            raise ValueError("User ingress requires content or attachments")
+        if not isinstance(self.source, Mapping):
+            raise ValueError("AgentIngressMessage.source must be an object")
+
+    def as_payload(self, conversation_id: str, turn_id: str, index: int,
+                   created_at: float) -> Dict[str, Any]:
+        msg_id = self.msg_id or str(uuid.uuid5(
+            _INGRESS_MESSAGE_NAMESPACE,
+            f"{conversation_id}:{turn_id}:{index}:{self.role}"))
+        payload: Dict[str, Any] = {
+            "role": self.role,
+            "content": self.content,
+            "msg_id": msg_id,
+            "ts": created_at + (index * 0.000001),
+        }
+        if self.tool_call_id:
+            payload["tool_call_id"] = self.tool_call_id
+        if self.source:
+            payload["source"] = dict(self.source)
+        if self.attachments:
+            payload["attachments"] = [dict(item) for item in self.attachments]
+        return payload
+
+
+@dataclass(frozen=True)
+class AgentStructuredRequest:
+    """Protocol-neutral batch submitted through the shared agent runtime."""
+
+    user_id: str
+    conversation_id: str
+    target_agent: str
+    ingress_messages: Tuple[AgentIngressMessage, ...]
+    client_tools: Tuple[Mapping[str, Any], ...] = ()
+    tool_choice: Any = "auto"
+    provider_overrides: Mapping[str, Any] = field(default_factory=dict)
+    attachments: Tuple[Mapping[str, Any], ...] = ()
+    msg_id: str = ""
+    channel: str = "web"
+    runtime_port: str = ""
+    permission_mode: str = ""
+    run_handle: str = ""
+    source_attributes: Mapping[str, str] = field(default_factory=dict)
+    live_callback: Optional[Callable[[str, str, Any], None]] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ingress_messages, tuple):
+            object.__setattr__(
+                self, "ingress_messages", tuple(self.ingress_messages))
+        if not self.ingress_messages and not self.attachments:
+            raise ValueError(
+                "AgentStructuredRequest requires ingress_messages or attachments")
+        if any(not isinstance(item, AgentIngressMessage)
+               for item in self.ingress_messages):
+            raise ValueError(
+                "AgentStructuredRequest.ingress_messages must contain "
+                "AgentIngressMessage values")
+        if not isinstance(self.provider_overrides, Mapping):
+            raise ValueError("provider_overrides must be an object")
 
 
 @dataclass
@@ -75,6 +154,14 @@ class AgentFinalResult:
     agent_name: str = ""
     channel: str = ""
     finish_reason: str = ""
+    outcome: str = "completed"
+    client_tool_calls: list = field(default_factory=list)
+    model: str = ""
+    provider: str = ""
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: float = 0.0
+    final_msg_id: str = ""
     error: str = ""
     event_type: str = "done"
     data: Dict[str, Any] = field(default_factory=dict)
@@ -274,6 +361,14 @@ class AgentResultWaiter:
                 agent_name=str(data.get("agent_name") or ""),
                 channel=str(data.get("channel") or ""),
                 finish_reason=str(data.get("finish_reason") or ""),
+                outcome=str(data.get("outcome") or "completed"),
+                client_tool_calls=list(data.get("client_tool_calls") or ()),
+                model=str(data.get("model") or ""),
+                provider=str(data.get("provider") or ""),
+                tokens_in=int(data.get("tokens_in") or 0),
+                tokens_out=int(data.get("tokens_out") or 0),
+                cost_usd=float(data.get("cost_usd") or 0.0),
+                final_msg_id=str(data.get("final_msg_id") or ""),
                 error=(str(data.get("message") or "")
                        if event_type == "error_event" else ""),
                 event_type=event_type,
@@ -297,12 +392,54 @@ class AgentRuntimeAPI:
         if not request.message and not request.attachments:
             raise ValueError("AgentRequest.message or attachments is required")
 
+        ingress = AgentIngressMessage(
+            role="user",
+            content=request.message,
+            msg_id=request.msg_id,
+            attachments=tuple(request.attachments or ()),
+        )
+        return AgentRuntimeAPI.submit_structured(AgentStructuredRequest(
+            user_id=request.user_id,
+            conversation_id=request.conversation_id,
+            target_agent=request.target_agent,
+            ingress_messages=(ingress,),
+            msg_id=request.msg_id,
+            channel=request.channel,
+            runtime_port=request.runtime_port,
+            permission_mode=request.permission_mode,
+            run_handle=request.run_handle,
+            source_attributes=request.source_attributes,
+            live_callback=request.live_callback,
+        ), _allow_runtime_target=True)
+
+    @staticmethod
+    def submit_structured(
+            request: AgentStructuredRequest, *,
+            _allow_runtime_target: bool = False) -> AgentSubmission:
+        if not request.user_id:
+            raise ValueError("AgentStructuredRequest.user_id is required")
+        if not request.conversation_id:
+            raise ValueError("AgentStructuredRequest.conversation_id is required")
+        if not request.target_agent and not _allow_runtime_target:
+            raise ValueError("AgentStructuredRequest.target_agent is required")
+
         turn_id = request.msg_id or f"{request.channel}:{uuid.uuid4().hex}"
+        created_at = time.time()
+        from core.client_tools import validate_client_tool_definitions
+        client_tools = validate_client_tool_definitions(
+            request.client_tools)
         body = {
             "conversation_id": request.conversation_id,
-            "message": request.message,
-            "attachments": request.attachments,
+            "ingress_messages": [
+                item.as_payload(
+                    request.conversation_id, turn_id, index, created_at)
+                for index, item in enumerate(request.ingress_messages)
+            ],
+            "attachments": [dict(item) for item in request.attachments],
             "msg_id": turn_id,
+            "client_tools": [dict(item) for item in client_tools],
+            "tool_choice": request.tool_choice,
+            "provider_overrides": dict(request.provider_overrides),
         }
         if request.target_agent:
             body["target_agent"] = request.target_agent

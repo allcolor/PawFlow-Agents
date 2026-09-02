@@ -121,6 +121,135 @@ def test_submitted_turn_carries_the_authenticated_principal(monkeypatch):
     assert submission.run_handle == ""
 
 
+def test_structured_submission_serializes_native_ingress_and_request_tools(
+        monkeypatch):
+    import json
+    import uuid
+
+    from core.agent_runtime_api import (
+        AgentIngressMessage,
+        AgentRuntimeAPI,
+        AgentStructuredRequest,
+    )
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    captured = {}
+
+    class _Task:
+        def execute(self, flowfile):
+            captured["body"] = json.loads(
+                flowfile.get_content().decode("utf-8"))
+            captured["ff"] = flowfile
+            flowfile.set_content(b'{"status":"accepted","conversation_id":"conv1"}')
+            return [flowfile]
+
+    monkeypatch.setattr(AgentLoopTask, "_live_instance", _Task())
+
+    submission = AgentRuntimeAPI.submit_structured(AgentStructuredRequest(
+        user_id="owner",
+        conversation_id="conv1",
+        target_agent="assistant",
+        ingress_messages=(
+            AgentIngressMessage(role="tool", content="sunny",
+                                tool_call_id="call_weather"),
+            AgentIngressMessage(role="user", content="Summarize that"),
+        ),
+        client_tools=({
+            "name": "lookup",
+            "description": "Look up a value",
+            "parameters": {"type": "object", "properties": {}},
+        },),
+        tool_choice="auto",
+        provider_overrides={"temperature": 0.2},
+        msg_id="api-turn-1",
+        channel="standard_api",
+    ))
+
+    body = captured["body"]
+    assert body["conversation_id"] == "conv1"
+    assert body["target_agent"] == "assistant"
+    assert [row["role"] for row in body["ingress_messages"]] == [
+        "tool", "user"]
+    assert body["ingress_messages"][0]["tool_call_id"] == "call_weather"
+    assert all(uuid.UUID(row["msg_id"]) for row in body["ingress_messages"])
+    assert body["client_tools"][0]["name"] == "lookup"
+    assert body["tool_choice"] == "auto"
+    assert body["provider_overrides"] == {"temperature": 0.2}
+    assert captured["ff"].get_attribute("agent.request_msg_id") == "api-turn-1"
+    assert submission.turn_id == "api-turn-1"
+
+
+def test_structured_submission_rejects_invalid_client_tools_before_runtime(
+        monkeypatch):
+    from core.agent_runtime_api import (
+        AgentIngressMessage,
+        AgentRuntimeAPI,
+        AgentStructuredRequest,
+    )
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    called = []
+
+    class _Task:
+        def execute(self, flowfile):
+            called.append(flowfile)
+            return [flowfile]
+
+    monkeypatch.setattr(AgentLoopTask, "_live_instance", _Task())
+    request = AgentStructuredRequest(
+        user_id="owner",
+        conversation_id="conv1",
+        target_agent="assistant",
+        ingress_messages=(AgentIngressMessage(
+            role="user", content="hello"),),
+        client_tools=(
+            {"name": "lookup", "description": "one",
+             "parameters": {"type": "object"}},
+            {"name": "LOOKUP", "description": "two",
+             "parameters": {"type": "object"}},
+        ),
+    )
+
+    with pytest.raises(ValueError, match="another client tool"):
+        AgentRuntimeAPI.submit_structured(request)
+    assert called == []
+
+
+def test_terminal_result_exposes_normalized_usage_and_client_tool_outcome():
+    from core.agent_runtime_api import AgentResultWaiter
+    from core.conversation_event_bus import ConversationEventBus
+
+    ConversationEventBus.reset()
+    AgentResultWaiter._instance = None
+    waiter = AgentResultWaiter.instance()
+    waiter.register("conv1", "turn1")
+    calls = [{"id": "call_1", "name": "lookup", "arguments": {"q": "x"}}]
+
+    ConversationEventBus.instance().publish_event("conv1", "done", {
+        "turn_id": "turn1",
+        "response": "",
+        "outcome": "client_tool_pending",
+        "client_tool_calls": calls,
+        "finish_reason": "client_tool_pending",
+        "model": "published-model",
+        "provider": "openai",
+        "tokens_in": 12,
+        "tokens_out": 3,
+        "cost_usd": 0.01,
+        "final_msg_id": "msg-final",
+    })
+
+    result = waiter.wait("conv1", "turn1", timeout=0.1)
+    assert result.outcome == "client_tool_pending"
+    assert result.client_tool_calls == calls
+    assert result.model == "published-model"
+    assert result.provider == "openai"
+    assert result.tokens_in == 12
+    assert result.tokens_out == 3
+    assert result.cost_usd == 0.01
+    assert result.final_msg_id == "msg-final"
+
+
 def test_stream_done_payload_includes_transport_correlation():
     from tasks.ai.agent_emitter import AgentResult, StreamEmitter
 

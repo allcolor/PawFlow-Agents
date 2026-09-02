@@ -35,6 +35,8 @@ class AgentResult:
     final_msg_id: str = ""
     is_final: bool = False
     cost_usd: float = 0.0
+    outcome: str = "completed"
+    client_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class AgentEmitter:
@@ -364,6 +366,8 @@ class StreamEmitter(AgentEmitter):
             "tokens_out": result.tokens_out,
             "duration_ms": result.duration_ms,
             "finish_reason": result.finish_reason,
+            "outcome": result.outcome,
+            "client_tool_calls": list(result.client_tool_calls),
             "cost_usd": result.cost_usd,
             "source": result.source,
             "agent_name": self._agent_name or "",

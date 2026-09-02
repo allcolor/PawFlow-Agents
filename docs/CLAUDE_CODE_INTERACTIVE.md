@@ -411,7 +411,10 @@ Timing controls are read once when the provider modules are imported:
   request confirms submission. If the structurally recognised composer still
   holds the pasted chip, verification may send up to three evidence-gated
   `Enter` retries within the same bounded verification budget. Unknown chrome,
-  stale transcript chips and running turns never authorize another key.
+  stale transcript chips and running turns never authorize another key. A chip
+  that has cleared or a pane that already looks busy still consumes the full
+  configured acknowledgement window: cold sessions can submit before their
+  hook or first MITM request reaches PawFlow, especially after compaction.
 - `PAWFLOW_CCI_IDLE_TTL_SECONDS` controls Claude Code idle container eviction;
   `PAWFLOW_CODEX_INTERACTIVE_IDLE_TTL_SECONDS` controls the equivalent Codex
   Interactive pool. **There is no default**: unset, or `0`, means containers

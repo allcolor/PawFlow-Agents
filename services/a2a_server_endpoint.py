@@ -10,7 +10,7 @@ from urllib.parse import parse_qs
 from core.a2a_store import A2AStore
 from core.a2a_runtime import public_task, send_message
 from services.mcp_server_endpoint import (
-    _bearer, _header, _json_response, _origin_allowed,
+    _header, _json_response,
 )
 
 
@@ -28,39 +28,23 @@ def _request_json(req) -> Dict[str, Any]:
 
 def _publication(req, *, authenticate: bool = True) -> Tuple[
         Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    publication_id = str((req.path_params or {}).get("publication_id") or "")
-    store = A2AStore.instance()
-    publication = store.get_publication(publication_id)
-    if not publication:
+    from services.published_agent_auth import resolve_published_agent
+
+    access = resolve_published_agent(req, authenticate=authenticate)
+    if access.error == "not_found":
         _json_response(req, 404, {"error": "A2A publication not found"})
         return None, None
-    if authenticate:
-        if not _origin_allowed(req):
-            _json_response(req, 403, {"error": "Origin is not allowed"})
-            return None, None
-        key = store.validate_key(publication_id, _bearer(req.headers))
-        if not key:
-            _json_response(req, 401, {"error": "Unauthorized"},
-                           {"WWW-Authenticate": "Bearer"})
-            return None, None
-    else:
-        key = None
-    try:
-        from core.conversation_store import ConversationStore
-        owner = ConversationStore.instance().resolve_owner(publication["conversation_id"])
-        from core.conv_agent_config import get_all_agent_configs
-        configs = get_all_agent_configs(publication["conversation_id"]) or {}
-        needle = publication["agent_name"].lower()
-        canonical = next((name for name in configs
-                          if isinstance(name, str) and name.lower() == needle), "")
-    except Exception:
-        owner, canonical = "", ""
-    if owner != publication["owner_user_id"] or not canonical:
+    if access.error == "origin_forbidden":
+        _json_response(req, 403, {"error": "Origin is not allowed"})
+        return None, None
+    if access.error == "unauthorized":
+        _json_response(req, 401, {"error": "Unauthorized"},
+                       {"WWW-Authenticate": "Bearer"})
+        return None, None
+    if access.error:
         _json_response(req, 403, {"error": "Published agent is unavailable"})
         return None, None
-    publication = dict(publication)
-    publication["agent_name"] = canonical
-    return publication, key
+    return access.publication, access.key
 
 
 def _base_url(req, publication_id: str) -> str:

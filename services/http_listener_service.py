@@ -168,6 +168,10 @@ class HTTPListenerService(BaseService):
             # same store, keys, and per-client contexts.
             from services.agui_server_endpoint import register_agui_routes
             register_agui_routes(self)
+            from services.standard_api_endpoint import (
+                register_standard_api_routes,
+            )
+            register_standard_api_routes(self)
         # The Flow Runtime Console download route is NOT registered here:
         # deploy_flow and flow_runtime_graph ensure it lazily, so listener
         # construction stays route-neutral (tests count routes).

@@ -396,6 +396,7 @@ class _CsGitMixin:
             logger.warning("[convstore] git snapshot failed for %s: %s | git stderr: %s",
                            cid[:8], e, (detail.strip() if isinstance(detail, str) else detail))
 
+
     def git_log(self, cid: str, limit: int = 20) -> List[Dict]:
         """List recent git commits for a conversation."""
         conv_dir = self._conv_dir(cid)

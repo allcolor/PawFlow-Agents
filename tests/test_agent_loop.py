@@ -753,6 +753,75 @@ class TestAgentLoopTask(unittest.TestCase):
         assert results[0].get_attribute("agent.tokens_out") == "25"
 
     @patch.object(LLMClient, 'complete')
+    def test_mixed_client_tool_batch_executes_server_calls_then_pauses(
+            self, mock_complete):
+        from core.tool_approval import ToolApprovalGate
+        from tasks.ai.agent_emitter import SyncEmitter
+
+        executed = []
+
+        class ServerEchoHandler(ToolHandler):
+            @property
+            def name(self): return "server_echo"
+            @property
+            def description(self): return "Server-side echo"
+            @property
+            def parameters_schema(self):
+                return {"type": "object", "properties": {
+                    "text": {"type": "string"}}}
+            def execute(self, arguments):
+                executed.append(arguments["text"])
+                return arguments["text"]
+
+        registry = ToolRegistry()
+        registry.register(ServerEchoHandler())
+        task = AgentLoopTask({"api_key": "test-key", "provider": "openai"})
+        task.set_tool_registry(registry)
+        ff = FlowFile(content=json.dumps({
+            "message": "Use both tools",
+            "client_tools": [{
+                "name": "lookup",
+                "description": "Look up a client value",
+                "parameters": {"type": "object", "properties": {
+                    "q": {"type": "string"}}},
+            }],
+        }).encode("utf-8"))
+        ff.set_attribute("http.auth.principal", "testuser")
+        ff.set_attribute("agent.request_msg_id", "turn-client-tools")
+        ctx = task._prepare_agent_context(ff)
+
+        mock_complete.return_value = LLMResponse(
+            content="I need the client value.",
+            model="gpt-4o",
+            tokens_in=12,
+            tokens_out=4,
+            finish_reason="tool_calls",
+            tool_calls=[
+                LLMToolCall(id="server-1", name="server_echo",
+                            arguments={"text": "server-ok"}),
+                LLMToolCall(id="client-1", name="lookup",
+                            arguments={"q": "weather"}),
+            ],
+        )
+        # core.background_tool starts its periodic cleanup timer on first import;
+        # keep this narrowly selected test from waiting for that process-level
+        # timer during pytest shutdown.
+        with patch.object(ToolApprovalGate, "check", return_value="approved"), \
+                patch("threading.Timer"):
+            result = task._run_agent_loop(ctx, SyncEmitter())
+
+        assert executed == ["server-ok"]
+        assert mock_complete.call_count == 1
+        assert result.outcome == "client_tool_pending"
+        assert result.finish_reason == "client_tool_pending"
+        assert result.client_tool_calls == [{
+            "id": "client-1", "name": "lookup",
+            "arguments": {"q": "weather"},
+        }]
+        assert ctx["registry"].get("lookup") is not None
+        assert task.get_tool_registry().get("lookup") is None
+
+    @patch.object(LLMClient, 'complete')
     def test_max_iterations_safety(self, mock_complete):
         """Agent stops after max_iterations and forces a final synthesis."""
         tool_call = LLMToolCall(id="call_1", name="execute_script", arguments={"code": "1"})

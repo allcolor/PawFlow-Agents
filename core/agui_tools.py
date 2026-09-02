@@ -31,6 +31,7 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
+from core.client_tools import ClientToolHandler
 from core.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
@@ -181,7 +182,7 @@ class _AguiHandlerBase(ToolHandler):
             logger.debug("AG-UI bus publish failed", exc_info=True)
 
 
-class AguiFrontendToolHandler(_AguiHandlerBase):
+class AguiFrontendToolHandler(ClientToolHandler):
     """A tool declared by the AG-UI client. It executes IN THE CLIENT: the
     server-side execute only reminds the agent that the result arrives in a
     later message (the call itself is streamed as TOOL_CALL_* events).
@@ -195,11 +196,11 @@ class AguiFrontendToolHandler(_AguiHandlerBase):
     def __init__(self, conversation_id: str, name: str, description: str,
                  parameters: Optional[Dict[str, Any]],
                  annotations: Optional[Dict[str, Any]] = None):
-        super().__init__(conversation_id)
-        self._name = name
-        self._description = description
-        self._parameters = parameters if isinstance(parameters, dict) else {
-            "type": "object", "properties": {}}
+        super().__init__(
+            conversation_id, "agui", name, description,
+            parameters if isinstance(parameters, dict) else {
+                "type": "object", "properties": {}},
+            origin="agui", origin_scope=f"agui:{conversation_id}")
         # Keep only scalar hints (client-controlled text is an injection
         # surface; annotation hints are scalars by contract).
         self._annotations = {
@@ -208,10 +209,6 @@ class AguiFrontendToolHandler(_AguiHandlerBase):
             if isinstance(value, (bool, int, float))
             or (isinstance(value, str) and len(value) <= 200)
         } if isinstance(annotations, dict) else {}
-
-    @property
-    def name(self) -> str:
-        return self._name
 
     @property
     def description(self) -> str:
@@ -233,10 +230,6 @@ class AguiFrontendToolHandler(_AguiHandlerBase):
             "frontend call this step needs, then end the turn."
         )
 
-    @property
-    def parameters_schema(self) -> Dict[str, Any]:
-        return self._parameters
-
     def execute(self, arguments: Dict[str, Any]) -> str:
         return (
             f"The call to '{self._name}' was recorded for the client "
@@ -246,6 +239,10 @@ class AguiFrontendToolHandler(_AguiHandlerBase):
             "turn; once every frontend call this step needs is emitted, "
             "end the turn. Do not invent a result."
         )
+
+    def set_conversation_id(self, conversation_id: str) -> None:
+        self._conversation_id = conversation_id
+        self._origin_scope = f"agui:{conversation_id}"
 
 
 class AguiStateHandler(_AguiHandlerBase):

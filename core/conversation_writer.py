@@ -203,6 +203,32 @@ class ConversationWriter:
             raise RuntimeError("idempotent conversation write failed") from item["_error"]
         return bool(item.get("_inserted"))
 
+    def enqueue_messages_if_absent(
+            self, items: List[Dict[str, Any]]) -> bool:
+        """Synchronously persist one idempotent FIFO ingress batch."""
+        if not items:
+            raise ValueError("idempotent message batch must not be empty")
+        for item in items:
+            _require_ts_seq(item.get("msg") or {})
+        self._ensure_can_accept_writes()
+        evt = threading.Event()
+        queued = {
+            "op": "append_messages_if_absent",
+            "items": items,
+            "_done_event": evt,
+        }
+        self._queue.put(queued)
+        if not evt.wait(timeout=30):
+            raise TimeoutError("idempotent conversation batch write timed out")
+        if queued.get("_error") is not None:
+            from core._conversation_store_append import (
+                MessageIdempotencyConflict)
+            if isinstance(queued["_error"], MessageIdempotencyConflict):
+                raise queued["_error"]
+            raise RuntimeError(
+                "idempotent conversation batch write failed") from queued["_error"]
+        return bool(queued.get("_inserted"))
+
     def flush(self, timeout: float = 10.0) -> bool:
         """Return whether all queued messages were written before timeout."""
         self._ensure_can_accept_writes()
@@ -408,6 +434,26 @@ class ConversationWriter:
                         if write_item["_inserted"]:
                             flush_before_sse()
                             self._publish_sse_events(write_item)
+                        i += 1
+                        continue
+                    if op == "append_messages_if_absent":
+                        for batch_item in write_item["items"]:
+                            _prewarm_started = time.monotonic()
+                            prewarm_before_write(
+                                batch_item.get("agent_name", ""))
+                            _prewarm_ms += (
+                                (time.monotonic() - _prewarm_started) * 1000.0)
+                        _write_started = time.monotonic()
+                        write_item["_inserted"] = (
+                            store.append_messages_if_absent(
+                                self._cid, write_item["items"]))
+                        _write_ms += ((time.monotonic() - _write_started)
+                                      * 1000.0)
+                        written.append(write_item)
+                        if write_item["_inserted"]:
+                            flush_before_sse()
+                            for batch_item in write_item["items"]:
+                                self._publish_sse_events(batch_item)
                         i += 1
                         continue
                     if op != "append_message":

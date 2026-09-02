@@ -131,6 +131,7 @@ _ACTION_ROLES = {
     "a2a_publication_configure": "write",
     "a2a_publication_create_key": "write",
     "a2a_publication_revoke_key": "write",
+    "a2a_publication_reset_api_sessions": "write",
     "a2a_publication_delete": "write",
     "a2a_target_save": "write",
     "a2a_target_delete": "write",

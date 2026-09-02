@@ -32,6 +32,7 @@ class AgentSyncMixin:
         flowfile.set_attribute("agent.tokens_out", str(result.tokens_out))
         flowfile.set_attribute("agent.duration_ms", f"{result.duration_ms:.1f}")
         flowfile.set_attribute("agent.finish_reason", result.finish_reason)
+        flowfile.set_attribute("agent.outcome", result.outcome)
 
         conversation_id = ctx.get("conversation_id", "")
         use_conv_store = ctx.get("use_conv_store", False)
@@ -63,6 +64,8 @@ class AgentSyncMixin:
                 "provider": result.provider,
                 "tokens_in": result.tokens_in,
                 "tokens_out": result.tokens_out,
+                "outcome": result.outcome,
+                "client_tool_calls": result.client_tool_calls,
                 "source": result.source,
             }, ensure_ascii=False)
             flowfile.set_content(output.encode("utf-8"))

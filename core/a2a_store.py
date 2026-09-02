@@ -24,14 +24,21 @@ from core._a2a_turn_attach import TurnAttachMixin
 from core._a2a_turn_batch import TurnBatchMixin
 from core._a2a_turn_journal import TurnJournalMixin
 from core._a2a_turn_machine import TurnMachineMixin
+from core._a2a_standard_api import StandardApiStoreMixin
+from core.standard_api_config import (
+    STANDARD_API_FIELDS,
+    default_standard_api_config,
+    normalize_standard_api_update,
+    standard_api_material_changed,
+)
 
 
 _CONTEXT_POLICIES = frozenset({"isolated", "shared"})
 _TARGET_KINDS = frozenset({"local", "remote"})
 
 
-class A2AStore(TurnMachineMixin, TurnJournalMixin, TurnAcquireMixin,
-               TurnBatchMixin, TurnAttachMixin):
+class A2AStore(StandardApiStoreMixin, TurnMachineMixin, TurnJournalMixin,
+               TurnAcquireMixin, TurnBatchMixin, TurnAttachMixin):
     """Thread-safe SQLite state for the PawFlow A2A transport."""
 
     _instance: Optional["A2AStore"] = None
@@ -145,6 +152,7 @@ class A2AStore(TurnMachineMixin, TurnJournalMixin, TurnAcquireMixin,
                     ON a2a_targets(owner_user_id, source_conversation_id);
                 """
             )
+            self._initialize_standard_api_tables(connection)
             self._initialize_turn_tables(connection)
             self._initialize_journal_tables(connection)
             self._initialize_acquire_tables(connection)
@@ -154,8 +162,19 @@ class A2AStore(TurnMachineMixin, TurnJournalMixin, TurnAcquireMixin,
     @staticmethod
     def _publication_row(row: sqlite3.Row) -> Dict[str, Any]:
         data = dict(row)
-        data["enabled"] = bool(data.get("enabled"))
-        data["managed_mode"] = bool(data.get("managed_mode"))
+        for field in (
+                "enabled", "managed_mode", "standard_api_enabled",
+                "strict_fields", "api_chat_completions_enabled",
+                "api_responses_enabled", "api_anthropic_messages_enabled"):
+            data[field] = bool(data.get(field))
+        for field, fallback in (
+                ("api_request_overrides_json", {}),
+                ("api_input_modalities_json", [])):
+            raw = data.get(field)
+            try:
+                data[field] = json.loads(raw) if isinstance(raw, str) else raw
+            except json.JSONDecodeError:
+                data[field] = fallback
         return data
 
     @staticmethod
@@ -184,6 +203,7 @@ class A2AStore(TurnMachineMixin, TurnJournalMixin, TurnAcquireMixin,
         label: str = "", description: str = "", context_policy: str = "isolated",
         enabled: bool = True, thread_ttl_seconds: Optional[int] = None,
         managed_mode: Optional[bool] = None,
+        standard_api_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create or update a publication.
 
@@ -201,28 +221,72 @@ class A2AStore(TurnMachineMixin, TurnJournalMixin, TurnAcquireMixin,
         if thread_ttl_seconds is not None:
             thread_ttl_seconds = max(0, int(thread_ttl_seconds))
         now = time.time()
-        with self._lock, self._connect() as connection:
+        with self._lock, self._immediate() as connection:
             row = connection.execute(
-                "SELECT publication_id, owner_user_id, managed_mode "
+                "SELECT * "
                 "FROM a2a_publications "
                 "WHERE conversation_id = ? AND lower(agent_name) = lower(?)",
                 (conversation_id, agent_name),
             ).fetchone()
             if row and row["owner_user_id"] != owner_user_id:
                 raise PermissionError("A2A publication belongs to another owner")
+            if row and float(row["delete_requested_at"] or 0):
+                raise ValueError("A2A publication is being deleted")
             effective_managed = (bool(managed_mode)
                                  if managed_mode is not None
                                  else bool(row["managed_mode"]) if row else False)
             if effective_managed and context_policy != "isolated":
                 raise ValueError(
                     "managed_mode requires context_policy='isolated'")
+            current_standard = (
+                {field: self._publication_row(row).get(field)
+                 for field in STANDARD_API_FIELDS}
+                if row else default_standard_api_config())
+            candidate_standard = normalize_standard_api_update(
+                current_standard,
+                standard_api_config or {},
+                context_policy=context_policy,
+            )
+            current_generation = int(row["api_generation"] or 0) if row else 0
+            material_change = standard_api_material_changed(
+                current_standard, candidate_standard)
+            if row:
+                material_change = material_change or any((
+                    bool(row["enabled"]) != bool(enabled),
+                    row["context_policy"] != context_policy,
+                    row["agent_name"] != agent_name,
+                ))
+            api_generation = current_generation
+            if current_generation and material_change:
+                api_generation += 1
+            elif not current_generation and candidate_standard[
+                    "standard_api_enabled"]:
+                api_generation = 1
+
+            encoded_standard = dict(candidate_standard)
+            encoded_standard["api_request_overrides_json"] = json.dumps(
+                candidate_standard["api_request_overrides_json"],
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            encoded_standard["api_input_modalities_json"] = json.dumps(
+                candidate_standard["api_input_modalities_json"],
+                ensure_ascii=False, separators=(",", ":"))
             if row:
                 publication_id = row["publication_id"]
                 sets = ["agent_name=?", "label=?", "description=?",
-                        "context_policy=?", "enabled=?"]
+                        "context_policy=?", "enabled=?", "api_generation=?"]
                 params: List[Any] = [agent_name, label or agent_name,
                                      description, context_policy,
-                                     int(bool(enabled))]
+                                     int(bool(enabled)), api_generation]
+                for field in STANDARD_API_FIELDS:
+                    sets.append(f"{field}=?")
+                    value = encoded_standard[field]
+                    if field in {
+                            "standard_api_enabled", "strict_fields",
+                            "api_chat_completions_enabled",
+                            "api_responses_enabled",
+                            "api_anthropic_messages_enabled"}:
+                        value = int(bool(value))
+                    params.append(value)
                 if thread_ttl_seconds is not None:
                     sets.append("thread_ttl_seconds=?")
                     params.append(thread_ttl_seconds)
@@ -237,17 +301,43 @@ class A2AStore(TurnMachineMixin, TurnJournalMixin, TurnAcquireMixin,
                     "UPDATE a2a_publications SET " + ", ".join(sets) +  # nosec B608
                     " WHERE publication_id=?")
                 connection.execute(update_sql, params)
+                if api_generation != current_generation:
+                    self._expire_old_api_generations(
+                        connection, publication_id, api_generation, now)
             else:
                 publication_id = "a2ap_" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")
                 connection.execute(
                     "INSERT INTO a2a_publications (publication_id, owner_user_id, "
                     "conversation_id, agent_name, label, description, context_policy, "
                     "enabled, created_at, updated_at, thread_ttl_seconds, "
-                    "managed_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "managed_mode, standard_api_enabled, api_model_id, "
+                    "api_generation, api_permission_mode, api_session_ttl_seconds, "
+                    "api_max_sessions_per_key, api_max_concurrent_runs_per_key, "
+                    "strict_fields, api_request_overrides_json, "
+                    "api_input_modalities_json, api_chat_completions_enabled, "
+                    "api_responses_enabled, api_anthropic_messages_enabled, "
+                    "api_disconnect_policy, delete_requested_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (publication_id, owner_user_id, conversation_id, agent_name,
                      label or agent_name, description, context_policy,
                      int(bool(enabled)), now, now, thread_ttl_seconds or 0,
-                     int(bool(managed_mode))),
+                     int(bool(managed_mode)),
+                     int(bool(candidate_standard["standard_api_enabled"])),
+                     candidate_standard["api_model_id"], api_generation,
+                     candidate_standard["api_permission_mode"],
+                     candidate_standard["api_session_ttl_seconds"],
+                     candidate_standard["api_max_sessions_per_key"],
+                     candidate_standard["api_max_concurrent_runs_per_key"],
+                     int(bool(candidate_standard["strict_fields"])),
+                     encoded_standard["api_request_overrides_json"],
+                     encoded_standard["api_input_modalities_json"],
+                     int(bool(candidate_standard[
+                         "api_chat_completions_enabled"])),
+                     int(bool(candidate_standard["api_responses_enabled"])),
+                     int(bool(candidate_standard[
+                         "api_anthropic_messages_enabled"])),
+                     candidate_standard["api_disconnect_policy"], 0),
                 )
         result = self.get_publication(publication_id)
         if result is None:

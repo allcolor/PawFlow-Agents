@@ -197,6 +197,12 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
             ),
             "channel": st.channel,
             "request_msg_id": st.flowfile.get_attribute("agent.request_msg_id") or "",
+            "tool_choice": (
+                st.body_json.get("tool_choice", "auto")
+                if isinstance(st.body_json, dict) else "auto"),
+            "provider_overrides": dict(
+                st.body_json.get("provider_overrides") or {})
+                if isinstance(st.body_json, dict) else {},
             "permission_mode_override": (
                 st.flowfile.get_attribute("agent.permission_mode") or ""),
             "active_agent_name": st._active_agent_name,  # MUST be non-empty — see _ensure_active_agent

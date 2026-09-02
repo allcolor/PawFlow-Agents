@@ -19,7 +19,7 @@ Sources:
   (`RUN_STARTED`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`, `THINKING_*`,
   `STATE_*`, `RUN_FINISHED`, `RUN_ERROR`, ...).
 
-## One publication, two protocols
+## One publication, several transports
 
 AG-UI reuses the existing **A2A publications** (`core/a2a_store.py`): the
 same publish action, Bearer keys, enable/disable flag, and per-client context
@@ -36,6 +36,11 @@ frontend is the same gesture as publishing it for A2A. The opposite direction
 `external_agui` runtime documented in `docs/AGENT_SYSTEM.md` (add an agent
 with the runtime "External AG-UI" and an `aguiConnection` service).
 
+The publication also owns the independently disabled OpenAI- and
+Anthropic-compatible API configuration. Those dialects use protocol-specific
+continuity and do not change AG-UI's `threadId` mapping or wire behavior. See
+[Standard Agent APIs](standard_agent_api.md).
+
 ## Endpoints
 
 | Method | Path | Description |
@@ -43,8 +48,8 @@ with the runtime "External AG-UI" and an `aguiConnection` service).
 | `GET` | `/agui/{publication_id}` | JSON descriptor (name, description, agent, context policy, `capabilities`). Bearer auth. |
 | `POST` | `/agui/{publication_id}` | Run the agent with a `RunAgentInput` body; responds `text/event-stream`. Bearer auth. |
 
-Authentication, origin checks, and publication resolution are shared with
-the A2A endpoint (`services/a2a_server_endpoint.py`). Routes are registered
+Authentication, origin checks, and publication resolution use the neutral
+published-agent auth helper shared with A2A. Routes are registered
 lazily: at listener startup when publications exist, and immediately when a
 publication is created (`services/agui_server_endpoint.py`).
 

@@ -83,7 +83,7 @@ _JS_MODULES = [
     # state, runs top-level init) MUST stay first, the rest follow.
     "resources.js", "resources_pfp.js", "resources_flow_templates.js",
     "resources_linked_services.js", "resources_render.js", "service_tunnels.js",
-    "resources_mcp_publish.js", "resources_a2a.js",
+    "resources_mcp_publish.js", "resources_standard_api.js", "resources_a2a.js",
     "workflow_kanban.js", "workflow_run_inspector.js", "resources_menus.js",
     "resources_flow_dialogs.js",
     "resources_resource_dialogs.js", "resources_create_dialogs.js",

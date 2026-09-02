@@ -127,6 +127,12 @@ def is_tool_enabled(conversation_id: str, name: str, agent_name: str = "",
         # AG-UI handlers are visible ONLY inside their own conversation:
         # client-declared frontend tools must never surface elsewhere.
         return origin_scope == f"agui:{conversation_id}"
+    if origin == "client":
+        # Request-scoped handlers are registered into the turn-local registry.
+        # The scope fence prevents a copied definition from surfacing in a
+        # different conversation.
+        return bool(conversation_id) and origin_scope.startswith(
+            f"client:{conversation_id}:")
     filters = get_filters(conversation_id)
     return is_tool_enabled_from_filters(
         filters, name, agent_name, origin, origin_scope)
@@ -142,6 +148,10 @@ def is_tool_enabled_from_filters(filters: Dict[str, Any], name: str,
     if origin == "agui":
         # AG-UI handlers need the active conversation id to be judged; this
         # entry point has none, so default-deny (see is_tool_enabled).
+        return False
+    if origin == "client":
+        # This entry point has no active conversation id, so it cannot verify
+        # the request scope. Default deny; use is_tool_enabled above.
         return False
     filters = filters if isinstance(filters, dict) else _default_filters()
     if agent_name:

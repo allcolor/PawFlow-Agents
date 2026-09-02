@@ -529,12 +529,14 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             after_submit, after_request = submit_marker
             saw_other_submit = False
             enter_retries = 0
-            while True:
+            proof_attempts_remaining = max_enter_retries + 1
+            while proof_attempts_remaining:
                 proof = event_service.wait_for_prompt_submission(
                     state.session_token, text,
                     after_submit=after_submit,
                     after_request=after_request,
                     timeout=proof_window)
+                proof_attempts_remaining -= 1
                 if proof in {"hook", "request"}:
                     logger.debug(
                         "[codex-interactive] prompt submission confirmed for "
@@ -567,6 +569,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                             "[codex-interactive] could not refresh the prompt "
                             "submission marker for %s", state.name,
                             exc_info=True)
+                    proof_attempts_remaining = max_enter_retries + 1
                     logger.warning(
                         "[codex-interactive] a different prompt was submitted "
                         "for %s; still waiting for the expected prompt",
@@ -585,6 +588,12 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                             state.last_error = (
                                 "failed to retry stranded Codex prompt")
                         return False
+                    continue
+                if proof_attempts_remaining:
+                    # A cold Codex session may clear the composer before its
+                    # hook or first provider request reaches PawFlow. Consume
+                    # the full configured proof window without adding another
+                    # Enter unless the composer still visibly holds the chip.
                     continue
                 if holds is True:
                     reason = "the prompt remains in the composer"

@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.258] — 2026-09-02
+
+### Added
+
+- Published agents can expose SDK-compatible OpenAI Chat Completions, OpenAI
+  Responses, and Anthropic Messages endpoints with native streaming and
+  non-streaming responses, model discovery, tool calls, and one-shot API keys.
+- Standard API sessions now persist canonical request prefixes, run ledgers,
+  replay events, response retrieval and deletion, exact immutable checkpoints,
+  and busy/stale-safe conversation forks across restarts.
+- The Published agents / APIs interface now configures dialects, activation,
+  permissions, limits, lifecycle controls, endpoint URLs, and SDK snippets in
+  English, French, and Spanish.
+
+### Changed
+
+- A2A, AG-UI, and standard API publications now share fail-closed authentication
+  and runtime state, while agent streaming preserves exact run, task, and turn
+  identities through continuation, cancellation, and disconnect handling.
+
+### Security
+
+- Standard API access is isolated by publication, key, generation, dialect,
+  model, canonicalization, and secret-hash namespaces, with bounded sessions,
+  concurrent-run admission, strict-field validation, lease fencing, TTLs, and
+  tombstones.
+
 ## [1.0.0-beta.257] — 2026-09-01
 
 ### Added

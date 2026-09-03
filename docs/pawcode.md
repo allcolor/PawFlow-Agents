@@ -43,7 +43,7 @@ python -m pip install pyinstaller
 python scripts/build-pawcode-installer.py
 ```
 
-The build writes artifacts under `dist/pawcode-installers/`. Every platform gets a portable archive with the `pawcode` binary and install scripts. On Linux, the builder also creates a `.deb` when `dpkg-deb` is available. On macOS, it creates a `.pkg` when `pkgbuild` is available. On Windows, it creates an NSIS setup executable when `makensis` is on `PATH` or installed under the standard `Program Files` NSIS directory; otherwise the generated zip still contains `install.ps1`.
+The build writes artifacts under `dist/pawcode-installers/`. Every platform gets a portable archive with the `pawcode` binary and install scripts. On Linux, the builder also creates a `.deb` when `dpkg-deb` is available. On macOS, it creates a `.pkg` when `pkgbuild` is available. On Windows, it creates an NSIS setup executable when `makensis` is on `PATH` or installed under the standard `Program Files` NSIS directory; the generated NSIS script uses native Windows path separators so `makensis` can resolve the staged executable. Otherwise the generated zip still contains `install.ps1`.
 
 The builder copies PawFlow's distribution metadata into the executable so
 `pawcode --version` reports the release version. The standalone binary keeps

@@ -121,6 +121,24 @@ def test_pawcode_nsis_falls_back_to_standard_program_files(monkeypatch, tmp_path
     assert commands == [[str(makensis), str(builder.BUILD_ROOT / "pawcode-installer.nsi")]]
 
 
+def test_pawcode_nsis_script_uses_native_path_separators(monkeypatch, tmp_path):
+    builder = _load_pawcode_builder()
+    builder.DIST_ROOT = tmp_path / "dist"
+    builder.BUILD_ROOT = tmp_path / "build"
+    layout = tmp_path / "layout"
+    monkeypatch.setattr(builder, "platform_tag", lambda: "win-x86_64")
+
+    nsi = builder.write_nsis_script(layout, "1.2.3")
+
+    text = nsi.read_text(encoding="utf-8")
+    expected_out = str(
+        builder.DIST_ROOT / "pawcode-1.2.3-win-x86_64-setup.exe"
+    ).replace("/", "\\")
+    expected_exe = str(layout / "bin" / "pawcode.exe").replace("/", "\\")
+    assert f'OutFile "{expected_out}"' in text
+    assert f'File /oname=pawcode.exe "{expected_exe}"' in text
+
+
 def test_release_assets_workflow_publishes_all_installers():
     workflow = (ROOT / ".github" / "workflows" / "release-assets.yml").read_text(encoding="utf-8")
 

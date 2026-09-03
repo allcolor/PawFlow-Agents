@@ -290,13 +290,17 @@ def build_pkg(binary: Path, version: str) -> Path | None:
     return out
 
 
+def _nsis_path(path: Path) -> str:
+    return str(path).replace("/", "\\")
+
+
 def write_nsis_script(layout: Path, version: str) -> Path:
     out = DIST_ROOT / f"pawcode-{version}-{platform_tag()}-setup.exe"
     nsi = BUILD_ROOT / "pawcode-installer.nsi"
     nsi.parent.mkdir(parents=True, exist_ok=True)
-    exe = (layout / "bin" / "pawcode.exe").as_posix()
+    exe = _nsis_path(layout / "bin" / "pawcode.exe")
     nsi.write_text(
-        f'''OutFile "{out.as_posix()}"
+        f'''OutFile "{_nsis_path(out)}"
 InstallDir "$LOCALAPPDATA\\Programs\\PawCode"
 RequestExecutionLevel user
 

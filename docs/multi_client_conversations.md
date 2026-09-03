@@ -81,6 +81,25 @@ segments.
 | API/flows | `publishMessage`, `readConversation`, `spawnAgent`, and HTTP tasks can interact with conversations. |
 | Messaging channels | Telegram, Discord, Slack, and WhatsApp receivers/senders can bridge messages into flows and agents. |
 
+## Multi-conversation web workspace
+
+The web workspace can keep several conversations open as independent tiles. Each
+tile owns a `ConversationSession`: selected agent, active interactions, streams,
+timers, transcript DOM, context gauges, attachments, view mode, and scroll state
+are saved and restored together when focus moves.
+
+Some controls are intentionally global because there is only one composer and
+one shared dock. Active Agents, the selected-agent badge, permission and usage
+badges, confirmations, and Grab may project only the focused session. A poll or
+SSE callback for a background tile may update that tile's stored state, but it
+must not repaint those shared controls.
+
+Grab is additionally bound to the focused conversation's live CLI inventory.
+Changing focus releases a held terminal, invalidates the previous inventory,
+and rejects any late terminal-list response from the old conversation. An agent
+with the same name in two tiles therefore cannot make the focused tile's Grab
+button appear or disappear.
+
 ## Streaming Model
 
 Agent work is started by an HTTP request that returns an immediate ACK. The actual turn runs in a background thread and publishes events to `ConversationEventBus`. Clients consume the event stream via SSE.

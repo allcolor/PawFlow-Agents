@@ -61,10 +61,18 @@ let _grab = {
   provider: '',
   sentDraft: '',
   connecting: false,
+  liveConversationId: '',
+  liveGeneration: 0,
   liveAgents: {},      // agent name → provider, from list_cc_interactive_terminals
   liveCheckedAt: 0,
   liveInFlight: false,
 };
+
+function _grabFocusedConversationId() {
+  const focused = (typeof focusedConversationId === 'function')
+    ? focusedConversationId() : '';
+  return String(focused || (typeof conversationId !== 'undefined' ? conversationId : '') || '');
+}
 
 function grabActive() {
   return !!(_grab.on && _grab.ws && _grab.ws.readyState === 1);
@@ -81,12 +89,25 @@ function _grabProviderFor(agentName) {
 /** Refresh the set of agents with a live tmux, throttled. */
 function _grabRefreshLive() {
   const now = Date.now();
+  const requestedConversationId = _grabFocusedConversationId();
+  if (!requestedConversationId) return;
+  if (_grab.liveConversationId !== requestedConversationId) {
+    _grab.liveConversationId = requestedConversationId;
+    _grab.liveGeneration += 1;
+    _grab.liveAgents = {};
+    _grab.liveCheckedAt = 0;
+    _grab.liveInFlight = false;
+  }
   if (_grab.liveInFlight) return;
   if (now - _grab.liveCheckedAt < _GRAB_LIVE_TTL_MS) return;
-  if (typeof conversationId === 'undefined' || !conversationId) return;
   _grab.liveInFlight = true;
-  action$('list_cc_interactive_terminals').subscribe({
+  const requestGeneration = ++_grab.liveGeneration;
+  action$('list_cc_interactive_terminals', {
+    conversation_id: requestedConversationId,
+  }).subscribe({
     next: data => {
+      if (_grab.liveGeneration !== requestGeneration
+          || _grab.liveConversationId !== requestedConversationId) return;
       _grab.liveInFlight = false;
       _grab.liveCheckedAt = Date.now();
       const live = {};
@@ -101,6 +122,8 @@ function _grabRefreshLive() {
       if (_grab.on && _grab.agent && !live[_grab.agent]) releaseGrab(true);
     },
     error: () => {
+      if (_grab.liveGeneration !== requestGeneration
+          || _grab.liveConversationId !== requestedConversationId) return;
       _grab.liveInFlight = false;
       _grab.liveCheckedAt = Date.now();
     },
@@ -114,11 +137,13 @@ function updateGrabButton() {
 }
 
 function _grabRenderButton() {
+  if (typeof canProjectConversationSharedSurfaces === 'function'
+      && !canProjectConversationSharedSurfaces()) return;
   const btn = document.getElementById('grabBtn');
   if (!btn) return;
   const agent = (typeof selectedAgent !== 'undefined' && selectedAgent) ? selectedAgent : '';
   const provider = _grabProviderFor(agent);
-  const live = !!(provider && _grab.liveAgents[agent]);
+  const live = !!(provider && _grab.liveAgents[agent] === provider);
   btn.style.display = live ? '' : 'none';
   if (!live && _grab.on) releaseGrab(true);
   btn.classList.toggle('on', !!_grab.on);
@@ -342,8 +367,11 @@ function grabHandleKey(e) {
 
 // A conversation or agent switch invalidates the held session.
 function grabOnConversationSwitch() {
+  _grab.liveConversationId = _grabFocusedConversationId();
+  _grab.liveGeneration += 1;
   _grab.liveAgents = {};
   _grab.liveCheckedAt = 0;
+  _grab.liveInFlight = false;
   if (_grab.on || _grab.connecting) releaseGrab(true);
   _grabRenderButton();
 }

@@ -612,6 +612,10 @@ function focusConversationSession(sessionOrId, options) {
   session.lastFocusedAt = Date.now();
   _applyConversationSessionState(session);
   _setConversationSessionDomActive(session, true);
+  if (previousFocused !== session
+      && typeof grabOnConversationSwitch === 'function') {
+    grabOnConversationSwitch();
+  }
   if (!options || options.project !== false) _projectFocusedConversation(session);
   return true;
 }

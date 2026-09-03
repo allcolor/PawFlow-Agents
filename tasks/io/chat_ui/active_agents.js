@@ -272,6 +272,8 @@ function _updateActiveAgentsCount(count) {
 }
 
 function updateActivePanel() {
+  if (typeof canProjectConversationSharedSurfaces === 'function'
+      && !canProjectConversationSharedSurfaces()) return;
   // Repair the long-lived mount on every render. This also makes mixed/live
   // asset rollouts self-healing when state.js ran before either node existed.
   mountComposerChrome();

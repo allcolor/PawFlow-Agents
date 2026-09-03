@@ -7,6 +7,10 @@ happens to a multiline prompt.
 """
 
 import json
+import shutil
+import subprocess
+
+import pytest
 
 from chat_ui_testing import rendered_chat_html
 import re
@@ -205,6 +209,84 @@ def test_grab_is_released_when_the_session_or_selection_moves():
     assert "grabOnAgentSwitch()" in cmd_agent
     conversations = (CHAT_UI / "conversations.js").read_text(encoding="utf-8")
     assert "grabOnConversationSwitch()" in conversations
+    sessions = (CHAT_UI / "conversation_sessions.js").read_text(encoding="utf-8")
+    focus = sessions[sessions.index("function focusConversationSession"):]
+    focus = focus[:focus.index("function openWorkspaceConversation")]
+    assert focus.index("_applyConversationSessionState(session)") < focus.index(
+        "grabOnConversationSwitch()") < focus.index("_projectFocusedConversation(session)")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_grab_discards_stale_terminal_inventory_after_conversation_focus_moves():
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+const callbacks = {};
+const button = {
+  style: { display: 'none' },
+  classList: { toggle: () => {} },
+  title: '',
+};
+const context = {
+  console,
+  window: null,
+  conversationId: 'conv-a',
+  selectedAgent: 'assistant',
+  focusedId: 'conv-a',
+  allowPaint: true,
+  document: {
+    getElementById: id => id === 'grabBtn' ? button : null,
+    querySelector: () => null,
+  },
+  focusedConversationId: () => context.focusedId,
+  canProjectConversationSharedSurfaces: () => context.allowPaint,
+  _agentLlmProvider: () => 'codex-interactive',
+  action$: (_name, params) => ({
+    subscribe: handlers => { callbacks[params.conversation_id] = handlers; },
+  }),
+  t: key => key,
+};
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+
+context.updateGrabButton();
+if (!callbacks['conv-a']) throw new Error('first inventory was not scoped to conv-a');
+
+context.conversationId = 'conv-b';
+context.focusedId = 'conv-b';
+context.grabOnConversationSwitch();
+context.updateGrabButton();
+if (!callbacks['conv-b']) throw new Error('second inventory was not scoped to conv-b');
+
+callbacks['conv-a'].next({
+  sessions: [{ agent_name: 'assistant', provider: 'codex-interactive' }],
+});
+if (context._grabState.liveConversationId !== 'conv-b'
+    || Object.keys(context._grabState.liveAgents).length !== 0
+    || button.style.display !== 'none') {
+  throw new Error('stale conv-a inventory leaked into focused conv-b');
+}
+
+callbacks['conv-b'].next({
+  sessions: [{ agent_name: 'assistant', provider: 'codex-interactive' }],
+});
+if (button.style.display !== '') throw new Error('focused live session did not show Grab');
+
+context.allowPaint = false;
+button.style.display = 'sentinel';
+context.updateGrabButton();
+if (button.style.display !== 'sentinel') {
+  throw new Error('background session repainted the global Grab button');
+}
+"""
+    result = subprocess.run(
+        ["node", "-e", harness, str(CHAT_UI / "grab.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_grab_covers_every_provider_that_owns_a_tmux():

@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- In a tiled multi-conversation workspace, background Active Agents polls and
+  late CLI terminal-inventory results can no longer repaint the focused
+  conversation's shared controls. Grab now invalidates its live-session cache on
+  focus changes, rejects stale results by conversation and generation, and only
+  renders from the focused `ConversationSession`, so an equally named agent in
+  another tile cannot make the button appear or disappear.
+
 ## [1.0.0-beta.263] — 2026-09-03
 
 ### Added

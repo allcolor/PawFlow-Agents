@@ -482,6 +482,12 @@ def test_background_session_cannot_paint_shared_agent_surfaces():
     active_agents = (CHAT_UI / "active_agents.js").read_text(encoding="utf-8")
     composer = (CHAT_UI / "file_mention.js").read_text(encoding="utf-8")
     assert "!canProjectConversationSharedSurfaces()) return;" in active_agents
+    active_panel = active_agents[active_agents.index("function updateActivePanel()") :]
+    active_panel = active_panel[:active_panel.index("// ── Server poll")]
+    assert active_panel.index("!canProjectConversationSharedSurfaces()) return;") < active_panel.index(
+        "mountComposerChrome()")
+    assert active_panel.index("!canProjectConversationSharedSurfaces()) return;") < active_panel.index(
+        "updateGrabButton()")
     assert "!canProjectConversationSharedSurfaces()) return;" in composer
     assert "selectedAgent = data.active_agent || selectedAgent" in (
         CHAT_UI / "conversations.js").read_text(encoding="utf-8")

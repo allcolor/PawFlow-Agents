@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.263] — 2026-09-03
+
 ### Added
 
 - Added `cc_mcp` and `codex_mcp` as managed CLI providers that reuse the
@@ -31,6 +33,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- OAuth credential pools now honor an explicit `allow_refresh` policy with
+  provider-specific defaults. Disabling it prevents PawFlow-managed proactive,
+  retry, bearer, and manual refreshes while preserving credentials updated by
+  the native CLI; Gemini and shared Antigravity pools default to disabled.
 - Importing the background-tool manager no longer keeps short-lived workers
   and test processes alive for its 60-second cleanup interval: the initial
   periodic cleanup timer is now daemonized like every later recurrence.

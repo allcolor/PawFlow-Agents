@@ -65,6 +65,21 @@ Use the credential source to choose the provider surface:
 
 `llmCredentialOAuthProvider` services own OAuth pools for three canonical CLI credential providers: `claude-code`, `codex-app-server`, and `gemini`. `claude-code-interactive` reuses the `claude-code` pool. `codex-interactive` reuses the `codex-app-server` pool. `antigravity-interactive` reuses the `gemini` pool. API-key mode skips the OAuth pool.
 
+Each pool has an `allow_refresh` checkbox with a provider-specific default:
+`true` for Claude Code, Codex, and generic pools; `false` for Gemini pools,
+including pools shared with Antigravity. A pool created before the field existed
+uses the same provider-specific default. When it is disabled, PawFlow does not
+perform proactive, retry, generic bearer, or manual OAuth token refreshes. It
+still writes the stored credentials into the native CLI HOME and recovers
+credentials that the client updates there. If the client does not refresh an
+expired token itself, the user must log in again.
+
+The Gemini pool is also used by Antigravity. Google's Antigravity terms restrict
+use in connection with non-Google products and warn that accounts may be
+suspended. Disabling PawFlow-managed refresh removes PawFlow's direct token
+exchange but does not make third-party Antigravity use contractually compliant.
+Enterprise and Workspace accounts may be governed by separate agreements.
+
 Advanced endpoint routing is supported where the underlying CLI honors it. `claude-code-interactive` can be used against non-Anthropic compatible endpoints by setting `api_key` plus `base_url`; in that mode PawFlow passes `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` instead of writing OAuth credentials. `codex-interactive` supports key-based auth for the native Codex session. The legacy transports retain their existing endpoint behavior for migration, while direct OpenAI-compatible endpoints should normally use the `openai` provider.
 
 On a cold CLI session, PawFlow writes the full serialized initial context to a

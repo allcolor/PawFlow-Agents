@@ -428,10 +428,64 @@ class Service:
     def get_parameter_rules(self) -> list:
         """Declarative rules for conditional visibility, required, defaults, options.
 
-        Each rule: {"when": {"field": ["val1", "val2"]}, "set": {"other_field": {"visible": bool, "required": bool, "default": val, "options": [...]}}}
-        Rules evaluated in order — last match wins per field.
+        Each rule has ``when`` conditions and a ``set`` mapping. Field effects
+        may define ``visible``, ``required``, ``default``, ``options``, or an
+        inline ``notice``. Rules are evaluated in order.
+        The last matching effect wins per field.
         """
         return []
+
+    def resolve_parameter_schema(
+            self, values: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Return the parameter schema after applying matching rules.
+
+        Configured values drive rule conditions; an absent condition field uses
+        its schema default. Rule defaults update only absent values, so an
+        explicit value always wins. This is the server-side counterpart of the
+        schema form's declarative rule evaluator.
+        """
+        provided = self.config if values is None else values
+        provided = provided or {}
+        schema = {
+            name: dict(definition)
+            for name, definition in self.get_parameter_schema().items()
+        }
+        explicit = {
+            name for name in schema
+            if name in provided and provided.get(name) is not None
+        }
+        effective_values = {
+            name: (provided.get(name) if name in explicit
+                   else definition.get("default"))
+            for name, definition in schema.items()
+        }
+
+        for rule in self.get_parameter_rules():
+            matches = True
+            for param_name, expected in (rule.get("when") or {}).items():
+                choices = (expected if isinstance(expected, (list, tuple, set))
+                           else [expected])
+                if effective_values.get(param_name) not in choices:
+                    matches = False
+                    break
+            if not matches:
+                continue
+            for param_name, effects in (rule.get("set") or {}).items():
+                if param_name not in schema or not isinstance(effects, dict):
+                    continue
+                schema[param_name].update(effects)
+                if "default" in effects and param_name not in explicit:
+                    effective_values[param_name] = effects["default"]
+        return schema
+
+    def resolve_parameter_value(self, name: str,
+                                values: dict[str, Any] | None = None) -> Any:
+        """Return an explicit parameter value or its effective schema default."""
+        provided = self.config if values is None else values
+        provided = provided or {}
+        if name in provided and provided.get(name) is not None:
+            return provided.get(name)
+        return self.resolve_parameter_schema(provided).get(name, {}).get("default")
 
     def get_service_actions(self) -> list:
         """Custom actions (buttons in the edit form).

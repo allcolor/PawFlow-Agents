@@ -678,6 +678,12 @@ otherwise the UI shows bundled fallback values and an explicit warning. Secret
 helpers list secret names only and fill `${secret_name}` references, never raw
 secret values.
 
+Conditional service defaults and notices belong in `get_parameter_rules()`,
+keyed by the controlling schema fields. The server resolves absent values from
+those rules, and the shared schema form applies the same defaults until the user
+explicitly edits a field. Provider-specific behavior therefore stays in the
+service definition instead of being duplicated in runtime or UI branches.
+
 Provider-specific model choices shipped by a PFP, including the bundled Pixazo
 and WaveSpeed providers, live in that package's service schema. PawFlow renders
 those options without retaining a second provider catalog in core.

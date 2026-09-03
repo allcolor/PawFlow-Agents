@@ -220,6 +220,7 @@ async function _renderCredentialPoolTable(serviceId, anchorBtn) {
       return;
     }
     const rows = resp.pool || [];
+    const allowRefresh = resp.allow_refresh !== false;
     let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
       + '<strong style="color:var(--pf-text);font-size:12px;">' + escapeHtml(t('providerCredentials', { provider: resp.provider || 'OAuth' })) + '</strong>'
       + '<span style="color:var(--pf-muted);font-size:11px;">' + t('loginCount', { n: rows.length }) + '</span></div>';
@@ -238,7 +239,7 @@ async function _renderCredentialPoolTable(serviceId, anchorBtn) {
           + '<td style="padding:5px 4px;color:' + statusColor + ';">' + status + '</td>'
           + '<td style="padding:5px 4px;">' + escapeHtml(r.expires_in || '') + '</td>'
           + '<td style="padding:5px 4px;text-align:right;white-space:nowrap;">'
-          + '<button type="button" data-cred-refresh="' + idx + '" style="background:color-mix(in srgb, var(--pf-accent-2) 18%, var(--pf-panel));color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:4px;padding:3px 7px;margin-right:4px;cursor:pointer;font-size:11px;">' + t('refresh') + '</button>'
+          + (allowRefresh ? '<button type="button" data-cred-refresh="' + idx + '" style="background:color-mix(in srgb, var(--pf-accent-2) 18%, var(--pf-panel));color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:4px;padding:3px 7px;margin-right:4px;cursor:pointer;font-size:11px;">' + t('refresh') + '</button>' : '')
           + '<button type="button" data-cred-delete="' + idx + '" style="background:color-mix(in srgb, var(--pf-danger) 16%, var(--pf-panel));color:var(--pf-danger);border:1px solid var(--pf-danger);border-radius:4px;padding:3px 7px;cursor:pointer;font-size:11px;">' + t('delete') + '</button>'
           + '</td></tr>';
       }

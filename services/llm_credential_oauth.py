@@ -154,6 +154,31 @@ def credential_pool_secret_key(service_id: str) -> str:
     return f"{service_id.replace('-', '_')}_credentials_pool"
 
 
+def credential_pool_allows_refresh(service_id: str = "", *,
+                                   user_id: str = "", conv_id: str = "",
+                                   config: Dict[str, Any] | None = None) -> bool:
+    """Whether PawFlow may refresh tokens owned by this credential pool.
+
+    Pools without an explicit ``allow_refresh`` value use the provider-specific
+    default declared by this service's parameter rules.
+    ``service_id`` may name either the pool itself or an LLM service that
+    references it, matching what CLI clients keep in ``_agent_service``.
+    """
+    if config is None:
+        sdef = get_service_def(service_id, user_id=user_id, conv_id=conv_id)
+        if getattr(sdef, "service_type", "") == "llmConnection":
+            llm_config = getattr(sdef, "config", {}) or {}
+            credential_service_id = str(
+                llm_config.get("credential_service_id") or "").strip()
+            sdef = get_service_def(
+                credential_service_id, user_id=user_id, conv_id=conv_id)
+        if not is_credential_service_def(sdef):
+            return True
+        config = getattr(sdef, "config", {}) or {}
+    service = LLMCredentialOAuthProviderService(config)
+    return service.resolve_parameter_value("allow_refresh") is not False
+
+
 class LLMCredentialOAuthProviderService(BaseService):
     TYPE = SERVICE_TYPE
     VERSION = "1.0.0"
@@ -231,6 +256,15 @@ class LLMCredentialOAuthProviderService(BaseService):
                     "provider, CLI included."
                 ),
             },
+            "allow_refresh": {
+                "type": "boolean", "required": False, "default": True,
+                "description": (
+                    "Allow PawFlow to refresh OAuth access tokens. The default "
+                    "depends on the selected provider. When disabled, refresh "
+                    "is delegated to the native client and PawFlow still "
+                    "recovers tokens the client writes back."
+                ),
+            },
             "identity_provider": {
                 "type": "select",
                 "default": "",
@@ -290,7 +324,28 @@ class LLMCredentialOAuthProviderService(BaseService):
         }
 
     def get_parameter_rules(self) -> list:
-        return []
+        return [
+            {
+                "when": {
+                    "provider": ["claude-code", "codex-app-server", GENERIC],
+                },
+                "set": {"allow_refresh": {"default": True}},
+            },
+            {
+                "when": {"provider": ["gemini"]},
+                "set": {
+                    "allow_refresh": {
+                        "default": False,
+                        "notice": (
+                            "Antigravity account warning: Google's terms "
+                            "restrict using Antigravity with non-Google "
+                            "products and accounts may be suspended. "
+                            "Enterprise or Workspace contracts may differ."
+                        ),
+                    },
+                },
+            },
+        ]
 
     def get_service_actions(self) -> list:
         return [

@@ -246,6 +246,13 @@ class CodexSessionMixin:
         svc_id = getattr(self, '_agent_service', '') or ''
         uid = user_id or getattr(self, '_user_id', '') or ''
         cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        from services.llm_credential_oauth import credential_pool_allows_refresh
+        if not credential_pool_allows_refresh(
+                svc_id, user_id=uid, conv_id=cid):
+            logger.info(
+                "[codex force-refresh] PawFlow refresh disabled for pool '%s'",
+                svc_id)
+            return False
         pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if pool_index < 0 or pool_index >= len(pool):
             return False
@@ -445,6 +452,9 @@ class CodexSessionMixin:
         svc_id = getattr(self, '_agent_service', '') or ''
         uid = user_id or getattr(self, '_user_id', '') or ''
         cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        from services.llm_credential_oauth import credential_pool_allows_refresh
+        allow_refresh = credential_pool_allows_refresh(
+            svc_id, user_id=uid, conv_id=cid)
         pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if not pool:
             raise LLMClientError(
@@ -492,7 +502,9 @@ class CodexSessionMixin:
             if expires_at:
                 _exp_s = int(expires_at) / 1000 if int(expires_at) > 1e12 else int(expires_at)
                 _remaining = _exp_s - _time.time()
-                if _remaining < self._OAUTH_REFRESH_MIN_TTL_SEC and refresh_token:
+                if (allow_refresh
+                        and _remaining < self._OAUTH_REFRESH_MIN_TTL_SEC
+                        and refresh_token):
                     logger.info("[codex] pool[%d] %s — refreshing", _pidx,
                                 "expired" if _remaining < 0 else f"expiring in {_remaining:.0f}s")
                     try:
@@ -528,7 +540,7 @@ class CodexSessionMixin:
                         logger.warning(
                             "[codex] pool[%d] proactive refresh temporarily "
                             "failed, using current token: %s", _pidx, e)
-                elif _remaining < 0 and not refresh_token:
+                elif allow_refresh and _remaining < 0 and not refresh_token:
                     logger.warning(
                         "[codex] pool[%d] expired, no refresh token", _pidx)
                     dead_indices.append(_pidx)

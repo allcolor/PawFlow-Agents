@@ -21,6 +21,7 @@ from tasks.ai.actions._sf_base import (
     _credential_provider_for_service,
     _credential_module,
 )
+from services.llm_credential_oauth import credential_pool_allows_refresh
 
 logger = logging.getLogger(__name__)
 
@@ -616,6 +617,8 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
             })
         flowfile.set_content(json.dumps({
             "provider": provider,
+            "allow_refresh": credential_pool_allows_refresh(
+                svc_id, user_id=user_id, conv_id=conv_id),
             "pool": entries,
             "count": len(entries),
             "message": f"{len(entries)} credential(s) in pool for {svc_id or provider}",

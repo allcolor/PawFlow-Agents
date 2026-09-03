@@ -1,8 +1,9 @@
 """Access tokens for an LLM service running in auth_mode=oauth.
 
 One resolution point so every provider's auth header reads its credential the
-same way: a static key, or a live access token out of an encrypted pool that is
-refreshed when it has expired.
+same way: a static key, or a live access token out of an encrypted pool. An
+expired pool token is refreshed only when that pool permits PawFlow-managed
+refresh.
 
 Refresh is serialised per pool. Several agents share one pool and can notice
 the same expiry in the same instant; identity providers that rotate refresh
@@ -142,7 +143,7 @@ def _refresh(credential: Dict[str, Any], service_config: Dict[str, Any],
 
 def access_token(service_id: str, service_config: Dict[str, Any],
                  endpoints: Dict[str, str]) -> str:
-    """Return a usable access token from the pool, refreshing if needed.
+    """Return an access token from the pool, refreshing if allowed and needed.
 
     Empty string when the pool holds nothing usable -- the caller decides
     whether that is fatal, because the answer differs between a request and a
@@ -150,6 +151,9 @@ def access_token(service_id: str, service_config: Dict[str, Any],
     """
     if not service_id:
         return ""
+    from services.llm_credential_oauth import credential_pool_allows_refresh
+    allow_refresh = credential_pool_allows_refresh(
+        service_id, config=service_config)
     with pool_lock(service_id):
         pool = load_pool(service_id)
         if not pool:
@@ -159,6 +163,11 @@ def access_token(service_id: str, service_config: Dict[str, Any],
                 continue
             token = str(credential.get("access_token") or "").strip()
             if token and not _expired(credential):
+                return token
+            if token and not allow_refresh:
+                # The native client receives the complete credential and owns
+                # refresh. If it cannot renew the token, its authentication
+                # failure is surfaced and the user can log in again.
                 return token
             refreshed = _refresh(credential, service_config, endpoints)
             if refreshed and refreshed.get("access_token"):

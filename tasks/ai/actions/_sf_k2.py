@@ -17,6 +17,7 @@ from tasks.ai.actions._sf_routes import (
     _publish_command_result,
     _notify_remote_mounts_after_service_change,
 )
+from services.llm_credential_oauth import credential_pool_allows_refresh
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,12 @@ def _handle_sf_k2(self, action, body, store, user_id, flowfile, _helpers):
         provider = _credential_provider_for_service(svc_id, user_id)
         if not svc_id or idx < 0 or not provider:
             flowfile.set_content(json.dumps({"error": "Missing service_id/provider or invalid index"}).encode())
+            return [flowfile]
+        if not credential_pool_allows_refresh(
+                svc_id, user_id=user_id, conv_id=conv_id):
+            flowfile.set_content(json.dumps({
+                "error": "PawFlow-managed refresh is disabled for this credential pool"
+            }).encode())
             return [flowfile]
         mod = _credential_module(provider)
         pool = mod._load_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)

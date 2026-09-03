@@ -64,12 +64,13 @@ function _renderSchemaFields(schema, values, readonly) {
   const roS = readonly ? 'opacity:0.7;cursor:not-allowed;' : '';
   for (const [pname, pdef] of Object.entries(schema || {})) {
     if (!pdef || pdef.internal || pdef.server_only || pdef.hidden || pdef.type === 'hidden') continue;
-    const val = (values && values[pname] != null) ? values[pname] : (pdef.default != null ? pdef.default : '');
+    const hasValue = !!(values && Object.prototype.hasOwnProperty.call(values, pname) && values[pname] != null);
+    const val = hasValue ? values[pname] : (pdef.default != null ? pdef.default : '');
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
     const label = escapeHtml(pdef.label || pname);
     const req = pdef.required ? ' data-required="1"' : '';
     const fillHelper = _renderParamFillHelper(pdef, pname, readonly);
-    html += '<div class="svc-field" data-field="' + pname + '"' + req + ' style="margin-bottom:8px;">';
+    html += '<div class="svc-field" data-field="' + pname + '" data-rule-default-owned="' + (hasValue ? '0' : '1') + '"' + req + ' style="margin-bottom:8px;">';
     html += '<label style="' + _svcLabelStyle + '">' + label
       + (pdef.required ? ' <span class="svc-req" style="color:var(--pf-danger)">*</span>' : '')
       + _renderParamHelp(pdef.description, pdef.label || pname) + '</label>';
@@ -277,6 +278,7 @@ function _applyRules(container, rules, actions, serviceId) {
     // Reset: all fields visible, none required
     container.querySelectorAll('.svc-field').forEach(f => {
       f.style.display = '';
+      f.querySelectorAll('.svc-rule-notice').forEach(n => n.remove());
       const lbl = f.querySelector('label');
       if (lbl) {
         lbl.querySelector('.svc-req')?.remove();
@@ -300,7 +302,13 @@ function _applyRules(container, rules, actions, serviceId) {
         }
         if (effects.default !== undefined) {
           const input = wrapper.querySelector('input,select,textarea');
-          if (input && !input.value) input.value = effects.default;
+          if (input && wrapper.dataset.ruleDefaultOwned !== '0') {
+            if (input.type === 'checkbox') {
+              input.checked = effects.default === true || String(effects.default).toLowerCase() === 'true';
+            } else {
+              input.value = effects.default;
+            }
+          }
         }
         if (effects.options) {
           const sel = wrapper.querySelector('select');
@@ -309,6 +317,13 @@ function _applyRules(container, rules, actions, serviceId) {
             sel.innerHTML = effects.options.map(o =>
               '<option value="' + o + '"' + (o === cur ? ' selected' : '') + '>' + o + '</option>').join('');
           }
+        }
+        if (effects.notice) {
+          const notice = document.createElement('div');
+          notice.className = 'svc-rule-notice';
+          notice.textContent = effects.notice;
+          notice.style.cssText = 'margin-top:6px;padding:7px 8px;border:1px solid var(--pf-warning);border-radius:4px;color:var(--pf-warning);font-size:11px;line-height:1.35;';
+          wrapper.appendChild(notice);
         }
       }
     }
@@ -320,6 +335,19 @@ function _applyRules(container, rules, actions, serviceId) {
       } catch { btn.style.display = ''; }
     });
   };
+
+  // A rule default follows its trigger until the user explicitly edits the
+  // target. Stored values are marked non-owned while rendering, so opening an
+  // existing service never rewrites its choice.
+  const defaultTargets = new Set();
+  rules.forEach(rule => Object.entries(rule.set || {}).forEach(([field, effects]) => {
+    if (effects && effects.default !== undefined) defaultTargets.add(field);
+  }));
+  defaultTargets.forEach(name => {
+    const wrapper = container.querySelector('[data-field="' + name + '"]');
+    const el = wrapper && wrapper.querySelector('input,select,textarea');
+    if (el) el.addEventListener('change', () => { wrapper.dataset.ruleDefaultOwned = '0'; });
+  });
 
   // Listen to trigger fields
   const triggers = new Set(rules.flatMap(r => Object.keys(r.when)));

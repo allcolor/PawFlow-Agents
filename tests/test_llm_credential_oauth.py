@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import inspect
@@ -6,6 +7,7 @@ import pytest
 from services.llm_connection import LLMConnectionService
 from services.llm_credential_oauth import (
     LLMCredentialOAuthProviderService,
+    credential_pool_allows_refresh,
     credential_service_id_from_llm_service,
     normalize_provider,
     resolve_credential_service_id,
@@ -46,6 +48,167 @@ def test_credential_provider_exposes_login_and_pool_actions():
     manage = next(a for a in actions if a["id"] == "credential_pool_manage")
     assert manage["flow"] == "credential_table"
     assert manage["server_action"] == "llm_credential_pool_list"
+
+
+def test_credential_refresh_policy_uses_declarative_provider_defaults(
+        monkeypatch):
+    service = LLMCredentialOAuthProviderService({})
+    schema = service.get_parameter_schema()
+    assert schema["allow_refresh"]["type"] == "boolean"
+    assert schema["allow_refresh"]["default"] is True
+    assert service.resolve_parameter_value(
+        "allow_refresh", {"provider": "claude-code"}) is True
+    assert service.resolve_parameter_value(
+        "allow_refresh", {"provider": "codex-app-server"}) is True
+    assert service.resolve_parameter_value(
+        "allow_refresh", {"provider": "generic"}) is True
+    assert service.resolve_parameter_value(
+        "allow_refresh", {"provider": "gemini"}) is False
+    gemini_schema = service.resolve_parameter_schema({"provider": "gemini"})
+    assert "Antigravity account warning" in gemini_schema["allow_refresh"]["notice"]
+    assert service.resolve_parameter_value(
+        "allow_refresh", {
+            "provider": "gemini", "allow_refresh": True,
+        }) is True
+
+    assert credential_pool_allows_refresh(config={}) is True
+    assert credential_pool_allows_refresh(
+        config={"provider": "gemini"}) is False
+    assert credential_pool_allows_refresh(config={
+        "provider": "gemini", "allow_refresh": True,
+    }) is True
+    assert credential_pool_allows_refresh(config={
+        "provider": "claude-code", "allow_refresh": False,
+    }) is False
+
+    llm = _sdef("llm", "llmConnection", {
+        "provider": "gemini", "credential_service_id": "pool"})
+    pool = _sdef("pool", "llmCredentialOAuthProvider", {
+        "provider": "gemini"})
+    by_id = {"llm": llm, "pool": pool}
+    monkeypatch.setattr(
+        "services.llm_credential_oauth.get_service_def",
+        lambda service_id, user_id="", conv_id="": by_id.get(service_id))
+
+    assert credential_pool_allows_refresh(
+        "llm", user_id="alice", conv_id="conv-1") is False
+
+
+def test_generic_expired_token_is_returned_without_refresh_when_disabled(
+        monkeypatch):
+    from core import llm_oauth_credential
+
+    monkeypatch.setattr(llm_oauth_credential, "load_pool", lambda _sid: [{
+        "access_token": "expired-access",
+        "refresh_token": "native-client-refresh",
+        "expires_at": 1,
+    }])
+    calls = []
+    monkeypatch.setattr(
+        llm_oauth_credential, "_refresh",
+        lambda *_args, **_kwargs: calls.append(True))
+
+    token = llm_oauth_credential.access_token(
+        "pool", {"allow_refresh": False}, {"token_url": "https://id/token"})
+
+    assert token == "expired-access"
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "provider,module,setup_name,force_name,credential,relative_path,token_path",
+    [
+        ("claude-code", claude_code_session, "_setup_credentials",
+         "_force_refresh_pool_entry",
+         {"access_token": "expired-access", "refresh_token": "native-refresh",
+          "expires_at": 1},
+         ".credentials.json", ("claudeAiOauth", "accessToken")),
+        ("codex-app-server", codex_session, "_codex_setup_credentials",
+         "_codex_force_refresh_pool_entry",
+         {"access_token": "expired-access", "refresh_token": "native-refresh",
+          "id_token": "identity", "expires_at": 1},
+         ".codex/auth.json", ("tokens", "access_token")),
+        ("gemini", gemini_session, "_gemini_setup_credentials",
+         "_gemini_force_refresh_pool_entry",
+         {"access_token": "expired-access", "refresh_token": "native-refresh",
+          "expires_at": 1},
+         ".gemini/oauth_creds.json", ("access_token",)),
+    ],
+)
+def test_disabled_cli_pool_delegates_refresh_to_native_client(
+        monkeypatch, tmp_path, provider, module, setup_name, force_name,
+        credential, relative_path, token_path):
+    monkeypatch.setattr(
+        "services.llm_credential_oauth.credential_pool_allows_refresh",
+        lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        module, "_load_credentials_pool",
+        lambda *_args, **_kwargs: [dict(credential)])
+    network_calls = []
+    if provider == "claude-code":
+        network_target = "_refresh_oauth_token"
+    else:
+        network_target = "refresh_oauth_token"
+        monkeypatch.setattr(
+            module, network_target,
+            lambda *_args, **_kwargs: network_calls.append(True))
+
+    client = LLMClient(provider=provider, config={})
+    client._agent_service = "pool"
+    if provider == "claude-code":
+        monkeypatch.setattr(
+            client, network_target,
+            lambda *_args, **_kwargs: network_calls.append(True))
+
+    getattr(client, setup_name)(
+        str(tmp_path), pool_index=0, user_id="alice", conversation_id="conv-1")
+    blob = json.loads((tmp_path / relative_path).read_text(encoding="utf-8"))
+    for key in token_path:
+        blob = blob[key]
+
+    assert blob == "expired-access"
+    assert getattr(client, force_name)(
+        0, user_id="alice", conversation_id="conv-1") is False
+    assert network_calls == []
+
+
+def test_credential_pool_actions_expose_and_enforce_disabled_refresh(
+        monkeypatch):
+    from core import FlowFile
+    from tasks.ai.actions import _sf_k1, _sf_k2
+
+    class _PoolModule:
+        @staticmethod
+        def _load_credentials_pool(*_args, **_kwargs):
+            return []
+
+    monkeypatch.setattr(
+        _sf_k1, "_credential_provider_for_service", lambda *_args: "gemini")
+    monkeypatch.setattr(_sf_k1, "_credential_module", lambda _provider: _PoolModule)
+    monkeypatch.setattr(
+        _sf_k1, "credential_pool_allows_refresh",
+        lambda *_args, **_kwargs: False)
+    listed = FlowFile(content=b"")
+    list_result = _sf_k1._handle_sf_k1(
+        None, "llm_credential_pool_list", {"service_id": "pool"}, None,
+        "alice", listed, (None,) * 6)
+    assert json.loads(list_result[0].get_content())["allow_refresh"] is False
+
+    monkeypatch.setattr(
+        _sf_k2, "_credential_provider_for_service", lambda *_args: "gemini")
+    monkeypatch.setattr(
+        _sf_k2, "credential_pool_allows_refresh",
+        lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        _sf_k2, "_credential_module",
+        lambda _provider: pytest.fail("refresh module must not be loaded"))
+    refreshed = FlowFile(content=b"")
+    refresh_result = _sf_k2._handle_sf_k2(
+        None, "llm_credential_pool_refresh",
+        {"service_id": "pool", "index": 0}, None, "alice", refreshed,
+        (None,) * 6)
+    error = json.loads(refresh_result[0].get_content())["error"]
+    assert "disabled" in error
 
 
 def test_credential_pool_resolution_prefers_llm_reference(monkeypatch):
@@ -319,3 +482,23 @@ def test_service_ref_ui_supports_provider_aliases():
     assert "data-provider-aliases" in src
     assert "function _serviceRefProviderMatches" in src
     assert "s.provider === wantedProvider" not in src
+
+
+def test_credential_pool_ui_hides_manual_refresh_when_disabled():
+    src = Path(
+        "tasks/io/chat_ui/resources_service_login.js").read_text(
+            encoding="utf-8")
+
+    assert "const allowRefresh = resp.allow_refresh !== false;" in src
+    assert "(allowRefresh ? '<button type=\"button\" data-cred-refresh=" in src
+
+
+def test_schema_form_applies_boolean_rule_defaults_without_overwriting_values():
+    src = Path("tasks/io/chat_ui/schema_form.js").read_text(encoding="utf-8")
+
+    assert "data-rule-default-owned" in src
+    assert "wrapper.dataset.ruleDefaultOwned !== '0'" in src
+    assert "input.type === 'checkbox'" in src
+    assert "input.checked = effects.default === true" in src
+    assert "if (effects.notice)" in src
+    assert "provider === 'gemini'" not in src

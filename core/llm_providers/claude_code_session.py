@@ -139,6 +139,13 @@ class ClaudeCodeSessionMixin:
         svc_id = getattr(self, '_agent_service', '') or ''
         uid = user_id or getattr(self, '_user_id', '') or ''
         cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        from services.llm_credential_oauth import credential_pool_allows_refresh
+        if not credential_pool_allows_refresh(
+                svc_id, user_id=uid, conv_id=cid):
+            logger.info(
+                "[force-refresh] PawFlow refresh disabled for pool '%s'",
+                svc_id)
+            return False
         pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if pool_index < 0 or pool_index >= len(pool):
             return False
@@ -489,10 +496,11 @@ class ClaudeCodeSessionMixin:
         If ANTHROPIC_API_KEY is set (via api_key config), skips OAuth
         credentials entirely — CC uses the API key directly.
 
-        Otherwise tries credentials from the pool. If a credential is
-        expired OR will expire within _OAUTH_REFRESH_MIN_TTL_SEC, attempts
-        a proactive refresh. If refresh fails, removes it from the pool
-        and tries the next. exclude_indices skips pool slots that have
+        Otherwise tries credentials from the pool. When the pool permits
+        PawFlow-managed refresh, a credential that is expired OR will expire
+        within _OAUTH_REFRESH_MIN_TTL_SEC is refreshed proactively. When it
+        does not, the credential is written unchanged so the native client can
+        refresh it. exclude_indices skips pool slots that have
         already failed during the current stream (set by the retry loop
         after a mid-stream auth error).
 
@@ -514,6 +522,9 @@ class ClaudeCodeSessionMixin:
         svc_id = getattr(self, '_agent_service', '') or ''
         uid = user_id or getattr(self, '_user_id', '') or ''
         cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        from services.llm_credential_oauth import credential_pool_allows_refresh
+        allow_refresh = credential_pool_allows_refresh(
+            svc_id, user_id=uid, conv_id=cid)
         pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if not pool:
             raise LLMClientError(
@@ -559,7 +570,9 @@ class ClaudeCodeSessionMixin:
             if expires_at:
                 _exp_s = int(expires_at) / 1000 if int(expires_at) > 1e12 else int(expires_at)
                 _remaining = _exp_s - _time.time()
-                if _remaining < self._OAUTH_REFRESH_MIN_TTL_SEC and refresh_token:
+                if (allow_refresh
+                        and _remaining < self._OAUTH_REFRESH_MIN_TTL_SEC
+                        and refresh_token):
                     logger.info("OAuth token [pool:%d] %s — attempting refresh", _pidx,
                                 "expired" if _remaining < 0 else f"expiring in {_remaining:.0f}s")
                     try:
@@ -600,7 +613,7 @@ class ClaudeCodeSessionMixin:
                             "OAuth token [pool:%d] proactive refresh "
                             "temporarily failed, using current token: %s",
                             _pidx, e)
-                elif _remaining < 0 and not refresh_token:
+                elif allow_refresh and _remaining < 0 and not refresh_token:
                     logger.warning("OAuth token [pool:%d] expired, no refresh token", _pidx)
                     dead_indices.append(_pidx)
                     continue

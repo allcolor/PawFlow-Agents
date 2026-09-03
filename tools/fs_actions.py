@@ -11,6 +11,15 @@ public ``action_*`` / helper names stay importable from this module:
   _fs_grep   - grep + glob
   _fs_edit   - find_replace / edit / batch_edit / apply_patch
   fs_exec / fs_screen / fs_mcp / fs_http - exec, screen, MCP, http actions
+  fs_archive - bounded ZIP subtree extraction
+
+Every module listed here must also be listed in the relay script manifests
+(``services/_relay_ws._RELAY_SCRIPT_FILES``,
+``pawflow_relay._relay_actions._RELAY_SCRIPTS``, the dev mounts in
+``pawflow_relay/_thread_docker.py``, ``scripts/generate-relay-image.py``,
+``scripts/build-mcp-client-installer.py`` and
+``pawflow-relay-desktop/scripts/prepare-runtime.js``); see
+``tests/test_relay_script_manifests.py``.
 """
 import os
 import sys as _sys
@@ -66,8 +75,40 @@ from fs_mcp import (  # noqa: E402,F401
     action_mcp_start, action_mcp_discover, action_mcp_call,
     action_mcp_stop, action_mcp_list,
 )
-from fs_http import action_http_fetch, action_http_fetch_to_file  # noqa: E402,F401
-from fs_archive import action_extract_zip_subtree  # noqa: E402,F401
+
+
+def _missing_module_action(module_name, action_name):
+    """Action stub for a relay runtime that lacks an optional action module.
+
+    ``fs_http`` and ``fs_archive`` were added after the base relay bundle. A
+    relay whose ``/opt/pawflow`` predates them (older accept list, older image)
+    receives the new ``fs_actions.py`` through script sync but not the sibling
+    module. The base actions must keep working; only the actions that live in
+    the missing module fail, and they say why.
+    """
+    def _unavailable(root_dir, abs_path, req):
+        raise RuntimeError(
+            f"{action_name} is unavailable: this relay runtime has no "
+            f"{module_name}.py; upgrade the relay runtime")
+    _unavailable.__name__ = f"action_{action_name}"
+    return _unavailable
+
+
+try:
+    from fs_http import action_http_fetch, action_http_fetch_to_file  # noqa: E402,F401
+except ModuleNotFoundError as _exc:
+    if _exc.name != "fs_http":
+        raise
+    action_http_fetch = _missing_module_action("fs_http", "http_fetch")
+    action_http_fetch_to_file = _missing_module_action(
+        "fs_http", "http_fetch_to_file")
+try:
+    from fs_archive import action_extract_zip_subtree  # noqa: E402,F401
+except ModuleNotFoundError as _exc:
+    if _exc.name != "fs_archive":
+        raise
+    action_extract_zip_subtree = _missing_module_action(
+        "fs_archive", "extract_zip_subtree")
 
 # Actions that require write access
 WRITE_ACTIONS = frozenset({

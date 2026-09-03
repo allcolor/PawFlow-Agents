@@ -25,6 +25,7 @@ TOOL_FILES = (
     "_fs_read.py",
     "audio_capture.py",
     "fs_actions.py",
+    "fs_archive.py",
     "fs_common.py",
     "fs_exec.py",
     "fs_http.py",

@@ -536,7 +536,8 @@ def execute_command(ctx, msg, on_output=None):
         else:
             result = handler_func(operation_root, abs_path, msg)
         if scratch_ticket and action in _WRITE_ACTIONS:
-            _scratchdir.validate_operation(msg, workspace_root=ctx.root_dir)
+            _scratchdir.validate_operation(
+                action, msg, workspace_root=ctx.root_dir)
         if scratch_root:
             result = _scratchdir.redact_result(result, scratch_root)
         return {"ok": True, "data": result}

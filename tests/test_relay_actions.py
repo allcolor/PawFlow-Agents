@@ -125,3 +125,27 @@ def test_update_scripts_reloads_readonly_split_module_before_facade(
     assert res["data"]["readonly_skipped"] == []
     assert edit_module.VALUE == "fresh"
     assert reloaded == ["fs_actions"]
+
+
+def test_update_scripts_reloads_optional_sibling_then_facade(
+        monkeypatch, tmp_path):
+    # fs_archive.py alone changes: the facade re-exports its action, so it
+    # must be reloaded after fs_archive even though fs_actions.py was not
+    # part of the push (2026-09-03 remote relay regression).
+    monkeypatch.setattr(ra, "_script_dir", lambda: str(tmp_path))
+    archive_module = types.ModuleType("fs_archive")
+    facade_module = types.ModuleType("fs_actions")
+    monkeypatch.setitem(sys.modules, "fs_archive", archive_module)
+    monkeypatch.setitem(sys.modules, "fs_actions", facade_module)
+    reloaded = []
+    monkeypatch.setattr(
+        ra, "_reload_module",
+        lambda module: reloaded.append(module.__name__) or module)
+
+    res = ra.update_scripts({
+        "scripts": {"fs_archive.py": base64.b64encode(b"# new\n").decode()},
+    })
+
+    assert res["ok"] is True
+    assert res["data"]["updated"] == ["fs_archive.py"]
+    assert reloaded == ["fs_archive", "fs_actions"]

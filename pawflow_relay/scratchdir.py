@@ -21,6 +21,10 @@ _SCOPED_ACTIONS = frozenset({
     "exists", "search", "grep", "find_replace", "edit", "batch_edit",
     "apply_patch", "edit_notebook", "exec", "exec_stream",
 })
+_QUOTA_RECOVERY_ACTIONS = frozenset({
+    "list_dir", "read_file", "read_file_stream", "read_file_chunked",
+    "read_chunk", "delete_file", "stat", "exists", "search", "grep",
+})
 
 
 class ScratchDirRelayError(RuntimeError):
@@ -102,7 +106,8 @@ def _require_owner(record: dict, scope_hash: str) -> None:
             "scratchdir_owner_mismatch", "ScratchDir owner does not match")
 
 
-def _usage(files_root: Path, quota_bytes: int, quota_files: int) -> tuple[int, int]:
+def _usage(files_root: Path, quota_bytes: int, quota_files: int, *,
+           enforce_quota: bool = True) -> tuple[int, int]:
     total_bytes = 0
     total_files = 0
     if files_root.is_symlink():
@@ -137,10 +142,10 @@ def _usage(files_root: Path, quota_bytes: int, quota_files: int) -> tuple[int, i
             continue
         total_files += 1
         total_bytes += path.stat().st_size
-        if total_files > quota_files:
+        if enforce_quota and total_files > quota_files:
             raise ScratchDirRelayError(
                 "scratchdir_quota_files", "ScratchDir file quota exceeded")
-        if total_bytes > quota_bytes:
+        if enforce_quota and total_bytes > quota_bytes:
             raise ScratchDirRelayError(
                 "scratchdir_quota_bytes", "ScratchDir byte quota exceeded")
     return total_bytes, total_files
@@ -220,6 +225,7 @@ def resolve_operation(action: str, message: dict, *,
             files_root,
             int(record["quota_bytes"]),
             int(record["quota_files"]),
+            enforce_quota=action not in _QUOTA_RECOVERY_ACTIONS,
         )
         target = _contained_path(files_root, message.get("path", "."))
         if action == "copy_file":
@@ -234,7 +240,8 @@ def resolve_operation(action: str, message: dict, *,
     return str(files_root), str(target)
 
 
-def validate_operation(message: dict, *, workspace_root: str = "") -> None:
+def validate_operation(action: str, message: dict, *,
+                       workspace_root: str = "") -> None:
     """Recount usage after a potentially mutating scoped operation."""
 
     ticket = message.get("scratchdir") or {}
@@ -255,6 +262,7 @@ def validate_operation(message: dict, *, workspace_root: str = "") -> None:
             files_root,
             int(record["quota_bytes"]),
             int(record["quota_files"]),
+            enforce_quota=action not in _QUOTA_RECOVERY_ACTIONS,
         )
 
 
@@ -278,7 +286,8 @@ def redact_result(value, files_root: str):
 
 def _public(record: dict, files_root: Path) -> dict:
     observed_bytes, observed_files = _usage(
-        files_root, int(record["quota_bytes"]), int(record["quota_files"]))
+        files_root, int(record["quota_bytes"]), int(record["quota_files"]),
+        enforce_quota=False)
     return {
         "format": "pawflow.scratchdir.relay.v1",
         "capability": _CAPABILITY,

@@ -53,6 +53,9 @@ conversation; a request handler is not one of them. Conversations reach
 hundreds of thousands of messages and `read_history` is called in chains, so a
 reader whose cost tracks the conversation instead of the answer will take the
 server down under a handful of calls -- which is exactly what it did.
+Plaintext searches use ripgrep only to select candidate segment files before
+the normal decoder and trace composer run; encrypted logs and prefilter errors
+fall back to the exact windowed scan.
 
 ## Updating
 

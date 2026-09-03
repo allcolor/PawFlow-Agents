@@ -25,6 +25,7 @@ from pawflow_relay.register import (
     auto_register,
     delete_service,
 )
+from pawflow_relay._relay_actions import _RELAY_SCRIPTS
 from pawflow_relay.worker import _ws_connect
 
 
@@ -295,10 +296,7 @@ def worker_main():
         _runtime_root = _relay_runtime_root()
         _pkg_src = str(_runtime_root / "pawflow_relay")
         _tools_src = str(_runtime_root / "tools")
-        for _relay_file in ["pawflow_relay_launcher.py", "fs_actions.py",
-                            "_fs_paths.py", "_fs_read.py", "_fs_grep.py",
-                            "_fs_edit.py", "fs_exec.py",
-                            "fs_screen.py", "fs_mcp.py", "fs_common.py"]:
+        for _relay_file in _RELAY_SCRIPTS:
             _src = os.path.join(_tools_src, _relay_file)
             if os.path.exists(_src):
                 docker_run_args += [

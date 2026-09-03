@@ -226,6 +226,7 @@ class _RelayDockerMixin:
                 (_tools_dir, "fs_mcp.py"),
                 (_tools_dir, "fs_common.py"),
                 (_tools_dir, "fs_http.py"),
+                (_tools_dir, "fs_archive.py"),
                 (_tools_dir, "audio_capture.py"),
                 (_tools_dir, "screen_actions.py"),
                 (_tools_dir, "screen_actions_cua.py"),

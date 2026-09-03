@@ -61,6 +61,7 @@ _RELAY_SCRIPT_FILES = [
     "_fs_paths.py", "_fs_read.py", "_fs_grep.py", "_fs_edit.py",
     "fs_exec.py",
     "fs_screen.py", "fs_mcp.py", "fs_common.py",
+    "fs_http.py", "fs_archive.py",
 ]
 
 _RELAY_RETRY_ATTEMPTS = 5

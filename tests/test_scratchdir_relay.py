@@ -104,15 +104,77 @@ def test_relay_scope_epoch_and_runtime_root_are_fail_closed(
     assert exc.value.code == "scratchdir_root_unsafe"
 
 
-def test_relay_quota_and_symlink_checks(relay_root, tmp_path):
+def test_relay_over_quota_allows_status_reads_and_delete_recovery(
+        relay_root, tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     relay_scratchdir.ensure(
         _message(quota_bytes=4), workspace_root=str(workspace))
     files = relay_root / _message()["scratch_id"] / "files"
     (files / "large").write_bytes(b"12345")
+    (files / "also-large").write_bytes(b"67890")
+
+    current = relay_scratchdir.status(
+        _message(), workspace_root=str(workspace))
+    assert current["observed_bytes"] == 10
+    assert current["observed_files"] == 2
+
+    request = {
+        "scratchdir": {
+            "scratch_id": _message()["scratch_id"],
+            "scope_hash": _message()["scope_hash"],
+            "epoch": 1,
+        },
+        "path": "large",
+    }
+    for action in ("exists", "stat", "read_file", "list_dir",
+                   "search", "grep", "delete_file"):
+        root, target = relay_scratchdir.resolve_operation(
+            action, request, workspace_root=str(workspace))
+        assert root == str(files)
+        assert target == str(files / "large")
+
+    # A single deletion may leave the root above quota. Its post-check must
+    # still succeed so repeated deletions can eventually restore compliance.
+    (files / "large").unlink()
+    relay_scratchdir.validate_operation(
+        "delete_file", request, workspace_root=str(workspace))
+
+    renewed = relay_scratchdir.renew(
+        _message(operation_id="renew-over-quota"),
+        workspace_root=str(workspace))
+    assert renewed["observed_bytes"] == 5
+
+    cleared = relay_scratchdir.clear(
+        _message(operation_id="clear-over-quota", epoch=2),
+        workspace_root=str(workspace))
+    assert cleared["state"] == "cleared"
+
+
+def test_relay_over_quota_still_blocks_growing_operations(
+        relay_root, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    relay_scratchdir.ensure(
+        _message(quota_bytes=4), workspace_root=str(workspace))
+    files = relay_root / _message()["scratch_id"] / "files"
+    (files / "large").write_bytes(b"12345")
+    request = {
+        "scratchdir": {
+            "scratch_id": _message()["scratch_id"],
+            "scope_hash": _message()["scope_hash"],
+            "epoch": 1,
+        },
+        "path": "new",
+    }
+
     with pytest.raises(relay_scratchdir.ScratchDirRelayError) as exc:
-        relay_scratchdir.status(_message(), workspace_root=str(workspace))
+        relay_scratchdir.resolve_operation(
+            "write_file", request, workspace_root=str(workspace))
+    assert exc.value.code == "scratchdir_quota_bytes"
+    with pytest.raises(relay_scratchdir.ScratchDirRelayError) as exc:
+        relay_scratchdir.validate_operation(
+            "write_file", request, workspace_root=str(workspace))
     assert exc.value.code == "scratchdir_quota_bytes"
 
 

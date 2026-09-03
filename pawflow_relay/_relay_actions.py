@@ -25,7 +25,14 @@ _RELAY_SCRIPTS = [
     "_fs_paths.py", "_fs_read.py", "_fs_grep.py",
     "_fs_edit.py", "fs_exec.py",
     "fs_screen.py", "fs_mcp.py", "fs_common.py",
+    "fs_http.py", "fs_archive.py",
 ]
+
+# Modules whose names fs_actions re-exports: when one of them changes the
+# facade must be reloaded too, or it keeps the old function objects.
+_FACADE_DEPENDENCIES = (
+    "_fs_paths", "_fs_read", "_fs_grep", "_fs_edit", "fs_http", "fs_archive",
+)
 
 
 def _script_dir():
@@ -154,10 +161,10 @@ def update_scripts(msg):
     # Reload split dependencies before fs_actions, whose imported bindings
     # otherwise keep the old functions. Reload the facade whenever a split
     # action module changed, even if fs_actions.py itself did not.
-    _split_modules = ("_fs_paths", "_fs_read", "_fs_grep", "_fs_edit")
-    _split_updated = any(f"{name}.py" in _updated for name in _split_modules)
+    _split_updated = any(
+        f"{name}.py" in _updated for name in _FACADE_DEPENDENCIES)
     for _mod_name in (
-            "fs_common", *_split_modules, "fs_actions",
+            "fs_common", *_FACADE_DEPENDENCIES, "fs_actions",
             "fs_exec", "fs_screen", "fs_mcp"):
         _should_reload = (
             f"{_mod_name}.py" in _updated

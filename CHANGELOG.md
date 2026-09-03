@@ -6,6 +6,89 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Added `cc_mcp` and `codex_mcp` as managed CLI providers that reuse the
+  existing interactive pools and PawFlow MCP bridge while taking final answers
+  from native lifecycle hooks instead of intercepted vendor traffic. Capability
+  reporting distinguishes native, unavailable, and final-only telemetry;
+  `agy_mcp` is registered but remains probe-gated until the supported CLI
+  proves a trustworthy native final-answer source.
+- Added the outbound `acp` provider: an `llmConnection` can launch any Agent
+  Client Protocol v1 agent command (`acp_command`, `acp_args`, `acp_cwd`,
+  `acp_env`) without a shell, negotiate the official protocol through the
+  pinned `agent-client-protocol` SDK, keep the process warm, load persisted
+  sessions when the agent advertises them, and expose only the explicitly
+  enabled PawFlow MCP bridge and client filesystem methods. Client reads go
+  through PawFlow policy and approval rules; a client write additionally
+  consumes a matching ACP edit permission. Accepted prompts are never replayed
+  (`NO_REPLAY_PROVIDERS`), cancellation reaches the process, and policy-gate
+  approvals now accept a `cancel_event` so a cancelled turn resolves as
+  cancelled instead of waiting out the approval timeout. The `pawflow-acp`
+  console script ships the stdio-to-WebSocket client proxy for published
+  PawFlow agents; the inbound server endpoint it targets lands in a later beta
+  (docs/ACP_INTEGRATION_PLAN.md WP4).
+
+### Fixed
+
+- Importing the background-tool manager no longer keeps short-lived workers
+  and test processes alive for its 60-second cleanup interval: the initial
+  periodic cleanup timer is now daemonized like every later recurrence.
+- Delegate observability is now transcript-backed and survives restarts.
+  Shared requests and replies carry the same `task_id`, isolated and flash
+  work writes an append-only `sub_agent_trace` before pool submission and a
+  terminal update on every exit including preflight failures, and
+  `delegate_status` / `delegate_result` scan those rows in streaming mode and
+  merge them with the in-memory registry instead of reporting "no live
+  delegate" after a server restart.
+- A ScratchDir already above its byte or file quota can be inspected and
+  emptied again: status, listing, reads, searches and `delete_file` skip the
+  quota check during recovery while every operation that can grow the
+  directory still fails closed, and confinement and symlink validation stay
+  enforced.
+
+- Remote relays no longer lose every filesystem action after a script sync.
+  `tools/fs_actions.py` imported the new `fs_http` and `fs_archive` modules at
+  module level, but neither file was in the server push list, the relay accept
+  list, the CLI/Docker dev mounts, the relay image generator or the MCP client
+  installer, so an existing containerized relay received the new facade
+  without its siblings and answered `No module named fs_archive` to `list_dir`
+  and uploads. Both files are now in every manifest (the CLI reuses the relay
+  accept list), `update_scripts` reloads them before the facade, and the
+  facade degrades to explicit per-action "upgrade the relay runtime" errors
+  when an older relay runtime lacks one of them.
+  `tests/test_relay_script_manifests.py` keeps the manifests aligned.
+- History search no longer reparses a very large current transcript for every
+  no-hit query or ordinary `conversation_search` refresh. Plaintext
+  `read_history(search)` calls use ripgrep to select candidate JSONL segments
+  before decoding messages, with the exact streaming path retained for
+  encrypted logs or prefilter failures. FTS refreshes read only the appended
+  reverse-tail rows under the conversation lock; edits, deletions, and other
+  generation changes still purge and rebuild the derived index. On a controlled
+  60,000-message transcript, no-hit search fell from 488.8 ms to 9.6 ms and a
+  one-row index refresh from 491.7 ms to 4.0 ms.
+- A human message drained from the pending queue at the end of a
+  `delegate_reply` turn now forces a visible user turn. Previously the newest
+  queued delegate broadcast re-selected `delegate_reply`, so the agent's
+  answers were routed privately to the delegator and every webchat message was
+  queued again with "mode mismatch", starving the user until a force stop. A
+  batch without a delegate or external request also resets to a user turn
+  instead of inheriting the previous turn's mode, and the stale DELEGATE MODE
+  hint is removed from the system message. The completed turn's routing mode is
+  now snapshotted before that drain, so an interleaved human or tmux message can
+  select the next visible user turn without orphaning the shared delegate
+  `task_id` that the current response must finish. Idle delegate wake-ups also
+  use the persisted CLI answer fallback when the provider returns empty final
+  content.
+- Force-stopping a turn after a terminal provider failure no longer allows a
+  blocked live-preempt request to recreate an older `preempt_rescue` message
+  after queue cleanup. The stop path persists its creation-time cutoffs before
+  clearing pending work, and enqueue checks the cutoff atomically with the
+  append. This prevents the stale message from scheduling a ghost agent
+  relaunch while messages created after the stop continue normally; the
+  terminal `error_event` remains visible in webchat and reconciles Active
+  Agents against server state.
+
 ## [1.0.0-beta.262] — 2026-09-03
 
 ### Fixed

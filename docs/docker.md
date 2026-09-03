@@ -489,6 +489,26 @@ runtime from the PawFlow server image into the server data dir and bind-mount it
 at `/opt/pawflow`, while desktop/local relays use their own packaged runtime
 mounts.
 
+#### Relay script manifests
+
+Every module that `tools/fs_actions.py` imports must be listed in each relay
+script manifest, or an existing relay receives a facade it cannot import:
+
+| Manifest | Role |
+|---|---|
+| `_RELAY_SCRIPT_FILES` in `services/_relay_ws.py` | files the server pushes to a connected containerized relay when its script hash differs |
+| `_RELAY_SCRIPTS` in `pawflow_relay/_relay_actions.py` | files a relay accepts from `update_scripts` and hot-reloads; also the dev-mount list of the `pawflow-relay` CLI |
+| `pawflow_relay/_thread_docker.py` | dev mounts of a source checkout into `/opt/pawflow` |
+| `scripts/generate-relay-image.py`, `scripts/build-mcp-client-installer.py`, `pawflow-relay-desktop/scripts/prepare-runtime.js` | runtime copies baked into relay images, the MCP client installer and Relay Desktop |
+
+`tests/test_relay_script_manifests.py` fails when a manifest falls behind the
+facade. Because an already-installed relay keeps its old accept list until it
+is upgraded, `fs_actions.py` treats `fs_http.py` and `fs_archive.py` as
+optional: when the sibling file is absent every base action keeps working and
+only `http_fetch`, `http_fetch_to_file` and `extract_zip_subtree` fail with an
+explicit "upgrade the relay runtime" error. A sibling that exists but fails to
+import still raises its own error.
+
 ### Rebuild relay images from the admin gear menu
 
 **Server settings (gear) → Updates → Relay images** rebuilds the two relay

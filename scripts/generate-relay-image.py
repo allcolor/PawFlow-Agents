@@ -252,6 +252,7 @@ def _copy_runtime_files(out_dir: Path) -> None:
         ROOT / "tools" / "fs_mcp.py",
         ROOT / "tools" / "fs_common.py",
         ROOT / "tools" / "fs_http.py",
+        ROOT / "tools" / "fs_archive.py",
         ROOT / "tools" / "audio_capture.py",
         ROOT / "tools" / "screen_actions.py",
         ROOT / "tools" / "screen_actions_cua.py",

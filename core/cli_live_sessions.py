@@ -145,3 +145,35 @@ def release_cli_live_sessions(conversation_id: str, agent_name: str,
             logger.info('Released %d live %s container(s) for %s/%s (%s)',
                         count, label, conversation_id[:8], agent_name, reason)
     return released
+
+
+def release_cli_live_sessions_for_context(conversation_id: str,
+                                          agent_name: str,
+                                          reason: str) -> int:
+    '''Kill live CLI sessions affected by a context replacement.
+
+    Agent context changes evict only that agent. Shared context changes evict
+    every live session in the conversation because every agent consumes it.
+    '''
+    conversation_id = str(conversation_id or '').strip()
+    agent_name = str(agent_name or '').strip()
+    if not conversation_id:
+        return 0
+    if agent_name and agent_name != 'shared':
+        return release_cli_live_sessions(
+            conversation_id, agent_name, reason=reason)
+
+    released = 0
+    for label, registry in _live_registries():
+        try:
+            count = int(registry.kill_and_evict_by_conv(
+                conversation_id, reason=reason) or 0)
+        except Exception:
+            logger.debug('%s live-session context eviction failed for %s',
+                         label, conversation_id[:8], exc_info=True)
+            continue
+        if count:
+            released += count
+            logger.info('Released %d live %s container(s) for %s (%s)',
+                        count, label, conversation_id[:8], reason)
+    return released

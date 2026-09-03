@@ -23,6 +23,9 @@ Design choices:
 - Queue stores the full stamped message dict, not a FlowFile — this
   makes boot recovery trivial (replay from disk = already-stamped
   message dicts, no FlowFile reconstruction).
+- Force stop is a creation-time fence. The cutoff check and append share
+  the queue lock with force-stop clear, so a blocked producer cannot recreate
+  work that the user already cancelled.
 """
 
 import json
@@ -138,35 +141,54 @@ class PendingQueue:
                 f"(msg_id+ts). Got keys: {list(message.keys())}")
 
         inbox = self._inbox_backend()
-        if inbox is not None:
+        with self._lock:
+            try:
+                from core.conversation_store import ConversationStore
+                store = ConversationStore.instance()
+                global_cutoff = float(store.get_extra(
+                    self.conv_id, "last_force_stop_at") or 0.0)
+                agent_cutoff = float(store.get_extra(
+                    self.conv_id,
+                    f"last_force_stop_at:{self.agent_name.lower()}") or 0.0)
+                cutoff = max(global_cutoff, agent_cutoff)
+            except Exception:
+                logger.debug("[pending-queue] force-stop cutoff lookup failed",
+                             exc_info=True)
+                cutoff = 0.0
+            if cutoff:
+                try:
+                    created_at = float(
+                        message.get("ts") or message.get("timestamp"))
+                except (TypeError, ValueError):
+                    created_at = 0.0
+                if created_at and created_at <= cutoff:
+                    logger.info(
+                        "[pending-queue] rejected pre-force-stop message %s "
+                        "for %s/%s (created=%s cutoff=%s source=%s)",
+                        message.get("msg_id"), self.conv_id[:8],
+                        self.agent_name or "_shared", created_at, cutoff,
+                        source or "?")
+                    return False
+
             entry = dict(message)
             if source:
                 entry["_pending_source"] = source
             entry["_pending_enqueued_at"] = time.time()
-            inbox.enqueue(
-                self.conv_id, self.agent_name, entry,
-                source or "legacy_pending")
-            return True
+            if inbox is not None:
+                inbox.enqueue(
+                    self.conv_id, self.agent_name, entry,
+                    source or "legacy_pending")
+                return True
 
-        if self._path is None:
-            self._path = self._resolve_path()
             if self._path is None:
-                logger.warning("[pending-queue] cannot enqueue — conv %s has no dir",
-                                self.conv_id[:8])
-                return False
-            self._path.parent.mkdir(parents=True, exist_ok=True)
+                self._path = self._resolve_path()
+                if self._path is None:
+                    logger.warning(
+                        "[pending-queue] cannot enqueue — conv %s has no dir",
+                        self.conv_id[:8])
+                    return False
+                self._path.parent.mkdir(parents=True, exist_ok=True)
 
-        entry = dict(message)
-        if source:
-            entry["_pending_source"] = source
-        # Diagnostic timestamp: when we enqueued (monotonic+wall). Lets
-        # drain() log the age so we can tell whether a drained message is
-        # "fresh from last turn" or "stuck since hours ago" (the latter is
-        # a bug — the queue should never retain messages across turns).
-        import time as _t
-        entry["_pending_enqueued_at"] = _t.time()
-
-        with self._lock:
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         logger.info("[pending-queue] enqueued %s → %s/%s (source=%s)",
@@ -210,8 +232,9 @@ class PendingQueue:
         """Drop queued work without replaying it, used by force stop."""
         inbox = self._inbox_backend()
         if inbox is not None:
-            return inbox.discard_through(
-                self.conv_id, self.agent_name, time.time())
+            with self._lock:
+                return inbox.discard_through(
+                    self.conv_id, self.agent_name, time.time())
         removed = len(self._read_and_truncate())
         if removed:
             logger.info("[pending-queue] cleared %d message(s) from %s/%s%s",

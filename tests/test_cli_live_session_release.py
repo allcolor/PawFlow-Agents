@@ -12,7 +12,10 @@ pool until acquire raised "pool exhausted".
 
 from pathlib import Path
 
-from core.cli_live_sessions import release_cli_live_sessions
+from core.cli_live_sessions import (
+    release_cli_live_sessions,
+    release_cli_live_sessions_for_context,
+)
 
 
 class _Registry:
@@ -22,6 +25,10 @@ class _Registry:
 
     def kill_and_evict_by_conv_agent(self, conv_id, agent_name, reason):
         self.calls.append((conv_id, agent_name, reason))
+        return self.count
+
+    def kill_and_evict_by_conv(self, conv_id, reason):
+        self.calls.append((conv_id, reason))
         return self.count
 
 
@@ -64,6 +71,22 @@ def test_an_unidentified_run_releases_nothing(monkeypatch):
     assert release_cli_live_sessions("", "agent", reason="x") == 0
     assert release_cli_live_sessions("conv1", "", reason="x") == 0
     assert not called, "no conversation/agent pair means nothing to release"
+
+
+def test_context_eviction_targets_one_agent_or_the_whole_conversation(monkeypatch):
+    targeted = _Registry(2)
+    shared = _Registry(3)
+    registries = iter([[("targeted", targeted)], [("shared", shared)]])
+    monkeypatch.setattr(
+        "core.cli_live_sessions._live_registries", lambda: next(registries))
+
+    assert release_cli_live_sessions_for_context(
+        "conv1", "agent", reason="compact_started") == 2
+    assert targeted.calls == [("conv1", "agent", "compact_started")]
+
+    assert release_cli_live_sessions_for_context(
+        "conv1", "", reason="compact_started") == 3
+    assert shared.calls == [("conv1", "compact_started")]
 
 
 def test_all_cli_registries_are_covered():

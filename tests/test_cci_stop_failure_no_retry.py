@@ -88,6 +88,19 @@ def test_driver_never_reruns_an_interactive_cli_turn_on_429(monkeypatch, provide
     assert calls == [provider]
 
 
+def test_driver_never_reruns_codex_interactive_on_404(monkeypatch):
+    calls = []
+    client = _failing_client(
+        monkeypatch, "codex-interactive",
+        RuntimeError("Provider returned HTTP 404: Not Found"), calls)
+
+    with pytest.raises(RuntimeError, match="404"):
+        client.complete_stream([
+            LLMMessage(role="user", content="hi", conversation_id="conv")])
+
+    assert calls == ["codex-interactive"]
+
+
 def test_driver_passes_stop_failure_call_error_through_unchanged(monkeypatch):
     calls = []
     exc = LLMCallError("Claude Code interactive turn failed: 429",

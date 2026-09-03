@@ -24,6 +24,10 @@ def _reset_state():
     bg._cc_pending_tcs.clear()
 
 
+def test_periodic_cleanup_timer_is_daemon():
+    assert bg._cleanup_timer.daemon is True
+
+
 def test_enqueue_and_pop_cc_tc_matches_by_name_and_args():
     _reset_state()
     h = bg._args_hash({"command": "ls"})

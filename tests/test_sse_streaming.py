@@ -701,6 +701,21 @@ class TestAgentLoopStreaming(unittest.TestCase):
         PendingQueue.drop_cache()
         PollScheduler.reset()
 
+    def test_streaming_error_publishes_agent_identity_before_active_cleanup(self):
+        source = Path("tasks/ai/_agent_streaming_loop.py").read_text(
+            encoding="utf-8")
+        wrapper = source[
+            source.index("    def _streaming_agent_loop("):
+            source.index("    def _streaming_agent_loop_inner(")]
+
+        error_event = wrapper.index(
+            'bus.publish_event(conversation_id, "error_event"')
+        cleanup = wrapper.index(
+            "self._decrement_active(conversation_id, ctx)")
+        assert error_event < cleanup
+        assert '"message": f"Agent loop crashed: {e}"' in wrapper
+        assert '"agent_name": _crash_agent' in wrapper
+
     def test_active_cleanup_removes_only_its_owned_marker(self):
         from tasks.ai.agent_loop import AgentLoopTask
 

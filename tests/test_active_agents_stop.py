@@ -77,3 +77,44 @@ def test_task_force_stop_removes_every_active_marker_and_returns_clients():
     ):
         assert matching_key not in mapping
         assert other_key in mapping
+
+
+def test_force_stop_persists_enqueue_cutoff_before_clearing_queues(monkeypatch):
+    from core.agent_inbox_store import AgentInboxStore
+    from core.pending_queue import PendingQueue
+    from core.poll_scheduler import PollScheduler
+    from tasks.ai.actions.cancel_interrupt import (
+        _clear_force_stop_relaunch_state,
+    )
+
+    events = []
+
+    class Store:
+        def set_extra(self, _conv_id, key, _value):
+            events.append(("set", key))
+
+    inbox = SimpleNamespace(
+        list_agent_keys=lambda _conv_id: [],
+        discard_through=lambda *_args: events.append(("discard", "inbox")),
+    )
+    queue = SimpleNamespace(
+        clear=lambda _reason: events.append(("clear", "pending")),
+    )
+    scheduler = SimpleNamespace(cancel_for_conversation=lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        AgentInboxStore, "instance", classmethod(lambda cls: inbox))
+    monkeypatch.setattr(
+        PendingQueue, "for_agent",
+        classmethod(lambda cls, _conv_id, _agent_name: queue))
+    monkeypatch.setattr(
+        PollScheduler, "instance", classmethod(lambda cls: scheduler))
+
+    _clear_force_stop_relaunch_state("c1", "Claude", Store())
+
+    first_queue_mutation = min(
+        events.index(("discard", "inbox")),
+        events.index(("clear", "pending")),
+    )
+    assert events.index(("set", "last_force_stop_at")) < first_queue_mutation
+    assert events.index((
+        "set", "last_force_stop_at:claude")) < first_queue_mutation

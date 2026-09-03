@@ -737,6 +737,12 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                 except Exception:
                     logger.debug("compact resume detection failed", exc_info=True)
             self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
+            if op_name == "compact":
+                from core.cli_live_sessions import (
+                    release_cli_live_sessions_for_context,
+                )
+                release_cli_live_sessions_for_context(
+                    conv_id, agent_name, reason="compact_started")
             if not self._acquire_context_op(conv_id, agent_name,
                                              timeout=60.0):
                 bus.publish_event(conv_id, "compact_progress", {

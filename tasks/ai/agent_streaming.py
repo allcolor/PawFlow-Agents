@@ -758,8 +758,16 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 # duplicate user row (seen as the same image described twice).
                 _enqueue_dict["_already_persisted"] = True
             from core.pending_queue import PendingQueue
-            PendingQueue.for_agent(conversation_id, _target or "").enqueue(
-                _enqueue_dict, source=source)
+            queued = PendingQueue.for_agent(
+                conversation_id, _target or "").enqueue(
+                    _enqueue_dict, source=source)
+            if not queued:
+                logger.info(
+                    "[agent:%s] pending message rejected after force stop "
+                    "(source=%s msg_id=%s)",
+                    conversation_id[:8], source,
+                    _enqueue_dict.get("msg_id", ""))
+                return False
             if publish:
                 bus.publish_event(conversation_id, "message_queued", {
                     "conversation_id": conversation_id})

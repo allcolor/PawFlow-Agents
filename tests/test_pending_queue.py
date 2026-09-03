@@ -13,11 +13,15 @@ def fake_store(tmp_path):
     """Fake ConversationStore that returns tmp_path/convs/{cid} as the conv dir."""
     class _FakeStore:
         _store_dir = tmp_path / "convs"
+        extras = {}
 
         def _conv_dir(self, cid, user_id=""):
             d = self._store_dir / "u" / cid
             d.mkdir(parents=True, exist_ok=True)
             return d
+
+        def get_extra(self, cid, key, default=None):
+            return self.extras.get((cid, key), default)
 
     store_root = tmp_path / "convs" / "u"
     store_root.mkdir(parents=True, exist_ok=True)
@@ -57,6 +61,27 @@ def test_clear_drops_pending_without_replay(fake_store):
     assert q.clear("force_stop") == 2
     assert q.peek_count() == 0
     assert q.drain() == []
+
+
+@pytest.mark.parametrize("cutoff_key", [
+    "last_force_stop_at",
+    "last_force_stop_at:claude",
+])
+def test_enqueue_rejects_messages_created_before_force_stop(
+        fake_store, cutoff_key):
+    """A blocked producer cannot recreate work after force-stop cleanup."""
+    fake_store.extras[("c1", cutoff_key)] = 20.0
+    q = PendingQueue.for_agent("c1", "claude")
+
+    assert q.enqueue(
+        _msg("stale rescue", "m-stale", 1, ts=10.0),
+        source="preempt_rescue") is False
+    assert q.peek_count() == 0
+
+    assert q.enqueue(
+        _msg("new message", "m-new", 2, ts=21.0),
+        source="http") is True
+    assert [msg["msg_id"] for msg in q.drain()] == ["m-new"]
 
 
 def test_unstamped_message_rejected(fake_store):

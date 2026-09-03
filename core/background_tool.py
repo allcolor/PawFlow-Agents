@@ -365,7 +365,9 @@ def _periodic_cleanup():
 
 
 # Start periodic cleanup on module import
-threading.Timer(60, _periodic_cleanup).start()
+_cleanup_timer = threading.Timer(60, _periodic_cleanup)
+_cleanup_timer.daemon = True
+_cleanup_timer.start()
 
 
 def _watch_future(tc_id: str):

@@ -162,6 +162,17 @@ def _clear_force_stop_relaunch_state(conv_id: str, agent_name: str,
     except Exception:
         inbox = None
         logger.debug("force-stop inbox scan failed", exc_info=True)
+    # Establish the creation-time fence before mutating either queue backend.
+    # An enqueue that began first holds the per-queue lock and is cleared below;
+    # one that begins afterward sees this cutoff and rejects the cancelled work.
+    try:
+        if store is not None:
+            store.set_extra(conv_id, "last_force_stop_at", stopped_at)
+            for agent in sorted(agents):
+                store.set_extra(conv_id, f"last_force_stop_at:{agent}", stopped_at)
+                store.set_extra(conv_id, f"cancel_checkpoint:{agent}", None)
+    except Exception:
+        logger.debug("force-stop cutoff persistence failed", exc_info=True)
     if inbox is not None:
         try:
             for agent in sorted(agents):
@@ -193,14 +204,6 @@ def _clear_force_stop_relaunch_state(conv_id: str, agent_name: str,
         )
     except Exception:
         logger.debug("force-stop schedule cleanup failed", exc_info=True)
-    try:
-        if store is not None:
-            store.set_extra(conv_id, "last_force_stop_at", stopped_at)
-            for agent in sorted(agents):
-                store.set_extra(conv_id, f"last_force_stop_at:{agent}", stopped_at)
-                store.set_extra(conv_id, f"cancel_checkpoint:{agent}", None)
-    except Exception:
-        logger.debug("force-stop cancel checkpoint cleanup failed", exc_info=True)
 
 
 def force_stop_invalidates_turn_resume(conv_id: str, agent_name: str,

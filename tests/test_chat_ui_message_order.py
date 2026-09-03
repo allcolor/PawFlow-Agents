@@ -848,3 +848,17 @@ def test_terminal_turn_id_drift_still_forces_authoritative_active_sync():
                      SSE_JS.index("eventSource.addEventListener('error_event'"))]
     assert error.index("syncActiveFromServer(true)") < error.index(
         "if (errAgent && !isAgentTerminalCurrent(errAgent, '', terminalTurnId)) return")
+
+
+def test_error_event_renders_failure_and_finalizes_active_agent():
+    error = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('error_event'"):
+        SSE_JS.index("eventSource.addEventListener('agent_response'",
+                     SSE_JS.index("eventSource.addEventListener('error_event'"))]
+
+    assert "addMsg('error', data.message || t('unknownError')" in error
+    assert "_finalizeLiveToolCalls(errAgent, '[Error]')" in error
+    assert "clearStream(errAgent)" in error
+    assert "trackAgentDone(errAgent, '', terminalTurnId)" in error
+    assert "sending = false" in error
+    assert "document.getElementById('sendBtn').disabled = false" in error

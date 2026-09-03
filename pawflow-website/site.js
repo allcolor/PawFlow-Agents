@@ -6,7 +6,7 @@ const toggle = document.querySelector('[data-nav-toggle]');
 // version in sync with the latest release tag on a best-effort basis — the
 // live fetch below overrides it on every page load.
 const PAWFLOW_RELEASE = {
-  version: '1.0.0-beta.241',
+  version: '1.0.0-beta.263',
   repo: 'https://github.com/allcolor/PawFlow-Agents',
 };
 
@@ -316,7 +316,7 @@ document.querySelectorAll('.site-nav a').forEach((link) => {
       eyebrow: '02 / AGENTS + INTEROP',
       title: 'Choose models, routing, and external interfaces.',
       copy: 'Connect reasoning services without rebuilding the durable runtime around one provider.',
-      recipes: ['published-mcp-client', 'agui-embed', 'delegated-vision', 'multi-llm-aggregator', 'fault-tolerant-llm', 'native-cli-plugins', 'provider-tmux'],
+      recipes: ['published-mcp-client', 'acp-agent', 'managed-mcp-providers', 'agui-embed', 'delegated-vision', 'multi-llm-aggregator', 'fault-tolerant-llm', 'native-cli-plugins', 'provider-tmux'],
     },
     {
       id: 'clients',
@@ -337,7 +337,7 @@ document.querySelectorAll('.site-nav a').forEach((link) => {
       eyebrow: '05 / IDENTITY + SECURITY',
       title: 'Keep access narrow and context intentional.',
       copy: 'Identity, secrets, encryption, memory, and gateway controls stay explicit.',
-      recipes: ['oauth-provider', 'rclone-filesystem', 'variables-secrets', 'encryption', 'webchat-editors', 'cognitive-routing', 'compact-summarizer', 'private-gateway', 'private-demo'],
+      recipes: ['oauth-provider', 'oauth-refresh-policy', 'rclone-filesystem', 'variables-secrets', 'encryption', 'webchat-editors', 'cognitive-routing', 'compact-summarizer', 'private-gateway', 'private-demo'],
     },
     {
       id: 'resources',
@@ -384,7 +384,7 @@ document.querySelectorAll('.site-nav a').forEach((link) => {
         </div>
       </div>
       <div class="howto-map-summary" data-reveal>
-        <strong>51</strong><span>complete recipes</span>
+        <strong>56</strong><span>complete recipes</span>
         <strong>08</strong><span>guided journeys</span>
         <strong>01</strong><span>shared runtime</span>
       </div>

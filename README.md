@@ -64,7 +64,12 @@ PawFlow gives agents a real operating surface without handing your workspace to 
   resolving values from AWS Secrets Manager or SSM, HashiCorp Vault, Azure Key
   Vault, Google Cloud Secret Manager, or Keeper. Remote values are cached only
   in memory, and conversation plus per-agent allowlists bound their exposure.
-- **Multi-provider agents**: mix Codex interactive, Claude Code interactive, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and OpenAI-compatible services per agent or conversation. The old Codex app-server and Claude Code `-p` agent transports remain available only for legacy configurations.
+- **Multi-provider agents**: mix direct OpenAI Chat Completions or Responses,
+  Anthropic, OmniRoute, and OpenAI-compatible APIs; native Codex, Claude Code,
+  Antigravity/Agy, and Gemini CLI sessions; managed native-hook CLI variants;
+  or any installed ACP v1 agent process. Providers stay selectable per agent or
+  conversation. The old Codex app-server and Claude Code `-p` transports remain
+  available only for legacy configurations.
 - **Native CLI engines, not API reimplementations**: subscription providers run the real interactive Codex, Claude Code, Antigravity, and Gemini CLI engines per conversation — native harness and reasoning preserved — with native Codex plugins (`codex_plugins`) and Claude Code plugin marketplaces (`claude_plugins`/`claude_marketplaces`) declarable per LLM service.
 - **External agent interoperability**: publish several agents from one
   conversation as independent authenticated MCP endpoints, publish one or more
@@ -267,13 +272,46 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 | **Codex interactive** | Interactive Codex TUI in tmux + observed stream | **Recommended Codex provider**; long-lived sessions, live control, shares the Codex OAuth pool, one row per tool even for code-mode harnesses |
 | **Antigravity / Agy** | Interactive CLI container + observed stream | Default Gemini subscription provider, Gemini OAuth pool, MCP tools |
 | **Gemini CLI** | CLI subprocess/container | Secondary Gemini CLI path for Pro/CLI-specific workflows |
+| **Claude Code MCP hooks** (`cc_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Claude interactive pool and PawFlow MCP bridge; final-only output from the native Stop hook without vendor-traffic interception |
+| **Codex MCP hooks** (`codex_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Codex interactive pool; native rollout usage/context, while Codex built-in tools are not observable |
+| **Antigravity MCP hooks** (`agy_mcp`) | Registered, probe-gated provider | Not currently selectable: the supported Agy CLI has not proven a trustworthy native final-answer source |
+| **ACP agent** (`acp`) | Outbound Agent Client Protocol v1 process | Launches an explicitly configured agent command without a shell, with negotiated sessions and opt-in PawFlow MCP/client filesystem capabilities |
 | **Anthropic API** | Direct HTTP | Streaming, tool use, vision, extended thinking |
 | **OpenAI API** | Direct HTTP | Streaming, tool use, vision, JSON mode |
+| **OpenAI Responses** (`openai-responses`) | Direct HTTP Responses API | Typed events, reasoning-item continuity, function calling, and server-side built-in tools |
+| **OmniRoute** (`omniroute`) | Direct gateway API | Explicit virtual-route selection, bounded routing controls, sanitized gateway metadata, and model discovery |
 | **OpenAI-compatible** | Direct HTTP | Local/self-hosted and third-party compatible endpoints via `base_url` |
 | **Claude Code (`cc -p`) — legacy** | Non-interactive CLI subprocess/container + MCP | Existing configurations only; migrate agent services to Claude Code interactive |
 | **Codex app-server — legacy** | App-server protocol in pooled container | Existing configurations only; migrate agent services to Codex interactive |
 
-Switch providers per agent, per conversation, or globally. API keys normally use direct `openai`/`anthropic` services; subscription logins use the matching interactive CLI-backed provider (`codex-interactive`, `claude-code-interactive`, or `antigravity-interactive`). `claude-code` (`cc -p`) and `codex-app-server` are legacy agent transports kept for existing configurations; do not select them for new agent services. Self-hosted and third-party LLMs can use the OpenAI-compatible endpoint (`base_url` override). See [LLM Providers](docs/llm_providers.md).
+Switch providers per agent, per conversation, or globally. API keys normally use
+direct `openai`/`anthropic` services; subscription logins use the matching
+interactive or managed native-hook provider. `cc_mcp` and `codex_mcp` reuse the
+same OAuth pools as their interactive siblings. `agy_mcp` is visible as a
+reserved, unavailable capability until its native probe passes. `claude-code`
+(`cc -p`) and `codex-app-server` are legacy agent transports kept for existing
+configurations; do not select them for new agent services. Self-hosted and
+third-party LLMs can use the OpenAI-compatible endpoint (`base_url` override).
+See [LLM Providers](docs/llm_providers.md).
+
+### beta.263 highlights
+
+- **Native-hook CLI providers**: `cc_mcp` and `codex_mcp` run the official
+  interactive CLIs in the existing managed pools, but collect final answers
+  from native lifecycle hooks instead of observing vendor traffic.
+- **Outbound ACP agents**: `acp` adds warm, session-aware Agent Client Protocol
+  v1 processes with explicit command, directory, authentication, MCP, filesystem,
+  cancellation, and permission boundaries.
+- **Durable agent operations**: delegate status/results now survive restarts,
+  queued human turns cannot be starved by delegate replies, terminal provider
+  failures remain visible, and a force stop fences late preempt-rescue work.
+- **Recoverable workspaces and faster history**: an over-quota ScratchDir can be
+  inspected and emptied, relay runtime manifests keep filesystem modules
+  complete, and large plaintext history searches avoid reparsing unrelated
+  transcript segments.
+
+See the [beta.263 changelog](CHANGELOG.md#100-beta263--2026-09-03) for the full
+implementation record.
 
 ### Multi-LLM Advisor Aggregation
 

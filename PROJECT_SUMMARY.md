@@ -17,17 +17,34 @@ The current core value is twofold:
    delegation, streaming.
 2. **Pipeline engine**: DAG execution over FlowFiles, task catalog, triggers, backpressure, checkpoints, crash recovery, provenance, and IO/data/control integrations.
 
+## beta.263 implementation highlights
+
+- Added the outbound `acp` provider for explicitly configured Agent Client
+  Protocol v1 processes, including warm-session reuse, cancellation, policy
+  checks, and opt-in PawFlow MCP/client filesystem capabilities.
+- Added managed native-hook CLI providers `cc_mcp` and `codex_mcp`.
+  `agy_mcp` is registered but remains unavailable until the supported Agy CLI
+  proves a trustworthy native final-answer source.
+- Made delegate observability restart-durable, fixed delegate-reply routing and
+  late preempt work after force stop, and kept terminal provider failures visible
+  in webchat.
+- Made over-quota ScratchDirs recoverable, completed the relay filesystem module
+  manifests, and accelerated large plaintext history search and incremental
+  conversation indexing.
+
 ## What lives in the repository
 
 ### Python core and runtime
 
 - `core/`: agent runtime and main primitives.
   - agent execution and tool-use loops;
-  - LLM providers: Anthropic API, OpenAI API (chat completions and Responses),
-    OpenAI-compatible endpoints, Gemini, and the CLI-backed subscription
-    providers `claude-code-interactive`, `codex-interactive`, and
-    `antigravity-interactive`, plus the legacy `claude-code` (`cc -p`) and
-    `codex-app-server` agent transports retained for existing configurations;
+  - LLM providers: Anthropic API, OpenAI Chat Completions and Responses,
+    OpenAI-compatible endpoints, OmniRoute, Gemini CLI, outbound ACP v1 agents,
+    the CLI-backed subscription providers `claude-code-interactive`,
+    `codex-interactive`, and `antigravity-interactive`, and the managed
+    native-hook variants `cc_mcp` and `codex_mcp`; `agy_mcp` is registered
+    but probe-gated, while legacy `claude-code` (`cc -p`) and
+    `codex-app-server` remain only for existing configurations;
   - memory, knowledge graph, diary, project graph/wiki, todo, and scratchpad;
   - conversation, plan, token, file, relay, and tool-handler management;
   - storage backends and security/context helpers.
@@ -125,7 +142,10 @@ The README also advertises:
 - Persistent memory, semantic recall, knowledge graph, and agent diary.
 - Durable todo state and expiring pull-only scratchpad notes.
 - Relay-scoped AST/tree-sitter project graph and sourced project wiki.
-- Multiple LLM providers and an OpenAI-compatible endpoint.
+- Direct API, interactive CLI, managed native-hook CLI, OmniRoute, and outbound
+  ACP providers, plus OpenAI-compatible endpoints.
+- Restart-durable delegate status and results, with visible terminal provider
+  failures and force-stop fencing for late queued work.
 - Permission modes and tool-access control per configuration.
 - Optional policy gating: a gate service decides allow / deny / ask for each
   tool call against the authenticated user's versioned mandate, on top of the
@@ -165,7 +185,10 @@ The README also advertises:
 - Security scanning and script execution.
 - Secret, resource, memory, KG, and plan management.
 - Relay-owned ScratchDir lifecycle and quota enforcement, including confined
-  in-tree symbolic links with fail-closed handling for unsafe links.
+  in-tree symbolic links with fail-closed handling for unsafe links and recovery
+  operations even when the directory is already above quota.
+- Incremental conversation indexing and candidate-prefiltered plaintext history
+  search for large transcripts.
 
 ### User interfaces
 

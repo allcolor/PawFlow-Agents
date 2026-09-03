@@ -86,6 +86,28 @@ publication API key and optional gateway key. The matching server endpoint is
 scheduled in `docs/ACP_INTEGRATION_PLAN.md` (WP4); until it ships the proxy
 has nothing to connect to.
 
+### Managed MCP CLI providers
+
+`cc_mcp` and `codex_mcp` run the official interactive Claude Code and Codex
+CLIs in the same managed containers, tmux sessions, credential pools, and
+PawFlow MCP bridge as their `*-interactive` siblings. The difference is
+observation: these variants obtain the completed answer from native lifecycle
+hooks and local CLI metadata instead of inspecting vendor traffic. Output is
+therefore final-only, and unavailable telemetry is reported as unavailable
+rather than estimated.
+
+| Provider | Availability | Native evidence | Important limits |
+|---|---|---|---|
+| `cc_mcp` | Available | Claude Code Stop hook | Native usage, context occupancy, thinking, and live preemption are unavailable. Claude's built-in tools are denied, so PawFlow MCP remains the visible tool path. |
+| `codex_mcp` | Available | Codex Stop hook plus local rollout token counts | Codex built-in shell/file tools remain available but are not observable through PawFlow; thinking and live preemption are unavailable. |
+| `agy_mcp` | Registered but unavailable | Probe has not found a trustworthy native final-answer hook field or transcript | Configuration fails closed until the supported Agy CLI passes the capability probe. Use `antigravity-interactive` for Gemini subscription sessions. |
+
+The managed variants reuse the canonical OAuth pools: `cc_mcp` uses
+`claude-code`, `codex_mcp` uses `codex-app-server`, and the reserved
+`agy_mcp` value uses `gemini`. Native Codex and Claude plugin settings remain
+available on their matching managed provider. See the
+[managed provider how-to](https://pawflow.allcolor.org/howtos.html#managed-mcp-providers).
+
 ## Which Provider To Use
 
 Use the credential source to choose the provider surface:
@@ -104,6 +126,8 @@ Use the credential source to choose the provider surface:
 
 `llmCredentialOAuthProvider` services own OAuth pools for three canonical CLI credential providers: `claude-code`, `codex-app-server`, and `gemini`. `claude-code-interactive` and `cc_mcp` reuse the `claude-code` pool. `codex-interactive` and `codex_mcp` reuse the `codex-app-server` pool. `antigravity-interactive` and `agy_mcp` reuse the `gemini` pool. API-key mode skips the OAuth pool.
 
+### OAuth refresh ownership
+
 Each pool has an `allow_refresh` checkbox with a provider-specific default:
 `true` for Claude Code, Codex, and generic pools; `false` for Gemini pools,
 including pools shared with Antigravity. A pool created before the field existed
@@ -118,6 +142,9 @@ use in connection with non-Google products and warn that accounts may be
 suspended. Disabling PawFlow-managed refresh removes PawFlow's direct token
 exchange but does not make third-party Antigravity use contractually compliant.
 Enterprise and Workspace accounts may be governed by separate agreements.
+See the
+[OAuth refresh how-to](https://pawflow.allcolor.org/howtos.html#oauth-refresh-policy)
+before changing ownership of refresh behavior.
 
 Advanced endpoint routing is supported where the underlying CLI honors it. `claude-code-interactive` can be used against non-Anthropic compatible endpoints by setting `api_key` plus `base_url`; in that mode PawFlow passes `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` instead of writing OAuth credentials. `codex-interactive` supports key-based auth for the native Codex session. The legacy transports retain their existing endpoint behavior for migration, while direct OpenAI-compatible endpoints should normally use the `openai` provider.
 

@@ -74,7 +74,7 @@ def test_website_pages_have_one_heading_and_valid_local_targets(name: str) -> No
     parser = parse_page(name)
 
     assert parser.h1_count == 1
-    assert "site.js?v=a33" in parser.scripts
+    assert "site.js?v=a34" in parser.scripts
 
     references = parser.links + parser.scripts
     if name in PRODUCT_PAGES:
@@ -233,10 +233,13 @@ def test_howto_canvas_indexes_every_recipe_and_keeps_full_reader() -> None:
     script = (SITE / "site.js").read_text(encoding="utf-8")
     recipe_ids = re.findall(r'<article[^>]*class="[^"]*\brecipe\b[^"]*"[^>]*\bid="([^"]+)"', html)
 
-    assert len(recipe_ids) == 53
+    assert len(recipe_ids) == 56
     assert len(recipe_ids) == len(set(recipe_ids))
     assert "workflow-agents" in recipe_ids
     assert "workflow-proposals" in recipe_ids
+    assert "acp-agent" in recipe_ids
+    assert "managed-mcp-providers" in recipe_ids
+    assert "oauth-refresh-policy" in recipe_ids
     assert "WORKFLOW_AGENTS_ENABLED" not in html
     assert "AGENT_GROUPS_ENABLED" not in html
     assert 'data-howto-canvas' in html
@@ -272,4 +275,30 @@ def test_site_soundtrack_autoplays_with_a_user_control() -> None:
 def test_release_fallback_matches_current_release() -> None:
     script = (SITE / "site.js").read_text(encoding="utf-8")
 
-    assert "version: '1.0.0-beta.241'" in script
+    assert "version: '1.0.0-beta.263'" in script
+
+
+def test_beta_263_provider_and_reliability_story_is_public() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    providers = (ROOT / "docs" / "llm_providers.md").read_text(encoding="utf-8")
+    homepage = (SITE / "index.html").read_text(encoding="utf-8")
+    features = (SITE / "features.html").read_text(encoding="utf-8")
+    integrations = (SITE / "integrations.html").read_text(encoding="utf-8")
+    faq = (SITE / "faq.html").read_text(encoding="utf-8")
+
+    for provider in (
+        "openai-responses",
+        "omniroute",
+        "acp",
+        "cc_mcp",
+        "codex_mcp",
+        "agy_mcp",
+    ):
+        assert provider in readme
+        assert provider in providers
+        assert provider in faq
+
+    assert "beta.263:" in homepage
+    assert "restart-durable delegation" in features
+    assert "MCP, ACP, A2A, and AG-UI" in integrations
+    assert "registered but unavailable" in faq

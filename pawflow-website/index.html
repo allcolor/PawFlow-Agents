@@ -51,7 +51,7 @@
         "applicationCategory": "DeveloperApplication",
         "applicationSubCategory": "AI Agent Orchestration",
         "operatingSystem": "Linux, macOS, Windows (Docker)",
-        "softwareVersion": "1.0.0-beta.241",
+        "softwareVersion": "1.0.0-beta.263",
         "license": "https://github.com/allcolor/PawFlow-Agents/blob/main/LICENSE",
         "installUrl": "https://pawflow.allcolor.org/quickstart.html",
         "downloadUrl": "https://github.com/allcolor/PawFlow-Agents",
@@ -128,7 +128,7 @@
               <img src="assets/logo.png" alt="">
               <div><small>PAWFLOW</small><strong>Shared runtime</strong><span>agents · context · flows · auth</span></div>
             </div>
-            <div class="stage-interop" aria-label="External protocols"><span>MCP</span><span>A2A</span><span>AG-UI</span></div>
+            <div class="stage-interop" aria-label="External protocols"><span>MCP</span><span>ACP</span><span>A2A</span><span>AG-UI</span></div>
             <div class="stage-link stage-link-two" aria-hidden="true"><i></i></div>
             <div class="stage-relay"><small>CONTROLLED BOUNDARY</small><strong>Relay</strong><span>filesystem · shell · browser · screen</span></div>
             <div class="stage-link stage-link-three" aria-hidden="true"><i></i></div>
@@ -166,7 +166,7 @@
             </div>
             <aside>
               <span>Expose the same runtime</span>
-              <div><b>MCP</b><b>A2A</b><b>AG-UI</b></div>
+              <div><b>MCP</b><b>ACP</b><b>A2A</b><b>AG-UI</b></div>
             </aside>
           </div>
           <div class="architecture-route" aria-hidden="true"><i></i></div>
@@ -280,11 +280,12 @@
           <p>Mix providers and clients without rebuilding the system around each one.</p>
         </header>
         <div class="stack-list" data-zoom-portal data-reveal>
-          <div><span>MODELS</span><p>OpenAI <i>·</i> Claude <i>·</i> Codex <i>·</i> Gemini <i>·</i> DeepSeek <i>·</i> compatible APIs</p></div>
-          <div><span>PROTOCOLS</span><p>MCP <i>·</i> A2A <i>·</i> AG-UI</p></div>
+          <div><span>MODELS</span><p>OpenAI <i>·</i> Responses <i>·</i> Anthropic <i>·</i> Claude Code <i>·</i> Codex <i>·</i> Gemini <i>·</i> OmniRoute <i>·</i> compatible APIs</p></div>
+          <div><span>PROTOCOLS</span><p>MCP <i>·</i> ACP <i>·</i> A2A <i>·</i> AG-UI</p></div>
           <div><span>CLIENTS</span><p>Web <i>·</i> CLI <i>·</i> VS Code <i>·</i> Android <i>·</i> Telegram <i>·</i> API</p></div>
           <div><span>INFRASTRUCTURE</span><p>Docker <i>·</i> VPS <i>·</i> workstation <i>·</i> remote machines <i>·</i> GPU hosts</p></div>
         </div>
+        <p class="architecture-note" data-reveal><strong>beta.263:</strong> outbound ACP agents and native-hook Claude Code/Codex providers join restart-durable delegate traces, recoverable ScratchDirs, complete relay updates, faster history search, and safer terminal-error/force-stop handling.</p>
         <div class="maturity-line" data-reveal>
           <span>OPEN SOURCE</span><span>SELF-HOSTED</span><span>MIT</span><span>8,900+ TESTS</span><span>MULTI-PROVIDER</span><span>MULTI-MACHINE</span>
         </div>
@@ -312,7 +313,7 @@
               <tr><th>Multi-model runtime</th><td>Varies</td><td>Varies</td><td>Limited</td><td><strong>Yes</strong></td></tr>
               <tr><th>Multi-machine execution</th><td>Limited</td><td>Cloud VMs</td><td>Workers</td><td><strong>Yes</strong></td></tr>
               <tr><th>Self-hosted control plane</th><td>Sometimes</td><td>Rarely</td><td>Often</td><td><strong>Yes</strong></td></tr>
-              <tr><th>MCP / A2A / AG-UI</th><td>Varies</td><td>Varies</td><td>Limited</td><td><strong>Yes</strong></td></tr>
+              <tr><th>MCP / ACP / A2A / AG-UI</th><td>Varies</td><td>Varies</td><td>Limited</td><td><strong>Yes</strong></td></tr>
             </tbody>
           </table>
         </div>
@@ -350,6 +351,6 @@
       </nav>
     </div>
   </footer>
-  <script src="site.js?v=a33"></script>
+  <script src="site.js?v=a34"></script>
 </body>
 </html>

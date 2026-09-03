@@ -101,6 +101,65 @@ class TestIndexing:
         assert stats["messages"] == 1  # not 2 -- the first row was not re-read
         assert len(index.search("question")) == 2
 
+    def test_a_plain_append_never_loads_the_whole_transcript(self, store, index,
+                                                             monkeypatch):
+        cid = _conv(store, [
+            {"role": "user", "content": f"old row {i}"}
+            for i in range(100)
+        ])
+        index.refresh(store)
+        store.append_message(cid, {
+            "role": "assistant", "content": "the appended needle",
+        }, user_id=USER)
+
+        def full_load_is_the_bug(*args, **kwargs):
+            raise AssertionError("incremental refresh called store.load()")
+
+        monkeypatch.setattr(store, "load", full_load_is_the_bug)
+        stats = index.refresh(store)
+
+        assert stats["messages"] == 1
+        assert len(index.search("appended needle")) == 1
+
+    def test_incremental_count_and_tail_read_share_the_conversation_lock(
+            self, store, index, monkeypatch):
+        cid = _conv(store, [{"role": "user", "content": "first"}])
+        index.refresh(store)
+        store.append_message(cid, {
+            "role": "assistant", "content": "second",
+        }, user_id=USER)
+        real_lock = store._get_conv_lock(cid)
+        real_count = store.message_count
+        real_page = store.load_page
+        state = {"locked": False, "counted": False, "paged": False}
+
+        class CheckedLock:
+            def __enter__(self):
+                real_lock.acquire()
+                state["locked"] = True
+
+            def __exit__(self, exc_type, exc, tb):
+                state["locked"] = False
+                real_lock.release()
+
+        def checked_count(*args, **kwargs):
+            assert state["locked"]
+            state["counted"] = True
+            return real_count(*args, **kwargs)
+
+        def checked_page(*args, **kwargs):
+            assert state["locked"]
+            state["paged"] = True
+            return real_page(*args, **kwargs)
+
+        monkeypatch.setattr(store, "_get_conv_lock", lambda _cid: CheckedLock())
+        monkeypatch.setattr(store, "message_count", checked_count)
+        monkeypatch.setattr(store, "load_page", checked_page)
+
+        index.refresh(store)
+
+        assert state["counted"] and state["paged"]
+
     def test_an_unchanged_conversation_is_never_reopened(self, store, index):
         # Without this, every search would read every transcript from disk --
         # "incremental" in name only.

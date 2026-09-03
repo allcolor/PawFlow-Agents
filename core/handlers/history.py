@@ -459,6 +459,23 @@ class ReadHistoryHandler(ToolHandler):
         for start, msgs in store.iter_display_windows(self._conversation_id):
             yield start, msgs
 
+    def _search_windows(self, store, terms: List[str]):
+        """Use the store's optional candidate-segment reader when available."""
+        if not self._owns_conversation(store):
+            return
+        candidate_reader = getattr(store, "iter_display_search_windows", None)
+        if candidate_reader is not None:
+            try:
+                candidates = candidate_reader(self._conversation_id, terms)
+            except Exception:
+                logger.debug("history search prefilter failed", exc_info=True)
+                candidates = None
+            if candidates is not None:
+                yield from candidates
+                return
+        for start, msgs in store.iter_display_windows(self._conversation_id):
+            yield start, msgs
+
     def _collect(self, store, keep, budget: int):
         """Stream the transcript, keep what ``keep`` accepts, up to ``budget``.
 
@@ -550,7 +567,9 @@ class ReadHistoryHandler(ToolHandler):
         token_total = 0
         query_lower = query.lower()
         tokens = _search_tokens(query)
-        for start, msgs in self._windows(store):
+        terms = [query] + [token for token in tokens
+                           if token.lower() != query_lower]
+        for start, msgs in self._search_windows(store, terms):
             for i, msg in enumerate(msgs):
                 if not self._matches(msg, role_filter, agent_filter):
                     continue

@@ -1,6 +1,9 @@
 """ConversationStore transcript load/page + display traces + context-usage."""
 
+import json
 import logging
+import shutil
+import subprocess  # nosec B404 -- fixed argv, no shell
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -386,6 +389,94 @@ class _CsTranscriptMixin:
                 seen = 0
         if seen:
             yield start_index, self._compose_display_traces(raw)
+
+    def iter_display_search_windows(self, cid: str, terms: List[str]):
+        """Return plaintext windows whose segment contains a search term.
+
+        ``None`` requests the exact fallback (encrypted rows or failed rg).
+        Candidate rows still pass through decoding, sanitizing and composing.
+        """
+        if not self.exists(cid):
+            return iter(())
+        log = self._transcript_log(cid)
+        if log.codec is not None:
+            return None
+        paths = log.iter_paths()
+        if not paths:
+            return iter(())
+        rg = shutil.which("rg")
+        if not rg:
+            return None
+        patterns = []
+        for term in terms:
+            term = str(term or "")
+            if not term:
+                continue
+            # Match the representation written by json.dumps, including quotes,
+            # newlines and backslashes, without putting user text in argv.
+            patterns.append(json.dumps(term, ensure_ascii=False)[1:-1])
+        if not patterns:
+            return iter(())
+        try:
+            result = subprocess.run(  # nosec B603 -- fixed executable + argv
+                [rg, "--files-with-matches", "--fixed-strings", "--ignore-case",
+                 "--no-messages", "--file", "-"] + [str(path) for path in paths],
+                input="\n".join(patterns) + "\n",
+                capture_output=True, text=True, timeout=10, check=False)
+        except (OSError, subprocess.SubprocessError):
+            logger.debug("history search prefilter unavailable", exc_info=True)
+            return None
+        if result.returncode == 1:
+            return iter(())
+        if result.returncode != 0:
+            logger.debug("history search prefilter failed: %s",
+                         result.stderr.strip())
+            return None
+        matched = {line.strip() for line in result.stdout.splitlines()
+                   if line.strip()}
+        if not matched:
+            return iter(())
+        selected = {i for i, path in enumerate(paths) if str(path) in matched}
+        selected |= {i - 1 for i in selected if i}
+
+        def _windows():
+            from core.secret_sanitization import strip_secret_runtime_values
+
+            start_index = 0
+            last_match = max(selected)
+            raw: List[Dict[str, Any]] = []
+            seen = 0
+            for i, path in enumerate(paths):
+                if i > last_match:
+                    break
+                if i not in selected:
+                    if seen:
+                        messages = self._compose_display_traces(raw)
+                        yield start_index, messages
+                        start_index += len(messages)
+                        raw = []
+                        seen = 0
+                    start_index += sum(
+                        1 for row in log._iter_file(path) if row.get("role"))
+                    continue
+                for row in log._iter_file(path):
+                    if self._is_trace_update_row(row):
+                        raw.append(strip_secret_runtime_values(row))
+                        continue
+                    if not row.get("role"):
+                        continue
+                    raw.append(strip_secret_runtime_values(row))
+                    seen += 1
+                    if seen >= self._WINDOW_CHUNK:
+                        messages = self._compose_display_traces(raw)
+                        yield start_index, messages
+                        start_index += len(messages)
+                        raw = []
+                        seen = 0
+            if seen:
+                yield start_index, self._compose_display_traces(raw)
+
+        return _windows()
 
     def load_window_by_index(self, cid: str, start: int, count: int) -> List[Dict]:
         """``count`` display messages from absolute display index ``start``.

@@ -19,6 +19,8 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from core.conversation_store import ConversationStore
 from core.handlers.history import ReadHistoryHandler
@@ -183,6 +185,33 @@ class StillCorrect(unittest.TestCase):
         self.assertIn("[#4]", out)
         self.assertIn("[#6]", out)
         self.assertNotIn("[#0]", out)
+
+    def test_search_prefilter_keeps_absolute_indices_across_segments(self):
+        from core.segmented_jsonl import SegmentedJsonl
+
+        log = self.store._transcript_log("c")
+        rows = list(log.iter_rows())
+        rows.insert(2, {
+            "t": "trace_update", "trace_id": "orphan",
+            "entry": {"role": "assistant", "content": "not a display row"},
+        })
+        SegmentedJsonl(
+            self.store._transcript_path("c"), max_rows=3,
+        ).replace_dicts(rows)
+        match_path = self.store._transcript_log("c").iter_paths()[-1]
+        rg_result = SimpleNamespace(
+            returncode=0, stdout=f"{match_path}\n", stderr="")
+
+        with patch("core._conversation_store_transcript.shutil.which",
+                   return_value="/test/rg"), patch(
+                       "core._conversation_store_transcript.subprocess.run",
+                       return_value=rg_result):
+            out = self.handler.execute({
+                "action": "search", "query": "line 8", "limit": 10,
+            })
+
+        self.assertIn("line 8", out)
+        self.assertIn("[#8]", out)
 
     def test_range_returns_exactly_the_closed_interval(self):
         out = self.handler.execute({"action": "range", "from_msg_id": "m4",

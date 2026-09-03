@@ -236,7 +236,8 @@ class ConversationIndex:
             added = self._index_conversation(
                 store, cid, title, row["rows_indexed"] if row else 0,
                 updated_at, generation,
-                stale=row is not None and generation != row["source_generation"])
+                stale=row is not None and generation != row["source_generation"],
+                incremental=row is not None)
             if added:
                 stats["indexed"] += 1
                 stats["messages"] += added
@@ -295,9 +296,39 @@ class ConversationIndex:
     def _index_conversation(self, store, cid: str, title: str,
                             watermark: int, source_updated_at: float = 0.0,
                             source_generation: int = 0,
-                            stale: bool = False) -> int:
+                            stale: bool = False,
+                            incremental: bool = False) -> int:
+        incremental = incremental and not stale
         try:
-            messages = store.load(cid, user_id=self._user_id) or []
+            if incremental:
+                with store._get_conv_lock(cid):
+                    current_generation = int(store.get_extra(
+                        cid, TRANSCRIPT_GENERATION, 0) or 0)
+                    if current_generation != source_generation:
+                        source_generation = current_generation
+                        stale = True
+                        incremental = False
+                    else:
+                        total = int(store.message_count(cid) or 0)
+                        if total < watermark:
+                            incremental = False
+                        else:
+                            appended = total - watermark
+                            if appended:
+                                page = store.load_page(
+                                    cid, limit=appended, offset=0,
+                                    user_id=self._user_id)
+                                messages = list(
+                                    (page or {}).get("messages") or [])
+                                if len(messages) < appended:
+                                    raise OSError(
+                                        "incremental transcript tail was incomplete")
+                                fresh = messages[-appended:]
+                            else:
+                                fresh = []
+            if not incremental:
+                messages = store.load(cid, user_id=self._user_id) or []
+                total = len(messages)
         except Exception:
             logger.debug("transcript unreadable for %s", cid[:8], exc_info=True)
             # Do this even on an incremental refresh: the existing rows may be
@@ -305,8 +336,7 @@ class ConversationIndex:
             # failed. Keeping them would turn an I/O failure into disclosure.
             self.purge(cid)
             return 0
-        total = len(messages)
-        if stale or total < watermark:
+        if not incremental and (stale or total < watermark):
             # `stale`: the store's rewrite counter moved, so rows already
             # indexed may hold text that has since been edited or deleted.
             # Appending onto them would keep serving it -- and an edit that
@@ -315,7 +345,8 @@ class ConversationIndex:
             # longer addresses the same rows.
             self.purge(cid)
             watermark = 0
-        fresh = messages[watermark:]
+        if not incremental:
+            fresh = messages[watermark:]
         rows = []
         for msg in fresh:
             if not isinstance(msg, dict):

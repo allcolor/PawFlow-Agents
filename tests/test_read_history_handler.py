@@ -109,6 +109,31 @@ def test_read_history_search_prefers_exact_phrase_matches():
     assert "alpha only" not in result
 
 
+def test_read_history_search_uses_candidate_windows_when_available():
+    class CandidateStore(FakeConversationStore):
+        def iter_display_search_windows(self, conversation_id, terms):
+            self.terms = terms
+            return iter([(40, [self.messages[40]])])
+
+        def iter_display_windows(self, conversation_id, chunk=0):
+            raise AssertionError("search opened the full transcript")
+
+    messages = [
+        {"role": "assistant", "content": f"unrelated row {i}"}
+        for i in range(40)
+    ] + [{"role": "assistant", "content": "the exact needle"}]
+    store = CandidateStore(messages)
+    handler = ReadHistoryHandler()
+
+    result = handler._do_search(
+        store, {"query": "exact needle", "limit": 20},
+        role_filter="", agent_filter="")
+
+    assert store.terms == ["exact needle", "exact", "needle"]
+    assert "Found 1 match(es)" in result
+    assert "[#40]" in result
+
+
 def test_read_history_keyword_fallback_rejects_single_generic_term_hits():
     handler = ReadHistoryHandler()
     messages = [

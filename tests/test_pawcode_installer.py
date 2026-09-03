@@ -95,6 +95,32 @@ def test_pawcode_binary_copies_distribution_metadata(monkeypatch, tmp_path):
     assert exclusions == {"IPython", "pydantic.v1._hypothesis_plugin"}
 
 
+def test_pawcode_nsis_falls_back_to_standard_program_files(monkeypatch, tmp_path):
+    builder = _load_pawcode_builder()
+    builder.DIST_ROOT = tmp_path / "dist"
+    builder.BUILD_ROOT = tmp_path / "build"
+    layout = tmp_path / "layout"
+    (layout / "bin").mkdir(parents=True)
+    (layout / "bin" / "pawcode.exe").write_bytes(b"binary")
+    program_files = tmp_path / "Program Files (x86)"
+    makensis = program_files / "NSIS" / "makensis.exe"
+    makensis.parent.mkdir(parents=True)
+    makensis.write_bytes(b"executable")
+    commands = []
+
+    monkeypatch.setattr(builder.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(builder, "platform_tag", lambda: "win-x86_64")
+    monkeypatch.setattr(builder.shutil, "which", lambda _name: None)
+    monkeypatch.setenv("ProgramFiles(x86)", str(program_files))
+    monkeypatch.delenv("ProgramFiles", raising=False)
+    monkeypatch.setattr(builder, "_run", lambda command: commands.append(command))
+
+    artifact = builder.build_nsis(layout, "1.2.3")
+
+    assert artifact == builder.DIST_ROOT / "pawcode-1.2.3-win-x86_64-setup.exe"
+    assert commands == [[str(makensis), str(builder.BUILD_ROOT / "pawcode-installer.nsi")]]
+
+
 def test_release_assets_workflow_publishes_all_installers():
     workflow = (ROOT / ".github" / "workflows" / "release-assets.yml").read_text(encoding="utf-8")
 

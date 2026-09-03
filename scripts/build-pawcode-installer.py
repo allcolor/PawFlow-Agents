@@ -323,11 +323,28 @@ SectionEnd
     return nsi
 
 
+def _find_makensis() -> str | None:
+    executable = shutil.which("makensis")
+    if executable:
+        return executable
+    for env_name in ("ProgramFiles(x86)", "ProgramFiles"):
+        program_files = os.environ.get(env_name)
+        if not program_files:
+            continue
+        candidate = Path(program_files) / "NSIS" / "makensis.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def build_nsis(layout: Path, version: str) -> Path | None:
-    if platform.system().lower() != "windows" or not shutil.which("makensis"):
+    if platform.system().lower() != "windows":
+        return None
+    makensis = _find_makensis()
+    if makensis is None:
         return None
     nsi = write_nsis_script(layout, version)
-    _run(["makensis", str(nsi)])
+    _run([makensis, str(nsi)])
     return DIST_ROOT / f"pawcode-{version}-{platform_tag()}-setup.exe"
 
 

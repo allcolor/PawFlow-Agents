@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- PawCode Windows release builds find Chocolatey-installed NSIS under the
+  standard `Program Files` directory even before the runner refreshes `PATH`,
+  ensuring the setup executable is included in published release assets.
+
 ## [1.0.0-beta.260] — 2026-09-02
 
 ### Fixed

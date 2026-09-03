@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.262] — 2026-09-03
+
 ### Fixed
 
 - PawCode Windows installer generation writes native paths into the NSIS script,

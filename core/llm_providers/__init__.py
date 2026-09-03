@@ -9,4 +9,6 @@ from core.llm_providers.claude_code_interactive import LLMClaudeCodeInteractiveM
 from core.llm_providers.antigravity_interactive import LLMAntigravityInteractiveMixin  # noqa: F401
 from core.llm_providers.codex_app_server import LLMCodexAppServerMixin  # noqa: F401
 from core.llm_providers.codex_interactive import LLMCodexInteractiveMixin  # noqa: F401
+from core.llm_providers.managed_mcp import LLMManagedMcpMixin  # noqa: F401
+from core.llm_providers.acp import LLMAcpMixin  # noqa: F401
 from core.llm_providers.gemini import LLMGeminiMixin  # noqa: F401

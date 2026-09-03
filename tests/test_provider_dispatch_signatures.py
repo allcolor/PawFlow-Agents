@@ -228,8 +228,17 @@ def test_cli_providers_do_not_force_default_model_flags():
     from core.llm_providers.codex_session import CodexSessionMixin
     from core.llm_providers.gemini import LLMGeminiMixin
 
-    for provider in ("claude-code", "codex-app-server", "gemini"):
+    for provider in (
+        "claude-code", "codex-app-server", "gemini",
+        "cc_mcp", "codex_mcp", "agy_mcp",
+    ):
         assert LLMClient(provider=provider, config={}).default_model == ""
+
+    for provider in ("cc_mcp", "codex_mcp", "agy_mcp"):
+        client = LLMClient(provider=provider, config={})
+        assert provider in client.PROVIDERS
+        assert client.supports_live_preempt is False
+        assert callable(getattr(client, f"_stream_{provider}"))
 
     assert '"--model", model or "sonnet"' not in inspect.getsource(
         ClaudeCodeSessionMixin._build_claude_cmd)
@@ -246,6 +255,50 @@ def test_cli_providers_do_not_force_default_model_flags():
     gemini_src = inspect.getsource(LLMGeminiMixin._gemini_acp_start_process)
     assert 'if model:' in gemini_src
     assert 'args = ["--model", model, *args]' in gemini_src
+
+
+def test_managed_mcp_unknown_native_usage_is_not_estimated(monkeypatch):
+    import pytest
+
+    from core import ServiceError
+    from core.llm_client import LLMMessage, LLMResponse
+    from services.llm_connection import LLMConnectionService
+    from services.llm_credential_oauth import normalize_provider
+
+    client = LLMClient(provider="cc_mcp", config={})
+    monkeypatch.setattr(
+        client, "_stream_cc_mcp",
+        lambda *args, **kwargs: LLMResponse(content="native final"))
+    response = client.complete([
+        LLMMessage(role="user", content="prompt", conversation_id="conv"),
+    ])
+    assert response.tokens_in == 0
+    assert response.tokens_out == 0
+
+    service = LLMConnectionService({
+        "provider": "cc_mcp",
+        "auth_mode": "none",
+    })
+    service._track_tokens(response, [
+        LLMMessage(role="user", content="prompt", conversation_id="conv"),
+    ])
+    assert service.get_token_stats() == {
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "calls": 0,
+    }
+
+    assert normalize_provider("cc_mcp") == "claude-code"
+    assert normalize_provider("codex_mcp") == "codex-app-server"
+    assert normalize_provider("agy_mcp") == "gemini"
+    unavailable = LLMConnectionService({
+        "provider": "agy_mcp",
+        "auth_mode": "none",
+    })
+    with pytest.raises(
+        ServiceError, match="Antigravity — MCP hooks is unavailable",
+    ):
+        unavailable._create_connection()
 
 
 def test_gemini_acp_capacity_error_is_non_retryable_text():
@@ -489,7 +542,8 @@ def test_agent_core_passes_live_block_callback_to_acp_providers():
     # end-of-turn flush (cc-p live-tool SSE fix). Must match turn_callback.
     gate = ('("claude-code", "claude-code-interactive", '
             '"antigravity-interactive", "codex-app-server", '
-            '"codex-interactive", "gemini")')
+            '"codex-interactive", "gemini", "cc_mcp", "codex_mcp", '
+            '"agy_mcp")')
     assert ('block_callback=_cli_block_callback if _client_provider in '
             f'{gate} else None') in src
     assert ('turn_callback=_claude_code_turn_callback if _client_provider in '

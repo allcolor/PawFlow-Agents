@@ -28,6 +28,12 @@ const _GRAB_OPEN_ACTIONS = {
   'claude-code-interactive': 'open_cc_interactive_terminal',
   'codex-interactive': 'open_cc_interactive_terminal',
   'antigravity-interactive': 'open_antigravity_interactive_terminal',
+  // Managed MCP providers: same tmux, same pools, native hooks instead of
+  // a MITM proxy. A prompt typed here is mirrored by the UserPromptSubmit
+  // hook and answered through the Stop hook's final text.
+  'cc_mcp': 'open_cc_interactive_terminal',
+  'codex_mcp': 'open_cc_interactive_terminal',
+  'agy_mcp': 'open_antigravity_interactive_terminal',
 };
 // Browsers reliably expose Shift+Enter, while the interactive TUIs use the
 // CSI-u Ctrl+Enter sequence for a newline in their own composer. Grab translates

@@ -14,7 +14,7 @@ class NativeContextObservationMixin:
 
     _SESSION_CONTEXT_PROVIDERS = {
         "claude-code", "claude-code-interactive", "antigravity-interactive",
-        "codex-app-server", "codex-interactive", "gemini",
+        "codex-app-server", "codex-interactive", "codex_mcp", "gemini", "acp",
     }
 
     def _record_observed_context(self, conversation_id: str, agent_name: str,

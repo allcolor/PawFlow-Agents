@@ -317,7 +317,8 @@ class _ALCIterationMixin:
         st._is_claude_code = st._client_provider in (
             "claude-code", "claude-code-interactive",
             "antigravity-interactive", "codex-app-server",
-            "codex-interactive", "gemini")
+            "codex-interactive", "gemini",
+            "cc_mcp", "codex_mcp", "agy_mcp")
 
         st._cc_turn_count = [0]
 

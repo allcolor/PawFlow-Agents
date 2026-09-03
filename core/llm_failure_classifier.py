@@ -129,6 +129,11 @@ _CLI_ALLOWLISTS = {
         "rate_limited": ("rate_limit_error",),
         "context_overflow": ("prompt is too long",),
     },
+    "cc_mcp": {
+        "auth_invalid": ("authentication_error",),
+        "rate_limited": ("rate_limit_error",),
+        "context_overflow": ("prompt is too long",),
+    },
     "codex-app-server": {
         "auth_invalid": ("invalid_api_key",),
         "rate_limited": ("rate_limit_exceeded",),
@@ -139,12 +144,22 @@ _CLI_ALLOWLISTS = {
         "rate_limited": ("rate_limit_exceeded",),
         "context_overflow": ("context_length_exceeded",),
     },
+    "codex_mcp": {
+        "auth_invalid": ("invalid_api_key",),
+        "rate_limited": ("rate_limit_exceeded",),
+        "context_overflow": ("context_length_exceeded",),
+    },
     "gemini": {
         "auth_invalid": ("unauthenticated",),
         "quota_exhausted": ("resource_exhausted", "quota will reset"),
         "context_overflow": ("input token count exceeds",),
     },
     "antigravity-interactive": {
+        "auth_invalid": ("unauthenticated",),
+        "quota_exhausted": ("resource_exhausted",),
+        "context_overflow": ("input token count exceeds",),
+    },
+    "agy_mcp": {
         "auth_invalid": ("unauthenticated",),
         "quota_exhausted": ("resource_exhausted",),
         "context_overflow": ("input token count exceeds",),

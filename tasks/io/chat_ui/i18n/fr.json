@@ -476,6 +476,8 @@
   "contextExpectedArray": "tableau attendu",
   "contextGauge": "jauge contexte",
   "contextGaugeTitle": "Contexte {used}k/{max}k ({pct}% restant)",
+  "contextGaugeUnavailable": "Utilisation du contexte indisponible pour ce fournisseur (aucune mesure native)",
+  "contextGaugeUnavailableShort": "ctx n/d",
   "contextRemainingPct": "{pct}% restant",
   "contextGeminiSession": "Session Gemini",
   "contextInvalidJson": "JSON invalide",

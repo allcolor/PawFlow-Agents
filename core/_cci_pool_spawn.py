@@ -27,6 +27,9 @@ from core.docker_utils import (get_host_ip, get_server_id,
                                pawflow_container_labels, to_host_path,
                                translate_path)
 from core.apparmor import apparmor_security_opts
+from core.managed_mcp_spec import (
+    MANAGED_MCP_LAUNCH_REVISION, MANAGED_MCP_OBSERVATION_MODE,
+    MITM_OBSERVATION_MODE, managed_mcp_observation_mode, managed_mcp_spec)
 import core.paths as _paths
 
 # Where the shell that starts the proxy appends its stderr, inside the
@@ -90,6 +93,14 @@ class InteractiveContainer:
     svc_pool_idx: int = -1
     user_id: str = ""
     conv_id: str = ""
+    # The concrete LLM provider this session was launched for and how its
+    # turns are observed. The pool key stays (user, conv, agent, service);
+    # reuse compatibility compares these instead, so a service switched from
+    # an interactive provider to its managed MCP twin (or back) recreates the
+    # session rather than mutating a running CLI's wiring.
+    provider: str = "claude-code-interactive"
+    observation_mode: str = MITM_OBSERVATION_MODE
+    launch_revision: str = ""
 
 
 
@@ -112,6 +123,41 @@ class _InteractiveContainerSpawnMixin:
     def _container_image() -> str:
         return os.environ.get(
             "PAWFLOW_CLAUDE_CODE_IMAGE", "pawflow-claude-code:latest")
+
+    @staticmethod
+    def _client_provider(client) -> str:
+        """The client's concrete provider name, or '' when it has none.
+
+        Only a real string counts: test doubles expose attribute mocks, and a
+        mock must never read as a provider change that kills a live session.
+        """
+        value = getattr(client, "provider", "")
+        return value if isinstance(value, str) else ""
+
+    @classmethod
+    def _observation_mode_for(cls, client) -> str:
+        return managed_mcp_observation_mode(cls._client_provider(client))
+
+    @classmethod
+    def _session_compatible(cls, state: InteractiveContainer, client) -> bool:
+        """Whether a live session may serve a turn from ``client``.
+
+        The pool key is unchanged; this is the additional check the managed
+        MCP plan requires: same concrete provider, same observation mode and
+        the same managed launch revision. A client without a provider name
+        has no opinion and keeps the session.
+        """
+        provider = cls._client_provider(client)
+        if not provider:
+            return True
+        wanted_mode = managed_mcp_observation_mode(provider)
+        wanted_revision = (MANAGED_MCP_LAUNCH_REVISION
+                           if wanted_mode == MANAGED_MCP_OBSERVATION_MODE
+                           else "")
+        return (getattr(state, "provider", "") == provider
+                and getattr(state, "observation_mode", MITM_OBSERVATION_MODE)
+                == wanted_mode
+                and getattr(state, "launch_revision", "") == wanted_revision)
 
     @staticmethod
     def _anthropic_base_url(client) -> str:
@@ -173,18 +219,32 @@ class _InteractiveContainerSpawnMixin:
         client._setup_credentials(workdir, pool_index=pool_index,
                                    user_id=user_id, conversation_id=conversation_id)
         mcp_path, internal_token = client._setup_mcp_config(workdir, user_id, conversation_id, agent_name)
+        observation_mode = self._observation_mode_for(client)
+        managed = observation_mode == MANAGED_MCP_OBSERVATION_MODE
+        provider = self._client_provider(client) or "claude-code-interactive"
+        spec = managed_mcp_spec(provider) if managed else None
         cert_dir = Path(workdir) / ".pawflow_cci" / "certs"
-        (upstream_host, upstream_port, upstream_scheme,
-         anthropic_base_url, listen_port) = self._anthropic_endpoint(client)
+        if managed:
+            # Managed MCP mode: the official CLI talks to its configured or
+            # native vendor endpoint itself. No leaf certificate, no CA, no
+            # host redirection, no proxy -- lifecycle hooks are the only
+            # observation channel.
+            upstream_host, upstream_port, upstream_scheme = "", 0, ""
+            anthropic_base_url = self._anthropic_base_url(client)
+            listen_port = 0
+        else:
+            (upstream_host, upstream_port, upstream_scheme,
+             anthropic_base_url, listen_port) = self._anthropic_endpoint(client)
         anthropic_api_key = self._anthropic_api_key(client)
         from core.cli_process_config import shell_cli_environment
         cli_environment = shell_cli_environment(
             client, user_id=user_id, conversation_id=conversation_id)
-        generate_leaf(
-            cert_dir,
-            common_name=upstream_host,
-            extra_dns=(() if upstream_host == "api.anthropic.com" else ("api.anthropic.com",)),
-        )  # writes leaf cert/key + CA into cert_dir (side effect)
+        if not managed:
+            generate_leaf(
+                cert_dir,
+                common_name=upstream_host,
+                extra_dns=(() if upstream_host == "api.anthropic.com" else ("api.anthropic.com",)),
+            )  # writes leaf cert/key + CA into cert_dir (side effect)
 
         event_url, event_token, event_service = get_or_create_cc_interactive_event_service()
         host_ip = get_host_ip()
@@ -195,11 +255,14 @@ class _InteractiveContainerSpawnMixin:
             user_id=user_id,
             conversation_id=conversation_id,
             agent_name=agent_name,
+            provider=provider,
+            observation_mode=observation_mode,
         )
 
         name = self._spawn_container(
             user_id=user_id, conversation_id=conversation_id,
-            agent_name=agent_name, upstream_host=upstream_host)
+            agent_name=agent_name, upstream_host=upstream_host,
+            intercept=not managed)
         physical_container_workdir = self._physical_container_workdir(
             user_id, conversation_id, agent_name)
         container_workdir = self._container_workdir(user_id, conversation_id, agent_name)
@@ -215,32 +278,37 @@ class _InteractiveContainerSpawnMixin:
             svc_pool_idx=pool_index,
             user_id=user_id,
             conv_id=conversation_id,
+            provider=provider,
+            observation_mode=observation_mode,
+            launch_revision=MANAGED_MCP_LAUNCH_REVISION if managed else "",
         )
 
         try:
             self._write_hook_settings(
                 workdir, anthropic_api_key=anthropic_api_key)
-            self._install_ca(name, physical_container_workdir)
-            self._start_proxy(
-                name=name,
-                container_workdir=physical_container_workdir,
-                session_token=session_token,
-                event_url=event_url,
-                event_token=event_token,
-                internal_token=internal_token,
-                upstream_host=upstream_host,
-                upstream_port=upstream_port,
-                upstream_scheme=upstream_scheme,
-                listen_port=listen_port,
-            )
-            state.proxy_started = True
+            if not managed:
+                self._install_ca(name, physical_container_workdir)
+                self._start_proxy(
+                    name=name,
+                    container_workdir=physical_container_workdir,
+                    session_token=session_token,
+                    event_url=event_url,
+                    event_token=event_token,
+                    internal_token=internal_token,
+                    upstream_host=upstream_host,
+                    upstream_port=upstream_port,
+                    upstream_scheme=upstream_scheme,
+                    listen_port=listen_port,
+                )
+                state.proxy_started = True
             self._start_claude_tmux(
                 name=name,
                 container_workdir=physical_container_workdir,
                 mcp_path=f"{container_workdir}/.mcp.json",
                 model=model,
                 effort=client._cfg("effort", "") if hasattr(client, "_cfg") else "",
-                ca_path=f"{container_workdir}/.pawflow_cci/certs/pawflow-ca.crt",
+                ca_path=("" if managed else
+                         f"{container_workdir}/.pawflow_cci/certs/pawflow-ca.crt"),
                 session_token=session_token,
                 event_url=event_url,
                 event_token=event_token,
@@ -248,6 +316,7 @@ class _InteractiveContainerSpawnMixin:
                 anthropic_base_url=anthropic_base_url,
                 anthropic_api_key=anthropic_api_key,
                 cli_environment=cli_environment,
+                hook_client=spec.hook_client if spec else "",
             )
             state.claude_started = True
         except Exception:
@@ -255,8 +324,17 @@ class _InteractiveContainerSpawnMixin:
             raise
         return state
 
+    # Files a managed MCP session never receives: they exist only to observe
+    # vendor traffic. Copying them would be harmless, but their absence is
+    # what a negative launch test can prove.
+    _INTERCEPTION_RUNTIME_FILES = (
+        "cc_interactive_proxy.py", "cc_interactive_observers.py",
+        "cc_interactive_ws.py",
+    )
+
     def _spawn_container(self, *, user_id: str = "", conversation_id: str = "",
-                         agent_name: str = "", upstream_host: str = "api.anthropic.com") -> str:
+                         agent_name: str = "", upstream_host: str = "api.anthropic.com",
+                         intercept: bool = True) -> str:
         session_root = self._session_root()
         session_root.mkdir(parents=True, exist_ok=True)
         project_root = Path(__file__).resolve().parents[1]
@@ -273,6 +351,10 @@ class _InteractiveContainerSpawnMixin:
             (project_root / "tools" / "cc_interactive_hook.py", "/opt/pawflow/cc_interactive_hook.py"),
             (project_root / "docker" / "pawflow_sdk" / "pawflow.py", "/opt/pawflow/pawflow.py"),
         ]
+        if not intercept:
+            runtime_files = [
+                (src, dst) for src, dst in runtime_files
+                if src.name not in self._INTERCEPTION_RUNTIME_FILES]
         pkg_dir = project_root / "pawflow_relay"
         # Bind-mount the skill repository scope dirs read-only so SKILL.md
         # asset references (${CLAUDE_SKILL_DIR}/...) resolve inside the
@@ -290,11 +372,16 @@ class _InteractiveContainerSpawnMixin:
         name = (f"pf-{owner[:12]}-{self._container_name_tag()}-"
                 f"{uuid.uuid4().hex[:8]}")
         image = self._container_image()
+        # Only a MITM session maps the vendor host onto the in-container
+        # proxy. A managed MCP session resolves it normally.
+        host_redirect = (
+            ["--add-host", f"{upstream_host or 'api.anthropic.com'}:127.0.0.1"]
+            if intercept else [])
         run_args = [
             "-d", "--rm", "--name", name, "--init",
             *pawflow_container_labels(self._container_kind()),
             *mounts,
-            "--add-host", f"{upstream_host or 'api.anthropic.com'}:127.0.0.1",
+            *host_redirect,
             "--add-host", "host.docker.internal:host-gateway",
             "--cap-add", "SYS_ADMIN",
             *apparmor_security_opts(image),
@@ -504,12 +591,13 @@ class _InteractiveContainerSpawnMixin:
 
     def _start_claude_tmux(self, *, name: str, container_workdir: str,
                            mcp_path: str, model: str, effort: str = "",
-                           ca_path: str,
+                           ca_path: str = "",
                            session_token: str, event_url: str,
                            event_token: str, internal_token: str,
                            anthropic_base_url: str = "",
                            anthropic_api_key: str = "",
-                           cli_environment: str = "") -> None:
+                           cli_environment: str = "",
+                           hook_client: str = "") -> None:
         parts = container_workdir.lstrip("/").split("/")
         if len(parts) < 3 or parts[0] != "cc_sessions_host":
             raise ValueError(
@@ -548,6 +636,17 @@ class _InteractiveContainerSpawnMixin:
         api_key_env = (
             f"ANTHROPIC_API_KEY={shlex.quote(anthropic_api_key)} "
             if anthropic_api_key else "")
+        # Interception trust only exists for a MITM session. A managed MCP
+        # session gets neither the extra CA nor the system cert store switch,
+        # so the CLI verifies its vendor endpoint exactly as it would outside
+        # PawFlow.
+        cert_env = (
+            f"NODE_EXTRA_CA_CERTS={shlex.quote(ca_path.replace(container_workdir, ns_workdir, 1))} "
+            if ca_path else "")
+        cert_store_env = "CLAUDE_CODE_CERT_STORE=system " if ca_path else ""
+        hook_client_env = (
+            f"PAWFLOW_CCI_HOOK_CLIENT={shlex.quote(hook_client)} "
+            if hook_client else "")
         shell = (
             "mkdir -p /cc_sessions && "
             f"mount --bind {shlex.quote(user_slot)} /cc_sessions && "
@@ -566,7 +665,8 @@ class _InteractiveContainerSpawnMixin:
             f"'env {cli_environment + ' ' if cli_environment else ''}"
             f"HOME={shlex.quote(ns_workdir)} USER=pawflow "
             f"CLAUDE_CONFIG_DIR={shlex.quote(ns_workdir)} "
-            f"NODE_EXTRA_CA_CERTS={shlex.quote(ca_path.replace(container_workdir, ns_workdir, 1))} "
+            f"{cert_env}"
+            f"{hook_client_env}"
             f"PAWFLOW_CCI_SESSION_TOKEN={shlex.quote(session_token)} "
             f"PAWFLOW_CCI_EVENT_URL={shlex.quote(event_url)} "
             f"PAWFLOW_CCI_EVENT_TOKEN={shlex.quote(event_token)} "
@@ -574,7 +674,7 @@ class _InteractiveContainerSpawnMixin:
             f"PAWFLOW_CCI_INJECTED_PROMPTS={shlex.quote(ns_workdir + '/.pawflow_cci/injected_prompts.jsonl')} "
             f"{endpoint_env}"
             f"{api_key_env}"
-            "CLAUDE_CODE_CERT_STORE=system TERM=xterm-256color "
+            f"{cert_store_env}TERM=xterm-256color "
             f"{quoted}'; "
             # Pin the window size so a webchat tmux viewer attaching/detaching
             # never resizes Claude Code's terminal. tmux otherwise resizes the

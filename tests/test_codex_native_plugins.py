@@ -200,8 +200,10 @@ class TestServiceSchema:
             LLMConnectionService.__new__(LLMConnectionService))
         visible_for = [r["when"]["provider"] for r in rules
                        if r["set"].get("codex_plugins", {}).get("visible")]
-        # Both Codex CLI providers take native plugins; nothing else does.
-        assert visible_for == [["codex-app-server"], ["codex-interactive"]]
+        # Every Codex CLI transport takes native plugins, the managed MCP
+        # variant included; nothing else does.
+        assert visible_for == [
+            ["codex-app-server"], ["codex-interactive"], ["codex_mcp"]]
 
     def test_cli_environment_and_codex_fragments_are_scoped(self):
         from services.llm_connection import LLMConnectionService
@@ -212,10 +214,11 @@ class TestServiceSchema:
         env_visible = [r["when"]["provider"] for r in rules
                        if r["set"].get("cli_environment", {}).get("visible")]
         assert env_visible == [
-            ["claude-code"], ["claude-code-interactive"],
+            ["claude-code"], ["claude-code-interactive"], ["cc_mcp"],
             ["antigravity-interactive"], ["codex-app-server"],
-            ["codex-interactive"], ["gemini"],
+            ["codex-interactive"], ["codex_mcp"], ["gemini"],
         ]
         toml_visible = [r["when"]["provider"] for r in rules
                         if r["set"].get("codex_config_toml", {}).get("visible")]
-        assert toml_visible == [["codex-app-server"], ["codex-interactive"]]
+        assert toml_visible == [
+            ["codex-app-server"], ["codex-interactive"], ["codex_mcp"]]

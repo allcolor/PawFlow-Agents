@@ -461,7 +461,15 @@ _run_agent_loop()              -- The core loop
 3. **Response budget**: `max_tokens` is unlimited when omitted or zero. A positive configured value limits only the visible terminal answer and is enforced afresh after each tool turn.
 4. **Cost budget**: Provider usage has no implicit per-run cost ceiling. A positive user-configured `max_budget_usd` covers total provider usage, including reasoning and tool-call turns.
 5. **Generation tracking**: Each conversation+agent pair has a generation counter. If a new message arrives (bumping the generation), the current loop detects staleness and can yield.
-6. **Queue-based messaging**: New user messages do not cancel the running agent. They are queued and processed after the current turn completes. For Claude Code providers, messages can be injected directly into the active session (preemption). At turn end, the final drain serializes the exact unhandled user-message delta and sets `_retrigger_after_done`; the streaming wrapper then re-runs the loop and **re-checks the flag after every retrigger** (bounded at 5 per idle transition). A live CLI receives only that delta. If a cold context is corrected to a live-session delta during the retrigger, the rebuild uses the same serialized messages and suppresses reinjection of the stale wake FlowFile payload. A retrigger turn's own final drain can pull in fresh messages — e.g. a delegate result landing mid-retrigger — and a one-shot check used to drop them silently: they were already out of the PendingQueue (so the post-idle wake saw nothing) but no turn ever answered them.
+6. **Queue-based messaging**: New user messages do not cancel the running agent. They are queued and processed after the current turn completes. For Claude Code providers, messages can be injected directly into the active session (preemption). At turn end, the final drain serializes the exact unhandled user-message delta and sets `_retrigger_after_done`; the streaming wrapper then re-runs the loop and **re-checks the flag after every retrigger** (bounded at 5 per idle transition). A live CLI receives only that delta. If a cold context is corrected to a live-session delta during the retrigger, the rebuild uses the same serialized messages and suppresses reinjection of the stale wake FlowFile payload. A retrigger turn's own final drain can pull in fresh messages — e.g. a delegate result landing mid-retrigger — and a one-shot check used to drop them silently: they were already out of the PendingQueue (so the post-idle wake saw nothing) but no turn ever answered them. Delegate-result preemption therefore always schedules a coalesced pending wake after enqueue; an active caller defers it and an idle caller consumes it, including when teardown races the delivery check. The drained batch decides only the **next turn's mode** (`_alc_apply_queued_delegate_turn_mode`); the loop snapshots the completed turn's mode before the drain and uses that immutable owner for delegate terminal delivery. This prevents an interleaved human or tmux message from retroactively turning a completed shared-delegate response into a normal agent response and orphaning its `task_id`. Next-turn selection replays the trigger-site rule: any human message in the batch yields a visible user turn, otherwise the newest external request yields an isolated `external_request` turn, otherwise the newest delegate request yields a private `delegate_reply` turn, otherwise a user turn; the previous turn's mode is never inherited and a stale DELEGATE MODE hint is stripped from the system message. Human precedence matters because an incoming message whose mode differs from the running turn's mode is always queued ("mode mismatch"): letting the newest queued delegate broadcast re-select `delegate_reply` routed the agent's replies privately to the delegator and queued the user's next messages again, starving the webchat until a force stop.
+
+   Force stop is also a durable queue boundary. It persists conversation and
+   per-agent creation-time cutoffs before clearing pending work, and
+   `PendingQueue.enqueue` performs the cutoff check and append under the same
+   queue lock used by cleanup. A live-preempt request blocked inside a failed
+   provider can therefore return after cancellation without recreating its old
+   rescue message or scheduling a ghost wake; messages created after the stop
+   remain eligible for the next user turn.
 7. **Multi-round**: `max_rounds` is unlimited when omitted or zero; a positive user-configured value limits consecutive autonomous turns.
 8. **One iteration owns one heartbeat**: the heartbeat is a thread started per iteration, covering the LLM call and the tools. `_alc_iteration` starts it and stops it in a `finally`, because the body leaves by five different returns — a compact restart, a cold restart, an overflow retry, a break, the normal end — and by any exception the turn raises. Stopping it at each return is how threads were left behind, one per attempt, all publishing for the same conversation. The body still stops it early on purpose before the end-of-iteration bookkeeping; the handle is cleared on stop, so the `finally` then finds nothing to do and it is never stopped twice.
 9. **Tool scope isolation**: API-provider dispatch forks the tool registry immediately before execution and configures the fork with the current user, conversation, agent, client, and model. Handler objects therefore never share mutable conversation scope across concurrent turns; referenced services, locks, caches, and registry hooks remain shared intentionally.
@@ -863,6 +871,18 @@ results. The caller receives the original delegate request and only the final
 synthesized reply from the target; the target's intermediate assistant blocks,
 tool calls, and tool results are not appended to the caller's private context.
 Delegate replies are never projected into shared context.
+
+Delegate observability uses that same durable transcript as its source of
+truth. Shared requests and replies carry the same `task_id`; isolated and
+flash work writes an append-only `sub_agent_trace` before pool submission and
+a terminal update on every exit, including preflight failures.
+`delegate_status` scans those rows in streaming mode and merges them with the
+process-local live registry, while `delegate_result` falls back to the durable
+reply or trace when the in-memory finished ring is empty. The scan retains at
+most the latest 100 terminal results and never loads the complete transcript
+into memory. Consequently an LLM context compaction or provider-session restart
+does not lose an acknowledged asynchronous delegate or its completed result,
+and merging runtime state never launches the task a second time.
 
 Workflow Agents always use this shared delegate transport. If a caller requests
 `isolated`, `last:N`, `summary:N`, `full`, or another non-shared context for a

@@ -1428,13 +1428,15 @@ def test_cc_interactive_interrupt_turn_sends_only_stop_transport():
     agent_core = agent_core_src()
     cci_start = agent_core.index(
         'if _client_provider in ("claude-code-interactive", '
-        '"antigravity-interactive", "codex-interactive")')
+        '"antigravity-interactive", "codex-interactive", "cc_mcp", '
+        '"codex_mcp", "agy_mcp")')
     cci_end = agent_core.index('logger.info(f"[agent:{conversation_id[:8]}] interrupted', cci_start)
     cci_branch = agent_core[cci_start:cci_end]
 
     assert "interrupt_claude_code_interactive" in cci_branch
     assert "interrupt_antigravity_interactive" in cci_branch
     assert "interrupt_codex_interactive" in cci_branch
+    assert 'f"interrupt_{_client_provider}"' in cci_branch
     assert "SOFT_INTERRUPT_USER_COMMAND" in cci_branch
     assert "_compact(" not in cci_branch
     assert "_with_provider_system_prompt" not in cci_branch

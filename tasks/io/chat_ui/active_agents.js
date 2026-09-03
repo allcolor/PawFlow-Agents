@@ -340,7 +340,20 @@ function updateActivePanel() {
     // establish a reliable containing block for percentage heights, so the
     // colored bar collapsed to 0px (only the % number was visible).
     let ctxHtml = '';
-    if (ctxMax > 0) {
+    if (info.contextSource === 'unavailable') {
+      // Managed MCP without a native local measurement: say so instead of
+      // drawing an empty battery that reads as 0% used. The i18n keys are
+      // integrated with the shared catalog; until then the English text is
+      // the fallback (t() returns the bare key for a missing entry).
+      const _unavailableTitle = t('contextGaugeUnavailable') === 'contextGaugeUnavailable'
+        ? 'Context usage unavailable for this provider (no native measurement)'
+        : t('contextGaugeUnavailable');
+      const _unavailableShort = t('contextGaugeUnavailableShort') === 'contextGaugeUnavailableShort'
+        ? 'ctx n/a' : t('contextGaugeUnavailableShort');
+      ctxHtml = '<span class="ctx-gauge ctx-gauge-unavailable" title="'
+        + escapeAttr(_unavailableTitle) + '" style="font-size:10px;color:#888;">'
+        + escapeHtml(_unavailableShort) + '</span>';
+    } else if (ctxMax > 0) {
       ctxHtml = renderCtxGauge({ used: ctxUsed, max: ctxMax, pct: ctxPct }, { width: 60 });
     }
     // Live-session badge: shown when any supported CLI is reusing a warm
@@ -371,7 +384,11 @@ function updateActivePanel() {
         : (info.geminiReuseCount || 0);
       const livedStr = lived < 60 ? lived + 's'
         : Math.floor(lived / 60) + 'm' + (lived % 60) + 's';
-      const cliLabel = liveCli === 'cc' ? 'Claude Code'
+      // A managed MCP provider reuses the interactive pool, so the live
+      // telemetry arrives under the pool's prefix; the label names the
+      // provider actually running.
+      const cliLabel = info.providerLabel ? info.providerLabel
+                     : liveCli === 'cc' ? 'Claude Code'
                      : liveCli === 'cci' ? 'Claude Code Interactive'
                      : liveCli === 'codex' ? 'Codex'
                      : liveCli === 'codex-interactive'
@@ -520,6 +537,13 @@ function syncActiveFromServer(force) {
         geminiIdleSeconds: a.gemini_idle_seconds || 0,
         runtimeKind: a.runtime_kind || (existing ? existing.runtimeKind : ''),
         workflowRunId: a.workflow_run_id || (existing ? existing.workflowRunId : ''),
+        // Concrete provider and honest telemetry origin. A managed MCP
+        // provider reports 'unavailable' usage/context: the gauge must show
+        // that, never a false 0%.
+        provider: a.active_llm_provider || (existing ? existing.provider : ''),
+        providerLabel: a.provider_label || (existing ? existing.providerLabel : ''),
+        usageSource: a.usage_source || (existing ? existing.usageSource : ''),
+        contextSource: a.context_source || (existing ? existing.contextSource : ''),
         updatedAt: now,
       };
       // list_active is status-only. Context gauge hydration is handled by

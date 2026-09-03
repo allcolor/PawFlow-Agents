@@ -26,7 +26,8 @@ MODES = (NONE, API_KEY, OAUTH)
 #: They default to ``oauth`` because that is how they are normally set up.
 CLI_PROVIDERS = frozenset({
     "claude-code", "claude-code-interactive", "antigravity-interactive",
-    "codex-app-server", "codex-interactive", "gemini",
+    "codex-app-server", "codex-interactive", "gemini", "acp",
+    "cc_mcp", "codex_mcp", "agy_mcp",
 })
 
 

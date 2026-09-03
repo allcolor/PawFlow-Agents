@@ -197,6 +197,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         container_alive = bool(existing and self._is_alive(existing.name))
         tmux_alive = bool(existing and container_alive
                           and self._tmux_is_alive(existing.name))
+        # The pool key is unchanged; the concrete provider, observation mode
+        # and managed launch revision are compared on the live state instead.
+        compatible = existing is None or self._session_compatible(
+            existing, client)
         dead_existing = None
         with self._lock:
             current = self._sessions.get(key)
@@ -205,7 +209,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 # theirs is fresher, reuse it.
                 current.last_used = time.time()
                 return current
-            if existing is not None and container_alive and tmux_alive:
+            if (existing is not None and container_alive and tmux_alive
+                    and compatible):
                 existing.last_used = time.time()
                 return existing
             if existing is not None:
@@ -213,9 +218,17 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 if container_alive:
                     dead_existing = existing
         if dead_existing is not None:
-            logger.warning(
-                "[cci-live] tmux session died inside live container %s; "
-                "recreating the interactive session", dead_existing.name)
+            if tmux_alive and not compatible:
+                logger.info(
+                    "[cci-live] live session %s was launched for %s/%s and "
+                    "cannot serve %s; recreating it",
+                    dead_existing.name, dead_existing.provider,
+                    dead_existing.observation_mode,
+                    self._client_provider(client) or "?")
+            else:
+                logger.warning(
+                    "[cci-live] tmux session died inside live container %s; "
+                    "recreating the interactive session", dead_existing.name)
             self._recover_container_tokens(dead_existing)
             self._kill_container(dead_existing.name)
             self._unregister_event_session(dead_existing)
@@ -406,7 +419,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                     "created_at": state.created_at,
                     "idle_seconds": max(0.0, time.time() - state.last_used),
                     "lived_seconds": max(0.0, time.time() - state.created_at),
-                    "provider": "claude-code-interactive",
+                    "provider": (getattr(state, "provider", "")
+                                 or "claude-code-interactive"),
+                    "observation_mode": getattr(
+                        state, "observation_mode", "mitm"),
                 })
         return sessions
 
@@ -439,7 +455,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                     "created_at": state.created_at,
                     "idle_seconds": max(0.0, now - state.last_used),
                     "lived_seconds": max(0.0, now - state.created_at),
-                    "provider": "claude-code-interactive",
+                    "provider": (getattr(state, "provider", "")
+                                 or "claude-code-interactive"),
+                    "observation_mode": getattr(
+                        state, "observation_mode", "mitm"),
                 })
         return sessions
 

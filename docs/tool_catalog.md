@@ -319,10 +319,12 @@ Four properties worth knowing before relying on it:
   stable.
 - **The index refreshes when you search, not when a message is appended.** The
   refresh is incremental twice over — a conversation whose `updated_at` has not
-  moved since it was indexed is never opened, and one that has moved is read
-  only past its row watermark — so the difference is only *when* the cost
-  lands; putting it on append would make the chat UI wait for a feature that
-  turn may never use.
+  moved since it was indexed is never opened, and an ordinary append reads only
+  the reverse-tail rows past its watermark. The watermark count and tail read
+  share the conversation lock so a concurrent append cannot shift the selected
+  rows. A changed `transcript_generation` still purges and rebuilds the whole
+  conversation. The difference is only *when* the cost lands; putting it on
+  append would make the chat UI wait for a feature that turn may never use.
 - **Only `user` and `assistant` rows are indexed**, and only conversations the
   searching user owns. Tool output is machine text that would dominate every
   ranking, and a shared conversation is searchable by its owner, not yet by
@@ -333,6 +335,12 @@ Four properties worth knowing before relying on it:
 `read_history` reads the conversation it is called in, a bounded window at a
 time — it never loads a transcript whole, which is what a conversation of a
 few hundred thousand messages makes fatal.
+
+For `search`, plaintext segmented logs are first filtered by ripgrep at the
+file-name level. Only candidate segments are decoded and composed; preceding
+segments are counted only when needed to preserve absolute `[#index]` labels.
+Encrypted transcripts and any missing, timed-out, or failing ripgrep use the
+same exact bounded streaming scan as before.
 
 Ownership is therefore checked once, up front, in `_owns_conversation`
 (`core/handlers/history.py`): `recent` pages through `load_page`, which is
@@ -352,8 +360,8 @@ someone else.
 |---|---|
 | `delegate` | Spawn/delegate work to another agent. |
 | `flash_delegate` | Create temporary task-specific agents for independent parallel work; they use the caller's LLM service and disappear after completion. Background results are delivered to the caller (preempt/wake) — and when the caller is on a live realtime voice session, the result is ALSO injected into the session and spoken (out-of-band `context` message). |
-| `delegate_status` | Report the caller's delegates (flash agents and background sub-agents): live ones (name, kind, task_id, age, queued follow-ups) from the live-delegate registry, and recently finished ones (status, error, duration, response size) from a bounded ring buffer. Lets the calling agent verify delegated work is actually running instead of inferring liveness from silence. |
-| `delegate_result` | Fetch the retained output of a finished delegate by task_id (full response text, capped at 200k chars, last 100 completions). The pull counterpart to the asynchronous push delivery — use it when a result's delivery was missed. Reports `running` for a still-live delegate. |
+| `delegate_status` | Report the caller's shared, flash, and isolated delegates. It streams the durable conversation transcript to rebuild shared request/reply pairs and isolated display traces, then merges process-local runtime details without duplicates. A context compaction or provider-session restart therefore cannot erase an acknowledged task from status. Finished results remain bounded to the latest 100. |
+| `delegate_result` | Fetch a finished delegate by task_id from the process-local result cache or its durable shared reply/display trace (full response text, capped at 200k chars, latest 100 completions). The pull counterpart to asynchronous push delivery; pending/running delegates remain visible even when no result exists yet. |
 | `consult_agent` | One-shot delegation to the conversation agent's own model: resolves the agent's system prompt and `llm_service`, sends the task with bounded conversation context, returns the answer as the tool result. Approval-exempt (the delegate gets no tools). Built for realtime voice sessions (`tool_profile=consult_agent`) where the realtime model is only the spoken interface and routes substantial work to the agent's brain; works from text sessions too. |
 | `manage_resource` | Create/update/delete/list agents, skills, tools, services, resources; review/import marketplace skills; assign/unassign skills to agents with live context notifications. Creates resources in conversation scope when called from an active conversation. |
 | `manage_package` | Build, inspect, install, export, list, and uninstall signed PawFlow Package (`.pfp`) artifacts with selectable objects and provenance. |

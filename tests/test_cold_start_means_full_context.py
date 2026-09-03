@@ -159,6 +159,8 @@ CLI_LAUNCH_SITES = [
     "core/llm_providers/antigravity_interactive.py",
     "core/llm_providers/codex_interactive.py",
     "core/llm_providers/_cc_stream.py",
+    # Managed MCP providers reuse the interactive pools and ask the same way.
+    "core/llm_providers/managed_mcp.py",
 ]
 
 # Modules that only carry out a launch someone else already decided on.

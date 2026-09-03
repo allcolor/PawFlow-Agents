@@ -15,6 +15,10 @@ _CLI_CONTEXT_PROVIDERS = (
     "codex-app-server",
     "codex-interactive",
     "gemini",
+    "acp",
+    "cc_mcp",
+    "codex_mcp",
+    "agy_mcp",
 )
 _USAGE_CACHE_LOCK = threading.RLock()
 _USAGE_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -340,7 +344,7 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
     # TUI window.  Treat it as cold immediately so page hydration does not
     # redisplay that stale percentage until the next user turn resets it.
     cold_codex_restart = (
-        provider == "codex-interactive"
+        provider in ("codex-interactive", "codex_mcp")
         and active_ctx is None
         and observed_tokens <= 0)
     # claude-code (-p) is the one CLI provider that measures its prompt only at

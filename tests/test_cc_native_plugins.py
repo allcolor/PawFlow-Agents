@@ -89,4 +89,6 @@ class TestServiceSchema:
             p for r in rules
             if r["set"].get("claude_plugins", {}).get("visible")
             for p in r["when"]["provider"])
-        assert visible_for == ["claude-code", "claude-code-interactive"]
+        # Every Claude Code transport takes native plugins, the managed MCP
+        # variant included; nothing else does.
+        assert visible_for == ["cc_mcp", "claude-code", "claude-code-interactive"]

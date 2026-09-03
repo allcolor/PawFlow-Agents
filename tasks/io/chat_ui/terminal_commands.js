@@ -88,10 +88,13 @@ async function cmdAgentTmux(agentName) {
   }
   const serviceId = _agentLlmService(targetAgent);
   const provider = _llmProviderForService(serviceId);
-  if (provider === 'antigravity-interactive') {
+  if (provider === 'antigravity-interactive' || provider === 'agy_mcp') {
     return _openAntigravityAgentTmux(targetAgent, serviceId);
   }
-  if (provider !== 'claude-code-interactive' && provider !== 'codex-interactive') {
+  // Managed MCP providers (cc_mcp, codex_mcp) own the same tmux as their
+  // interactive twins; the server resolves the pool from the provider.
+  const tmuxProviders = ['claude-code-interactive', 'codex-interactive', 'cc_mcp', 'codex_mcp'];
+  if (tmuxProviders.indexOf(provider) === -1) {
     addMsg('system', t('ccInteractiveTerminalNoLive'));
     return true;
   }

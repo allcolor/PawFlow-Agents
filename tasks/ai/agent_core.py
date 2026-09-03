@@ -334,8 +334,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
             # turn_callback again returns empty.)
             st._is_cli_provider = (
                 st.ctx.get("_is_claude_code")
-                or st.ctx.get("active_llm_provider") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini")
-                or getattr(st.client, "provider", "") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini")
+                or st.ctx.get("active_llm_provider") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "cc_mcp", "codex_mcp", "agy_mcp")
+                or getattr(st.client, "provider", "") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "cc_mcp", "codex_mcp", "agy_mcp")
             )
             if (not st.response_content and not st._fatal_error
                     and not st._is_cli_provider

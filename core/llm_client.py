@@ -25,6 +25,8 @@ from core.llm_providers import (
     LLMAntigravityInteractiveMixin,
     LLMCodexAppServerMixin,
     LLMCodexInteractiveMixin,
+    LLMManagedMcpMixin,
+    LLMAcpMixin,
     LLMGeminiMixin,
 )
 from core._llm_types import (  # noqa: F401 -- re-exported for back-compat (invariant 1)
@@ -75,6 +77,8 @@ class LLMClient(
     LLMAntigravityInteractiveMixin,
     LLMCodexAppServerMixin,
     LLMCodexInteractiveMixin,
+    LLMManagedMcpMixin,
+    LLMAcpMixin,
     LLMGeminiMixin,
 ):
     """Standalone LLM HTTP client (no BaseService dependency).
@@ -90,7 +94,7 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "openai-responses", "azure-openai", "copilot", "omniroute", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini")
+    PROVIDERS = ("openai", "openai-responses", "azure-openai", "copilot", "omniroute", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "acp", "cc_mcp", "codex_mcp", "agy_mcp")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
@@ -112,6 +116,9 @@ class LLMClient(
         "codex-app-server": True,
         "codex-interactive": True,
         "gemini": True,
+        "cc_mcp": False,
+        "codex_mcp": False,
+        "agy_mcp": False,
     }
 
     _circuit_lock = threading.Lock()
@@ -218,6 +225,12 @@ class LLMClient(
         _max_ctx = getattr(self, '_max_context_size', 0)
         if _max_ctx:
             clone._max_context_size = _max_ctx
+        if self.provider == "acp":
+            sessions, lock = self._acp_shared_state()
+            clone._acp_live_sessions = sessions
+            clone._acp_live_lock = lock
+            if hasattr(self, "_tool_registry"):
+                clone._tool_registry = self._tool_registry
         # Per-TURN state that must follow the call: the context phase leaves
         # this here when it emptied the message list for a live session, and
         # only the provider -- running on this clone -- can discover the
@@ -615,6 +628,16 @@ class LLMClient(
             return
         tokens_in = response.tokens_in
         tokens_out = response.tokens_out
+        if (
+            self.provider == "acp"
+            and getattr(response, "input_usage_native", None) is False
+        ):
+            return
+        if (
+            self.provider in ("cc_mcp", "codex_mcp", "agy_mcp")
+            and not (tokens_in or tokens_out)
+        ):
+            return
         # Estimate if provider didn't return counts
         if not tokens_in and messages:
             tokens_in = count_messages_tokens(messages)
@@ -646,11 +669,13 @@ class LLMClient(
             fn = getattr(self, "_codex_interactive_send_user_message", None)
         elif self.provider == "gemini":
             fn = getattr(self, "_gemini_send_user_message", None)
+        elif self.provider in ("cc_mcp", "codex_mcp", "agy_mcp"):
+            fn = getattr(self, f"_{self.provider}_send_user_message", None)
         else:
             return False
         if fn is None:
             return False
-        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive"):
+        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "cc_mcp", "codex_mcp", "agy_mcp"):
             return fn(text, attachments, **kwargs)
         return fn(text, attachments)
 
@@ -666,7 +691,8 @@ class LLMClient(
 
 _PROVIDERS_WITHOUT_DEFAULT_MODEL = (
     "claude-code", "claude-code-interactive", "antigravity-interactive",
-    "codex-app-server", "codex-interactive", "gemini")
+    "codex-app-server", "codex-interactive", "gemini", "acp",
+    "cc_mcp", "codex_mcp", "agy_mcp")
 
 
 def resolve_default_model(provider: str, config: Optional[Dict[str, Any]]) -> str:

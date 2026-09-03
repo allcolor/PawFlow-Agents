@@ -30,6 +30,10 @@ def test_llm_service_references_external_credential_provider():
         "claude-code-interactive": "claude-code",
         "antigravity-interactive": "gemini",
         "codex-interactive": "codex-app-server",
+        # Managed MCP providers reuse the same three OAuth pools.
+        "cc_mcp": "claude-code",
+        "codex_mcp": "codex-app-server",
+        "agy_mcp": "gemini",
     }
     # CLI providers own no login action here — they reference a credential
     # pool. Copilot is not a pool: its device flow just fills api_key.

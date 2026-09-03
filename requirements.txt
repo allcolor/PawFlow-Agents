@@ -79,3 +79,7 @@ azure-storage-blob>=12.17.0
 psycopg2-binary>=2.9.0
 # Realtime worker-control spike/server tooling and LiveKit worker HTTP client
 aiohttp>=3.9.0
+
+# Agent Client Protocol (typed SDK plus PawFlow's explicit WS proxy runtime)
+agent-client-protocol==0.12.1
+websockets>=13.0

@@ -14,6 +14,7 @@ import pytest
 
 from core._llm_types import (
     INTERACTIVE_CLI_PROVIDERS,
+    NO_REPLAY_PROVIDERS,
     DeltaContextRequired,
     LLMCallError,
 )
@@ -55,7 +56,10 @@ def test_stop_failure_without_rate_limit_is_still_terminal():
 def test_interactive_cli_provider_set_covers_every_tmux_provider():
     assert INTERACTIVE_CLI_PROVIDERS == {
         "claude-code-interactive", "codex-interactive",
-        "antigravity-interactive"}
+        "antigravity-interactive",
+        # Managed MCP providers reuse the same tmux pools.
+        "cc_mcp", "codex_mcp", "agy_mcp"}
+    assert NO_REPLAY_PROVIDERS == INTERACTIVE_CLI_PROVIDERS | {"acp"}
 
 
 def _failing_client(monkeypatch, provider, exc, calls):
@@ -65,12 +69,10 @@ def _failing_client(monkeypatch, provider, exc, calls):
         calls.append(provider)
         raise exc
 
-    monkeypatch.setattr(client, "_stream_claude_code_interactive", _boom,
-                        raising=False)
-    monkeypatch.setattr(client, "_stream_codex_interactive", _boom,
-                        raising=False)
-    monkeypatch.setattr(client, "_stream_antigravity_interactive", _boom,
-                        raising=False)
+    # The driver dispatches on ``_stream_<provider>``; stub exactly that one
+    # so the count below proves it was entered once and never again.
+    monkeypatch.setattr(client, f"_stream_{provider.replace('-', '_')}",
+                        _boom, raising=False)
     # Never sleep in the retry loop even if a regression re-enables it.
     monkeypatch.setattr("core._llm_client_driver.time.sleep", lambda *_: None)
     return client
@@ -132,7 +134,7 @@ def test_agent_loop_skips_transient_retry_for_interactive_cli_providers():
     # into a live CLI session.
     with open("tasks/ai/_alc_llm_turn.py", encoding="utf-8") as handle:
         src = handle.read()
-    assert "INTERACTIVE_CLI_PROVIDERS" in src
-    assert ("if (st._transient and not st._interactive_cli\n"
+    assert "NO_REPLAY_PROVIDERS" in src
+    assert ("if (st._transient and not st._no_replay_provider\n"
             "                        and not st.ctx.get(\"_agent_transient_retried\")):"
             ) in src

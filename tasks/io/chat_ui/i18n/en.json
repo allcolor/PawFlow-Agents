@@ -476,6 +476,8 @@
   "contextExpectedArray": "expected array",
   "contextGauge": "context gauge",
   "contextGaugeTitle": "Context {used}k/{max}k ({pct}% left)",
+  "contextGaugeUnavailable": "Context usage unavailable for this provider (no native measurement)",
+  "contextGaugeUnavailableShort": "ctx n/a",
   "contextRemainingPct": "{pct}% left",
   "contextGeminiSession": "Gemini session",
   "contextInvalidJson": "Invalid JSON",

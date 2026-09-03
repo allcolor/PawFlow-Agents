@@ -199,7 +199,10 @@ def test_manual_compact_stops_active_loop_before_replacing_context():
     bg_start = block.index("def _bg():")
     bg_block = block[bg_start:block.index("if not self._acquire_context_op", bg_start)]
     assert 'if op_name != "compact":' not in bg_block
-    assert "self.cancel_agent(conv_id, agent_name=agent_name, silent=True)" in bg_block
+    cancel_at = bg_block.index(
+        "self.cancel_agent(conv_id, agent_name=agent_name, silent=True)")
+    evict_at = bg_block.index("release_cli_live_sessions_for_context(")
+    assert cancel_at < evict_at
     assert "def _refresh_active_context_from_store" in block
     assert "active_msgs[:] = refreshed" in block
     assert "_context_usage_cache" in block

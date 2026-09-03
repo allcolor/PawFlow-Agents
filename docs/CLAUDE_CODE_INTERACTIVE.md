@@ -855,6 +855,198 @@ tool calls, image materialization, and lifecycle hooks. It still requires a live
 Claude subscription session and has not been exercised here against a real
 Claude Code Docker session.
 
+## Managed MCP Providers (`cc_mcp`, `codex_mcp`, `agy_mcp`)
+
+The managed MCP providers run the same official interactive CLIs, in the same
+managed containers, with the same tmux paste path, prompt builders, credential
+pools and PawFlow MCP bridge as `claude-code-interactive`,
+`codex-interactive` and `antigravity-interactive`. The one substitution is
+observation: instead of a vendor-traffic MITM proxy, the turn's outcome comes
+from the CLI's native lifecycle hooks.
+
+| Provider | CLI | Pool reused | Credential family | Status |
+|---|---|---|---|---|
+| `cc_mcp` | `claude` | `InteractiveClaudeCodePool` | `claude-code` | available |
+| `codex_mcp` | `codex` | `CodexInteractivePool` | `codex-app-server` | available |
+| `agy_mcp` | `agy` | `AntigravityObserverPool` | `gemini` | probe-gated, unavailable |
+
+The executable contract is one table, `core/managed_mcp_spec.py`
+(`MANAGED_MCP_PROVIDERS`). Every capability claim below is read from it; the
+UI labels are `Claude Code — MCP hooks`, `Codex — MCP hooks` and
+`Antigravity — MCP hooks`.
+
+### Observation mode
+
+Each interactive session carries `observation_mode` (`mitm` or
+`managed_mcp`), its concrete `provider` and, for managed sessions, a
+`launch_revision` (`MANAGED_MCP_LAUNCH_REVISION`). The pool key is unchanged
+(user, conversation, agent, service); reuse compatibility additionally compares
+those three fields (`_session_compatible`), so switching a service between an
+interactive provider and its managed twin kills and recreates the session
+instead of rewiring a running CLI. A client whose `provider` is not a string
+(test doubles) has no opinion and keeps the session.
+
+In `managed_mcp` mode the launcher (`_cci_pool_spawn._start_new`,
+`_CodexInteractiveSpawnMixin._start_new`) skips every interception step and
+the snapshot tests prove their absence:
+
+- no leaf certificate and no CA install (`generate_leaf`, `_install_ca` are
+  not called);
+- no proxy process (`_start_proxy` is not called, `proxy_started` stays
+  false) and the proxy runtime files (`cc_interactive_proxy.py`,
+  `cc_interactive_observers.py`, `cc_interactive_ws.py`) are not copied;
+- no vendor host override (`--add-host <vendor>:127.0.0.1` is absent);
+- no interception environment (`NODE_EXTRA_CA_CERTS`,
+  `CLAUDE_CODE_CERT_STORE=system` are absent); a configured `base_url` is
+  handed to the CLI as its own vendor endpoint, never redirected.
+
+What stays identical: `--strict-mcp-config` with the internal PawFlow MCP
+server, the six Claude hooks written by `_write_hook_settings`, the five Codex
+hooks written by `_write_codex_hooks`, `CODEX_HOME` isolation, the injected
+prompt marker, submission proof and every tmux transport rule above. The CLI
+environment additionally carries `PAWFLOW_CCI_HOOK_CLIENT` (`cc`, `codex`,
+`agy`) so the hook knows which payload shape it receives.
+
+### The hook carries the final answer
+
+`tools/cc_interactive_hook.py` keeps its registration (event token, managed
+session token, container id, `client_kind="hook"`) and its `hook` event
+envelope. On `Stop` it now delivers `last_assistant_message`, bounded at
+200,000 characters including the truncation notice, plus `final_source`:
+
+- `hook_field` when the CLI supplied the text;
+- `transcript` when the field was empty and the last assistant message was
+  read from the CLI's local transcript (`transcript_path`), tail-read only;
+  the Claude Code JSONL shape and the Codex rollout `response_item` shape are
+  both supported, tool calls and tool results never match;
+- empty when neither exists, in which case the coordinator fails the turn.
+
+Delivery stays fire-and-forget with one bounded retry (`_DELIVERY_RETRIES`,
+0.4 s) inside the five-second hook timeout. The hook mints no consumer epoch,
+no turn receipt and no event id: those stay server-owned.
+
+For `agy` the hook is client-aware: `hookEventName`/`transcriptPath`/
+`sessionId` are mapped to the Claude field names, `PreInvocation` becomes a
+`UserPromptSubmit` whose prompt is the transcript's last user message, and
+the hook prints `{}` on stdout as Antigravity expects. Version 1 injects no
+context through hooks; cold and delta context stay in the pasted prompt.
+
+### The managed turn coordinator
+
+`core/llm_providers/_managed_mcp_turn._ManagedMcpTurnCoordinator` reuses the
+CCI coordinator's consumer claim/epoch/eviction, liveness probe, tool-row
+dedup and callbacks, and reads nothing from vendor traffic:
+
+- `UserPromptSubmit` marks the prompt as submitted (the pool's
+  `wait_for_prompt_submission` proof is unchanged);
+- `Stop` completes the turn with the hook's final text: exactly one text
+  callback, one text block, one turn callback and one `LLMResponse` with
+  `tool_calls=[]`, `raw.provider` set to the concrete provider and
+  `raw.telemetry` naming what is native (`final_source`) and what is
+  `unavailable` (thinking, usage, context for `cc_mcp`; Codex keeps its
+  native rollout `token_count` for the context gauge);
+- a `Stop` whose timestamp predates the turn's own start is a late final of
+  a previous turn and is ignored; a duplicate final after completion is left
+  for the next drain and can complete nothing;
+- `StopFailure`, `SessionEnd`, an empty final and the optional deadline
+  (`PAWFLOW_MANAGED_MCP_FINAL_TIMEOUT_SECONDS`, 0 = disabled) raise a typed,
+  non-retryable `LLMCallError`; `PreCompact`/`PostCompact` raise
+  `CCCompactDetected` exactly as the MITM path does; a dead container/tmux
+  fails the turn through the shared liveness probe;
+- relay-published `tool_use`/`tool_result` rows are mirrored once through the
+  session's dedup sets and never returned to `AgentLoopTask` as tool calls;
+- vendor events (`sse`, `request_start`, ...) on a managed session are logged
+  once and ignored: a hook/MCP failure never falls back to MITM.
+
+Text streaming is therefore final-only in version 1; the webchat still gets
+active state, MCP tool activity and the final text.
+
+### Event service
+
+`CCInteractiveSessionEvents.observation_mode` is set by the pool at
+`register_session(..., provider=<concrete>, observation_mode="managed_mcp")`.
+A managed session is `connected` from registration (no proxy will ever
+connect; the pool is the liveness evidence) and a hook registration records
+the container id for the capture liveness probe. `_pool_family`,
+`_tmux_input_tag` and `_pool_for` resolve the interactive pool behind a
+concrete provider, so a manual tmux prompt on `cc_mcp` is persisted once with
+`source.input = "cc_mcp_tmux"` and `channel = "tmux"`, and
+`_run_manual_capture` waits on the managed coordinator without importing the
+two MITM coordinators. The undelivered-events rule, orphan adoption and the
+capture claim are unchanged: `UserPromptSubmit` is the managed turn trigger.
+
+### Provider facade
+
+`core/llm_providers/managed_mcp.LLMManagedMcpMixin` exposes `_stream_cc_mcp`,
+`_stream_codex_mcp`, `_stream_agy_mcp`, `interrupt_*`, `cancel_*` and
+`_*_send_user_message` with the same signatures as the interactive twins. A
+turn is: cold/delta guard, `_cci_prompt`, claim + drain, one `send_text`,
+managed coordinator, release, `end_turn`. Live preemption is not advertised
+(`live_preempt=False`): `_*_send_user_message` returns `False` and the
+message stays queued for the next loop, until the server-owned request state
+can prove which final answers which prompt. Force stop is the pool's
+existing `force_stop`; interrupting a session that is already gone is a
+no-op, never an error.
+
+### Active agents, terminal and grab
+
+`list_active` keys the CLI runtime check on the row's concrete provider
+(`cc_mcp` rows are backed only by `cc_mcp` sessions) and annotates managed
+rows with `usage_source`, `context_source`, `observation_mode` and
+`provider_label`; the panel shows `ctx n/a` instead of a false 0% when the
+context source is `unavailable`. `open_cc_interactive_terminal` resolves the
+pool from the provider's pool family, and grab maps `cc_mcp`/`codex_mcp` to
+the same terminal action as their twins.
+
+### `agy_mcp` probe record (WP0)
+
+Recorded on 2026-09-03 against `pawflow-claude-code:latest` (image
+`f960169f0778`, `agy` 1.1.25); commands and raw output are in
+`tests/fixtures/agy_managed_hook_probe.json`, the verdict function in
+`core/llm_providers/_managed_mcp_agy_probe.py`.
+
+- `agy --help` lists no `hooks` subcommand; `/hooks` exists only as a slash
+  command.
+- Binary identifiers: `PostInvocation` (98), `PreInvocation` (97),
+  `SessionStart` (70), `hooks.json` (22), `stopReason` (21), `injectSteps`
+  (14), `PostToolUse` (9), `PreToolUse` (7), `transcriptPath` (4),
+  `SessionEnd` (3). Absent: `UserPromptSubmit`, `hookEventName`,
+  `hookSpecificOutput`, `lastAssistantMessage`, `last_assistant_message`,
+  `additionalContext`.
+- Changelog: hooks in `hooks.json` run before the built-in termination checks
+  so `PostInvocation` observes the final invocation and `Stop` hooks run;
+  `/hooks` writes `~/.gemini/config/hooks.json`, shared by TUI and backend.
+- `agy -p /hooks --output-format json` and an instrumented print turn with
+  `SessionStart`/`PreInvocation`/`PostInvocation`/`Stop`/`PreToolUse`/
+  `PostToolUse`/`SessionEnd` handlers both stopped at Google authentication;
+  no handler was invoked, so no payload field could be recorded.
+
+Verdict: the final-answer source is unproven. `agy_mcp` is registered in the
+spec table with `available=False` and every turn is refused with a typed
+error. The Antigravity pool nevertheless supports managed mode for the day the
+probe passes: `_is_usable` checks container + `pawflow-agy` tmux instead of
+`_proxy_log_ready`, `_write_agy_managed_hooks` writes `PreInvocation`, `Stop`
+and `SessionEnd` into the shared `config/hooks.json` and both settings files,
+and the container mounts the client-aware hook instead of the observer proxy.
+Enabling it requires an authenticated CI probe whose `Stop` payload either
+carries a final-text field or points at a transcript whose last assistant
+message equals the visible answer (`evaluate_probe`).
+
+### Troubleshooting
+
+- *Turn fails with "no final Stop hook within N s"*: the hook could not reach
+  the event service twice in a row, or the CLI never fired `Stop`. Check the
+  container's `PAWFLOW_CCI_EVENT_URL` reachability; the prompt is consumed,
+  so the failure is reported instead of replayed.
+- *"the Stop hook carried no extractable final answer"*: the CLI sent an empty
+  `last_assistant_message` and its transcript had no assistant text (for
+  example a turn that ended on a tool call). Nothing is fabricated.
+- *Tool rows missing*: managed mode shows PawFlow MCP calls only; Codex and
+  Antigravity built-in tools are invisible by design
+  (`builtin_tools_visible=False`).
+- *Session recreated after a provider switch*: expected, see observation
+  mode above.
+
 ## Codex Interactive Provider
 
 `codex-interactive` reuses the persistent tmux and transparent TLS observation

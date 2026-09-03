@@ -1,8 +1,8 @@
 """LLM Connection Service - Connector for AI inference providers.
 
-Supports direct OpenAI/Anthropic APIs, OpenAI-compatible APIs, and CLI-backed
-providers (Claude Code, Claude Code interactive, Antigravity interactive, Codex
-app-server, Gemini CLI). Uses shared LLM client from core/llm_client.py.
+Supports direct OpenAI/Anthropic APIs, OpenAI-compatible APIs, CLI-backed
+providers, and generic outbound ACP agents. Uses the shared LLM client from
+core/llm_client.py.
 """
 
 import logging
@@ -95,6 +95,12 @@ class LLMConnectionService(BaseService):
                 f"Unknown provider '{self.provider}'. "
                 f"Supported: {', '.join(self.PROVIDERS)}"
             )
+        from core.managed_mcp_spec import managed_mcp_capability_matrix
+        _managed_capability = managed_mcp_capability_matrix().get(self.provider)
+        if _managed_capability and not _managed_capability["available"]:
+            raise ServiceError(
+                f"{_managed_capability['label']} is unavailable: "
+                f"{_managed_capability['unavailable_reason']}")
         if self.provider == "omniroute":
             from urllib.parse import urlparse
             from core.llm_providers.omniroute import auth_headers, request_headers
@@ -108,6 +114,16 @@ class LLMConnectionService(BaseService):
                 auth_headers(
                     self.api_key, self.config.get("omniroute_auth_mode", ""))
                 request_headers(self.config)
+            except ValueError as exc:
+                raise ServiceError(str(exc)) from exc
+        if self.provider == "acp":
+            from core.llm_auth_modes import NONE, resolve_mode
+            from core.llm_providers.acp import validate_acp_config
+
+            if resolve_mode(self.provider, self.config) != NONE:
+                raise ServiceError("provider 'acp' requires auth_mode=none")
+            try:
+                validate_acp_config(self.config)
             except ValueError as exc:
                 raise ServiceError(str(exc)) from exc
         # One credential rule for every provider. It used to fork on provider
@@ -142,7 +158,8 @@ class LLMConnectionService(BaseService):
         return {"provider": self.provider, "ready": True}
 
     def _close_connection(self):
-        pass
+        if self.provider == "acp":
+            self._client._acp_close_all()
 
     def _apply_defaults(self, temperature, max_tokens, model):
         """Apply service-level defaults from config.
@@ -322,6 +339,17 @@ class LLMConnectionService(BaseService):
         tokens_in = response.tokens_in
         tokens_out = response.tokens_out
 
+        if (
+            self.provider == "acp"
+            and getattr(response, "input_usage_native", None) is False
+        ):
+            return
+        if (
+            self.provider in ("cc_mcp", "codex_mcp", "agy_mcp")
+            and not (tokens_in or tokens_out)
+        ):
+            return
+
         # Estimate if provider didn't return token counts
         if not tokens_in and messages:
             tokens_in = count_messages_tokens(messages)
@@ -451,6 +479,9 @@ class LLMConnectionService(BaseService):
                     "claude-code-interactive": "claude-code",
                     "antigravity-interactive": "gemini",
                     "codex-interactive": "codex-app-server",
+                    "cc_mcp": "claude-code",
+                    "codex_mcp": "codex-app-server",
+                    "agy_mcp": "gemini",
                 },
                 "default": "",
                 "description": (
@@ -717,6 +748,55 @@ class LLMConnectionService(BaseService):
                     "no store field at all."
                 ),
             },
+            "acp_command": {
+                "type": "string", "default": "",
+                "description": "Executable path or name for the outbound ACP agent",
+            },
+            "acp_args": {
+                "type": "string", "default": "[]", "multiline": True,
+                "description": "JSON array of argv strings passed to the ACP agent",
+            },
+            "acp_cwd": {
+                "type": "string", "default": "",
+                "description": "Existing working directory for the ACP agent process",
+            },
+            "acp_env": {
+                "type": "string", "default": "{}", "multiline": True,
+                "description": "JSON object of explicit environment variables",
+            },
+            "acp_auth_method_id": {
+                "type": "string", "default": "",
+                "description": "Exact authentication method id advertised by the ACP agent",
+            },
+            "acp_auto_auth_single_method": {
+                "type": "boolean", "default": False,
+                "description": "Use the sole advertised ACP auth method when no id is configured",
+            },
+            "acp_reuse_process": {
+                "type": "boolean", "default": True,
+                "description": "Reuse the live ACP process and session between turns",
+            },
+            "acp_load_session": {
+                "type": "boolean", "default": True,
+                "description": "Load a persisted ACP session when the agent advertises support",
+            },
+            "acp_additional_directories": {
+                "type": "string", "default": "[]", "multiline": True,
+                "description": "JSON array of additional existing directories exposed to ACP",
+            },
+            "acp_mcp_mode": {
+                "type": "select", "default": "pawflow",
+                "options": ["none", "pawflow"],
+                "description": "Expose no MCP server or PawFlow's scoped MCP bridge",
+            },
+            "acp_use_client_io": {
+                "type": "boolean", "default": True,
+                "description": "Expose PawFlow-authorized ACP filesystem client methods",
+            },
+            "acp_title_override": {
+                "type": "string", "default": "",
+                "description": "Optional display title for responses from this ACP agent",
+            },
             "docker_image": {
                 "type": "string", "default": "pawflow-claude-code:latest",
                 "description": "Docker image for containerized execution",
@@ -797,7 +877,8 @@ class LLMConnectionService(BaseService):
                                      "claude-code", "claude-code-interactive",
                                      "antigravity-interactive", "codex-app-server",
                                      "codex-interactive",
-                                     "gemini"]},
+                                     "gemini", "acp",
+                                     "cc_mcp", "codex_mcp", "agy_mcp"]},
                 "set": {
                     "azure_deployment":  {"visible": False},
                     "azure_api_version": {"visible": False},
@@ -805,6 +886,18 @@ class LLMConnectionService(BaseService):
                     "omniroute_mode": {"visible": False},
                     "omniroute_budget_usd": {"visible": False},
                     "omniroute_budget_fallback": {"visible": False},
+                    "acp_command": {"visible": False},
+                    "acp_args": {"visible": False},
+                    "acp_cwd": {"visible": False},
+                    "acp_env": {"visible": False},
+                    "acp_auth_method_id": {"visible": False},
+                    "acp_auto_auth_single_method": {"visible": False},
+                    "acp_reuse_process": {"visible": False},
+                    "acp_load_session": {"visible": False},
+                    "acp_additional_directories": {"visible": False},
+                    "acp_mcp_mode": {"visible": False},
+                    "acp_use_client_io": {"visible": False},
+                    "acp_title_override": {"visible": False},
                 }
             },
             {
@@ -906,6 +999,47 @@ class LLMConnectionService(BaseService):
                 }
             },
             {
+                "when": {"provider": ["acp"]},
+                "set": {
+                    "auth_mode": {"visible": True, "default": "none"},
+                    "api_key": {"visible": False},
+                    "credential_service_id": {"visible": False},
+                    "base_url": {"visible": False},
+                    "relay_local": {"visible": False},
+                    "default_model": {"visible": False},
+                    "fallback_model": {"visible": False},
+                    "max_retries": {"visible": False},
+                    "supports_vision": {"visible": True},
+                    "vision_llm_service": {"visible": False},
+                    "max_concurrent": {"visible": False},
+                    "docker_image": {"visible": False},
+                    "docker_cpu_limit": {"visible": False},
+                    "docker_memory_limit": {"visible": False},
+                    "effort": {"visible": False},
+                    "reasoning_effort": {"visible": False},
+                    "codex_plugins": {"visible": False},
+                    "claude_plugins": {"visible": False},
+                    "claude_marketplaces": {"visible": False},
+                    "extra_body": {"visible": False},
+                    "store": {"visible": False},
+                    "cli_environment": {"visible": False},
+                    "codex_config_toml": {"visible": False},
+                    "codex_models_json": {"visible": False},
+                    "acp_command": {"visible": True, "required": True},
+                    "acp_args": {"visible": True},
+                    "acp_cwd": {"visible": True, "required": True},
+                    "acp_env": {"visible": True},
+                    "acp_auth_method_id": {"visible": True},
+                    "acp_auto_auth_single_method": {"visible": True},
+                    "acp_reuse_process": {"visible": True},
+                    "acp_load_session": {"visible": True},
+                    "acp_additional_directories": {"visible": True},
+                    "acp_mcp_mode": {"visible": True},
+                    "acp_use_client_io": {"visible": True},
+                    "acp_title_override": {"visible": True},
+                }
+            },
+            {
                 "when": {"provider": ["claude-code"]},
                 "set": {
                     "api_key":       {"visible": True, "description": "Anthropic API key (empty = OAuth credential service)"},
@@ -937,6 +1071,32 @@ class LLMConnectionService(BaseService):
                     "api_key":       {"visible": True, "description": "Anthropic API key (empty = OAuth credential service)"},
                     "credential_service_id": {"visible": True},
                     "base_url":      {"visible": True, "description": "Anthropic-compatible endpoint for API-key mode (empty = provider default)"},
+                    "relay_local":   {"visible": True},
+                    "max_retries":   {"visible": False},
+                    "fallback_model": {"visible": False},
+                    "supports_vision": {"visible": True},
+                    "vision_llm_service": {"visible": False},
+                    "max_concurrent": {"visible": False},
+                    "timeout":       {"default": 0},
+                    "docker_image":  {"visible": True},
+                    "docker_cpu_limit": {"visible": True},
+                    "docker_memory_limit": {"visible": True},
+                    "effort":        {"visible": True},
+                    "codex_plugins": {"visible": False},
+                    "claude_plugins": {"visible": True},
+                    "claude_marketplaces": {"visible": True},
+                    "extra_body":    {"visible": False},
+                    "cli_environment": {"visible": True},
+                    "codex_config_toml": {"visible": False},
+                    "codex_models_json": {"visible": False},
+                }
+            },
+            {
+                "when": {"provider": ["cc_mcp"]},
+                "set": {
+                    "api_key":       {"visible": True, "description": "Anthropic API key (empty = OAuth credential service)"},
+                    "credential_service_id": {"visible": True},
+                    "base_url":      {"visible": True, "description": "Native Claude CLI endpoint, with no traffic interception (empty = provider default)"},
                     "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
@@ -1020,6 +1180,36 @@ class LLMConnectionService(BaseService):
                             "Optional Responses-compatible upstream for the "
                             "transparent MITM; empty keeps Codex's official "
                             "OAuth/API-key endpoint")},
+                    "relay_local":   {"visible": True},
+                    "max_retries":   {"visible": False},
+                    "fallback_model": {"visible": False},
+                    "supports_vision": {"visible": True},
+                    "vision_llm_service": {"visible": False},
+                    "max_concurrent": {"visible": False},
+                    "timeout":       {"default": 0},
+                    "docker_image":  {"visible": True},
+                    "docker_cpu_limit": {"visible": True},
+                    "docker_memory_limit": {"visible": True},
+                    "effort":        {"visible": True, "description": "Codex TUI reasoning effort (low/medium/high/xhigh/max)"},
+                    "codex_plugins": {"visible": True},
+                    "claude_plugins": {"visible": False},
+                    "claude_marketplaces": {"visible": False},
+                    "extra_body":    {"visible": False},
+                    "cli_environment": {"visible": True},
+                    "codex_config_toml": {"visible": True},
+                    "codex_models_json": {"visible": True},
+                }
+            },
+            {
+                "when": {"provider": ["codex_mcp"]},
+                "set": {
+                    "api_key":       {"visible": True, "description": "OpenAI API key (empty = shared Codex OAuth credential service)"},
+                    "credential_service_id": {"visible": True},
+                    "base_url":      {
+                        "visible": True, "required": False,
+                        "description": (
+                            "Native Codex CLI endpoint, with no traffic "
+                            "interception (empty = provider default)")},
                     "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},

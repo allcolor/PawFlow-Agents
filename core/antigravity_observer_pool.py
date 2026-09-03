@@ -8,34 +8,48 @@ the ``antigravity-interactive`` LLM provider.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional, TYPE_CHECKING
 import json
 import logging
 import os
-import shutil
 import shlex
+import shutil
 import socket
 import subprocess  # nosec B404 - Docker/tmux process control is this module's job.
 import threading
 import time
 import uuid
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional
 
 import core.paths as _paths
-from core.cc_interactive_certs import ca_private_key_is_host_only, generate_leaf
-from core.docker_utils import (docker_cmd, get_server_id,
-                               pawflow_container_labels, to_host_path,
-                               translate_path)
 from core.apparmor import apparmor_security_opts
+from core.cc_interactive_certs import ca_private_key_is_host_only, generate_leaf
+from core.docker_utils import (
+    docker_cmd,
+    get_server_id,
+    pawflow_container_labels,
+    to_host_path,
+    translate_path,
+)
+from core.managed_mcp_spec import (
+    MANAGED_MCP_LAUNCH_REVISION,
+    MANAGED_MCP_OBSERVATION_MODE,
+    MITM_OBSERVATION_MODE,
+    managed_mcp_observation_mode,
+    managed_mcp_spec,
+)
 
 if TYPE_CHECKING:
     from core.llm_client import LLMClient
 
 
 logger = logging.getLogger(__name__)
-from core._antigravity_base import AntigravityObserverSession, ANTIGRAVITY_BACKEND_HOST  # noqa: F401,E402
-from core._antigravity_manual import _AntigravityManualIngestMixin  # noqa: E402
+from core._antigravity_base import (  # noqa: F401,E402
+    ANTIGRAVITY_BACKEND_HOST,
+    AntigravityObserverSession,
+)
 from core._antigravity_input import _AntigravityInputMixin  # noqa: E402
+from core._antigravity_manual import _AntigravityManualIngestMixin  # noqa: E402
 
 
 class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMixin):
@@ -150,7 +164,8 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         stale = None
         with self._lock:
             existing = self._sessions.get(key)
-            if existing and self._is_usable(existing):
+            if (existing and self._is_usable(existing)
+                    and self._session_compatible(existing, client)):
                 existing.last_used = time.time()
                 return existing
             if existing:
@@ -205,7 +220,13 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
                     "log_path": state.log_path,
                     "idle_seconds": max(0.0, now - state.last_used),
                     "lived_seconds": max(0.0, now - state.created_at),
-                    "provider": "antigravity-observer",
+                    "provider": (
+                        getattr(state, "provider", "")
+                        if getattr(state, "observation_mode", "")
+                        == MANAGED_MCP_OBSERVATION_MODE
+                        else "antigravity-observer"),
+                    "observation_mode": getattr(
+                        state, "observation_mode", MITM_OBSERVATION_MODE),
                 })
         return out
 
@@ -239,9 +260,37 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
     def touch(self, state: AntigravityObserverSession) -> None:
         state.last_used = time.time()
 
+    @staticmethod
+    def _client_provider(client) -> str:
+        value = getattr(client, "provider", "")
+        return value if isinstance(value, str) else ""
+
+    @classmethod
+    def _observation_mode_for(cls, client) -> str:
+        return managed_mcp_observation_mode(cls._client_provider(client))
+
+    @classmethod
+    def _session_compatible(cls, state: AntigravityObserverSession,
+                            client) -> bool:
+        provider = cls._client_provider(client)
+        if not provider:
+            return True
+        wanted_mode = managed_mcp_observation_mode(provider)
+        if wanted_mode == MITM_OBSERVATION_MODE:
+            return getattr(state, "observation_mode",
+                           MITM_OBSERVATION_MODE) == MITM_OBSERVATION_MODE
+        return (getattr(state, "observation_mode", "") == wanted_mode
+                and getattr(state, "provider", "") == provider
+                and getattr(state, "launch_revision", "")
+                == MANAGED_MCP_LAUNCH_REVISION)
+
     def _start_new(self, user_id: str, conversation_id: str, agent_name: str,
                    service_id: str, model: str, client=None) -> AntigravityObserverSession:
         workdir = self._workdir(user_id, conversation_id, agent_name)
+        observation_mode = self._observation_mode_for(client)
+        managed = observation_mode == MANAGED_MCP_OBSERVATION_MODE
+        provider = self._client_provider(client) or "antigravity-interactive"
+        spec = managed_mcp_spec(provider) if managed else None
         if client is None:
             from core.llm_client import LLMClient
             setup_client = LLMClient(provider="gemini", config={"provider": "gemini"})
@@ -259,7 +308,9 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
                 setup_client._agent_service = original_agent_service
 
         cert_dir = Path(workdir) / ".pawflow_ag" / "certs"
-        certs = generate_leaf(cert_dir, common_name=ANTIGRAVITY_BACKEND_HOST)
+        certs = None
+        if not managed:
+            certs = generate_leaf(cert_dir, common_name=ANTIGRAVITY_BACKEND_HOST)
         from core.cli_process_config import shell_cli_environment
         cli_environment = shell_cli_environment(
             setup_client, user_id=user_id, conversation_id=conversation_id)
@@ -269,27 +320,108 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         log_path = str(log_dir / f"observer-{log_id}.jsonl")
         stderr_path = str(log_dir / f"proxy-{log_id}.stderr.log")
 
-        name = self._spawn_container(user_id=user_id, conversation_id=conversation_id, agent_name=agent_name)
+        hook_env: dict = {}
+        session_token = ""  # nosec B105 - filled below in managed mode
+        if managed:
+            # Managed MCP mode: the lifecycle hook is the only observation
+            # channel. Register the event session first so the hook's
+            # registration binds to a known conversation/agent.
+            from core.docker_utils import get_host_ip
+            from services.cc_interactive_event_service import (
+                get_or_create_cc_interactive_event_service,
+            )
+            event_url, event_token, event_service = (
+                get_or_create_cc_interactive_event_service())
+            host_ip = get_host_ip()
+            event_url = event_url.replace(
+                "localhost", host_ip).replace("127.0.0.1", host_ip)
+            session_token = uuid.uuid4().hex
+            event_service.register_session(
+                session_token, user_id=user_id,
+                conversation_id=conversation_id, agent_name=agent_name,
+                provider=provider,
+                observation_mode=MANAGED_MCP_OBSERVATION_MODE)
+            hook_env = {
+                "PAWFLOW_CCI_SESSION_TOKEN": session_token,
+                "PAWFLOW_CCI_EVENT_URL": event_url,
+                "PAWFLOW_CCI_EVENT_TOKEN": event_token,
+                "PAWFLOW_CCI_HOOK_CLIENT": spec.hook_client if spec else "agy",
+                "PAWFLOW_CCI_INJECTED_PROMPTS": (
+                    self._container_workdir(user_id, conversation_id, agent_name)
+                    + "/.pawflow_ag/injected_prompts.jsonl"),
+            }
+            self._write_agy_managed_hooks(workdir)
+
+        name = self._spawn_container(
+            user_id=user_id, conversation_id=conversation_id,
+            agent_name=agent_name, intercept=not managed)
         physical_workdir = self._physical_container_workdir(user_id, conversation_id, agent_name)
         container_workdir = self._container_workdir(user_id, conversation_id, agent_name)
         try:
-            self._install_ca(name, physical_workdir)
-            self._start_proxy(name=name, container_workdir=physical_workdir,
-                              log_path=log_path, stderr_path=stderr_path, certs=certs)
+            if not managed:
+                self._install_ca(name, physical_workdir)
+                self._start_proxy(name=name, container_workdir=physical_workdir,
+                                  log_path=log_path, stderr_path=stderr_path, certs=certs)
             self._start_agy_tmux(
                 name=name, container_workdir=physical_workdir,
-                cli_environment=cli_environment)
+                cli_environment=cli_environment, hook_env=hook_env)
         except Exception:
             subprocess.run(docker_cmd() + ["rm", "-f", name], capture_output=True, timeout=15)  # nosec B603
             raise
 
-        return AntigravityObserverSession(
+        state = AntigravityObserverSession(
             key=(user_id, conversation_id, agent_name, service_id),
             name=name,
             workdir=workdir,
             container_workdir=container_workdir,
             log_path=log_path,
         )
+        # Mode/provider identity lives on the session so reuse compatibility
+        # and liveness can be decided without consulting the proxy log.
+        state.observation_mode = observation_mode
+        state.provider = provider
+        state.launch_revision = MANAGED_MCP_LAUNCH_REVISION if managed else ""
+        state.session_token = session_token
+        return state
+
+    # Hook events the supported agy build exposes (probe: binary identifiers
+    # PreInvocation, PostInvocation, SessionStart, SessionEnd, PreToolUse,
+    # PostToolUse; hooks.json under ~/.gemini/config). ``Stop`` is documented
+    # in the agy changelog as running once hooks precede the built-in
+    # termination checks. The final-answer field is NOT proven -- see the
+    # probe record in docs/CLAUDE_CODE_INTERACTIVE.md -- which is why the
+    # agy_mcp provider stays unavailable.
+    _AGY_MANAGED_HOOK_EVENTS = ("PreInvocation", "Stop", "SessionEnd")
+
+    @classmethod
+    def _write_agy_managed_hooks(cls, workdir: str) -> dict:
+        """Write the managed lifecycle hooks into the isolated agy home.
+
+        Written to the shared ``.gemini/config/hooks.json`` (the location agy
+        1.0.15+ synchronizes between TUI and backend) and mirrored into the
+        CLI settings, the same pair the published installer uses.
+        """
+        handler = {
+            "type": "command",
+            "command": "python3 /opt/pawflow/cc_interactive_hook.py",
+            "timeout": 5,
+        }
+        hooks = {event: [{"hooks": [dict(handler)]}]
+                 for event in cls._AGY_MANAGED_HOOK_EVENTS}
+        gemini_home = Path(workdir) / ".gemini"
+        config_dir = gemini_home / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "hooks.json").write_text(
+            json.dumps({"hooks": hooks}, indent=2) + "\n", encoding="utf-8")
+        for settings_path in (gemini_home / "antigravity-cli" / "settings.json",
+                              gemini_home / "settings.json"):
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
+            settings = cls._read_json(settings_path)
+            settings["hooks"] = hooks
+            settings_path.write_text(
+                json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8")
+        return hooks
 
     def _write_antigravity_config(self, client: "LLMClient", workdir: str, user_id: str,
                                   conversation_id: str, agent_name: str, model: str) -> None:
@@ -436,7 +568,8 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return {}
 
-    def _spawn_container(self, *, user_id: str, conversation_id: str, agent_name: str) -> str:
+    def _spawn_container(self, *, user_id: str, conversation_id: str, agent_name: str,
+                         intercept: bool = True) -> str:
         self._base_dir().mkdir(parents=True, exist_ok=True)
         project_root = Path(__file__).resolve().parents[1]
         sessions_host = translate_path(to_host_path(str(self._base_dir().resolve())))
@@ -444,10 +577,19 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         runtime_files = [
             (project_root / "tools" / "mcp_bridge.py", "/opt/pawflow/mcp_bridge.py"),
             (project_root / "core" / "tool_json.py", "/opt/pawflow/tool_json.py"),
-            (project_root / "tools" / "ag_observer_proxy.py", "/opt/pawflow/ag_observer_proxy.py"),
-            (project_root / "tools" / "ag_observer_semantics.py", "/opt/pawflow/ag_observer_semantics.py"),
             (project_root / "docker" / "pawflow_sdk" / "pawflow.py", "/opt/pawflow/pawflow.py"),
         ]
+        if intercept:
+            runtime_files += [
+                (project_root / "tools" / "ag_observer_proxy.py", "/opt/pawflow/ag_observer_proxy.py"),
+                (project_root / "tools" / "ag_observer_semantics.py", "/opt/pawflow/ag_observer_semantics.py"),
+            ]
+        else:
+            # Managed MCP mode mounts the lifecycle hook (client-aware for
+            # agy) instead of the observer proxy.
+            runtime_files += [
+                (project_root / "tools" / "cc_interactive_hook.py", "/opt/pawflow/cc_interactive_hook.py"),
+            ]
         pkg_dir = project_root / "pawflow_relay"
         if not ca_private_key_is_host_only([m.split(":", 1)[0] for m in mounts if isinstance(m, str)]):
             raise RuntimeError("Refusing to mount Antigravity observer CA private key")
@@ -455,11 +597,14 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         owner = get_server_id()
         name = f"pf-{owner[:12]}-agyobs-{uuid.uuid4().hex[:8]}"
         image = os.environ.get("PAWFLOW_ANTIGRAVITY_IMAGE", os.environ.get("PAWFLOW_GEMINI_IMAGE", "pawflow-claude-code:latest"))
+        host_redirect = (
+            ["--add-host", f"{ANTIGRAVITY_BACKEND_HOST}:127.0.0.1"]
+            if intercept else [])
         run_args = [
             "-d", "--rm", "--name", name, "--init",
             *pawflow_container_labels("antigravity-observer"),
             *mounts,
-            "--add-host", f"{ANTIGRAVITY_BACKEND_HOST}:127.0.0.1",
+            *host_redirect,
             "--add-host", "host.docker.internal:host-gateway",
             "--cap-add", "SYS_ADMIN",
             *apparmor_security_opts(image),
@@ -552,7 +697,8 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         return "/cc_sessions/" + rel.as_posix()
 
     def _start_agy_tmux(self, *, name: str, container_workdir: str,
-                        cli_environment: str = "") -> None:
+                        cli_environment: str = "",
+                        hook_env: dict | None = None) -> None:
         parts = container_workdir.lstrip("/").split("/")
         if len(parts) < 3 or parts[0] != "cc_sessions_host":
             raise ValueError(f"container_workdir must look like /cc_sessions_host/<user>/<conv>/<agent>; got {container_workdir!r}")
@@ -561,6 +707,12 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         agy_bin = os.environ.get("PAWFLOW_ANTIGRAVITY_BIN", "agy")
         quoted_cmd = " ".join(shlex.quote(a) for a in [agy_bin, "--dangerously-skip-permissions"])
         drop_privs = f"setpriv --reuid={self.run_uid} --regid={self.run_gid} --clear-groups --"
+        # Managed MCP mode hands the lifecycle hook its event-service
+        # credentials through the CLI's environment, exactly like the CCI
+        # and Codex launchers do.
+        hook_env_str = "".join(
+            f"{key}={shlex.quote(str(value))} "
+            for key, value in sorted((hook_env or {}).items()) if value)
         shell = (
             "mkdir -p /cc_sessions && "
             f"mount --bind {shlex.quote(user_slot)} /cc_sessions && "
@@ -570,6 +722,7 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
             f"'env {cli_environment + ' ' if cli_environment else ''}"
             f"HOME={shlex.quote(ns_workdir)} "
             f"GEMINI_CLI_HOME={shlex.quote(ns_workdir)} "
+            f"{hook_env_str}"
             f"CASCADE_ENABLE_MCP_TOOLS=true "
             f"USER=pawflow TERM=xterm-256color "
             f"{quoted_cmd}'; "
@@ -640,7 +793,28 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
             return False
 
     def _is_usable(self, state: AntigravityObserverSession) -> bool:
+        """Whether a live session can take the next turn.
+
+        MITM mode needs the observer proxy to have started (its log is the
+        response source). Managed MCP mode has no proxy: the container and
+        the ``pawflow-agy`` tmux session are the whole runtime, and the
+        proxy log is never consulted.
+        """
+        if getattr(state, "observation_mode", MITM_OBSERVATION_MODE) \
+                == MANAGED_MCP_OBSERVATION_MODE:
+            return self._is_alive(state.name) and self._tmux_is_alive(state.name)
         return self._is_alive(state.name) and self._proxy_log_ready(state.log_path)
+
+    def _tmux_is_alive(self, name: str) -> bool:
+        """Whether the ``pawflow-agy`` tmux session still exists."""
+        try:
+            result = subprocess.run(  # nosec B603
+                docker_cmd() + ["exec", "--user", self._user_spec(), name,
+                                "tmux", "has-session", "-t", "pawflow-agy"],
+                capture_output=True, text=True, timeout=5, check=False)
+            return result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
 
     @staticmethod
     def _proxy_log_ready(log_path: str) -> bool:

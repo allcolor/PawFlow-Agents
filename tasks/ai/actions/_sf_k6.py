@@ -161,9 +161,14 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
             from core.docker_utils import docker_cmd
             from services.terminal_proxy import register_terminal
 
-            if provider == "codex-interactive":
+            # A managed MCP provider owns a tmux in the same pool as its
+            # interactive twin: cc_mcp in the Claude pool, codex_mcp in the
+            # Codex pool.
+            from core.managed_mcp_spec import managed_mcp_pool_family
+            pool_family = managed_mcp_pool_family(provider)
+            if pool_family == "codex-interactive":
                 pools = [CodexInteractivePool.instance()]
-            elif provider == "claude-code-interactive":
+            elif pool_family == "claude-code-interactive":
                 pools = [InteractiveClaudeCodePool.instance()]
             else:
                 # Backward-compatible fallback for callers predating the

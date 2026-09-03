@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from core.token_counter import count_messages_tokens, truncate_tokens
 from core._llm_types import (
-    INTERACTIVE_CLI_PROVIDERS,
+    NO_REPLAY_PROVIDERS,
     AgentSuperseded,
     CCCompactDetected,
     ColdStartRequired,
@@ -133,7 +133,7 @@ class _LLMClientDriverMixin:
         Returns:
             LLMResponse with content and/or tool_calls populated.
         """
-        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini"):
+        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "acp", "cc_mcp", "codex_mcp", "agy_mcp"):
             raise LLMClientError("api_key is required")
         if self.provider not in self.PROVIDERS:
             raise LLMClientError(
@@ -219,9 +219,28 @@ class _LLMClientDriverMixin:
                     call_event_cid=call_event_cid,
                     call_ephemeral_stream=call_ephemeral_stream,
                 )
+            elif self.provider in ("cc_mcp", "codex_mcp", "agy_mcp"):
+                result = getattr(self, f"_stream_{self.provider}")(
+                    messages, mdl, temperature, wire_max_tokens, tools,
+                    thinking_budget=thinking_budget,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream,
+                )
             elif self.provider == "gemini":
                 result = self._stream_gemini(
                     messages, mdl, temperature, wire_max_tokens, tools,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream,
+                )
+            elif self.provider == "acp":
+                result = self._stream_acp(
+                    messages, mdl, temperature, wire_max_tokens, None,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
                     call_agent_name=call_agent_name,
@@ -241,9 +260,9 @@ class _LLMClientDriverMixin:
                 call_user_id=call_user_id or "",
                 call_event_cid=call_event_cid or "",
             )
-            if not result.tokens_in and messages:
+            if self.provider not in ("acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_in and messages:
                 result.tokens_in = count_messages_tokens(messages)
-            if not result.tokens_out and result.content:
+            if self.provider not in ("acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_out and result.content:
                 result.tokens_out = len(result.content) // 4
             self._report_tokens(result, messages)
             self._circuit_after_success(mdl)
@@ -256,7 +275,7 @@ class _LLMClientDriverMixin:
             try:
                 return _do_complete(model)
             except (LLMClientError, Exception) as e:
-                if self.provider in INTERACTIVE_CLI_PROVIDERS:
+                if self.provider in NO_REPLAY_PROVIDERS:
                     # The prompt is already consumed by the live CLI session,
                     # which did its own API retries; calling the provider
                     # again would paste it twice or trip the cold/delta guard.
@@ -371,6 +390,16 @@ class _LLMClientDriverMixin:
                 self.cancel_antigravity_interactive(force=True)
             except Exception:
                 logger.debug("Antigravity interactive abort failed", exc_info=True)
+        if getattr(self, "provider", "") in ("cc_mcp", "codex_mcp", "agy_mcp"):
+            try:
+                getattr(self, f"cancel_{self.provider}")(force=True)
+            except Exception:
+                logger.debug("Managed MCP abort failed", exc_info=True)
+        if getattr(self, "provider", "") == "acp":
+            try:
+                self._acp_abort_active(force=True)
+            except Exception:
+                logger.debug("ACP abort failed", exc_info=True)
         conn = getattr(self, "_active_http_conn", None)
         if conn is not None:
             # Never close() from here: the streaming thread owns the socket
@@ -425,7 +454,7 @@ class _LLMClientDriverMixin:
 
         Supports both OpenAI and Anthropic streaming.
         """
-        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini"):
+        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "acp", "cc_mcp", "codex_mcp", "agy_mcp"):
             raise LLMClientError("api_key is required")
 
         self._apply_call_identity(
@@ -580,6 +609,19 @@ class _LLMClientDriverMixin:
                     call_agent_name=call_agent_name,
                     call_event_cid=call_event_cid,
                     call_ephemeral_stream=call_ephemeral_stream)
+            elif self.provider in ("cc_mcp", "codex_mcp", "agy_mcp"):
+                result = getattr(self, f"_stream_{self.provider}")(
+                    messages, mdl, temperature, wire_max_tokens, tools,
+                    _visible_callback,
+                    thinking_budget=thinking_budget,
+                    thinking_callback=thinking_callback,
+                    turn_callback=_terminal_turn_callback,
+                    block_callback=block_callback,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "gemini":
                 result = self._stream_gemini(messages, mdl, temperature, wire_max_tokens, tools, _visible_callback,
                                                thinking_budget=thinking_budget,
@@ -590,6 +632,19 @@ class _LLMClientDriverMixin:
                                                call_agent_name=call_agent_name,
                                                call_event_cid=call_event_cid,
                                                call_ephemeral_stream=call_ephemeral_stream)
+            elif self.provider == "acp":
+                result = self._stream_acp(
+                    messages, mdl, temperature, wire_max_tokens, None,
+                    _visible_callback,
+                    thinking_callback=thinking_callback,
+                    turn_callback=_terminal_turn_callback,
+                    block_callback=block_callback,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream,
+                )
             elif self.provider == "anthropic":
                 result = self._stream_anthropic(messages, mdl, temperature, wire_max_tokens, tools, _visible_callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback,
                                                  call_user_id=call_user_id or "",
@@ -610,9 +665,9 @@ class _LLMClientDriverMixin:
                 call_user_id=call_user_id or "",
                 call_event_cid=call_event_cid or "",
             )
-            if not result.tokens_in and messages:
+            if self.provider not in ("acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_in and messages:
                 result.tokens_in = count_messages_tokens(messages)
-            if not result.tokens_out and result.content:
+            if self.provider not in ("acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_out and result.content:
                 result.tokens_out = len(result.content) // 4
             self._report_tokens(result, messages)
             self._circuit_after_success(mdl)
@@ -632,7 +687,7 @@ class _LLMClientDriverMixin:
                 if isinstance(e, (_AC, AgentSuperseded, CCCompactDetected, ColdStartRequired,
                                   DeltaContextRequired)):
                     raise
-                if self.provider in INTERACTIVE_CLI_PROVIDERS:
+                if self.provider in NO_REPLAY_PROVIDERS:
                     # Same rule as complete(): an interactive CLI turn is never
                     # re-run from here. A StopFailure (e.g. an upstream 429)
                     # matched the 429 branch below and re-pasted the prompt

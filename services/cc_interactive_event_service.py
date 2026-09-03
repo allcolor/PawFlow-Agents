@@ -19,14 +19,20 @@ import re
 import threading
 import time
 import uuid
-from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 from core import ServiceFactory
-from core.base_service import BaseService
 from core._llm_types import AgentSuperseded
+from core.base_service import BaseService
 from core.llm_providers.cli_shared import is_anthropic_messages_endpoint
+from core.managed_mcp_spec import (
+    MANAGED_MCP_OBSERVATION_MODE,
+    MITM_OBSERVATION_MODE,
+    managed_mcp_pool_family,
+    managed_mcp_source_input,
+)
 from core.native_todo_adapter import native_task_id as _native_task_id
 
 logger = logging.getLogger(__name__)
@@ -91,6 +97,11 @@ class CCInteractiveSessionEvents:
     conversation_id: str = ""
     agent_name: str = ""
     provider: str = "claude-code-interactive"
+    # ``mitm``: a proxy in the container streams vendor events here.
+    # ``managed_mcp``: only native lifecycle hooks (and relay tool rows)
+    # arrive; there is no proxy, so hook registrations are the liveness
+    # evidence and the Stop hook is the sole answer source.
+    observation_mode: str = MITM_OBSERVATION_MODE
     connected: bool = False
     unreliable: bool = False
     error: str = ""
@@ -261,9 +272,14 @@ class CCInteractiveEventService(BaseService):
     def register_session(self, session_token: str, *, user_id: str = "",
                          conversation_id: str = "",
                          agent_name: str = "",
-                         provider: str = "") -> CCInteractiveSessionEvents:
+                         provider: str = "",
+                         observation_mode: str = "") -> CCInteractiveSessionEvents:
         if not session_token:
             raise ValueError("session_token is required")
+        if observation_mode and observation_mode not in (
+                MITM_OBSERVATION_MODE, MANAGED_MCP_OBSERVATION_MODE):
+            raise ValueError(
+                f"unknown observation_mode {observation_mode!r}")
         with self._sessions_lock:
             state = self._sessions.get(session_token)
             if state is None:
@@ -280,7 +296,42 @@ class CCInteractiveEventService(BaseService):
                 state.agent_name = agent_name
             if provider:
                 state.provider = provider
+            if observation_mode:
+                state.observation_mode = observation_mode
+                # No proxy will ever connect for a managed session: the pool
+                # registering it is the evidence that its container is up,
+                # and unregister_session is where that evidence ends.
+                if observation_mode == MANAGED_MCP_OBSERVATION_MODE:
+                    state.connected = True
             return state
+
+    @staticmethod
+    def _is_managed(state: CCInteractiveSessionEvents) -> bool:
+        return state.observation_mode == MANAGED_MCP_OBSERVATION_MODE
+
+    @staticmethod
+    def _pool_family(state: CCInteractiveSessionEvents) -> str:
+        """The interactive pool family behind this session's provider."""
+        return managed_mcp_pool_family(
+            state.provider or "claude-code-interactive")
+
+    @classmethod
+    def _tmux_input_tag(cls, state: CCInteractiveSessionEvents) -> str:
+        """``source.input`` of a message typed into or answered from tmux."""
+        tag = managed_mcp_source_input(state.provider)
+        if tag:
+            return tag
+        return ("codex_interactive_tmux"
+                if cls._pool_family(state) == "codex-interactive"
+                else "cc_interactive_tmux")
+
+    @classmethod
+    def _pool_for(cls, state: CCInteractiveSessionEvents):
+        if cls._pool_family(state) == "codex-interactive":
+            from core.codex_interactive_pool import CodexInteractivePool
+            return CodexInteractivePool.instance()
+        from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+        return InteractiveClaudeCodePool.instance()
 
     def unregister_session(self, session_token: str) -> None:
         with self._sessions_lock:
@@ -768,9 +819,7 @@ class CCInteractiveEventService(BaseService):
                     "type": "user",
                     "name": state.user_id,
                     "target_agent": state.agent_name,
-                    "input": ("codex_interactive_tmux"
-                              if state.provider == "codex-interactive"
-                              else "cc_interactive_tmux"),
+                    "input": self._tmux_input_tag(state),
                 },
                 "channel": "tmux",
             }, state.conversation_id)
@@ -847,7 +896,7 @@ class CCInteractiveEventService(BaseService):
             return False
         path = event.get("path", "") or ""
         return (urlsplit(path).path.rstrip("/").endswith("/responses")
-                if state.provider == "codex-interactive"
+                if managed_mcp_pool_family(state.provider) == "codex-interactive"
                 else is_anthropic_messages_endpoint(path))
 
     def _track_turn_boundary(self, state: CCInteractiveSessionEvents,
@@ -1353,9 +1402,7 @@ class CCInteractiveEventService(BaseService):
             # is worth less than nothing if it states numbers nobody measured.
             return {"type": "agent", "name": state.agent_name,
                     "provider": state.provider,
-                    "input": ("codex_interactive_tmux"
-                              if state.provider == "codex-interactive"
-                              else "cc_interactive_tmux")}
+                    "input": self._tmux_input_tag(state)}
 
         def _writer():
             from core.conversation_writer import ConversationWriter
@@ -1383,8 +1430,11 @@ class CCInteractiveEventService(BaseService):
 
         def _block_callback(event_type: str, payload: dict) -> None:
             from core.llm_client import (
-                has_complete_mcp_tool_call, is_mcp_tool_call_name,
-                stamp_message, unwrap_mcp_tool)
+                has_complete_mcp_tool_call,
+                is_mcp_tool_call_name,
+                stamp_message,
+                unwrap_mcp_tool,
+            )
             try:
                 if event_type == "text":
                     text = payload.get("text", "") or ""
@@ -1530,12 +1580,7 @@ class CCInteractiveEventService(BaseService):
         chained captures of the same session.
         """
         try:
-            if state.provider == "codex-interactive":
-                from core.codex_interactive_pool import CodexInteractivePool
-                pool = CodexInteractivePool.instance()
-            else:
-                from core.claude_code_interactive_pool import InteractiveClaudeCodePool
-                pool = InteractiveClaudeCodePool.instance()
+            pool = self._pool_for(state)
             container = pool.find_by_session_token(state.session_token)
         except Exception:
             logger.debug("CC interactive pool lookup failed for capture",
@@ -1604,13 +1649,7 @@ class CCInteractiveEventService(BaseService):
         container = getattr(state, "container_id", "") or ""
         if not container:
             return None
-        if state.provider == "codex-interactive":
-            from core.codex_interactive_pool import CodexInteractivePool
-            pool = CodexInteractivePool.instance()
-        else:
-            from core.claude_code_interactive_pool import (
-                InteractiveClaudeCodePool)
-            pool = InteractiveClaudeCodePool.instance()
+        pool = self._pool_for(state)
         return lambda: pool.session_is_live(container)
 
     def _run_manual_capture(self, session_token: str) -> None:
@@ -1634,12 +1673,18 @@ class CCInteractiveEventService(BaseService):
             self._publish_capture_active(state, active=True)
             announced = True
             state.captured_msg_ids = []
-            if state.provider == "codex-interactive":
+            if self._is_managed(state):
+                # Managed MCP mode waits for the native Stop final. The two
+                # MITM coordinators are not imported on this path at all.
+                _TurnCoordinator = self._managed_capture_coordinator(state)
+            elif self._pool_family(state) == "codex-interactive":
                 from core.llm_providers._codex_interactive_turn import (
-                    _CodexInteractiveTurnCoordinator as _TurnCoordinator)
+                    _CodexInteractiveTurnCoordinator as _TurnCoordinator,
+                )
             else:
                 from core.llm_providers.claude_code_interactive import (
-                    _CCITurnCoordinator as _TurnCoordinator)
+                    _CCITurnCoordinator as _TurnCoordinator,
+                )
             # Same callbacks a PawFlow-driven turn passes: every observed
             # block is persisted and published as it arrives. Without them
             # the coordinator ran the whole turn silently and the webchat saw
@@ -1707,6 +1752,17 @@ class CCInteractiveEventService(BaseService):
                     )
                     thread.start()
 
+    @staticmethod
+    def _managed_capture_coordinator(state: CCInteractiveSessionEvents):
+        """Factory binding the managed final waiter to this session's provider."""
+        from core.llm_providers._managed_mcp_turn import _ManagedMcpTurnCoordinator
+        provider = state.provider
+
+        def _build(event_service, session_token, **kwargs):
+            return _ManagedMcpTurnCoordinator(
+                event_service, session_token, provider=provider, **kwargs)
+        return _build
+
     def _handle_ws(self, sock, path_params, meta):
         from services.filesystem_service import _attach_sync_sock_to_loop
         remote = meta.get("remote_addr", "?")
@@ -1743,6 +1799,13 @@ class CCInteractiveEventService(BaseService):
             state = self.register_session(session_token)
             if client_kind == "proxy":
                 state.container_id = reg.get("container_id", "")
+                state.connected = True
+            elif client_kind == "hook" and self._is_managed(state):
+                # Hooks are the only client of a managed session. Their
+                # registration carries the container id the liveness probe
+                # needs; identity stays whatever the pool registered.
+                if reg.get("container_id"):
+                    state.container_id = str(reg.get("container_id"))
                 state.connected = True
             await _ws_send_frame(writer, json.dumps({"type": "registered"}).encode())
             logger.info(
@@ -1789,7 +1852,7 @@ class CCInteractiveEventService(BaseService):
 
 def get_or_create_cc_interactive_event_service() -> tuple[str, str, CCInteractiveEventService]:
     """Return ``(wss_url, token, service)`` for the shared event service."""
-    from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+    from core.service_registry import SCOPE_GLOBAL, ServiceRegistry
     from services.http_listener_service import HTTPListenerService
 
     instances = HTTPListenerService.all_instances()

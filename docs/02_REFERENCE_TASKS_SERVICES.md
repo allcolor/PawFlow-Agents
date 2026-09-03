@@ -789,7 +789,8 @@ val = cache.get("key")
 
 `cli_environment` is available for `claude-code`,
 `claude-code-interactive`, `antigravity-interactive`,
-`codex-app-server`, `codex-interactive`, and `gemini`. Empty values are
+`codex-app-server`, `codex-interactive`, `gemini`, `cc_mcp`,
+`codex_mcp`, and `agy_mcp`. Empty values are
 preserved. Process-isolation variables such as `HOME`, provider home
 directories, `PAWFLOW_*`, and managed endpoint or credential values remain
 authoritative and cannot be replaced by this block.

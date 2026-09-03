@@ -103,6 +103,10 @@ class InstallBootstrapTask(BaseTask):
             "codex-interactive": "codex",
             "gemini": "gemini",
             "antigravity-interactive": "gemini",
+            # Managed MCP providers reuse the canonical credential families.
+            "cc_mcp": "claude_code",
+            "codex_mcp": "codex",
+            "agy_mcp": "gemini",
         }.get(provider)
         if action_prefix == "gemini" and login_cli in {"agy", "antigravity"}:
             action_prefix = "agy"

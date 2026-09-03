@@ -476,6 +476,8 @@
   "contextExpectedArray": "se esperaba un array",
   "contextGauge": "indicador de contexto",
   "contextGaugeTitle": "Contexto {used}k/{max}k ({pct}% restante)",
+  "contextGaugeUnavailable": "Uso del contexto no disponible para este proveedor (sin medición nativa)",
+  "contextGaugeUnavailableShort": "ctx n/d",
   "contextRemainingPct": "{pct}% restante",
   "contextGeminiSession": "Sesión Gemini",
   "contextInvalidJson": "JSON inválido",

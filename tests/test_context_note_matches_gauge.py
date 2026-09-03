@@ -195,8 +195,14 @@ def test_every_cli_provider_records_a_measure_for_the_gauge():
 
 def test_the_cli_providers_checked_here_are_the_gauge_s_own_list():
     """Pin the list to context_usage, so a new provider cannot slip past."""
+    from core.managed_mcp_spec import managed_mcp_capability_matrix
     from tasks.ai.context_usage import _CLI_CONTEXT_PROVIDERS
 
+    managed = managed_mcp_capability_matrix()
     assert set(_CLI_CONTEXT_PROVIDERS) == {
-        "claude-code", "claude-code-interactive", "antigravity-interactive",
-        "codex-app-server", "codex-interactive", "gemini"}
+        "acp", "claude-code", "claude-code-interactive", "antigravity-interactive",
+        "codex-app-server", "codex-interactive", "gemini",
+        "cc_mcp", "codex_mcp", "agy_mcp"}
+    assert managed["cc_mcp"]["context_source"] == "unavailable"
+    assert managed["codex_mcp"]["context_source"] == "codex_rollout_token_count"
+    assert managed["agy_mcp"]["context_source"] == "unavailable"

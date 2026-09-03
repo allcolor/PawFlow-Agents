@@ -325,8 +325,17 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                 if _ent:
                     _apply_live(row, _ent, "cci")
             cci_live_list = _cci_entries
+            # The Claude pool hosts both the MITM provider and its managed
+            # MCP twin; each row names its concrete provider, and an active
+            # marker is only backed by a runtime of the SAME provider.
             cli_runtime_agents["claude-code-interactive"] = {
                 e.get("agent_name") for e in _cci_entries
+                if e.get("provider", "claude-code-interactive")
+                == "claude-code-interactive"
+            }
+            cli_runtime_agents["cc_mcp"] = {
+                e.get("agent_name") for e in _cci_entries
+                if e.get("provider") == "cc_mcp"
             }
         except Exception:
             logger.debug("cci_live enrichment failed", exc_info=True)
@@ -346,6 +355,11 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             codex_interactive_live_list = _codex_interactive_entries
             cli_runtime_agents["codex-interactive"] = {
                 e.get("agent_name") for e in _codex_interactive_entries
+                if e.get("provider", "codex-interactive") == "codex-interactive"
+            }
+            cli_runtime_agents["codex_mcp"] = {
+                e.get("agent_name") for e in _codex_interactive_entries
+                if e.get("provider") == "codex_mcp"
             }
         except Exception:
             logger.debug(
@@ -391,9 +405,29 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                 user_id, conv_id)
             cli_runtime_agents["antigravity-interactive"] = {
                 e.get("agent_name") for e in _antigravity_entries
+                if e.get("provider") != "agy_mcp"
+            }
+            cli_runtime_agents["agy_mcp"] = {
+                e.get("agent_name") for e in _antigravity_entries
+                if e.get("provider") == "agy_mcp"
             }
         except Exception:
             logger.debug("antigravity live enrichment failed", exc_info=True)
+        # Managed MCP telemetry is honest by construction: these providers
+        # measure no usage and no context window unless a native local
+        # source exists, and the UI must not read their silence as zero.
+        try:
+            from core.managed_mcp_spec import managed_mcp_spec
+            for row in active:
+                _spec = managed_mcp_spec(row.get("active_llm_provider", ""))
+                if _spec is None:
+                    continue
+                row["usage_source"] = _spec.usage_source
+                row["context_source"] = _spec.context_source
+                row["observation_mode"] = "managed_mcp"
+                row["provider_label"] = _spec.label
+        except Exception:
+            logger.debug("managed mcp telemetry annotation failed", exc_info=True)
 
         # A provider-backed marker can outlive its process when a CLI exits
         # outside the normal terminal path (for example a model rate limit or

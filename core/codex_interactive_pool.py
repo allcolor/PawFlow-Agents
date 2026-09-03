@@ -27,6 +27,11 @@ from core._cci_pool_spawn import InteractiveContainer, _InteractiveContainerSpaw
 from core.cc_interactive_certs import generate_leaf
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.docker_utils import docker_cmd, get_host_ip
+from core.managed_mcp_spec import (
+    MANAGED_MCP_LAUNCH_REVISION,
+    MANAGED_MCP_OBSERVATION_MODE,
+    managed_mcp_spec,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +170,8 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
                    agent_name: str, key: tuple[str, str, str, str],
                    pool_index: int = -1) -> InteractiveContainer:
         from services.cc_interactive_event_service import (
-            get_or_create_cc_interactive_event_service)
+            get_or_create_cc_interactive_event_service,
+        )
 
         workdir = client._codex_get_session_workdir(
             conversation_id, agent_name, user_id)
@@ -181,13 +187,26 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
             trusted_project=self._container_workdir(
                 user_id, conversation_id, agent_name))
 
-        (upstream_host, upstream_port, upstream_scheme, codex_base_url,
-         listen_port) = self._codex_endpoint(client)
+        observation_mode = self._observation_mode_for(client)
+        managed = observation_mode == MANAGED_MCP_OBSERVATION_MODE
+        provider = self._client_provider(client) or "codex-interactive"
+        spec = managed_mcp_spec(provider) if managed else None
+        if managed:
+            # Managed MCP mode: Codex keeps its own vendor endpoint (the
+            # configured base_url when there is one), no local TLS endpoint,
+            # no CA, no Responses MITM.
+            upstream_host, upstream_port, upstream_scheme = "", 0, ""
+            codex_base_url = self._codex_base_url(client)
+            listen_port = 0
+        else:
+            (upstream_host, upstream_port, upstream_scheme, codex_base_url,
+             listen_port) = self._codex_endpoint(client)
         from core.cli_process_config import shell_cli_environment
         cli_environment = shell_cli_environment(
             client, user_id=user_id, conversation_id=conversation_id)
         cert_dir = Path(workdir) / ".pawflow_cci" / "certs"
-        generate_leaf(cert_dir, common_name=upstream_host)
+        if not managed:
+            generate_leaf(cert_dir, common_name=upstream_host)
 
         event_url, event_token, event_service = (
             get_or_create_cc_interactive_event_service())
@@ -197,11 +216,13 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
         session_token = uuid.uuid4().hex
         event_service.register_session(
             session_token, user_id=user_id, conversation_id=conversation_id,
-            agent_name=agent_name, provider="codex-interactive")
+            agent_name=agent_name, provider=provider,
+            observation_mode=observation_mode)
 
         name = self._spawn_container(
             user_id=user_id, conversation_id=conversation_id,
-            agent_name=agent_name, upstream_host=upstream_host)
+            agent_name=agent_name, upstream_host=upstream_host,
+            intercept=not managed)
         physical_workdir = self._physical_container_workdir(
             user_id, conversation_id, agent_name)
         container_workdir = self._container_workdir(
@@ -214,17 +235,20 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
             internal_token=internal_token,
             service_id=getattr(client, "_agent_service", "") or "",
             svc_pool_idx=selected_pool_index, user_id=user_id,
-            conv_id=conversation_id)
+            conv_id=conversation_id, provider=provider,
+            observation_mode=observation_mode,
+            launch_revision=MANAGED_MCP_LAUNCH_REVISION if managed else "")
         try:
             self._write_codex_hooks(workdir)
-            self._install_ca(name, physical_workdir)
-            self._start_proxy(
-                name=name, container_workdir=physical_workdir,
-                session_token=session_token, event_url=event_url,
-                event_token=event_token, internal_token=internal_token,
-                upstream_host=upstream_host, upstream_port=upstream_port,
-                upstream_scheme=upstream_scheme, listen_port=listen_port)
-            state.proxy_started = True
+            if not managed:
+                self._install_ca(name, physical_workdir)
+                self._start_proxy(
+                    name=name, container_workdir=physical_workdir,
+                    session_token=session_token, event_url=event_url,
+                    event_token=event_token, internal_token=internal_token,
+                    upstream_host=upstream_host, upstream_port=upstream_port,
+                    upstream_scheme=upstream_scheme, listen_port=listen_port)
+                state.proxy_started = True
             self._start_codex_tmux(
                 name=name, container_workdir=physical_workdir, model=model,
                 effort=client._cfg("effort", "")
@@ -232,7 +256,8 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
                 session_token=session_token, event_url=event_url,
                 event_token=event_token, internal_token=internal_token,
                 codex_base_url=codex_base_url,
-                cli_environment=cli_environment)
+                cli_environment=cli_environment,
+                hook_client=spec.hook_client if spec else "")
 
             state.claude_started = True
         except Exception:
@@ -264,7 +289,8 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
                           model: str, effort: str, session_token: str,
                           event_url: str, event_token: str,
                           internal_token: str, codex_base_url: str = "",
-                          cli_environment: str = "") -> None:
+                          cli_environment: str = "",
+                          hook_client: str = "") -> None:
         parts = container_workdir.lstrip("/").split("/")
         if len(parts) < 3 or parts[0] != "cc_sessions_host":
             raise ValueError(
@@ -303,6 +329,9 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
         endpoint_env = (
             f"OPENAI_BASE_URL={shlex.quote(codex_base_url)} "
             if codex_base_url else "")
+        hook_client_env = (
+            f"PAWFLOW_CCI_HOOK_CLIENT={shlex.quote(hook_client)} "
+            if hook_client else "")
         shell = (
             "mkdir -p /cc_sessions && "
             f"mount --bind {shlex.quote(user_slot)} /cc_sessions && "
@@ -318,6 +347,7 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
             f"PAWFLOW_CCI_EVENT_TOKEN={shlex.quote(event_token)} "
             f"PAWFLOW_INTERNAL_TOKEN={shlex.quote(internal_token)} "
             f"PAWFLOW_CCI_INJECTED_PROMPTS={shlex.quote(ns_workdir + '/.pawflow_cci/injected_prompts.jsonl')} "
+            f"{hook_client_env}"
             f"{endpoint_env}TERM=xterm-256color {quoted}'; "
             f"{drop_privs} tmux set-window-option -t pawflow window-size manual 2>/dev/null || true; "
             f"{drop_privs} tmux set-window-option -t pawflow aggressive-resize off 2>/dev/null || true)")
@@ -658,17 +688,27 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         with self._lock:
             existing = self._sessions.get(key)
             container_alive = bool(existing and self._is_alive(existing.name))
-            if (existing and container_alive
+            compatible = existing is None or self._session_compatible(
+                existing, client)
+            if (existing and container_alive and compatible
                     and self._tmux_is_alive(existing.name)):
                 existing.last_used = time.time()
                 return existing
             if existing:
                 self._sessions.pop(key, None)
                 if container_alive:
-                    logger.warning(
-                        "[codex-interactive] tmux session died inside live "
-                        "container %s; recreating the interactive session",
-                        existing.name)
+                    if not compatible:
+                        logger.info(
+                            "[codex-interactive] live session %s was launched "
+                            "for %s/%s and cannot serve %s; recreating it",
+                            existing.name, existing.provider,
+                            existing.observation_mode,
+                            self._client_provider(client) or "?")
+                    else:
+                        logger.warning(
+                            "[codex-interactive] tmux session died inside live "
+                            "container %s; recreating the interactive session",
+                            existing.name)
                     self._recover_container_tokens(existing)
                     self._kill_container(existing.name)
             if before_launch is not None:
@@ -686,7 +726,8 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             return
         try:
             from core.llm_providers._codex_credentials import (
-                recover_tokens_from_workdir)
+                recover_tokens_from_workdir,
+            )
             recover_tokens_from_workdir(
                 state.workdir, state.service_id, state.svc_pool_idx,
                 user_id=state.user_id, conv_id=state.conv_id)
@@ -697,11 +738,17 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     def list_sessions(self, *args, **kwargs) -> list[dict]:
         rows = super().list_sessions(*args, **kwargs)
         for row in rows:
-            row["provider"] = "codex-interactive"
+            # A managed session reports its concrete provider (codex_mcp);
+            # everything else this pool owns is codex-interactive.
+            if row.get("provider") in ("", "claude-code-interactive"):
+                row["provider"] = "codex-interactive"
         return rows
 
     def list_sessions_snapshot(self, *args, **kwargs) -> list[dict]:
         rows = super().list_sessions_snapshot(*args, **kwargs)
         for row in rows:
-            row["provider"] = "codex-interactive"
+            # A managed session reports its concrete provider (codex_mcp);
+            # everything else this pool owns is codex-interactive.
+            if row.get("provider") in ("", "claude-code-interactive"):
+                row["provider"] = "codex-interactive"
         return rows

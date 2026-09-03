@@ -247,7 +247,8 @@ def _record(result: ToolAuthorizationResult, tool_name: str, user_id: str,
 def gate_for_runtime(*, tool_name: str, arguments: Any, user_id: str, conversation_id: str,
                      agent_name: str, runtime: str, permission_mode: str = "default",
                      tool_permission: str = "", allow_prompt: bool = True,
-                     approval_cid: str = "", secret_values: Iterable[str] = ()) -> Optional[str]:
+                     approval_cid: str = "", secret_values: Iterable[str] = (),
+                     cancel_event: Any = None) -> Optional[str]:
     """Shared adapter for the secondary runtimes (WP6).
 
     Returns ``None`` when no gate is bound (the runtime keeps its legacy rules),
@@ -274,7 +275,8 @@ def gate_for_runtime(*, tool_name: str, arguments: Any, user_id: str, conversati
     approval = ToolApprovalGate.check(
         tool_name, f"[policy gate] {result.reason[:160]} — {tool_name}",
         approval_cid or conversation_id, user_id, arguments=args,
-        agent_name=agent_name, force_prompt=True)
+        agent_name=agent_name, force_prompt=True,
+        cancel_event=cancel_event)
     if approval != "approved":
         return (f"Error: Tool '{tool_name}' was {approval} by the user "
                 "(policy gate asked for confirmation).")

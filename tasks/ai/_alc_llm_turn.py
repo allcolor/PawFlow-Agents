@@ -2,7 +2,7 @@
 import logging
 import time
 
-from core._llm_types import INTERACTIVE_CLI_PROVIDERS
+from core._llm_types import NO_REPLAY_PROVIDERS
 from core.llm_client import (
     AgentSuperseded,
     CCCompactDetected,
@@ -589,9 +589,9 @@ class _ALCLlmTurnMixin:
                 # prompt is consumed by the live tmux session: re-calling the
                 # provider here would paste the turn again. Surface the error
                 # (the tmux shows the same failure) instead of retrying.
-                st._interactive_cli = (
-                    getattr(st.client, "provider", "") in INTERACTIVE_CLI_PROVIDERS)
-                if (st._transient and not st._interactive_cli
+                st._no_replay_provider = (
+                    getattr(st.client, "provider", "") in NO_REPLAY_PROVIDERS)
+                if (st._transient and not st._no_replay_provider
                         and not st.ctx.get("_agent_transient_retried")):
                     st.ctx["_agent_transient_retried"] = True
                     logger.warning("[agent:%s] transient LLM error, retrying: %s",

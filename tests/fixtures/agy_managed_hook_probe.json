@@ -1,0 +1,52 @@
+{
+  "recorded_at": "2026-09-03T11:36:00Z",
+  "image": "pawflow-claude-code:latest",
+  "image_id": "f960169f0778",
+  "agy_version": "1.1.25",
+  "commands": {
+    "version": "docker run --rm --entrypoint agy pawflow-claude-code:latest --version",
+    "help": "docker run --rm --entrypoint agy pawflow-claude-code:latest --help",
+    "identifiers": "docker run --rm --entrypoint bash pawflow-claude-code:latest -lc \"grep -a -o -E 'PreInvocation|PostInvocation|UserPromptSubmit|SessionStart|SessionEnd|PreToolUse|PostToolUse|injectSteps|transcriptPath|hookEventName|hookSpecificOutput|lastAssistantMessage|last_assistant_message|additionalContext|stopReason|hooks\\.json' /usr/local/bin/agy | sort | uniq -c | sort -rn\"",
+    "changelog_hooks": "docker run --rm --entrypoint agy pawflow-claude-code:latest changelog | grep -n -i hook",
+    "hooks_listing": "docker run --rm -e HOME=/tmp/agyhome --entrypoint agy pawflow-claude-code:latest -p /hooks --output-format json",
+    "instrumented_turn": "hooks.json with SessionStart/PreInvocation/PostInvocation/Stop/PreToolUse/PostToolUse/SessionEnd/UserPromptSubmit handlers dumping stdin to /tmp/agyhome/out, then: agy --dangerously-skip-permissions -p 'reply with the single word pong' --print-timeout 60s"
+  },
+  "observations": {
+    "help_subcommands": ["agent", "agents", "changelog", "help", "install", "mcp", "mic-serve", "models", "plugin", "plugins", "update"],
+    "help_has_hooks_subcommand": false,
+    "identifier_counts_raw": "98 PostInvocation / 97 PreInvocation / 70 SessionStart / 22 hooks.json / 21 stopReason / 14 injectSteps / 9 PostToolUse / 7 PreToolUse / 4 transcriptPath / 3 SessionEnd",
+    "changelog_hook_lines": [
+      "Improved hook ordering so hooks defined in hooks.json run before the built-in termination checks, which lets PostInvocation hooks observe the final invocation of a turn and lets Stop hooks run at all instead of sitting unreachable behind the built-ins.",
+      "Fixed the /hooks command wrote configurations to ~/.gemini/antigravity-cli/hooks.json instead of the shared ~/.gemini/config/hooks.json, ensuring hooks remain synchronized between the TUI and the backend.",
+      "Fixed stop hooks that always block hanging the agent forever; after a configurable number of consecutive continuations, the hook can no longer block and the turn ends normally.",
+      "Fixed PostToolUse hooks firing on non-tool steps such as user input and model responses, which also caused them to ignore their configured matchers.",
+      "Fixed workspace-local hooks defined in <workspace>/.agents/hooks.json not loading after trusting a folder by reloading hooks whenever workspaces change."
+    ],
+    "hooks_listing_result": "{\"conversation_id\":\"\",\"status\":\"ERROR\",\"response\":\"\",\"error\":\"authentication failed or timed out\",\"duration_seconds\":0,\"num_turns\":0}",
+    "instrumented_turn_result": "Authentication required. Please visit the URL to log in ... Error: authentication timed out. No hook handler was invoked: /tmp/agyhome/out stayed empty.",
+    "hooks_json_location": "~/.gemini/config/hooks.json (shared TUI/backend since agy 1.0.15), mirrored by the published installer into antigravity-cli/settings.json and settings.json"
+  },
+  "identifier_counts": {
+    "PostInvocation": 98,
+    "PreInvocation": 97,
+    "SessionStart": 70,
+    "hooks.json": 22,
+    "stopReason": 21,
+    "injectSteps": 14,
+    "PostToolUse": 9,
+    "PreToolUse": 7,
+    "transcriptPath": 4,
+    "SessionEnd": 3,
+    "UserPromptSubmit": 0,
+    "hookEventName": 0,
+    "hookSpecificOutput": 0,
+    "lastAssistantMessage": 0,
+    "last_assistant_message": 0,
+    "additionalContext": 0
+  },
+  "hook_payloads": {},
+  "final_field": "",
+  "transcript_final": false,
+  "proxy_independent_liveness": true,
+  "conclusion": "The pinned agy 1.1.25 binary carries PreInvocation/PostInvocation/SessionStart/SessionEnd/PreToolUse/PostToolUse hook identifiers, injectSteps, transcriptPath and a shared hooks.json, and its changelog documents Stop hooks running before built-in termination. It carries no UserPromptSubmit and no last-assistant-message field. Every hook is behind Google authentication (print mode, including /hooks, authenticates first), so an unauthenticated probe fires no hook and no payload could be recorded. The final-answer source is therefore unproven; agy_mcp stays unavailable until an authenticated CI probe records a Stop payload with either a final-text field or a transcript whose last assistant message equals the visible answer."
+}

@@ -27,6 +27,9 @@ _BUILTIN_MODEL_DEFAULTS = {
     "codex-app-server": "gpt-5.5",
     "codex-interactive": "gpt-5.5",
     "gemini": "gemini-3.1-pro",
+    "cc_mcp": "best",
+    "codex_mcp": "gpt-5.5",
+    "agy_mcp": "gemini-3.5-flash",
 }
 
 
@@ -330,15 +333,15 @@ class LLMResponse:
 
 
 
-#: Providers that drive a live interactive CLI session (tmux). A turn is a
-#: prompt pasted into that session: once pasted it is consumed, the CLI runs
-#: its own API retries, and re-running the turn from PawFlow would paste the
-#: prompt a second time (or trip the cold/delta context guard on the same
-#: client). Failures of these providers are therefore surfaced, never retried
-#: by the generic driver or agent-level retry loops.
+#: Providers backed by a live interactive tmux session.
 INTERACTIVE_CLI_PROVIDERS = frozenset({
     "claude-code-interactive", "codex-interactive", "antigravity-interactive",
+    "cc_mcp", "codex_mcp", "agy_mcp",
 })
+
+#: Stateful providers that consume a prompt exactly once. Re-running a turn
+#: would duplicate work or trip the cold/delta context guard.
+NO_REPLAY_PROVIDERS = INTERACTIVE_CLI_PROVIDERS | {"acp"}
 
 
 class LLMClientError(Exception):

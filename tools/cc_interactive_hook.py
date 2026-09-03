@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
-"""Claude Code lifecycle hook bridge for claude-code-interactive."""
+"""Lifecycle hook bridge for PawFlow-managed interactive CLIs.
+
+Installed as the ``UserPromptSubmit`` / ``Stop`` / compaction / session hooks
+of Claude Code and Codex (and, once its probe passes, Antigravity). It sends
+one fire-and-forget ``hook`` event per invocation to ``CCInteractiveEventService``
+over the managed session's authenticated WebSocket registration.
+
+Managed MCP mode reads the turn's final answer from the ``Stop`` event, so this
+hook keeps ``last_assistant_message`` (bounded) and, when the CLI leaves that
+field empty, extracts the last assistant message from the CLI's own local
+transcript. It never scrapes tmux or vendor traffic.
+"""
 
 from __future__ import annotations
-import logging
 
 import base64
+import logging
+
 try:
     import fcntl  # POSIX-only; marker-file locking is best-effort elsewhere.
 except ImportError:
@@ -18,10 +30,21 @@ import sys
 import time
 from urllib.parse import urlparse
 
-
 _INJECTED_PROMPT_TTL_SECONDS = 300
 _INJECTED_FRAGMENT_BURST_SECONDS = 180
 _MIN_INJECTED_FRAGMENT_CHARS = 12
+
+# Bound on the final text carried by a Stop event. Large enough for any real
+# answer, small enough that a runaway transcript cannot exceed the event
+# service's frame budget.
+_MAX_FINAL_CHARS = 200_000
+# How much of a local transcript is read (from its end) to find the last
+# assistant message. Transcripts are append-only JSONL, so the tail is enough.
+_TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024
+# One short retry when the event service refuses the first connection: the
+# hook has a five-second command timeout, so this stays well inside it.
+_DELIVERY_RETRIES = 1
+_DELIVERY_RETRY_DELAY_SECONDS = 0.4
 
 
 def _masked_frame(obj: dict) -> bytes:
@@ -106,6 +129,138 @@ def _connect(url: str, token: str, session_token: str):
     return sock
 
 
+def _hook_client() -> str:
+    """Which official CLI invoked us: ``cc`` (default), ``codex`` or ``agy``."""
+    return (os.environ.get("PAWFLOW_CCI_HOOK_CLIENT", "") or "cc").strip().lower()
+
+
+def _bound_final_text(value) -> str:
+    """Cap a final answer at ``_MAX_FINAL_CHARS`` including the notice."""
+    if not isinstance(value, str):
+        return ""
+    if len(value) <= _MAX_FINAL_CHARS:
+        return value
+    notice = (
+        f"\n\n[... final answer truncated by the hook at {_MAX_FINAL_CHARS:,} "
+        f"chars; {len(value):,} chars total]")
+    keep = max(0, _MAX_FINAL_CHARS - len(notice))
+    return value[:keep] + notice
+
+
+def _content_text(value) -> str:
+    """Plain text of a transcript ``content`` value (string or block list)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                btype = str(item.get("type") or "")
+                if btype in {"text", "output_text"} and isinstance(
+                        item.get("text"), str):
+                    parts.append(item["text"])
+        return "\n".join(part for part in parts if part)
+    if isinstance(value, dict):
+        if isinstance(value.get("text"), str):
+            return value["text"]
+        for key in ("content", "message", "parts"):
+            text = _content_text(value.get(key))
+            if text:
+                return text
+    return ""
+
+
+def _transcript_role_text(row, role: str) -> str:
+    """Text of ``row`` when it is a ``role`` message in any supported shape.
+
+    Claude Code: ``{"type": "assistant", "message": {"role": "assistant",
+    "content": [...]}}``. Codex rollout: ``{"type": "response_item",
+    "payload": {"type": "message", "role": "assistant", "content": [...]}}``.
+    Generic: ``{"role": ..., "content": ...}``. Tool results and tool calls
+    never match: they carry no assistant/user role.
+    """
+    if not isinstance(row, dict):
+        return ""
+    aliases = {"assistant": {"assistant", "model"},
+               "user": {"user", "human"}}[role]
+    candidates = [row]
+    for key in ("message", "payload"):
+        nested = row.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested)
+    for candidate in candidates:
+        candidate_role = str(candidate.get("role") or "").lower()
+        if not candidate_role and candidate is row:
+            candidate_role = str(row.get("type") or "").lower()
+        if candidate_role not in aliases:
+            continue
+        text = _content_text(candidate.get("content"))
+        if text.strip():
+            return text
+    return ""
+
+
+def _last_transcript_message(path: str, role: str) -> str:
+    """Last ``role`` message of a local JSONL transcript, read from its tail."""
+    if not path:
+        return ""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            start = max(0, size - _TRANSCRIPT_TAIL_BYTES)
+            fh.seek(start)
+            data = fh.read()
+    except OSError:
+        return ""
+    lines = data.split(b"\n")
+    if start > 0 and lines:
+        # The first line of a mid-file read is a partial row.
+        lines = lines[1:]
+    for raw in reversed(lines):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw.decode("utf-8", errors="replace"))
+        except ValueError:
+            continue
+        text = _transcript_role_text(row, role)
+        if text:
+            return text
+    return ""
+
+
+def _normalize_client_input(raw: dict, client: str) -> dict:
+    """Map a client's native hook payload onto the Claude Code field names.
+
+    Claude Code and Codex already speak the ``hook_event_name`` shape.
+    Antigravity uses camelCase (``hookEventName``, ``transcriptPath``) and
+    fires ``PreInvocation`` before a model call instead of a prompt hook; the
+    submitted prompt is then only in its transcript. Nothing here is trusted
+    for identity: the server binds the event to the registered session.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    if client != "agy":
+        return raw
+    out = dict(raw)
+    if "hook_event_name" not in out and out.get("hookEventName"):
+        out["hook_event_name"] = out.get("hookEventName")
+    if "transcript_path" not in out and out.get("transcriptPath"):
+        out["transcript_path"] = out.get("transcriptPath")
+    if "session_id" not in out and out.get("sessionId"):
+        out["session_id"] = out.get("sessionId")
+    if out.get("hook_event_name") == "PreInvocation":
+        out["hook_event_name"] = "UserPromptSubmit"
+        if not isinstance(out.get("prompt"), str) or not out.get("prompt"):
+            out["prompt"] = _last_transcript_message(
+                str(out.get("transcript_path") or ""), "user")
+    return out
+
+
 def _compact_input(raw: dict) -> dict:
     keep = {
         "hook_event_name", "session_id", "cwd", "permission_mode",
@@ -124,6 +279,15 @@ def _compact_input(raw: dict) -> dict:
         out["pawflow_injected_prompt"] = injected
         if prompt and not injected:
             out["prompt"] = prompt
+    elif raw.get("hook_event_name") == "Stop":
+        final = _bound_final_text(raw.get("last_assistant_message"))
+        source = "hook_field" if final.strip() else ""
+        if not source:
+            final = _bound_final_text(_last_transcript_message(
+                str(raw.get("transcript_path") or ""), "assistant"))
+            source = "transcript" if final.strip() else ""
+        out["last_assistant_message"] = final
+        out["final_source"] = source
     return out
 
 
@@ -197,18 +361,46 @@ def _consume_injected_prompt(prompt: str) -> bool:
             return found
     except FileNotFoundError:
         return False
-    except Exception:
+    except Exception:  # noqa: BLE001 - marker damage must not classify a prompt
         return False
+
+
+def _deliver(url: str, token: str, session_token: str, event: dict) -> bool:
+    """Send one event; retry once on a refused/aborted connection."""
+    attempts = _DELIVERY_RETRIES + 1
+    for attempt in range(attempts):
+        try:
+            sock = _connect(url, token, session_token)
+            try:
+                sock.sendall(_masked_frame({"type": "event", "event": event}))
+            finally:
+                sock.close()
+            return True
+        except Exception:  # noqa: BLE001 - any transport failure is a retry, never a CLI error
+            if attempt + 1 >= attempts:
+                return False
+            time.sleep(_DELIVERY_RETRY_DELAY_SECONDS)
+    return False
+
+
+def _client_output(client: str) -> str:
+    """What the CLI expects on stdout. Antigravity reads a JSON object."""
+    return "{}" if client == "agy" else ""
 
 
 def main() -> int:
     session_token = os.environ.get("PAWFLOW_CCI_SESSION_TOKEN", "")
     url = os.environ.get("PAWFLOW_CCI_EVENT_URL", "")
     token = os.environ.get("PAWFLOW_CCI_EVENT_TOKEN", "")
+    client = _hook_client()
+    output = _client_output(client)
     if not session_token or not url or not token:
+        if output:
+            print(output)
         return 0
     try:
         raw = json.loads(sys.stdin.read() or "{}")
+        raw = _normalize_client_input(raw, client)
         event = {
             "type": "hook",
             "hook_event_name": raw.get("hook_event_name", ""),
@@ -216,13 +408,11 @@ def main() -> int:
             "container_id": os.environ.get("HOSTNAME", ""),
             "timestamp": time.time(),
         }
-        sock = _connect(url, token, session_token)
-        try:
-            sock.sendall(_masked_frame({"type": "event", "event": event}))
-        finally:
-            sock.close()
-    except Exception:
-        return 0
+        _deliver(url, token, session_token, event)
+    except Exception:  # noqa: BLE001, S110  # nosec B110 - a hook must never fail the CLI turn
+        pass
+    if output:
+        print(output)
     return 0
 
 

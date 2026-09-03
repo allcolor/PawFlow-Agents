@@ -99,6 +99,9 @@ dependencies = [
     "json-repair>=0.58.0",
     # Realtime worker-control tooling (spike server/client, LiveKit worker)
     "aiohttp>=3.9.0",
+    # Agent Client Protocol (typed SDK plus PawFlow's explicit WS proxy runtime)
+    "agent-client-protocol==0.12.1",
+    "websockets>=13.0",
 ]
 
 [project.optional-dependencies]
@@ -135,6 +138,7 @@ pawflow = "cli:main"
 pawflow-install = "pawflow_installer.frontends.cli:main"
 pawflow-relay = "pawflow_relay.manager_cli:main"
 pawflow-mcp = "pawflow_relay.mcp_stdio:main"
+pawflow-acp = "pawflow_cli.acp_proxy:main"
 pawcode = "pawflow_cli.app:main"
 
 [project.urls]

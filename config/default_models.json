@@ -6,5 +6,8 @@
   "antigravity-interactive": "gemini-3.5-flash",
   "codex-app-server": "gpt-5.5",
   "codex-interactive": "gpt-5.5",
-  "gemini": "gemini-3.1-pro"
+  "gemini": "gemini-3.1-pro",
+  "cc_mcp": "best",
+  "codex_mcp": "gpt-5.5",
+  "agy_mcp": "gemini-3.5-flash"
 }

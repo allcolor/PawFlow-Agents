@@ -1,6 +1,8 @@
 # LLM Providers
 
-PawFlow can run agents through direct HTTP APIs and through CLI-backed coding agents. Agents reference an LLM service by id, so different agents in the same conversation can use different backends.
+PawFlow can run agents through direct HTTP APIs, CLI-backed coding agents, and
+outbound Agent Client Protocol (ACP) processes. Agents reference an LLM service
+by id, so different agents in the same conversation can use different backends.
 
 For new CLI-backed agent services, use `claude-code-interactive` for Claude Code and `codex-interactive` for Codex. The non-interactive `claude-code` transport (`claude -p`, commonly called `cc -p`) and `codex-app-server` are legacy agent providers retained for existing configurations and migration only. Their identifiers still name the shared OAuth credential pools, so credential references do not need to change when an agent service migrates to the interactive provider.
 
@@ -12,6 +14,10 @@ For new CLI-backed agent services, use `claude-code-interactive` for Claude Code
 | `openai-responses` | Direct API | Endpoints speaking OpenAI's **Responses API** | Same fields as `openai`, different wire format and a different endpoint (`/responses`). See [Responses API](#responses-api). |
 | `omniroute` | Explicit gateway API | OmniRoute Chat Completions and virtual routes such as `auto` | Requires an explicit `base_url`, `omniroute_auth_mode`, and `default_model`. Supports bounded routing controls, sanitized gateway metadata, and model discovery. |
 | `anthropic` | Direct API | Claude API and Anthropic-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. |
+| `acp` | Outbound ACP agent process | Any configured ACP v1 agent command | PawFlow launches the command without a shell, negotiates the official ACP protocol, and exposes only explicitly enabled PawFlow MCP and client filesystem capabilities. |
+| `cc_mcp` | Managed Claude Code CLI with native hooks | Claude subscription sessions without vendor-traffic interception | Reuses the Claude interactive pool and PawFlow MCP tools; final text comes from the official Stop hook. |
+| `codex_mcp` | Managed Codex CLI with native hooks | Codex subscription sessions without vendor-traffic interception | Reuses the Codex interactive pool and native rollout context counters; built-in Codex tools are not observable. |
+| `agy_mcp` | Managed Antigravity CLI with native hooks | Reserved provider value | Currently unavailable: the supported `agy` build has not proven a native final-answer hook or transcript source. |
 | `claude-code-interactive` | Interactive CLI container with observed provider stream | **Preferred** Claude subscription and Claude Code agent sessions | Uses the Claude Code OAuth pool by default. API-key mode can also set `api_key` and `base_url` for Anthropic-compatible endpoints. |
 | `antigravity-interactive` | Interactive `agy` CLI in tmux with observed provider stream | Default Gemini subscription provider | Uses the Gemini OAuth credential pool, starts the real `agy` CLI, and routes tools through PawFlow MCP. |
 | `codex-interactive` | Interactive Codex TUI in tmux with observed provider stream | **Preferred** Codex subscription and coding-agent sessions | Reuses the `codex-app-server` OAuth pool. The turn is read from a local MITM of the Responses stream. See [Codex Interactive](#codex-interactive). |
@@ -19,7 +25,7 @@ For new CLI-backed agent services, use `claude-code-interactive` for Claude Code
 | `claude-code` | Legacy non-interactive CLI container or subprocess (`claude -p`) | Existing agent configurations only | Migrate to `claude-code-interactive`; the legacy transport remains available for compatibility. |
 | `codex-app-server` | Legacy Codex `app-server` transport in a pooled container | Existing agent configurations only | Migrate to `codex-interactive`; the identifier remains canonical for the shared Codex OAuth pool. |
 
-Direct API providers are normal HTTP clients. CLI providers launch a provider CLI, keep provider-specific session state, and route tools through PawFlow's relay/MCP bridge.
+Direct API providers are normal HTTP clients. CLI providers launch a provider CLI, keep provider-specific session state, and route tools through PawFlow's relay/MCP bridge. The managed MCP variants use official lifecycle hooks and local CLI metadata instead of inspecting vendor traffic; their capability matrix reports unavailable telemetry explicitly.
 
 `llmRouter` is a composite service, not a provider. It selects among direct
 `llmConnection` services once per logical turn, keeps the chosen child through
@@ -48,6 +54,38 @@ The **Refresh OmniRoute models** service action reads the bounded public
 `GET /v1/models` shape without changing `default_model` or persisting the key.
 V1 intentionally does not implement OmniRoute's Responses API or admin APIs.
 
+### Generic ACP agent
+
+`acp` is a normal `llmConnection` provider for an external agent that implements
+ACP stable protocol version 1. Set `auth_mode=none`, `acp_command`, `acp_args` as
+a JSON array of argv strings, and `acp_cwd` to an existing directory. The
+command is launched directly without a shell. `acp_env` is an optional JSON
+object whose entries extend the inherited process environment; secret values
+are resolved by PawFlow and are not included in diagnostics.
+
+By default, `acp_reuse_process=true` keeps a successful process warm and
+`acp_load_session=true` loads a persisted session when the agent advertises
+that capability. `acp_additional_directories` is a JSON array of explicitly
+shared directories. If the remote agent requires authentication, configure its
+exact advertised method with `acp_auth_method_id`; automatic selection of a
+single advertised method is disabled unless
+`acp_auto_auth_single_method=true`.
+
+`acp_mcp_mode=pawflow` exposes PawFlow's request-scoped MCP bridge;
+`acp_mcp_mode=none` exposes no MCP server. `acp_use_client_io=true` advertises
+the supported filesystem client methods. Reads pass through PawFlow policy and
+approval rules. A write additionally requires a matching ACP edit permission
+for the same path, and that grant is consumed by the write. Disable client I/O
+when the remote agent does not need it. ACP processes receive cancellation and
+force-stop signals, and an accepted prompt is never replayed automatically.
+
+The `pawflow-acp` console script (`pawflow_cli/acp_proxy.py`) is the client
+half of the inbound direction: it bridges an ACP client's stdio to the
+WebSocket endpoint of a published PawFlow agent, authenticating with the
+publication API key and optional gateway key. The matching server endpoint is
+scheduled in `docs/ACP_INTEGRATION_PLAN.md` (WP4); until it ships the proxy
+has nothing to connect to.
+
 ## Which Provider To Use
 
 Use the credential source to choose the provider surface:
@@ -55,6 +93,7 @@ Use the credential source to choose the provider surface:
 | Credential source | Preferred provider(s) | Why |
 |---|---|---|
 | Generic API key for an OpenAI-compatible endpoint | `openai` | Direct HTTP, tool calling, vision when `supports_vision=true`, `base_url` support, and `/v1/embeddings` support when the endpoint exposes it. |
+| Installed ACP v1 agent command | `acp` | Launch an explicitly configured agent process and use its negotiated ACP session, streaming, tools, and usage capabilities. |
 | An endpoint you want to drive through the Responses API | `openai-responses` | Reasoning items, server-side built-in tools, and the event stream those need. Prefer plain `openai` unless you specifically want the Responses surface. |
 | Anthropic API key | `anthropic`, or `claude-code-interactive` with `api_key` | Use `anthropic` for direct API agents. Use `claude-code-interactive` when you want the native Claude Code session behavior and PawFlow MCP bridge. |
 | Claude subscription login | `claude-code-interactive` | Long-lived interactive Claude Code session with OAuth credentials from the `claude-code` credential pool. |
@@ -63,7 +102,7 @@ Use the credential source to choose the provider surface:
 | Gemini subscription login | `antigravity-interactive` | Default Gemini subscription path. It uses the `agy`/Antigravity CLI with the Gemini OAuth pool. |
 | Gemini Pro / Gemini CLI account | `gemini` | Use when the account/workflow specifically needs Gemini CLI stream-json behavior. |
 
-`llmCredentialOAuthProvider` services own OAuth pools for three canonical CLI credential providers: `claude-code`, `codex-app-server`, and `gemini`. `claude-code-interactive` reuses the `claude-code` pool. `codex-interactive` reuses the `codex-app-server` pool. `antigravity-interactive` reuses the `gemini` pool. API-key mode skips the OAuth pool.
+`llmCredentialOAuthProvider` services own OAuth pools for three canonical CLI credential providers: `claude-code`, `codex-app-server`, and `gemini`. `claude-code-interactive` and `cc_mcp` reuse the `claude-code` pool. `codex-interactive` and `codex_mcp` reuse the `codex-app-server` pool. `antigravity-interactive` and `agy_mcp` reuse the `gemini` pool. API-key mode skips the OAuth pool.
 
 Each pool has an `allow_refresh` checkbox with a provider-specific default:
 `true` for Claude Code, Codex, and generic pools; `false` for Gemini pools,

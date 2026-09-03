@@ -275,7 +275,7 @@ class _ALCClosures2Mixin:
             st.conversation_id[:8], _adopt_agent, len(st.messages), reason)
 
     def _alc_run_interrupt_turn(self, st):
-        if st._client_provider in ("claude-code-interactive", "antigravity-interactive", "codex-interactive"):
+        if st._client_provider in ("claude-code-interactive", "antigravity-interactive", "codex-interactive", "cc_mcp", "codex_mcp", "agy_mcp"):
             logger.info(
                 "[agent:%s] interrupted — sending %s STOP via tmux only",
                 st.conversation_id[:8], st._client_provider)
@@ -285,6 +285,9 @@ class _ALCClosures2Mixin:
                 _interrupt_fn = st.client.interrupt_antigravity_interactive
             elif st._client_provider == "codex-interactive":
                 _interrupt_fn = st.client.interrupt_codex_interactive
+            elif st._client_provider in ("cc_mcp", "codex_mcp", "agy_mcp"):
+                _interrupt_fn = getattr(
+                    st.client, f"interrupt_{st._client_provider}")
             else:
                 _interrupt_fn = st.client.interrupt_claude_code_interactive
             _irpt_resp = _interrupt_fn(
@@ -841,8 +844,8 @@ class _ALCClosures2Mixin:
                 # PawFlow did not request an explicit token budget. Always
                 # provide the preview callback; unused callbacks are inert.
                 thinking_callback=st.emitter.get_thinking_callback(ps),
-                turn_callback=st._claude_code_turn_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini") else None,
-                block_callback=st._cli_block_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini") else None,
+                turn_callback=st._claude_code_turn_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "cc_mcp", "codex_mcp", "agy_mcp") else None,
+                block_callback=st._cli_block_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "cc_mcp", "codex_mcp", "agy_mcp") else None,
                 **_call_kwargs)
         return st.client.complete(
             messages=msgs, model=st.model or None,

@@ -240,8 +240,8 @@ class GatingService(BaseService):
                                     source="failure", source_id=llm_id,
                                     metadata={"error": "llm_unavailable"})
         provider = str((getattr(svc, "config", {}) or {}).get("provider") or "")
-        from core._llm_types import INTERACTIVE_CLI_PROVIDERS
-        if provider in INTERACTIVE_CLI_PROVIDERS or provider == "claude-code":
+        from core._llm_types import NO_REPLAY_PROVIDERS
+        if provider in NO_REPLAY_PROVIDERS or provider == "claude-code":
             return evaluator_result(
                 failure, f"gating LLM '{llm_id}' uses CLI provider '{provider}'; "
                 "a policy gate needs an API-backed connection",

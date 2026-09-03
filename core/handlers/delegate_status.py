@@ -1,10 +1,9 @@
 """delegate_status / delegate_result — caller-facing delegate observability.
 
 The calling agent is otherwise blind between a delegate/flash_delegate spawn
-and the asynchronous result delivery: these tools expose the live-delegate
-registry and the bounded finished-results ring (recorded in
-_SpawnDeliveryMixin._inject_bg_result) so the caller can verify liveness and
-pull a result whose push delivery it missed.
+and the asynchronous result delivery. These tools rebuild acknowledged and
+finished work from the durable transcript, merge current runtime details, and
+let a caller recover status or output after its provider context was compacted.
 """
 
 import json
@@ -25,6 +24,80 @@ def _display_name(target: str) -> Dict[str, str]:
     return {"name": target, "kind": "agent"}
 
 
+def _durable_state(parent_conv_id: str, caller: str,
+                   user_id: str) -> Dict[str, list]:
+    """Load transcript-backed delegate state without hiding runtime entries."""
+    try:
+        from core.conversation_store import ConversationStore
+        return ConversationStore.instance().load_delegate_state(
+            parent_conv_id, caller, user_id=user_id)
+    except Exception:
+        logger.warning(
+            "delegate durable-state scan failed for %s/%s",
+            parent_conv_id, caller, exc_info=True)
+        return {"live": [], "finished": []}
+
+
+def _merged_state(parent_conv_id: str, caller: str,
+                  user_id: str) -> tuple[list, list]:
+    """Merge durable task identities with process-local execution details."""
+    from core.agent_executor import (
+        list_finished_delegates, list_live_delegates,
+    )
+
+    durable = _durable_state(parent_conv_id, caller, user_id)
+    live_by_id = {
+        str(entry.get("task_id") or ""): dict(entry)
+        for entry in durable.get("live") or []
+        if entry.get("task_id")
+    }
+    for entry in list_live_delegates(parent_conv_id, caller):
+        item = dict(entry)
+        target = str(item.get("target") or "")
+        item.setdefault(
+            "mode", "flash" if _FLASH_MARKER in target else "isolated")
+        item["status"] = "running"
+        item["runtime_attached"] = True
+        live_by_id[str(item.get("task_id") or "")] = item
+
+    finished_by_id = {
+        str(entry.get("task_id") or ""): dict(entry)
+        for entry in durable.get("finished") or []
+        if entry.get("task_id")
+    }
+    for entry in list_finished_delegates(parent_conv_id, caller):
+        item = dict(entry)
+        target = str(item.get("target") or "")
+        item.setdefault(
+            "mode", "flash" if _FLASH_MARKER in target else "isolated")
+        finished_by_id[str(item.get("task_id") or "")] = item
+
+    for task_id in finished_by_id:
+        live_by_id.pop(task_id, None)
+    live = sorted(
+        live_by_id.values(),
+        key=lambda item: item.get("started_at") or 0.0,
+    )
+    finished = sorted(
+        finished_by_id.values(),
+        key=lambda item: item.get("finished_at") or 0.0,
+    )[-100:]
+    return live, finished
+
+
+def _render_entry(entry: Dict[str, Any], *, include_response: bool) -> Dict:
+    item = dict(entry)
+    target = str(item.pop("target", "") or "")
+    item.pop("caller", None)
+    response = str(item.get("response") or "")
+    if not include_response:
+        item.pop("response", None)
+        item.setdefault("response_chars", len(response))
+    item.update(_display_name(target))
+    item["agent"] = target
+    return item
+
+
 class DelegateStatusHandler(SpawnAgentsHandler):
     """Report the caller's delegates: live ones and recent finished ones."""
 
@@ -35,13 +108,10 @@ class DelegateStatusHandler(SpawnAgentsHandler):
     @property
     def description(self) -> str:
         return (
-            "Check the status of your delegates (both flash_delegate agents "
-            "and background delegate sub-agents). Returns the live ones "
-            "(name, kind, task_id, age, queued follow-ups) and the recently "
-            "finished ones (status, error, duration, response size). Use it "
-            "to verify delegated work is actually running instead of "
-            "inferring liveness from silence; fetch a finished output with "
-            "delegate_result."
+            "Check durable status for your shared, isolated, and flash "
+            "delegates, including after context compaction. Returns pending/"
+            "running work with task IDs and runtime details, plus the latest "
+            "100 finished results. Use delegate_result to fetch one output."
         )
 
     @property
@@ -51,9 +121,6 @@ class DelegateStatusHandler(SpawnAgentsHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time
 
-        from core.agent_executor import (
-            list_finished_delegates, list_live_delegates,
-        )
         from core.service_registry import _parent_conversation_id
 
         raw_conv_id = self._conversation_id
@@ -67,23 +134,19 @@ class DelegateStatusHandler(SpawnAgentsHandler):
             )
 
         now = time.time()
+        raw_live, raw_finished = _merged_state(
+            parent_conv_id, src_agent, self._user_id)
         live = []
-        for entry in list_live_delegates(parent_conv_id, src_agent):
-            target = entry.pop("target")
-            started = entry.pop("started_at", 0.0)
-            entry.pop("caller", None)
-            entry.update(_display_name(target))
-            entry["agent"] = target
-            entry["age_seconds"] = round(now - started, 1) if started else None
-            live.append(entry)
+        for entry in raw_live:
+            item = _render_entry(entry, include_response=False)
+            started = item.pop("started_at", 0.0)
+            item["age_seconds"] = round(now - started, 1) if started else None
+            live.append(item)
 
-        finished = []
-        for entry in list_finished_delegates(parent_conv_id, src_agent):
-            target = entry.pop("target")
-            entry.pop("caller", None)
-            entry.update(_display_name(target))
-            entry["agent"] = target
-            finished.append(entry)
+        finished = [
+            _render_entry(entry, include_response=False)
+            for entry in raw_finished
+        ]
 
         return json.dumps({
             "live": live,
@@ -104,10 +167,9 @@ class DelegateResultHandler(DelegateStatusHandler):
         return (
             "Fetch the output of one of your finished delegates by task_id "
             "(as listed by delegate_status, or from the delegate/"
-            "flash_delegate reply). Returns the full retained response text "
-            "plus status, error, and duration. Use it to pull a result whose "
-            "asynchronous delivery you missed; if the delegate is still "
-            "running it says so instead."
+            "flash_delegate reply), including after context compaction. "
+            "Returns the durable response text plus status, error, and "
+            "duration; pending/running delegates remain discoverable."
         )
 
     @property
@@ -125,9 +187,7 @@ class DelegateResultHandler(DelegateStatusHandler):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        from core.agent_executor import (
-            get_finished_delegate, list_live_delegates,
-        )
+        from core.agent_executor import get_finished_delegate
         from core.service_registry import _parent_conversation_id
 
         task_id = str(arguments.get("task_id", "")).strip()
@@ -146,18 +206,28 @@ class DelegateResultHandler(DelegateStatusHandler):
 
         entry = get_finished_delegate(parent_conv_id, src_agent, task_id)
         if entry is not None:
-            target = entry.pop("target")
-            entry.pop("caller", None)
-            entry.update(_display_name(target))
-            entry["agent"] = target
-            return json.dumps(entry, ensure_ascii=False, indent=2)
+            return json.dumps(
+                _render_entry(entry, include_response=True),
+                ensure_ascii=False, indent=2)
 
-        for live in list_live_delegates(parent_conv_id, src_agent):
+        live_entries, finished_entries = _merged_state(
+            parent_conv_id, src_agent, self._user_id)
+        entry = next((
+            dict(item) for item in reversed(finished_entries)
+            if item.get("task_id") == task_id
+        ), None)
+        if entry is not None:
+            return json.dumps(
+                _render_entry(entry, include_response=True),
+                ensure_ascii=False, indent=2)
+
+        for live in live_entries:
             if live.get("task_id") == task_id:
+                status = str(live.get("status") or "running")
                 return json.dumps({
                     "task_id": task_id,
-                    "status": "running",
-                    "message": "Delegate is still running — no result yet. "
+                    "status": status,
+                    "message": "Delegate has no terminal result yet. "
                                "Check again with delegate_status.",
                 }, ensure_ascii=False)
 

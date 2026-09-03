@@ -37,6 +37,10 @@ They are interconnected:
   links fail closed. Filesystem handlers validate a cached scoped ticket against
   the current store epoch before reuse, so `clear` followed by `ensure`
   immediately rebinds instead of retaining a stale facade.
+  If usage is already above quota, status and read-only inspection remain
+  available and `delete_file` may be repeated until compliance is restored;
+  operations that can grow the directory continue to fail closed. Confinement
+  and symbolic-link validation remain enforced during recovery.
 - ScratchDir metadata is disposable by contract. If SQLite reports a proven
   corruption signature, PawFlow renames the metadata database and any WAL/SHM
   companions with a `.corrupt-<timestamp>` suffix for forensic inspection,

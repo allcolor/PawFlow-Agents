@@ -360,6 +360,13 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                 if st.fm:
                     st.final_model = st.fm
 
+            # The final drain below selects ownership of the NEXT turn. Keep an
+            # immutable copy for finalizing the turn that just produced this
+            # response; otherwise an interleaved human/tmux message rewrites a
+            # completed delegate reply into a normal user turn and its task_id
+            # never receives a terminal.
+            st._completed_turn_mode = dict(st.ctx.get("_turn_mode") or {})
+
             def _make_result(reason=""):
                 _result_reason = reason or st.finish_reason
                 _is_final = bool(
@@ -517,7 +524,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     # caller so they can read the result. Without this, the
                     # reply is persisted privately but the caller never
                     # sees it until their next user message.
-                    st._tm_end = st.ctx.get("_turn_mode") or {}
+                    st._tm_end = st._completed_turn_mode
                     st._src_agent = st._tm_end.get("source_agent") or ""
                     # claude-code's turn_callback persists text per turn and
                     # returns response.content="" at the very end, so
@@ -596,7 +603,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                     SpawnAgentsHandler._wake_caller(
                                         st._inst, st.conversation_id,
                                         st._src_agent, st.user_id,
-                                        st.response_content, st._reply_mid,
+                                        st._reply_text, st._reply_mid,
                                         source=st._reply_src)
                         except Exception as _dre:
                             logger.error(

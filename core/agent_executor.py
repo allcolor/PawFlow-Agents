@@ -84,6 +84,62 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
         """Shutdown the thread pool."""
         self._pool.shutdown(wait=False)
 
+    def _ensure_display_trace(self, task: AgentTask) -> bool:
+        """Persist an acknowledged delegate before its worker is submitted."""
+        if (task.internal or not task.parent_conversation_id
+                or getattr(task, "_display_trace_created", False)):
+            return bool(getattr(task, "_display_trace_created", False))
+        try:
+            from core.conversation_store import ConversationStore
+            ConversationStore.instance().create_display_trace(
+                task.parent_conversation_id, task.id,
+                source={
+                    "name": task.agent_name,
+                    "parent_agent": task.source_agent or "",
+                    "task_id": task.id,
+                    "depth": _get_depth() + 1,
+                    "delegate_tc_id": task.delegate_tc_id,
+                    "source_task_id": task.source_task_id,
+                    "message": task.message,
+                    "llm_service": task.llm_service,
+                },
+                user_id=task.user_id,
+            )
+            task._display_trace_created = True
+            return True
+        except Exception as exc:
+            logger.debug("Failed to create display trace: %s", exc)
+            return False
+
+    def _finish_display_trace(self, task: AgentTask,
+                              result: AgentResult) -> bool:
+        """Persist one terminal event for every acknowledged delegate."""
+        if (getattr(task, "_display_trace_finished", False)
+                or not self._ensure_display_trace(task)):
+            return False
+        entry = {
+            "type": "done", "status": result.status,
+            "tokens_in": result.tokens_in, "tokens_out": result.tokens_out,
+            "iterations": result.iterations,
+            "tools_called": result.tools_called,
+            "model": result.model, "error": result.error,
+        }
+        if result.question:
+            entry["question"] = result.question[:500]
+        try:
+            from core.conversation_store import ConversationStore
+            ConversationStore.instance().append_display_trace(
+                task.parent_conversation_id, task.id, entry,
+                content_update=(
+                    result.response or result.question or result.error or ""
+                ),
+            )
+            task._display_trace_finished = True
+            return True
+        except Exception as exc:
+            logger.debug("Failed to append done trace: %s", exc)
+            return False
+
     # ── Single agent execution ────────────────────────────────────────
 
     def execute_agent(self, task: AgentTask) -> AgentResult:
@@ -94,15 +150,18 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
         """
         current_depth = _get_depth()
         effective_max = max(0, int(task.max_depth or 0))
+        self._ensure_display_trace(task)
 
         if effective_max > 0 and current_depth >= effective_max:
-            return AgentResult(
+            result = AgentResult(
                 task_id=task.id,
                 agent_name=task.agent_name,
                 error=f"Max agent depth ({effective_max}) reached — "
                       f"cannot spawn deeper agents",
                 status="error",
             )
+            self._finish_display_trace(task, result)
+            return result
 
         # Increase depth for this thread
         _set_depth(current_depth + 1)
@@ -327,6 +386,7 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
         """
         futures = {}
         for task in tasks:
+            self._ensure_display_trace(task)
             future = self._pool.submit(self.execute_agent, task)
             futures[task.id] = future
             with self._lock:

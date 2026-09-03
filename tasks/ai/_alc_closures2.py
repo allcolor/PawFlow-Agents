@@ -1,6 +1,7 @@
 """AgentCoreMixin closures extracted as methods (split for <=800 lines)."""
 import copy
 import logging
+import re
 import time
 
 from core.llm_client import (
@@ -15,6 +16,15 @@ from tasks.ai._alc_base import (  # noqa: F401
     _CONTEXT_ACK_PATTERNS)
 
 logger = logging.getLogger(__name__)
+
+# Both DELEGATE MODE hint wordings: the cold-path one appended by
+# _agentctx_p3 (ends with "answering '<caller>'.") and the hot-path one
+# appended by _alc_apply_queued_delegate_turn_mode (ends with
+# "delegate() yourself to answer.").
+_DELEGATE_HINT_RE = re.compile(
+    r"(?:\n\n)?DELEGATE MODE: .*?"
+    r"(?:delegate\(\) yourself to answer\.|answering '[^']*'\.)",
+    re.DOTALL)
 
 
 def _alc_carry_pawflow_attrs(src, dst):
@@ -600,39 +610,65 @@ class _ALCClosures2Mixin:
                 turn_msgs.append(tr_msg)
 
     def _alc_apply_queued_delegate_turn_mode(self, st, _new_user_msgs):
-        """If a shared delegate arrived while this agent was
-                        running, the pending-queue drain happens without a new
-                        _prepare_agent_context() call. Recreate the delegate
-                        reply turn mode here so the next loop's assistant
-                        output is routed privately back to the delegator.
-                        """
+        """Recompute the next turn's mode from the drained pending batch.
+
+        The end-of-turn pending drain happens without a new
+        _prepare_agent_context() call, so the trigger-site rule of
+        _agentctx_p3 is replayed here on the whole batch. Precedence:
+
+        1. Any human message in the batch wins: the next turn is a plain
+           user turn, visible in the chat. While an agent answers a delegator
+           every webchat message is queued with "mode mismatch"; letting the
+           newest queued delegate broadcast re-select delegate_reply routed
+           the agent's replies privately to the delegator and queued the
+           user's next messages again, starving the user until a force stop.
+        2. Newest external request (a2a / cross-conversation) → isolated
+           external_request turn.
+        3. Newest delegate request (kind != reply) → delegate_reply turn.
+        4. Otherwise a user turn. The previous turn's mode is never
+           inherited: a batch of delegate replies is a user turn, exactly as
+           on the cold path.
+
+        Returns True when a non-user mode was installed.
+        """
         _delegate_src = None
         _external_src = None
+        _human_msg = False
         for _m in reversed(_new_user_msgs or []):
             _src = getattr(_m, "source", None) or {}
-            if (isinstance(_src, dict)
-                    and _src.get("type") in {
-                        "a2a", "cross_conversation_delegate"}):
-                _external_src = _src
-                break
-            if (isinstance(_src, dict)
-                    and _src.get("type") == "agent_delegate"
-                    and _src.get("kind") != "reply"
-                    and _src.get("from")):
-                _delegate_src = _src
-                break
+            _src_type = _src.get("type") if isinstance(_src, dict) else None
+            if _src_type in {"a2a", "cross_conversation_delegate"}:
+                if _external_src is None:
+                    _external_src = _src
+                continue
+            if _src_type == "agent_delegate":
+                if (_delegate_src is None and _src.get("kind") != "reply"
+                        and _src.get("from")):
+                    _delegate_src = _src
+                continue
+            _human_msg = True
+        if _human_msg or (not _external_src and not _delegate_src):
+            _previous = (st.ctx.get("_turn_mode") or {}).get("type", "user")
+            st.ctx["_turn_mode"] = {"type": "user", "source_agent": None}
+            self._alc_strip_delegate_hint(st)
+            if _previous != "user":
+                logger.info(
+                    "[agent:%s] queued %s message resets next turn mode: "
+                    "user turn (was %s)",
+                    st.conversation_id[:8],
+                    "human" if _human_msg else "delegate reply", _previous)
+            return False
         if _external_src:
             st.ctx["_turn_mode"] = {
                 "type": "external_request",
                 "source_agent": _external_src.get("task_id", ""),
                 "source": dict(_external_src),
             }
+            self._alc_strip_delegate_hint(st)
             logger.info(
                 "[agent:%s] queued external request sets isolated next turn mode",
                 st.conversation_id[:8])
             return True
-        if not _delegate_src:
-            return False
         _caller = _delegate_src.get("from", "") or ""
         st.ctx["_turn_mode"] = {
             "type": "delegate_reply",
@@ -669,6 +705,25 @@ class _ALCClosures2Mixin:
             "[agent:%s] queued delegate message sets next turn mode: reply to %s",
             st.conversation_id[:8], _caller)
         return True
+
+    def _alc_strip_delegate_hint(self, st):
+        """Remove a DELEGATE MODE hint left in the system message by an
+        earlier delegate_reply turn (cold-path _agentctx_p3 wording or the
+        hot-path wording above). A user turn must not tell the agent that a
+        delegator is waiting for a private reply."""
+        for _idx, _m in enumerate(st.messages):
+            if getattr(_m, "role", "") != "system":
+                continue
+            _content = _m.content or ""
+            if "DELEGATE MODE:" not in _content:
+                return
+            _stripped = _DELEGATE_HINT_RE.sub("", _content)
+            if _stripped != _content:
+                st.messages[_idx] = LLMMessage(
+                    role="system", content=_stripped,
+                    conversation_id=st.conversation_id)
+            return
+
 
     def _alc_cli_block_callback(self, st, event_type, payload):
         """Persist one live CLI tool block through the writer.

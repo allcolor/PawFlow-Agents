@@ -14,8 +14,9 @@ Verifies that:
 """
 import json
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+from core.conversation_store import ConversationStore
 from core.agent_executor import (
     AgentTask,
     get_finished_delegate,
@@ -118,6 +119,172 @@ class TestFinishedDelegateRing:
 
 
 class TestDelegateStatusHandler:
+    def test_shared_delegate_is_recovered_from_durable_transcript(self, tmp_path):
+        conv = "conv_dsh_shared_live"
+        transcript = [{
+            "role": "user",
+            "content": "audit the implementation",
+            "timestamp": 100.0,
+            "source": {
+                "type": "agent_delegate",
+                "from": "agentA",
+                "to": "reviewer",
+                "target_agent": "reviewer",
+                "task_id": "tid-shared-live",
+            },
+        }, {
+            "role": "user",
+            "content": "private task from another caller",
+            "timestamp": 101.0,
+            "source": {
+                "type": "agent_delegate",
+                "from": "agentB",
+                "to": "reviewer",
+                "target_agent": "reviewer",
+                "task_id": "tid-other-caller",
+            },
+        }]
+        store = ConversationStore(
+            store_dir=str(tmp_path / "shared-live-conversations"))
+        store.save(conv, transcript, user_id="user1")
+
+        with patch.object(
+                store, "load",
+                side_effect=AssertionError(
+                    "delegate state must stream instead of loading transcript")), \
+                patch("core.conversation_store.ConversationStore.instance",
+                      return_value=store):
+            out = json.loads(
+                _make_handler(DelegateStatusHandler, conv).execute({}))
+
+        assert out["counts"] == {"live": 1, "finished": 0}
+        assert out["live"][0]["task_id"] == "tid-shared-live"
+        assert out["live"][0]["agent"] == "reviewer"
+        assert out["live"][0]["mode"] == "shared"
+
+    def test_durable_and_runtime_live_delegate_are_merged_once(self, tmp_path):
+        conv = "conv_dsh_shared_runtime"
+        task_id = "tid-shared-runtime"
+        store = ConversationStore(
+            store_dir=str(tmp_path / "shared-runtime-conversations"))
+        store.save(conv, [{
+            "role": "user",
+            "content": "audit",
+            "timestamp": 100.0,
+            "source": {
+                "type": "agent_delegate",
+                "from": "agentA",
+                "to": "reviewer",
+                "target_agent": "reviewer",
+                "task_id": task_id,
+            },
+        }], user_id="user1")
+        task = AgentTask(id=task_id, agent_name="reviewer", message="audit")
+        register_live_delegate(
+            conv, "agentA", "reviewer", task_id, MagicMock(), task)
+        try:
+            with patch("core.conversation_store.ConversationStore.instance",
+                       return_value=store):
+                out = json.loads(
+                    _make_handler(DelegateStatusHandler, conv).execute({}))
+        finally:
+            unregister_live_delegate(conv, "agentA", "reviewer", task_id)
+
+        assert out["counts"] == {"live": 1, "finished": 0}
+        assert out["live"][0]["task_id"] == task_id
+        assert out["live"][0]["status"] == "running"
+        assert out["live"][0]["runtime_attached"] is True
+
+    def test_shared_delegate_reply_is_recovered_after_registry_restart(
+            self, tmp_path):
+        conv = "conv_dsh_shared_finished"
+        transcript = [
+            {
+                "role": "user",
+                "content": "audit the implementation",
+                "timestamp": 100.0,
+                "source": {
+                    "type": "agent_delegate",
+                    "from": "agentA",
+                    "to": "reviewer",
+                    "target_agent": "reviewer",
+                    "task_id": "tid-shared-finished",
+                },
+            },
+            {
+                "role": "assistant",
+                "content": "The audit passes.",
+                "timestamp": 104.0,
+                "source": {
+                    "type": "agent_delegate",
+                    "from": "reviewer",
+                    "to": "agentA",
+                    "kind": "reply",
+                    "task_id": "tid-shared-finished",
+                },
+            },
+        ]
+        store = ConversationStore(
+            store_dir=str(tmp_path / "shared-finished-conversations"))
+        store.save(conv, transcript, user_id="user1")
+
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store):
+            status = json.loads(
+                _make_handler(DelegateStatusHandler, conv).execute({}))
+            result = json.loads(_make_handler(
+                DelegateResultHandler, conv).execute({
+                    "task_id": "tid-shared-finished",
+                }))
+
+        assert status["counts"] == {"live": 0, "finished": 1}
+        assert status["finished"][0]["task_id"] == "tid-shared-finished"
+        assert status["finished"][0]["mode"] == "shared"
+        assert result["status"] == "completed"
+        assert result["response"] == "The audit passes."
+        assert result["duration_ms"] == 4000.0
+
+    def test_durable_finished_results_remain_bounded(self, tmp_path):
+        conv = "conv_dsh_shared_bounded"
+        transcript = []
+        for index in range(105):
+            task_id = f"tid-bounded-{index}"
+            transcript.extend([
+                {
+                    "role": "user",
+                    "content": "request",
+                    "timestamp": float(index * 2 + 1),
+                    "source": {
+                        "type": "agent_delegate",
+                        "from": "agentA",
+                        "to": "reviewer",
+                        "target_agent": "reviewer",
+                        "task_id": task_id,
+                    },
+                },
+                {
+                    "role": "assistant",
+                    "content": f"result-{index}",
+                    "timestamp": float(index * 2 + 2),
+                    "source": {
+                        "type": "agent_delegate",
+                        "from": "reviewer",
+                        "to": "agentA",
+                        "kind": "reply",
+                        "task_id": task_id,
+                    },
+                },
+            ])
+        store = ConversationStore(
+            store_dir=str(tmp_path / "shared-bounded-conversations"))
+        store.save(conv, transcript, user_id="user1")
+
+        state = store.load_delegate_state(conv, "agentA", user_id="user1")
+
+        assert len(state["finished"]) == 100
+        assert state["finished"][0]["task_id"] == "tid-bounded-5"
+        assert state["finished"][-1]["task_id"] == "tid-bounded-104"
+
     def test_reports_flash_and_plain_delegates(self):
         conv = "conv_dsh1"
         task = AgentTask(id="tid1", agent_name="agentA::flash::critic",
@@ -172,6 +339,68 @@ class TestDelegateStatusHandler:
 
 
 class TestDelegateResultHandler:
+    def test_pending_durable_delegate_scans_transcript_once(self, tmp_path):
+        conv = "conv_dr_pending_once"
+        store = ConversationStore(
+            store_dir=str(tmp_path / "pending-once-conversations"))
+        store.save(conv, [{
+            "role": "user",
+            "content": "audit",
+            "timestamp": 100.0,
+            "source": {
+                "type": "agent_delegate",
+                "from": "agentA",
+                "to": "reviewer",
+                "task_id": "tid-pending-once",
+            },
+        }], user_id="user1")
+
+        with patch.object(
+                store, "load_delegate_state",
+                wraps=store.load_delegate_state) as scan, \
+                patch("core.conversation_store.ConversationStore.instance",
+                      return_value=store):
+            result = json.loads(_make_handler(
+                DelegateResultHandler, conv).execute({
+                    "task_id": "tid-pending-once",
+                }))
+
+        assert result["status"] == "pending"
+        scan.assert_called_once()
+
+    def test_finished_isolated_delegate_is_recovered_from_display_trace(
+            self, tmp_path):
+        conv = "conv_dr_trace"
+        store = ConversationStore(
+            store_dir=str(tmp_path / "trace-conversations"))
+        store.save(conv, [], user_id="user1")
+        store.create_display_trace(
+            conv, "tid-trace", {
+                "name": "auditor",
+                "parent_agent": "agentA",
+                "task_id": "tid-trace",
+            },
+            user_id="user1",
+        )
+        store.append_display_trace(
+            conv, "tid-trace", {
+                "type": "done",
+                "status": "completed",
+                "error": "",
+            },
+            content_update="durable result",
+        )
+
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store):
+            result = json.loads(_make_handler(
+                DelegateResultHandler, conv).execute({"task_id": "tid-trace"}))
+
+        assert result["status"] == "completed"
+        assert result["response"] == "durable result"
+        assert result["duration_ms"] >= 0.0
+        assert result["mode"] == "isolated"
+
     def test_returns_full_response_of_finished_delegate(self):
         conv = "conv_dr1"
         record_finished_delegate(conv, "agentA", "agentA::flash::auditor",

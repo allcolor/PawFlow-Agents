@@ -16,7 +16,6 @@ from core._agent_executor_base import (
     AgentResult,
     AgentTask,
     _clear_cancelled,
-    _get_depth,
     _is_cancelled,
     drain_live_delegate_messages,
     register_live_delegate,
@@ -48,29 +47,14 @@ class _SubAgentExecutorLoopMixin:
             "source_task_id": task.source_task_id,
         })
 
-        # Create display-only trace message in parent conversation
-        _trace_created = False
-        if task.parent_conversation_id and not task.internal:
-            try:
-                from core.conversation_store import ConversationStore
-                _depth = _get_depth()
-                ConversationStore.instance().create_display_trace(
-                    task.parent_conversation_id, task.id,
-                    source={
-                        "name": task.agent_name,
-                        "parent_agent": task.source_agent or "",
-                        "task_id": task.id,
-                        "depth": _depth,
-                        "delegate_tc_id": task.delegate_tc_id,
-                        "source_task_id": task.source_task_id,
-                        "message": task.message,
-                        "llm_service": task.llm_service,
-                    },
-                    user_id=task.user_id,
-                )
-                _trace_created = True
-            except Exception as _te:
-                logger.debug("Failed to create display trace: %s", _te)
+        _trace_created = self._ensure_display_trace(task)
+
+        def _terminal_error(message: str) -> AgentResult:
+            result.error = message
+            result.status = "error"
+            result.duration_ms = (time.time() - start) * 1000
+            self._finish_display_trace(task, result)
+            return result
 
         # Tools have NO timeout — only cancellation breaks the sub-agent.
         max_iter = max(
@@ -84,12 +68,7 @@ class _SubAgentExecutorLoopMixin:
             _msg = (f"Sub-agent '{task.agent_name}' has no llm_service "
                     f"— conv_agents link is missing or misconfigured.")
             logger.error("[sub-agent:%s] %s", task.agent_name, _msg)
-            return AgentResult(
-                task_id=task.id,
-                agent_name=task.agent_name,
-                error=_msg,
-                status="error",
-            )
+            return _terminal_error(_msg)
         if task.llm_service and self._client_resolver:
             try:
                 resolved_client, resolved_svc = self._client_resolver(
@@ -98,12 +77,9 @@ class _SubAgentExecutorLoopMixin:
             except Exception as e:
                 logger.exception("Failed to resolve LLM service '%s' for sub-agent '%s'",
                                  task.llm_service, task.agent_name)
-                return AgentResult(
-                    task_id=task.id,
-                    agent_name=task.agent_name,
-                    error=(f"Failed to resolve LLM service '{task.llm_service}': "
-                           f"{type(e).__name__}: {e or 'no details'}"),
-                    status="error",
+                return _terminal_error(
+                    f"Failed to resolve LLM service '{task.llm_service}': "
+                    f"{type(e).__name__}: {e or 'no details'}",
                 )
             if not resolved_client:
                 _msg = (f"Sub-agent '{task.agent_name}' requested llm_service "
@@ -111,33 +87,20 @@ class _SubAgentExecutorLoopMixin:
                         f"for user '{task.user_id}'. Check that the service "
                         f"exists and is enabled in the user or global scope.")
                 logger.error("[sub-agent:%s] %s", task.agent_name, _msg)
-                return AgentResult(
-                    task_id=task.id,
-                    agent_name=task.agent_name,
-                    error=_msg,
-                    status="error",
-                )
+                return _terminal_error(_msg)
             client = resolved_client
         elif task.llm_service and not self._client_resolver:
             _msg = (f"Sub-agent '{task.agent_name}' requested llm_service "
                     f"'{task.llm_service}' but no client_resolver is "
                     f"configured on the SubAgentExecutor.")
             logger.error("[sub-agent:%s] %s", task.agent_name, _msg)
-            return AgentResult(
-                task_id=task.id,
-                agent_name=task.agent_name,
-                error=_msg,
-                status="error",
-            )
+            return _terminal_error(_msg)
 
         # Acquire capacity slot if service has limits
         if resolved_svc and hasattr(resolved_svc, 'try_acquire'):
             if not resolved_svc.try_acquire():
-                return AgentResult(
-                    task_id=task.id,
-                    agent_name=task.agent_name,
-                    error=f"LLM service '{task.llm_service}' at capacity",
-                    status="error",
+                return _terminal_error(
+                    f"LLM service '{task.llm_service}' at capacity",
                 )
 
         # Build tool definitions (filtered if agent specifies a whitelist)
@@ -863,25 +826,7 @@ class _SubAgentExecutorLoopMixin:
             _done_data["question"] = result.question[:500]
         self._emit("sub_agent_done", _done_data)
 
-        if _trace_created:
-            try:
-                from core.conversation_store import ConversationStore
-                _trace_done = {
-                    "type": "done", "status": result.status,
-                    "tokens_in": result.tokens_in, "tokens_out": result.tokens_out,
-                    "iterations": result.iterations,
-                    "tools_called": result.tools_called,
-                    "model": result.model, "error": result.error,
-                }
-                if result.question:
-                    _trace_done["question"] = result.question[:500]
-                ConversationStore.instance().append_display_trace(
-                    task.parent_conversation_id, task.id,
-                    _trace_done,
-                    content_update=result.response or result.question or result.error or "",
-                )
-            except Exception as _te:
-                logger.debug("Failed to append done trace: %s", _te)
+        self._finish_display_trace(task, result)
 
         # Cleanup sub-conversation (unless persist=True)
         if sub_conv_id and not task.persist and result.status in ("completed", "error", "timeout", "cancelled"):

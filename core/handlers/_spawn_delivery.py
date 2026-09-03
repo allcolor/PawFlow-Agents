@@ -201,7 +201,8 @@ class _SpawnDeliveryMixin:
                         "[delegate-shared] target '%s' running (key=%s) — preempt",
                         to_agent, key)
                     self._preempt_caller(inst, _route_conv_id, to_agent,
-                                         message, _msg_id, _src)
+                                         message, _msg_id, _src,
+                                         user_id=user_id)
                     return {"state": "running (preempted)"}
                 else:
                     logger.info(
@@ -457,7 +458,9 @@ class _SpawnDeliveryMixin:
             logger.info(
                 "[bg-delegate] caller '%s' is running — preempting with "
                 "result for task %s", caller_agent, task_id)
-            self._preempt_caller(inst, conv_id, caller_agent, text, msg_id, _source)
+            self._preempt_caller(
+                inst, conv_id, caller_agent, text, msg_id, _source,
+                user_id=user_id)
         else:
             # Wake path: no active loop → spawn a fresh stream so the
             # caller reads + reacts to the result.
@@ -543,9 +546,9 @@ class _SpawnDeliveryMixin:
         return {"state": submission.status, "turn_id": submission.turn_id}
 
     @staticmethod
-    def _preempt_caller(inst, conv_id, caller_agent, text, msg_id, source):
-        """Append the delegate result to the caller's PendingQueue — the
-        running agent loop will drain it at its next turn boundary."""
+    def _preempt_caller(inst, conv_id, caller_agent, text, msg_id, source,
+                        user_id=""):
+        """Queue a delegate result and request a race-safe caller wake."""
         try:
             from core.pending_queue import PendingQueue
             from core.llm_client import stamp_message
@@ -557,6 +560,16 @@ class _SpawnDeliveryMixin:
             }, conv_id)
             PendingQueue.for_agent(conv_id, caller_agent or "").enqueue(
                 msg, source="delegate_reply")
+            # The caller can leave its active loop after delivery selected the
+            # preempt path but before this enqueue. Always schedule the stable
+            # per-agent pending key: the poller defers it while still active and
+            # consumes it once idle, so the durable result cannot be stranded.
+            from tasks.ai.agent_loop import AgentLoopTask
+            AgentLoopTask.wake_agent(
+                conv_id, caller_agent or "",
+                reason=(f"[delegate_reply] queued result for "
+                        f"{caller_agent or 'default'}"),
+                user_id=user_id, delay=0.0, even_if_active=True)
         except Exception as e:
             logger.error("[bg-delegate] preempt failed: %s", e)
 

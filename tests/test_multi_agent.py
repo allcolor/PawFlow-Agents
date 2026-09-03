@@ -187,6 +187,115 @@ class TestAgentResult:
 
 
 class TestSingleAgentExecution:
+    def test_async_spawn_persists_trace_before_return(self):
+        client = make_client_mock([])
+        executor = SubAgentExecutor(
+            client, make_registry(),
+            client_resolver=lambda *_args: (client, None),
+        )
+        executor.execute_agent = MagicMock(return_value=AgentResult(
+            task_id="queued-trace", agent_name="worker", status="completed",
+        ))
+        store = MagicMock()
+        task = AgentTask(
+            id="queued-trace", agent_name="worker", message="audit",
+            llm_service="svc", user_id="alice",
+            source_agent="caller", parent_conversation_id="conv",
+        )
+
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store):
+            pending = executor.spawn([task], wait=False)
+
+        assert pending[0].status == "pending"
+        store.create_display_trace.assert_called_once()
+        executor.shutdown()
+
+    def test_early_resolver_failure_closes_durable_trace(self):
+        client = make_client_mock([])
+        executor = SubAgentExecutor(
+            client, make_registry(),
+            client_resolver=MagicMock(side_effect=RuntimeError("resolver down")),
+        )
+        store = MagicMock()
+        task = AgentTask(
+            id="resolver-trace", agent_name="worker", message="audit",
+            llm_service="svc", user_id="alice",
+            source_agent="caller", parent_conversation_id="conv",
+        )
+
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store):
+            result = executor.execute_agent(task)
+
+        assert result.status == "error"
+        store.create_display_trace.assert_called_once()
+        done = store.append_display_trace.call_args.args[2]
+        assert done["type"] == "done"
+        assert done["status"] == "error"
+        assert "resolver down" in store.append_display_trace.call_args.kwargs[
+            "content_update"
+        ]
+        executor.shutdown()
+
+    def test_normal_completion_writes_one_anchor_and_terminal(self):
+        client = make_client_mock([simple_response("done")])
+        executor = SubAgentExecutor(
+            client, make_registry(),
+            client_resolver=lambda *_args: (client, None),
+        )
+        store = MagicMock()
+        store.load.return_value = []
+        task = AgentTask(
+            id="complete-trace", agent_name="worker", message="audit",
+            llm_service="svc", user_id="alice",
+            source_agent="caller", parent_conversation_id="conv",
+        )
+
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store):
+            result = executor.spawn([task], wait=True)[0]
+
+        assert result.status == "completed"
+        store.create_display_trace.assert_called_once()
+        terminal_calls = [
+            call for call in store.append_display_trace.call_args_list
+            if call.args[2].get("type") == "done"
+        ]
+        assert len(terminal_calls) == 1
+        done = terminal_calls[0].args[2]
+        assert done["type"] == "done"
+        assert done["status"] == "completed"
+        assert terminal_calls[0].kwargs[
+            "content_update"
+        ] == "done"
+        executor.shutdown()
+
+    def test_depth_rejection_is_durable(self):
+        client = make_client_mock([])
+        executor = SubAgentExecutor(client, make_registry())
+        store = MagicMock()
+        task = AgentTask(
+            id="depth-trace", agent_name="worker", message="audit",
+            llm_service="svc", user_id="alice", max_depth=1,
+            source_agent="caller", parent_conversation_id="conv",
+        )
+
+        _set_depth(1)
+        try:
+            with patch("core.conversation_store.ConversationStore.instance",
+                       return_value=store):
+                result = executor.execute_agent(task)
+        finally:
+            _set_depth(0)
+
+        assert result.status == "error"
+        store.create_display_trace.assert_called_once()
+        done = store.append_display_trace.call_args.args[2]
+        assert done["type"] == "done"
+        assert done["status"] == "error"
+        executor.shutdown()
+
     def test_sub_agent_tool_execution_records_registry_metrics(self):
         """Sub-agent tool calls must go through ToolRegistry.execute."""
         ToolRegistry.reset_metrics()

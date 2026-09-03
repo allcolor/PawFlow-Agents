@@ -88,6 +88,203 @@ class _CsTranscriptMixin:
                 return None
         return self._read(cid, self._scan_transcript)
 
+    def load_delegate_state(self, cid: str, caller: str, user_id: str = "",
+                            finished_limit: int = 100,
+                            response_limit: int = 200_000) -> Dict[str, List[Dict]]:
+        """Rebuild one caller's delegate state from the append-only transcript.
+
+        Shared delegate requests and replies already carry the same task_id.
+        Isolated and flash delegates persist a sub_agent_trace anchor followed
+        by trace_update rows. Streaming those rows is the durable counterpart
+        to the process-local live registry and finished-result ring: context
+        compaction or a runtime restart cannot make an acknowledged delegate
+        disappear from delegate_status or delegate_result.
+
+        The scan is O(transcript rows) but keeps only delegate state in memory;
+        it never materializes the full conversation.
+        """
+        empty = {"live": [], "finished": []}
+        if not caller or not self.exists(cid):
+            return empty
+        if user_id:
+            cache = self._load_cache(cid)
+            if cache["user_id"] and cache["user_id"] != user_id:
+                return empty
+        log = self._transcript_log(cid)
+        if not log.exists():
+            return empty
+
+        caller_key = str(caller).casefold()
+        response_limit = max(0, int(response_limit))
+        finished_limit = max(0, int(finished_limit))
+        active: Dict[str, Dict[str, Any]] = {}
+        traces: Dict[str, Dict[str, Any]] = {}
+        finished: Dict[str, Dict[str, Any]] = {}
+        order = 0
+
+        def _time(value: Dict[str, Any]) -> float:
+            try:
+                return float(value.get("timestamp") or value.get("ts") or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def _text(value: Any) -> str:
+            if isinstance(value, str):
+                return value
+            if isinstance(value, list):
+                return "".join(
+                    str(block.get("text") or "")
+                    for block in value if isinstance(block, dict)
+                    and block.get("type") == "text"
+                )
+            return str(value or "")
+
+        def _finish(task_id: str, target: str, status: str, error: str,
+                    response: str, finished_at: float, mode: str) -> None:
+            nonlocal order
+            started = active.pop(task_id, None) or {}
+            trace = traces.pop(task_id, None) or {}
+            started_at = float(
+                started.get("started_at") or trace.get("started_at") or 0.0)
+            target = str(
+                target or started.get("target") or trace.get("target") or "")
+            mode = str(mode or started.get("mode") or trace.get("mode")
+                       or "isolated")
+            duration_ms = (
+                max(0.0, finished_at - started_at) * 1000
+                if started_at and finished_at else 0.0
+            )
+            order += 1
+            finished[task_id] = {
+                "caller": caller,
+                "target": target,
+                "task_id": task_id,
+                "status": str(status or "completed"),
+                "error": str(error or "")[:500],
+                "duration_ms": duration_ms,
+                "finished_at": finished_at,
+                "response": str(response or "")[:response_limit],
+                "mode": mode,
+                "_order": order,
+            }
+
+        for row in log.iter_rows():
+            if self._is_trace_update_row(row):
+                task_id = str(row.get("trace_id") or "")
+                trace = traces.get(task_id)
+                if trace is None:
+                    continue
+                content_update = _text(row.get("content_update"))
+                if content_update:
+                    trace["response"] = (
+                        str(trace.get("response") or "") + content_update
+                    )[:response_limit]
+                entry = row.get("entry") or {}
+                if isinstance(entry, dict) and entry.get("type") == "done":
+                    _finish(
+                        task_id,
+                        str(trace.get("target") or ""),
+                        str(entry.get("status") or "completed"),
+                        str(entry.get("error") or ""),
+                        str(trace.get("response") or ""),
+                        _time(entry) or _time(row),
+                        str(trace.get("mode") or "isolated"),
+                    )
+                continue
+
+            source = row.get("source") or {}
+            if not isinstance(source, dict):
+                continue
+            role = str(row.get("role") or "")
+            if role == "sub_agent_trace":
+                if str(source.get("parent_agent") or "").casefold() != caller_key:
+                    continue
+                task_id = str(
+                    source.get("task_id") or row.get("trace_id") or "")
+                if not task_id:
+                    continue
+                target = str(source.get("name") or "")
+                mode = "flash" if "::flash::" in target else "isolated"
+                finished.pop(task_id, None)
+                trace = {
+                    "caller": caller,
+                    "target": target,
+                    "task_id": task_id,
+                    "started_at": _time(row),
+                    "pending_messages": 0,
+                    "mode": mode,
+                    "status": "pending",
+                    "response": _text(row.get("content"))[:response_limit],
+                }
+                traces[task_id] = trace
+                active[task_id] = {
+                    key: value for key, value in trace.items()
+                    if key != "response"
+                }
+                for entry in row.get("trace") or []:
+                    if not isinstance(entry, dict):
+                        continue
+                    if entry.get("type") == "done":
+                        _finish(
+                            task_id, target,
+                            str(entry.get("status") or "completed"),
+                            str(entry.get("error") or ""),
+                            str(trace.get("response") or ""),
+                            _time(entry), mode,
+                        )
+                continue
+
+            if source.get("type") != "agent_delegate":
+                continue
+            task_id = str(source.get("task_id") or "")
+            if not task_id:
+                continue
+            is_reply = source.get("kind") == "reply"
+            if (not is_reply
+                    and str(source.get("from") or "").casefold() == caller_key):
+                target = str(
+                    source.get("to") or source.get("target_agent") or "")
+                finished.pop(task_id, None)
+                active[task_id] = {
+                    "caller": caller,
+                    "target": target,
+                    "task_id": task_id,
+                    "started_at": _time(row),
+                    "pending_messages": 0,
+                    "mode": "shared",
+                    "status": "pending",
+                }
+            elif (is_reply
+                  and str(source.get("to") or "").casefold() == caller_key):
+                _finish(
+                    task_id,
+                    str(source.get("from") or ""),
+                    "completed",
+                    "",
+                    _text(row.get("content")),
+                    _time(row),
+                    "shared",
+                )
+
+        ordered_finished = sorted(
+            finished.values(),
+            key=lambda item: (item.get("finished_at") or 0.0,
+                              item.get("_order") or 0),
+        )
+        if finished_limit:
+            ordered_finished = ordered_finished[-finished_limit:]
+        else:
+            ordered_finished = []
+        for item in ordered_finished:
+            item.pop("_order", None)
+        return {
+            "live": sorted(
+                active.values(),
+                key=lambda item: item.get("started_at") or 0.0,
+            ),
+            "finished": ordered_finished,
+        }
+
     def load_range_by_msg_id(self, cid: str,
                              from_msg_id: str,
                              to_msg_id: str,

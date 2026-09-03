@@ -657,7 +657,8 @@ class TestAgentLoopStreaming(unittest.TestCase):
             with patch("core.conversation_store.ConversationStore.instance",
                        return_value=fake_store), \
                     patch.object(_paths, "POLL_SCHEDULE_FILE",
-                                 root / "poll_schedule.json"):
+                                 root / "poll_schedule.json"), \
+                    patch.object(AgentLoopTask, "wake_poller") as wake_poller:
                 PendingQueue.drop_cache()
                 PollScheduler.reset()
                 task = AgentLoopTask({"api_key": "k", "streaming": True})
@@ -695,6 +696,7 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 assert wake is not None
                 assert wake["reason"] == "[pending] 1 queued msg(s) after idle"
                 assert wake["recheck_at"] <= time.time() + 1
+                wake_poller.assert_called_once_with()
 
         PendingQueue.drop_cache()
         PollScheduler.reset()
@@ -772,7 +774,8 @@ class TestAgentLoopStreaming(unittest.TestCase):
             with patch("core.conversation_store.ConversationStore.instance",
                        return_value=fake_store), \
                     patch.object(_paths, "POLL_SCHEDULE_FILE",
-                                 root / "poll_schedule.json"):
+                                 root / "poll_schedule.json"), \
+                    patch.object(AgentLoopTask, "wake_poller") as wake_poller:
                 PendingQueue.drop_cache()
                 PollScheduler.reset()
                 task = AgentLoopTask({"api_key": "k", "streaming": True})
@@ -808,6 +811,7 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 assert wake is not None
                 assert wake["reason"] == "[pending] 1 queued msg(s) after interrupted turn"
                 assert wake["recheck_at"] <= time.time() + 1
+                wake_poller.assert_called_once_with()
 
         PendingQueue.drop_cache()
         PollScheduler.reset()

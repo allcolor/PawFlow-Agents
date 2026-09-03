@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Durable one-shot flow runs enqueue their initial FlowFile and enter the
+  `running` state before the executor scheduler starts, preventing an empty
+  startup window from failing a valid run as drained before injection.
+
 ## [1.0.0-beta.260] — 2026-09-02
 
 ### Fixed

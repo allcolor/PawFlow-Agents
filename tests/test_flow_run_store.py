@@ -297,6 +297,13 @@ def test_attach_executor_injects_unique_run_context(monkeypatch, tmp_path):
     executor._runtime_context = {}
     executor._tasks = {"done": task}
     registry = MagicMock()
+    observed_at_start = {}
+
+    def observe_start():
+        observed_at_start["status"] = store.get(run["run_id"])["status"]
+        observed_at_start["inject_calls"] = executor.inject.call_count
+
+    executor.start.side_effect = observe_start
     monkeypatch.setattr(
         "core.executor_registry.ExecutorRegistry.get_instance",
         classmethod(lambda cls: registry))
@@ -315,6 +322,7 @@ def test_attach_executor_injects_unique_run_context(monkeypatch, tmp_path):
     assert runtime["workflow_resource_roots"] == ()
     assert executor._instance_id == run["deployment_instance_id"]
     executor.inject.assert_called_once()
+    assert observed_at_start == {"status": "running", "inject_calls": 1}
     assert store.get(run["run_id"])["status"] == "running"
 
 

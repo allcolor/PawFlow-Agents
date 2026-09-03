@@ -64,8 +64,6 @@ class FlowRunCoordinator:
             executor._inject_runtime_context(task, task_id=task_id)
         from core.executor_registry import ExecutorRegistry
         ExecutorRegistry.get_instance().register(run["deployment_instance_id"], executor)
-        executor.start()
-        self.store.transition(run_id, "running")
         if inject_input:
             snapshot = run["input"] or {}
             flowfile = FlowFile(
@@ -74,6 +72,8 @@ class FlowRunCoordinator:
             )
             flowfile.set_attribute("flow.run.id", run_id)
             executor.inject(flowfile, entry_task_id=entry_task_id or None)
+        self.store.transition(run_id, "running")
+        executor.start()
         return executor
 
     def finalize(self, run_id: str, terminal: dict[str, Any]) -> dict[str, Any]:

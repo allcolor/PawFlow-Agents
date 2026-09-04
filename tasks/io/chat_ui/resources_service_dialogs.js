@@ -70,18 +70,14 @@ function _showTaskDefLog(defName) {
 
 function showServiceMenu(e, serviceId, scope, enabled) {
   e.preventDefault();
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px var(--pf-shadow);';
+  menu.style.minWidth = '160px';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
-    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
-    d.onmouseleave = () => d.style.background = '';
+    d.className = 'ctx-menu-item' + (danger ? ' danger' : '');
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
@@ -123,7 +119,6 @@ function showServiceMenu(e, serviceId, scope, enabled) {
       });
     }, true);
   }
-  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
 // ── Service schema-based form helpers ─────────────────────────────
@@ -313,9 +308,14 @@ function _renderServiceActions(actions, serviceId, scope) {
   let html = '<div class="svc-actions" style="margin-top:12px;padding-top:8px;border-top:1px solid var(--pf-border);">';
   for (const a of actions) {
     const whenAttr = a.when ? ' data-action-when=\'' + JSON.stringify(a.when).replace(/'/g, '&#39;') + '\'' : '';
+    const labelKey = {
+      acp_registry_import: 'acpRegistryImport',
+      acp_registry_check_update: 'acpRegistryCheckUpdates',
+    }[a.id];
+    const label = labelKey ? t(labelKey) : (a.label || a.id);
     html += '<button type="button" onclick="_executeServiceAction(' + _pfpJsArg(a.id) + ',' + _pfpJsArg(serviceId) + ',' + _pfpJsArg(a.flow || 'simple') + ',' + _pfpJsArg(a.server_action || '') + ',' + _pfpJsArg(scope) + ')"'
       + whenAttr + ' style="background:color-mix(in srgb, var(--pf-accent) 14%, var(--pf-panel));color:var(--pf-accent);border:1px solid var(--pf-accent);border-radius:4px;padding:6px 12px;cursor:pointer;font-size:12px;margin-right:8px;">'
-      + escapeHtml(a.icon || '') + ' ' + escapeHtml(a.label || a.id) + '</button>';
+      + escapeHtml(a.icon || '') + ' ' + escapeHtml(label) + '</button>';
   }
   html += '</div>';
   return html;

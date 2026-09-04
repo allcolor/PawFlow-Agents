@@ -116,7 +116,7 @@ def test_turn_controller_keeps_positional_boundaries_and_rehydrates_live(tmp_pat
           function findToolCallElement(){ return null; }
           function parseShowFileArtifact(){ return null; }
         """,
-        sources=["turn_view.js"],
+        sources=["ui_motion.js", "ui_disclosure.js", "turn_view.js"],
         test=r"""
           const box = document.getElementById('messages');
           const row = (id, role, text) => {

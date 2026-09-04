@@ -419,6 +419,10 @@ def test_every_tile_header_can_maximize_its_surface_into_single_layout():
     assert "workspaceSetLayout(1)" in WORKSPACE_JS
     assert "switchTab(tabId)" in WORKSPACE_JS
     assert "workspace-maximized" in WORKSPACE_CSS
+    assert "window.pfMotion.flipGroup(panels, apply" in WORKSPACE_JS
+    assert "channel: 'workspace-layout'" in WORKSPACE_JS
+    assert "duration: 300" in WORKSPACE_JS
+    assert "scale: true" in WORKSPACE_JS
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node")

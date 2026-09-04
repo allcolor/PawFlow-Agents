@@ -29,9 +29,31 @@ function eq(actual, expected, msg) {
 }
 
 // Fresh document + fresh module state for every test.
-function env(mode) {
+function env(mode, options) {
+  options = options || {};
   delete require.cache[require.resolve(STUB)];
   const dom = require(STUB);
+  dom.document.visibilityState = 'visible';
+  const observerRecords = {intersection: [], resize: []};
+  const mediaListeners = new Set();
+  const media = {
+    matches: options.reduced === undefined ? false : !!options.reduced,
+    addEventListener(_type, listener) { mediaListeners.add(listener); },
+    removeEventListener(_type, listener) { mediaListeners.delete(listener); },
+    dispatch() { mediaListeners.forEach(listener => listener({matches: media.matches})); },
+  };
+  function observerClass(kind) {
+    return class {
+      constructor(callback) {
+        this.callback = callback;
+        this.targets = new Set();
+        observerRecords[kind].push(this);
+      }
+      observe(target) { this.targets.add(target); }
+      unobserve(target) { this.targets.delete(target); }
+      disconnect() { this.targets.clear(); }
+    };
+  }
   const ctx = {
     document: dom.document,
     setTimeout: dom.setTimeout,
@@ -39,7 +61,13 @@ function env(mode) {
     setInterval: dom.setInterval,
     clearInterval: dom.clearInterval,
     Date: dom.Date,
+    AbortController,
     console,
+    matchMedia: () => media,
+    IntersectionObserver: observerClass('intersection'),
+    ResizeObserver: observerClass('resize'),
+    requestAnimationFrame: callback => { callback(); return 1; },
+    cancelAnimationFrame: () => {},
     CSS: { escape: s => String(s).replace(/["\\\]]/g, '\\$&') },
     t: k => k,
     escapeHtml: s => String(s === null || s === undefined ? '' : s)
@@ -51,8 +79,12 @@ function env(mode) {
     _seenMsgIds: new Set(),
     _updateLoadMoreBanner: () => {},
   };
+  ctx.window = ctx;
+  ctx.globalThis = ctx;
   vm.createContext(ctx);
-  for (const file of ['turn_view.js', 'messages_render.js']) {
+  for (const file of [
+    'ui_motion.js', 'ui_disclosure.js', 'turn_view.js', 'messages_render.js'
+  ]) {
     vm.runInContext(fs.readFileSync(path.join(CHAT_UI, file), 'utf8'), ctx, { filename: file });
   }
   const messages = dom.document.createElement('div');
@@ -60,7 +92,7 @@ function env(mode) {
   dom.documentElement.appendChild(messages);
 
   const api = {
-    ctx, dom, messages, clock: dom.clock,
+    ctx, dom, messages, clock: dom.clock, observers: observerRecords, media,
     row(msgId, extraClass) {
       const el = dom.document.createElement('div');
       el.className = 'msg' + (extraClass ? ' ' + extraClass : '');
@@ -105,6 +137,56 @@ test('classic mode eviction groups stay single-node', () => {
   const group = e.ctx.turnViewEvictionGroup(user);
   eq(group.length, 1);
   assert(group[0] === user);
+});
+
+test('rain caches size and draws only while visible with motion enabled', () => {
+  const e = env('simplified', {reduced: false});
+  startTurn(e, 'u-rain');
+  const activity = e.row('rain-activity');
+  e.ctx.turnViewIngest('assistant', {
+    turn_id: 'u-rain', msg_id: 'rain-activity', live: true, content: 'working',
+  }, activity);
+  const canvas = e.messages.querySelector('.simple-turn-rain');
+  assert(canvas, 'active turn did not create its rain canvas');
+  let draws = 0;
+  canvas.getContext = () => ({
+    fillRect() { draws++; }, fillText() {},
+    fillStyle: '', font: '', textBaseline: '', globalAlpha: 1,
+  });
+  const resize = e.observers.resize.find(record => record.targets.has(canvas));
+  const intersection = e.observers.intersection.find(record => record.targets.has(canvas));
+  assert(resize, 'rain canvas was not resize-observed');
+  assert(intersection, 'rain canvas was not visibility-observed');
+  resize.callback([{target: canvas, contentRect: {width: 120, height: 60}}]);
+  Object.defineProperty(canvas, 'clientWidth', {
+    get() { throw new Error('rain frame forced a layout width read'); },
+  });
+  Object.defineProperty(canvas, 'clientHeight', {
+    get() { throw new Error('rain frame forced a layout height read'); },
+  });
+
+  intersection.callback([{target: canvas, isIntersecting: false}]);
+  e.clock.tick(200);
+  eq(draws, 0, 'offscreen rain kept drawing');
+
+  intersection.callback([{target: canvas, isIntersecting: true}]);
+  e.clock.tick(70);
+  assert(draws > 0, 'visible rain did not draw');
+  const visibleDraws = draws;
+
+  e.dom.document.visibilityState = 'hidden';
+  const visibility = e.dom.document._listeners.find(item => item[0] === 'visibilitychange');
+  assert(visibility, 'rain scheduler did not observe document visibility');
+  visibility[1]();
+  e.clock.tick(200);
+  eq(draws, visibleDraws, 'hidden document kept drawing rain');
+
+  e.dom.document.visibilityState = 'visible';
+  visibility[1]();
+  e.media.matches = true;
+  e.media.dispatch();
+  e.clock.tick(200);
+  eq(draws, visibleDraws, 'reduced motion kept drawing rain');
 });
 
 // ── Boundaries are positional: no turn_id required anywhere ─────────────

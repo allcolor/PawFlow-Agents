@@ -10,6 +10,37 @@
   border-color: var(--pf-danger);
 }
 
+.workflow-run-action {
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  min-width: max-content;
+}
+
+.workflow-run-action-face {
+  grid-area: 1 / 1;
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity var(--pf-motion-fast) ease,
+    transform var(--pf-motion-fast) ease;
+  pointer-events: none;
+}
+
+.workflow-run-action[data-action-state="idle"] [data-action-face="idle"],
+.workflow-run-action[data-action-state="pending"] [data-action-face="pending"],
+.workflow-run-action[data-action-state="success"] [data-action-face="success"],
+.workflow-run-action[data-action-state="error"] [data-action-face="error"] {
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+}
+
+.workflow-run-action:disabled {
+  cursor: wait !important;
+  opacity: .78;
+}
+
 .workflow-kanban-move,
 .workflow-kanban-form {
   display: grid;
@@ -142,6 +173,14 @@
   font-size: 11px;
 }
 
+@keyframes workflow-run-pulse {
+  50% { opacity: .35; }
+}
+
+.workflow-run-pulse {
+  animation: workflow-run-pulse 1.2s ease-in-out infinite;
+}
+
 .workflow-kanban-card:focus-visible,
 .workflow-kanban-card-open:focus-visible,
 .workflow-kanban-host button:focus-visible,
@@ -227,5 +266,13 @@
     scroll-behavior: auto !important;
     transition: none !important;
     animation: none !important;
+  }
+
+  .workflow-run-pulse {
+    animation: none !important;
+  }
+
+  .workflow-run-action-face {
+    transition: none !important;
   }
 }

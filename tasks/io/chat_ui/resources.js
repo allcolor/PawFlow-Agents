@@ -122,8 +122,122 @@ function cmdListResources() {
 }
 
 // ── Sidebar accordion ───────────────────────────────────────────
+let _sidebarAccordionGeneration = 0;
+let _sidebarAccordionSettled = Promise.resolve({status: 'idle'});
+
+function _sidebarAccordionParts() {
+  return ['conversations', 'resources'].map(function(name) {
+    const section = document.querySelector('[data-sidebar-section="' + name + '"]');
+    return section ? {
+      name: name,
+      section: section,
+      body: section.querySelector('.sidebar-section-body'),
+    } : null;
+  }).filter(function(part) { return part && part.body; });
+}
+
+function _sidebarAccordionOpacity(part) {
+  if (typeof window.getComputedStyle === 'function') {
+    const value = Number(window.getComputedStyle(part.body).opacity);
+    if (Number.isFinite(value)) return value;
+  }
+  return part.section.classList.contains('active') ? 1 : 0;
+}
+
+function _sidebarAccordionSnapshot(parts) {
+  return parts.map(function(part) {
+    return {
+      sectionHeight: Number(part.section.getBoundingClientRect().height || 0),
+      bodyHeight: Number(part.body.getBoundingClientRect().height || 0),
+      opacity: _sidebarAccordionOpacity(part),
+    };
+  });
+}
+
+function _sidebarAccordionClear(parts) {
+  parts.forEach(function(part) {
+    part.section.style.flex = '';
+    part.section.style.height = '';
+    part.body.style.flex = '';
+    part.body.style.height = '';
+    part.body.style.opacity = '';
+  });
+}
+
+function _sidebarAccordionAnimate(parts, first, generation) {
+  let last = null;
+  const measured = window.pfMotion.read(function() {
+    if (generation !== _sidebarAccordionGeneration) return null;
+    last = _sidebarAccordionSnapshot(parts);
+    return last;
+  });
+  const animated = window.pfMotion.write(function() {
+    if (!last || generation !== _sidebarAccordionGeneration) {
+      return {status: 'stale'};
+    }
+    const jobs = [];
+    parts.forEach(function(part, index) {
+      const start = first[index];
+      const end = last[index];
+      part.section.style.flex = '0 0 auto';
+      part.section.style.height = end.sectionHeight + 'px';
+      part.body.style.flex = '0 0 auto';
+      part.body.style.height = end.bodyHeight + 'px';
+      part.body.style.opacity = String(end.opacity);
+      jobs.push(window.pfMotion.replace(part.section, 'sidebar-accordion-section', [
+        {height: start.sectionHeight + 'px'},
+        {height: end.sectionHeight + 'px'},
+      ], {
+        duration: 500,
+        easing: 'cubic-bezier(.4, 0, .2, 1)',
+        fill: 'both',
+      }));
+      jobs.push(window.pfMotion.replace(part.body, 'sidebar-accordion-body', [
+        {height: start.bodyHeight + 'px', opacity: start.opacity},
+        {height: end.bodyHeight + 'px', opacity: end.opacity},
+      ], {
+        duration: 500,
+        easing: 'cubic-bezier(.4, 0, .2, 1)',
+        fill: 'both',
+      }));
+    });
+    return Promise.all(jobs).then(function(results) {
+      if (generation !== _sidebarAccordionGeneration) return {status: 'stale'};
+      _sidebarAccordionClear(parts);
+      results.forEach(function(result) {
+        if (result && result.animation && typeof result.animation.cancel === 'function') {
+          result.animation.cancel();
+        }
+      });
+      return {status: 'finished'};
+    });
+  });
+  _sidebarAccordionSettled = Promise.all([measured, animated]).then(function(results) {
+    return results[1] || {status: 'stale'};
+  });
+}
+
 function setSidebarSection(sectionName) {
   if (sectionName !== 'conversations' && sectionName !== 'resources') return false;
+  const parts = _sidebarAccordionParts();
+  const alreadyActive = parts.some(function(part) {
+    return part.name === sectionName && part.section.classList.contains('active');
+  });
+  if (alreadyActive) return true;
+  const canAnimate = !!(window.pfMotion && !window.pfMotion.reduced()
+    && parts.length === 2 && parts.every(function(part) {
+      return typeof part.section.getBoundingClientRect === 'function'
+        && typeof part.body.getBoundingClientRect === 'function';
+    }));
+  const first = canAnimate ? _sidebarAccordionSnapshot(parts) : null;
+  const generation = ++_sidebarAccordionGeneration;
+  if (window.pfMotion) {
+    parts.forEach(function(part) {
+      window.pfMotion.cancel(part.section, 'sidebar-accordion-section');
+      window.pfMotion.cancel(part.body, 'sidebar-accordion-body');
+    });
+  }
+  _sidebarAccordionClear(parts);
   ['conversations', 'resources'].forEach(function(name) {
     const section = document.querySelector('[data-sidebar-section="' + name + '"]');
     if (!section) return;
@@ -136,7 +250,7 @@ function setSidebarSection(sectionName) {
     const chevron = section.querySelector('.sidebar-section-chevron');
     if (chevron) chevron.textContent = isActive ? '\u25BC' : '\u25B6';
   });
-  if (sectionName === 'resources' && typeof loadResources === 'function') loadResources();
+  if (canAnimate) _sidebarAccordionAnimate(parts, first, generation);
   return true;
 }
 
@@ -177,16 +291,16 @@ function _withView(payload) {
 }
 function _toggleScopeViewAll() {
   window._scopeViewAll = !window._scopeViewAll;
-  if (typeof loadResources === 'function') loadResources();
+  if (typeof refreshResources === 'function') refreshResources();
 }
 function _viewAllBarHtml() {
   if (typeof _isAdmin !== 'function' || !_isAdmin()) return '';
   const on = !!window._scopeViewAll;
-  return '<div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-bottom:6px;padding:0 2px;">'
+  return '<div data-resource-owner="_scope_view" style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-bottom:6px;padding:0 2px;">'
     + '<span style="font-size:10px;color:var(--pf-muted);">' + escapeHtml(t('adminScopeView')) + '</span>'
-    + '<span onclick="_toggleScopeViewAll()" style="cursor:pointer;font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--pf-border);background:'
+    + '<button type="button" onclick="_toggleScopeViewAll()" style="cursor:pointer;font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--pf-border);background:'
     + (on ? 'var(--pf-accent)' : 'transparent') + ';color:' + (on ? 'var(--pf-bg)' : 'var(--pf-muted)') + ';" title="' + _pfpAttr(t('adminScopeViewHint')) + '">'
-    + escapeHtml(on ? t('adminScopeAll') : t('adminScopeMine')) + '</span>'
+    + escapeHtml(on ? t('adminScopeAll') : t('adminScopeMine')) + '</button>'
     + '</div>';
 }
 function _ownerBadge(item) {
@@ -280,13 +394,9 @@ function _toggleSection(id) {
   _collapsedSections[id] = !_isSectionCollapsed(id);
   _saveCollapsedSections();
   const isOpening = !_collapsedSections[id];
-  const el = document.getElementById('res-section-' + id);
-  if (el) el.style.display = isOpening ? 'block' : 'none';
   const arrow = document.getElementById('res-arrow-' + id);
   if (arrow) arrow.textContent = isOpening ? '\u25BC' : '\u25B6';
-  if (isOpening && _lastResourcesData) _renderResourcesData(_lastResourcesData);
-  // Opening a repository or runtime section refreshes from disk after the cached render.
-  if (isOpening && (id.endsWith('_repo') || id === '_svc' || id === '_relay' || id === '_remote_fs' || id === '_linked_services' || id === '_flow' || id === '_pfp')) loadResources();
+  return _setResourceSectionOpen(id, isOpening);
 }
 
 
@@ -295,7 +405,7 @@ function _toggleSection(id) {
 //                        rtype='agent' defaults to 'Add agent to conversation')
 //   opts.createOnclick   override the '+' click handler
 //   opts.refreshOnclick  override the refresh click handler (default:
-//                        loadResources() - sufficient for every section
+//                        refreshResources() - sufficient for every section
 //                        that reads from the ResourceStore or from conv
 //                        extras, both of which hit disk on every call).
 //                        Use 'reload_disk + loadResources' for sections
@@ -317,41 +427,47 @@ function _sectionHeader(title, rtype, opts) {
   // Refresh: shown by default on every section (every listing reads
   // from disk, and the user may edit those files manually out-of-band).
   const refreshOnclick = opts.refreshOnclick
-    || "event.stopPropagation();loadResources()";
+    || "event.stopPropagation();refreshResources()";
   const refreshBtn = opts.hideRefresh ? ''
-    : `<span style="cursor:pointer;font-size:11px;color:var(--pf-muted);padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || t('refreshFromDisk')}">\u21BB</span>`;
+    : `<button type="button" class="resource-section-control resource-section-action resource-section-refresh" onclick="${refreshOnclick}" title="${_pfpAttr(opts.refreshTitle || t('refreshFromDisk'))}">\u21BB</button>`;
   const createBtn = opts.hideCreate ? ''
-    : `<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="${createOnclick}" title="${createTitle}">+</span>`;
+    : `<button type="button" class="resource-section-control resource-section-action resource-section-create" onclick="${createOnclick}" title="${_pfpAttr(createTitle)}">+</button>`;
   const collapsed = _isSectionCollapsed(rtype);
   const arrow = collapsed ? '\u25B6' : '\u25BC';
-  return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-    <span style="cursor:pointer;color:var(--pf-resource-heading, var(--pf-accent));font-weight:600;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
+  return `<section id="resource-owner-${_pfpAttr(rtype)}" class="resource-section" data-resource-section="${_pfpAttr(rtype)}"><div class="resource-section-header-row" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+    <button type="button" class="resource-section-control resource-section-toggle" aria-controls="res-section-${_pfpAttr(rtype)}" aria-expanded="${collapsed ? 'false' : 'true'}" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${_pfpAttr(rtype)}" aria-hidden="true">${arrow}</span> ${escapeHtml(title)}</button>
     <span style="display:flex;gap:4px;align-items:center;">${refreshBtn}${createBtn}</span>
-  </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};max-height:260px;overflow-y:auto;">`;
+  </div><div class="resource-section-body" id="res-section-${_pfpAttr(rtype)}" style="max-height:260px;overflow-y:auto;"${collapsed ? ' hidden aria-hidden="true" inert' : ''}>`;
 }
 // _repoSectionHeader(title, rtype, opts?)
 //   opts.createOnclick   if set, render a '+' button next to the refresh
 //   opts.createTitle     tooltip for the '+' button (default 'Create new')
-//   opts.refreshOnclick  override the refresh handler (default loadResources)
+//   opts.refreshOnclick  override the refresh handler (default refreshResources)
 //   opts.refreshTitle    tooltip for the refresh button
 function _repoSectionHeader(title, rtype, opts) {
   opts = opts || {};
   const collapsed = _isSectionCollapsed(rtype);
   const arrow = collapsed ? '\u25B6' : '\u25BC';
   const createBtn = opts.createOnclick
-    ? `<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="${opts.createOnclick}" title="${opts.createTitle || t('createNew')}">+</span>`
+    ? `<button type="button" class="resource-section-control resource-section-action resource-section-create" onclick="${opts.createOnclick}" title="${_pfpAttr(opts.createTitle || t('createNew'))}">+</button>`
     : '';
   const refreshOnclick = opts.refreshOnclick
-    || "event.stopPropagation();loadResources()";
-  return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-    <span style="cursor:pointer;color:var(--pf-resource-subheading, var(--pf-muted));font-weight:500;font-size:11px;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
+    || "event.stopPropagation();refreshResources()";
+  return `<section id="resource-owner-${_pfpAttr(rtype)}" class="resource-section resource-repo-section" data-resource-section="${_pfpAttr(rtype)}"><div class="resource-section-header-row" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+    <button type="button" class="resource-section-control resource-section-toggle" aria-controls="res-section-${_pfpAttr(rtype)}" aria-expanded="${collapsed ? 'false' : 'true'}" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${_pfpAttr(rtype)}" aria-hidden="true">${arrow}</span> ${escapeHtml(title)}</button>
     <span style="display:flex;gap:4px;align-items:center;">
-      <span style="cursor:pointer;font-size:11px;color:var(--pf-muted);padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || t('refreshFromDisk')}">\u21BB</span>
+      <button type="button" class="resource-section-control resource-section-action resource-section-refresh" onclick="${refreshOnclick}" title="${_pfpAttr(opts.refreshTitle || t('refreshFromDisk'))}">\u21BB</button>
       ${createBtn}
     </span>
-  </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};">`;
+  </div><div class="resource-section-body" id="res-section-${_pfpAttr(rtype)}"${collapsed ? ' hidden aria-hidden="true" inert' : ''}>`;
 }
-function _sectionFooter() { return '</div>'; }
+function _sectionFooter() { return '</div></section>'; }
+
+function _resourceRowAttr(kind) {
+  const parts = Array.prototype.slice.call(arguments, 1)
+    .map(function(value) { return String(value == null ? '' : value); });
+  return ' data-resource-row="' + _pfpAttr([kind].concat(parts).join(':')) + '"';
+}
 
 function _pfpAttr(value) {
   return escapeAttr(String(value == null ? '' : value));

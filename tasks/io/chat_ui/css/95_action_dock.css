@@ -117,7 +117,7 @@
                   background: var(--pf-panel); background: color-mix(in srgb, var(--pf-panel) 94%, transparent); color: var(--pf-text);
                   box-shadow: 0 5px 18px var(--pf-shadow); backdrop-filter: blur(8px);
                   pointer-events: none; opacity: 0; visibility: hidden; transform: translateY(2px);
-                  transition: opacity .12s ease, transform .12s ease, visibility .12s; text-align: left; }
+                  text-align: left; }
 .pf-css-tooltip.visible { opacity: 1; visibility: visible; transform: translateY(0); }
 .pf-css-tooltip-label { font-size: 12px; font-weight: 650; line-height: 1.25; }
 .pf-css-tooltip-desc { margin-top: 2px; color: var(--pf-muted); font-size: 10px; line-height: 1.35; }

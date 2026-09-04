@@ -74,6 +74,7 @@ function _workflowKanbanCardHtml(card) {
     + ((card.relations || {}).children || []).length;
   return '<article class="workflow-kanban-card" role="listitem" tabindex="0" draggable="'
     + (targets.length ? 'true' : 'false') + '" data-card-id="' + _pfpAttr(card.id)
+    + '" data-pf-key="card:' + _pfpAttr(card.id)
     + '" data-targets="' + _pfpAttr(targets.join(',')) + '">'
     + '<button type="button" class="workflow-kanban-card-open" data-card-open="'
     + _pfpAttr(card.id) + '"><strong>' + escapeHtml(card.title || card.id)
@@ -180,7 +181,8 @@ function _workflowKanbanDetailHtml(card, snapshot) {
       entry[0].replaceAll('_', ' ') + ': ' + String(entry[1])) + '</span>';
   }).join('');
   const project = card.project || {};
-  return '<aside class="workflow-kanban-drawer" tabindex="-1" aria-label="'
+  return '<aside class="workflow-kanban-drawer" data-pf-key="drawer:'
+    + _pfpAttr(card.id) + '" tabindex="-1" aria-label="'
     + _pfpAttr(t('workflowKanbanDetails')) + '">'
     + '<div class="workflow-kanban-drawer-head"><div><h4>'
     + escapeHtml(card.title || card.id) + '</h4><span>'
@@ -309,7 +311,7 @@ function mountWorkflowKanban(host, agentName, runId, options) {
     })) state.selectedCardId = '';
     const savedViews = _workflowKanbanReadViews(agentName);
     const projects = snapshot.projects || [];
-    const toolbar = '<div class="workflow-kanban-toolbar">'
+    const toolbar = '<div class="workflow-kanban-toolbar" data-pf-key="toolbar">'
       + '<div><strong>' + escapeHtml(t('workflowKanbanTitle', { agent: agentName }))
       + '</strong><span>' + escapeHtml(snapshot.mode === 'tasks'
         ? t('workflowKanbanTasks') : t('workflowKanbanRuns')) + '</span></div>'
@@ -338,24 +340,28 @@ function mountWorkflowKanban(host, agentName, runId, options) {
         return '<option value="' + value + '"' + (state.pageSize === value ? ' selected' : '')
           + '>' + value + '</option>';
       }).join('') + '</select></label></div>';
-    const board = '<div class="workflow-kanban-board" role="list" aria-label="'
+    const board = '<div class="workflow-kanban-board" data-pf-key="board" role="list" aria-label="'
       + _pfpAttr(t('workflowKanbanTitle', { agent: agentName })) + '">'
       + (snapshot.lanes || []).map(function(lane) {
         const laneCards = cards.filter(function(card) { return card.lane === lane.id; });
-        return '<section class="workflow-kanban-lane" data-lane="' + _pfpAttr(lane.id)
+        return '<section class="workflow-kanban-lane" data-pf-key="lane:'
+          + _pfpAttr(lane.id) + '" data-lane="' + _pfpAttr(lane.id)
           + '" aria-label="' + _pfpAttr(_workflowKanbanLaneLabel(lane)) + '">'
-          + '<header><h4>' + escapeHtml(_workflowKanbanLaneLabel(lane))
+          + '<header data-pf-key="lane-header:' + _pfpAttr(lane.id) + '"><h4>'
+          + escapeHtml(_workflowKanbanLaneLabel(lane))
           + '</h4><span>' + laneCards.length + '</span></header>'
-          + '<div class="workflow-kanban-lane-cards" role="list">'
+          + '<div class="workflow-kanban-lane-cards" data-pf-key="lane-cards:'
+          + _pfpAttr(lane.id) + '" role="list">'
           + (laneCards.length ? laneCards.map(_workflowKanbanCardHtml).join('')
             : '<p class="workflow-kanban-empty">' + escapeHtml(t('workflowKanbanEmptyLane'))
               + '</p>') + '</div></section>';
       }).join('') + '</div>';
-    host.innerHTML = toolbar + '<div data-kanban-live class="sr-only" aria-live="polite">'
+    const html = toolbar + '<div data-kanban-live data-pf-key="live" class="sr-only" aria-live="polite">'
       + escapeHtml(state.announcement) + '</div>' + board
-      + (snapshot.cursor ? '<button type="button" class="workflow-kanban-load-more" data-kanban-more>'
+      + (snapshot.cursor ? '<button type="button" class="workflow-kanban-load-more" data-pf-key="load-more" data-kanban-more>'
         + escapeHtml(t('workflowKanbanLoadMore')) + '</button>' : '')
       + _workflowKanbanDetailHtml(selectedCard(), snapshot);
+    window.pfDomPatch.patchHtml(host, html);
     bind();
   }
 
@@ -415,30 +421,36 @@ function mountWorkflowKanban(host, agentName, runId, options) {
 
   function bind() {
     const snapshot = state.snapshot;
-    host.querySelector('[data-kanban-runs]')?.addEventListener('click', function() {
+    const unbound = function(selector) {
+      const element = host.querySelector(selector);
+      if (!element || element._workflowKanbanBound) return null;
+      element._workflowKanbanBound = true;
+      return element;
+    };
+    unbound('[data-kanban-runs]')?.addEventListener('click', function() {
       state.runId = '';
       state.selectedCardId = '';
       state.visibleLimit = state.pageSize;
       refresh().catch(function(error) { addMsg('error', error.message); });
     });
-    host.querySelector('[data-kanban-page-size]')?.addEventListener('change', function(event) {
+    unbound('[data-kanban-page-size]')?.addEventListener('change', function(event) {
       state.pageSize = Number(event.target.value) || 25;
       state.visibleLimit = state.pageSize;
       refresh().catch(function(error) { addMsg('error', error.message); });
     });
-    host.querySelector('[data-kanban-filter]')?.addEventListener('change', function(event) {
+    unbound('[data-kanban-filter]')?.addEventListener('change', function(event) {
       state.filterText = event.target.value || '';
       render();
     });
-    host.querySelector('[data-kanban-project]')?.addEventListener('change', function(event) {
+    unbound('[data-kanban-project]')?.addEventListener('change', function(event) {
       state.projectId = event.target.value || '';
       render();
     });
-    host.querySelector('[data-kanban-hide-done]')?.addEventListener('change', function(event) {
+    unbound('[data-kanban-hide-done]')?.addEventListener('change', function(event) {
       state.hideDone = !!event.target.checked;
       render();
     });
-    host.querySelector('[data-kanban-saved-view]')?.addEventListener('change', function(event) {
+    unbound('[data-kanban-saved-view]')?.addEventListener('change', function(event) {
       const name = event.target.value || '';
       const view = _workflowKanbanReadViews(agentName)[name];
       state.savedView = name;
@@ -449,7 +461,7 @@ function mountWorkflowKanban(host, agentName, runId, options) {
       }
       render();
     });
-    host.querySelector('[data-kanban-save-view]')?.addEventListener('click', function() {
+    unbound('[data-kanban-save-view]')?.addEventListener('click', function() {
       const name = String(prompt(t('workflowKanbanSavedViewName')) || '').trim();
       if (!name) return;
       const views = _workflowKanbanReadViews(agentName);
@@ -460,11 +472,13 @@ function mountWorkflowKanban(host, agentName, runId, options) {
       state.savedView = name.slice(0, 80);
       render();
     });
-    host.querySelector('[data-kanban-more]')?.addEventListener('click', function() {
+    unbound('[data-kanban-more]')?.addEventListener('click', function() {
       state.visibleLimit += state.pageSize;
       refresh().catch(function(error) { addMsg('error', error.message); });
     });
     host.querySelectorAll('.workflow-kanban-card').forEach(function(element) {
+      if (element._workflowKanbanBound) return;
+      element._workflowKanbanBound = true;
       const open = function() {
         state.selectedCardId = element.dataset.cardId;
         render();
@@ -485,6 +499,8 @@ function mountWorkflowKanban(host, agentName, runId, options) {
       });
     });
     host.querySelectorAll('.workflow-kanban-lane').forEach(function(lane) {
+      if (lane._workflowKanbanBound) return;
+      lane._workflowKanbanBound = true;
       lane.addEventListener('dragover', function(event) {
         const cardId = event.dataTransfer.getData('text/plain');
         const card = (snapshot.cards || []).find(function(value) { return value.id === cardId; });
@@ -505,16 +521,16 @@ function mountWorkflowKanban(host, agentName, runId, options) {
     });
     const card = selectedCard();
     if (!card) return;
-    host.querySelector('[data-kanban-detail-close]')?.addEventListener('click', function() {
+    unbound('[data-kanban-detail-close]')?.addEventListener('click', function() {
       state.selectedCardId = '';
       render();
     });
-    host.querySelector('[data-kanban-open-tasks]')?.addEventListener('click', function() {
+    unbound('[data-kanban-open-tasks]')?.addEventListener('click', function() {
       state.runId = card.run_id;
       state.selectedCardId = '';
       refresh().catch(function(error) { addMsg('error', error.message); });
     });
-    host.querySelector('[data-kanban-open-graph]')?.addEventListener('click', function() {
+    unbound('[data-kanban-open-graph]')?.addEventListener('click', function() {
       if (typeof options.openGraph === 'function') {
         options.openGraph(card.run_id, card.task_id);
       } else {
@@ -523,7 +539,7 @@ function mountWorkflowKanban(host, agentName, runId, options) {
         }));
       }
     });
-    host.querySelector('[data-kanban-propose]')?.addEventListener('click', function() {
+    unbound('[data-kanban-propose]')?.addEventListener('click', function() {
       const specification = String(prompt(
         t('workflowKanbanProposalPrompt'), (card.summary || {}).description || card.title || '',
       ) || '').trim();
@@ -537,17 +553,19 @@ function mountWorkflowKanban(host, agentName, runId, options) {
       cmdPlan('/plan ' + request, [], '/plan');
     });
     host.querySelectorAll('[data-kanban-command]').forEach(function(button) {
+      if (button._workflowKanbanBound) return;
+      button._workflowKanbanBound = true;
       button.addEventListener('click', function() {
         requestAction(card, button.dataset.kanbanCommand).catch(function(error) {
           addMsg('error', error.message);
         });
       });
     });
-    host.querySelector('[data-kanban-apply]')?.addEventListener('click', function() {
+    unbound('[data-kanban-apply]')?.addEventListener('click', function() {
       const target = host.querySelector('[data-kanban-target]').value;
       requestAction(card, target).catch(function(error) { addMsg('error', error.message); });
     });
-    host.querySelector('[data-kanban-assignment]')?.addEventListener('submit', function(event) {
+    unbound('[data-kanban-assignment]')?.addEventListener('submit', function(event) {
       event.preventDefault();
       const assignee = event.currentTarget.elements.assignee.value.trim();
       _workflowKanbanApi('workflow_kanban_assign', {
@@ -557,7 +575,7 @@ function mountWorkflowKanban(host, agentName, runId, options) {
         idempotency_key: _workflowKanbanUuid(),
       }).then(refresh).catch(function(error) { addMsg('error', error.message); });
     });
-    host.querySelector('[data-kanban-comment]')?.addEventListener('submit', function(event) {
+    unbound('[data-kanban-comment]')?.addEventListener('submit', function(event) {
       event.preventDefault();
       const body = event.currentTarget.elements.body.value.trim();
       _workflowKanbanApi('workflow_kanban_comment', {
@@ -567,7 +585,7 @@ function mountWorkflowKanban(host, agentName, runId, options) {
         idempotency_key: _workflowKanbanUuid(),
       }).then(refresh).catch(function(error) { addMsg('error', error.message); });
     });
-    host.querySelector('[data-kanban-attachment]')?.addEventListener('submit', async function(event) {
+    unbound('[data-kanban-attachment]')?.addEventListener('submit', async function(event) {
       event.preventDefault();
       const file = event.currentTarget.elements.file.files[0];
       if (!file || typeof uploadFileToStore !== 'function') return;
@@ -582,7 +600,7 @@ function mountWorkflowKanban(host, agentName, runId, options) {
         await refresh();
       } catch (error) { addMsg('error', error.message); }
     });
-    host.querySelector('[data-kanban-review]')?.addEventListener('submit', function(event) {
+    unbound('[data-kanban-review]')?.addEventListener('submit', function(event) {
       event.preventDefault();
       _workflowKanbanApi('workflow_kanban_review', {
         conversation_id: conversationId, agent_name: agentName,
@@ -673,40 +691,44 @@ function showWorkflowKanban(agentName, runId) {
   document.body.appendChild(overlay);
   const dialog = overlay.querySelector('[role="dialog"]');
   let controller;
-  const close = function() {
-    if (controller) controller.destroy();
-    document.removeEventListener('keydown', onKey);
-    overlay.remove();
-    if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
+  let layerController;
+  let closePromise = null;
+  const close = function(reason, restoreFocus) {
+    if (closePromise) return closePromise;
+    if (controller) { controller.destroy(); controller = null; }
+    closePromise = layerController
+      ? layerController.close({reason: reason || 'close', restoreFocus: restoreFocus})
+      : Promise.resolve(false);
+    return closePromise;
   };
   overlay._workflowKanbanClose = close;
   const openGraph = function(selectedRunId, taskId) {
-    close();
-    if (typeof showWorkflowRunInspector === 'function') {
-      showWorkflowRunInspector(agentName, {
-        runId: selectedRunId, view: 'graph', taskId: taskId,
-      });
-    }
+    close('view-change', false).then(function() {
+      if (typeof showWorkflowRunInspector === 'function') {
+        showWorkflowRunInspector(agentName, {
+          runId: selectedRunId, view: 'graph', taskId: taskId,
+        });
+      }
+    });
   };
-  const onKey = function(event) {
-    if (event.key === 'Escape') { close(); return; }
-    if (event.key !== 'Tab') return;
-    const focusable = Array.from(dialog.querySelectorAll(
-      'button:not([disabled]),select:not([disabled]),input:not([disabled]),textarea:not([disabled]),[tabindex="0"]',
-    )).filter(function(element) { return element.offsetParent !== null; });
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault(); last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault(); first.focus();
-    }
-  };
-  overlay.querySelector('[data-close]').addEventListener('click', close);
-  document.addEventListener('keydown', onKey);
+  overlay.querySelector('[data-close]').addEventListener('click', function() {
+    close('button');
+  });
   controller = mountWorkflowKanban(
     overlay.querySelector('[data-kanban-host]'), agentName, runId, { openGraph: openGraph },
   );
-  dialog.focus();
+  layerController = window.pfFloatingLayer.open({
+    channel: 'workflow-dialog',
+    element: overlay,
+    motionElement: dialog,
+    trigger: previousFocus,
+    initialFocus: dialog,
+    managePlacement: false,
+    modal: true,
+    closeOnOutside: false,
+    closeOnEnvironment: false,
+    closeOnSelect: false,
+    removeOnClose: true,
+    restoreFocus: true,
+  });
 }

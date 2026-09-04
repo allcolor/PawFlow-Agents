@@ -43,17 +43,15 @@ def test_mobile_sidebar_toggle_clears_the_persistent_rail_then_tracks_the_open_d
     """Regression: on mobile the sidebar becomes a fixed overlay (z-index 150).
     While the resource drawer is hidden the task rail is hidden with it
     (_syncToggleBtn couples them), so the toggle hugs the viewport edge —
-    left: 35px here floated over the chat text. Once opened, the toggle tracks
-    the outer edge of the drawer and rail so the menu can always be closed."""
+    An old left: 35px offset floated over the chat text. The toggle now tracks
+    the drawer edge with the shared compositor transform."""
     mobile = _mobile_block()
     assert ".sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;" in mobile
     assert ".sidebar-toggle { left: 0 !important; z-index: 200; }" in mobile
     assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 0;" in mobile
     assert "body:has(.sidebar:not(.collapsed)) .tab-bar { left: 260px; }" in mobile
-    assert (
-        "body:has(.sidebar:not(.collapsed)) .sidebar-toggle"
-        " { left: 295px !important; }" in mobile
-    )
+    assert "body:has(.sidebar:not(.collapsed)) .sidebar-toggle" not in mobile
+    assert "--pf-sidebar-toggle-x" in TEMPLATE_HTML
     # The desktop-only tooltip handle must not add another chevron on mobile.
     assert ".tab-bar-handle { display: none; }" in TEMPLATE_HTML
 

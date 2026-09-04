@@ -398,6 +398,7 @@ function _getOrCreateGroup(delegateTcId, srcAgent, total, sourceTaskId) {
   if (_delegateGroups[delegateTcId]) return _delegateGroups[delegateTcId];
   const details = document.createElement('details');
   details.className = 'msg delegate-block delegate-group';
+  details.dataset.groupKey = 'delegate:' + delegateTcId;
   details.dataset.messageRole = 'sub_agent_trace';
   details.dataset.sortTs = String(Date.now() / 1000);
   details.setAttribute('open', '');

@@ -3,6 +3,7 @@
 
 var _loadResourcesTimer = null;
 var _loadResourcesGeneration = 0;
+var _resourcesPendingKey = '';
 function _resourcesFocusedConversationId() {
   if (typeof focusedConversationId === 'function') {
     return String(focusedConversationId() || '');
@@ -13,17 +14,30 @@ function _resourcesRequestIsCurrent(conversationId, generation) {
   return generation === _loadResourcesGeneration
     && conversationId === _resourcesFocusedConversationId();
 }
-async function loadResources(targetConversationId) {
+function _resourcesRequestKey(conversationId) {
+  return String(conversationId || '') + '|' + (_viewAllActive() ? 'all' : 'mine');
+}
+function loadResources(targetConversationId, options) {
   const requestedConversationId = arguments.length
     ? String(targetConversationId || '') : _resourcesFocusedConversationId();
+  options = options || {};
+  const requestKey = _resourcesRequestKey(requestedConversationId);
+  if (!options.force && requestKey === _resourcesPendingKey) return false;
+  _resourcesPendingKey = requestKey;
   const generation = ++_loadResourcesGeneration;
   // Debounce: coalesce rapid calls into one (300ms window)
   if (_loadResourcesTimer) clearTimeout(_loadResourcesTimer);
   _loadResourcesTimer = setTimeout(function() {
-    _loadResourcesNow(requestedConversationId, generation);
+    _loadResourcesNow(requestedConversationId, generation, requestKey);
   }, 300);
+  return true;
 }
-function _loadResourcesNow(requestedConversationId, generation) {
+function refreshResources(targetConversationId) {
+  const requestedConversationId = arguments.length
+    ? String(targetConversationId || '') : _resourcesFocusedConversationId();
+  return loadResources(requestedConversationId, {force: true});
+}
+function _loadResourcesNow(requestedConversationId, generation, requestKey) {
   _loadResourcesTimer = null;
   if (!_resourcesRequestIsCurrent(requestedConversationId, generation)) return;
   // The panel is shown even with no conversation selected: _renderResourcesData
@@ -36,6 +50,22 @@ function _loadResourcesNow(requestedConversationId, generation) {
   var actionOptions = _noConv ? { skipConversationId: true } : {};
   // Fetch resources and services in parallel — merge then render.
   var _resData = null, _svcData = null, _pfpUserData = null, _pfpConvData = null;
+  var _paramsData = null, _mergedData = null, _mainRendered = false;
+  function _finishPending() {
+    if (_resourcesRequestIsCurrent(requestedConversationId, generation)
+        && _resourcesPendingKey === requestKey) _resourcesPendingKey = '';
+  }
+  function _renderParamsIfReady() {
+    if (!_mainRendered || _paramsData === null
+        || !_resourcesRequestIsCurrent(requestedConversationId, generation)) return;
+    var withParams = Object.assign({}, _mergedData, {
+      parameters: _paramsData.parameters || [],
+      secrets: _paramsData.secrets || [],
+    });
+    _lastResourcesData = withParams;
+    _renderResourcesFromSSE(withParams);
+    _finishPending();
+  }
   function _tryRender() {
     if (_resData === null || _svcData === null || _pfpUserData === null || _pfpConvData === null) return;
     if (!_resourcesRequestIsCurrent(requestedConversationId, generation)) return;
@@ -54,9 +84,11 @@ function _loadResourcesNow(requestedConversationId, generation) {
     var pfpPackages = [];
     ((_pfpUserData && _pfpUserData.packages) || []).forEach(function(p) { pfpPackages.push(Object.assign({_scope: 'user'}, p)); });
     ((_pfpConvData && _pfpConvData.packages) || []).forEach(function(p) { pfpPackages.push(Object.assign({_scope: 'conversation'}, p)); });
-    var merged = Object.assign({}, _resData, { services: services, pfp_packages: pfpPackages });
-    _lastResourcesData = merged;
-    _renderResourcesFromSSE(merged);
+    _mergedData = Object.assign({}, _resData, { services: services, pfp_packages: pfpPackages });
+    _lastResourcesData = _mergedData;
+    _renderResourcesFromSSE(_mergedData);
+    _mainRendered = true;
+    _renderParamsIfReady();
   }
   action$('list_resources', _withView({ conversation_id: requestedConversationId }), actionOptions)
     .subscribe(d => { _resData = d || {}; _tryRender(); });
@@ -73,6 +105,16 @@ function _loadResourcesNow(requestedConversationId, generation) {
       scope: 'conversation', conversation_id: requestedConversationId,
     }).subscribe(d => { _pfpConvData = d || { packages: [] }; _tryRender(); });
   }
+  var paramsRequest = action$('list_params_secrets', {
+    conversation_id: requestedConversationId,
+  }, actionOptions);
+  paramsRequest.subscribe(function(data) {
+    _paramsData = data || {};
+    _renderParamsIfReady();
+  }, function() {
+    _paramsData = {};
+    _renderParamsIfReady();
+  });
   if (!window._cachedTools) {
     action$('get_tool_schemas', { conversation_id: requestedConversationId }, actionOptions)
       .subscribe(data => {
@@ -99,7 +141,7 @@ function _renderResourcesFromSSE(data) {
   }
   _renderResourcesData(data);
 }
-async function _renderResourcesData(data) {
+function _renderResourcesData(data) {
   try {
     const el = document.getElementById('resourcesContent');
 
@@ -137,7 +179,7 @@ async function _renderResourcesData(data) {
         // Hydrate the global cache through the same monotonic path used by
         // Resource polling must not touch the context gauge. The gauge is
         // updated only by live context events and the explicit /context view.
-        liveHtml += '<div data-agent-name="' + aNameAttr + '" style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"'
+        liveHtml += '<div' + _resourceRowAttr('agent', a.scope, aName) + ' data-agent-name="' + aNameAttr + '" style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"'
           + ' oncontextmenu="showAgentMenu(event,' + _pfpJsArg(aName) + ',' + _pfpJsArg(a.scope || '') + ',' + (a.autoconv ? 'true' : 'false') + ',' + _pfpJsArg(aRuntime) + ');return false;">'
           + '<span style="cursor:pointer;color:' + primaryColor + ';font-size:11px;" title="' + _pfpAttr(primaryTitle) + '"'
           + ' onclick="_selectAgentAndRefresh(this.dataset.n)" data-n="' + aNameAttr + '">' + primaryArrow + '</span>'
@@ -153,14 +195,14 @@ async function _renderResourcesData(data) {
         var _ctxUsage = (window._contextUsage || {})[aKeyLc];
         var _ctxHtml = (typeof renderCtxGauge === 'function' && _ctxUsage)
           ? renderCtxGauge(_ctxUsage) : '';
-        liveHtml += '<div style="margin-left:24px;margin-bottom:3px;min-height:6px;" data-ctx-agent="' + escapeHtml(aKeyLc) + '">'
+        liveHtml += '<div' + _resourceRowAttr('agent-context', aName) + ' style="margin-left:24px;margin-bottom:3px;min-height:6px;" data-ctx-agent="' + escapeHtml(aKeyLc) + '">'
           + _ctxHtml
           + '</div>';
         // Show LLM service + assigned skills as small tags
         var aLlm = a.llm_service || '';
         var aSkills = a.assigned_skills || [];
         if (aLlm || aSkills.length || aRuntime !== 'llm') {
-          liveHtml += '<div style="margin-left:24px;margin-bottom:3px;display:flex;flex-wrap:wrap;gap:3px;">';
+          liveHtml += '<div' + _resourceRowAttr('agent-metadata', aName) + ' style="margin-left:24px;margin-bottom:3px;display:flex;flex-wrap:wrap;gap:3px;">';
           if (aLlm) {
             liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb, var(--pf-accent-2) 16%, var(--pf-panel));color:var(--pf-accent-2);">' + escapeHtml(aLlm) + '</span>';
           }
@@ -202,7 +244,7 @@ async function _renderResourcesData(data) {
           const statusColor = t.status === 'active' ? 'var(--pf-success)' : t.status === 'paused' ? 'var(--pf-warning)' : 'var(--pf-muted)';
           const statusIcon = t.status === 'active' ? '\u25B6' : t.status === 'paused' ? '\u23F8' : '\u23F9';
           const label = (t.task_def_name || (t.task || '').substring(0, 30) || t.task_id) + ' \u2192 ' + t.agent;
-          liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,${_pfpJsArg(t.task_id)},${_pfpJsArg(t.agent)},${_pfpJsArg(t.status)});return false;">
+          liveHtml += `<div${_resourceRowAttr('running-task', t.task_id)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,${_pfpJsArg(t.task_id)},${_pfpJsArg(t.agent)},${_pfpJsArg(t.status)});return false;">
             <span style="color:${statusColor};font-size:11px;">${statusIcon}</span>
             <span style="color:var(--pf-muted);font-size:11px;" title="${_pfpAttr(t.task)}">${escapeHtml(label)}</span>
             <span style="color:var(--pf-muted);font-size:10px;">[${escapeHtml(t.iterations)}/${escapeHtml(t.max_iterations)}]</span>
@@ -220,7 +262,7 @@ async function _renderResourcesData(data) {
     //    Naming mirrors Tasks: this section = active state in the conv,
     //    "Flows Repository" below = catalog on disk.
     liveHtml += _sectionHeader(t('flows'), '_flow', {
-      refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(loadResources,300)",
+      refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(refreshResources,300)",
       refreshTitle: t('reloadFromDisk'),
       createTitle: t('deployFlow'),
     });
@@ -229,7 +271,7 @@ async function _renderResourcesData(data) {
         const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';
         const statusColor = f.status === 'running' ? 'var(--pf-success)' : f.status === 'stopped' ? 'var(--pf-muted)' : 'var(--pf-danger)';
         const flowCtx = ` oncontextmenu="showFlowInstanceMenu(event,${_pfpJsArg(f.instance_id)},${_pfpJsArg(f.status)},${_pfpJsArg(f.scope)},${_pfpJsArg(f.flow_fqn || '')});return false;"`;
-        liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${flowCtx}>
+        liveHtml += `<div${_resourceRowAttr('flow', f.scope, f.instance_id)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${flowCtx}>
           ${_scopeBadge(f.scope)}<span style="color:${statusColor};font-size:11px;">${statusIcon} ${escapeHtml(f.flow_name || f.instance_id)}</span>${_ownerBadge(f)}
         </div>`;
       });
@@ -240,7 +282,7 @@ async function _renderResourcesData(data) {
 
     // Services (install with '+', reload from disk with ↻ on the left)
     liveHtml += _sectionHeader(t('services'), '_svc', {
-      refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(loadResources,300)",
+      refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(refreshResources,300)",
       refreshTitle: t('reloadFromDisk'),
       createTitle: t('installService'),
     });
@@ -254,7 +296,7 @@ async function _renderResourcesData(data) {
           dockerTag = ' \u{1F433}' + (img ? ` [${img}]` : '');
         }
         const svcCtx = ` oncontextmenu="showServiceMenu(event,${_pfpJsArg(s.service_id)},${_pfpJsArg(s.scope)},${s.enabled});return false;"`;
-        liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${svcCtx}>
+        liveHtml += `<div${_resourceRowAttr('service', s.scope, s.service_id)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${svcCtx}>
           ${_scopeBadge(s.scope)}<span style="color:var(--pf-muted);font-size:11px;">${statusDot} <b>${escapeHtml(s.service_id)}</b> <span style="color:var(--pf-muted)">(${escapeHtml(s.service_type)})</span>${escapeHtml(dockerTag)}</span>${_ownerBadge(s)}
         </div>`;
       });
@@ -268,7 +310,7 @@ async function _renderResourcesData(data) {
     liveHtml += _sectionHeader(t('pfpPackages'), '_pfp', {
       createOnclick: "_showPfpInstallDialog()",
       createTitle: t('pfpInstallPackage'),
-      refreshOnclick: "event.stopPropagation();loadResources()",
+      refreshOnclick: "event.stopPropagation();refreshResources()",
     });
     { const packages = data.pfp_packages || [];
       if (packages.length) {
@@ -283,7 +325,7 @@ async function _renderResourcesData(data) {
           const objectTitle = _pfpAttr(objects.map(_pfpObjectLabel).join('\n'));
           const webApps = objects.filter(o => o.kind === 'web_app' && o.url);
           const webAppLinks = webApps.map(w => '<a href="' + _pfpAttr(w.url) + '" target="_blank" rel="noopener" style="font-size:11px;color:var(--pf-accent);text-decoration:none;padding:0 3px;" title="' + _pfpAttr(t('pfpOpenWebApp', { name: w.name || '' })) + '">\u2197</a>').join('');
-          liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="' + objectTitle + '">'
+          liveHtml += '<div' + _resourceRowAttr('pfp-package', scope, pkg.package) + ' style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="' + objectTitle + '">'
             + _scopeBadge(scope)
             + '<span style="color:var(--pf-text);font-size:12px;flex:1;">' + pkgName + '</span>'
             + (blockers.length ? '<span style="color:var(--pf-warning);font-size:10px;" title="' + _pfpAttr(t('pfpBlockingDependents')) + '">!' + escapeHtml(String(blockers.length)) + '</span>' : '')
@@ -301,14 +343,11 @@ async function _renderResourcesData(data) {
     if (!noConv) {
     // Relay bindings for this conversation (always show section)
     {
-      var rbCollapsed = _isSectionCollapsed('_relay');
-      var rbArrow = rbCollapsed ? '\u25B6' : '\u25BC';
-      var rbDisplay = rbCollapsed ? 'none' : 'block';
-      liveHtml += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
-        + '<span style="cursor:pointer;color:var(--pf-resource-heading, var(--pf-accent));font-weight:600;user-select:none;" onclick="_toggleSection(\'_relay\')">'
-        + '<span id="res-arrow-_relay">' + rbArrow + '</span> ' + escapeHtml(t('relays')) + '</span>'
-        + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="_showRelayLinkDialog()" title="' + escapeHtml(t('linkRelay')) + '">+</span>'
-        + '</div><div id="res-section-_relay" style="display:' + rbDisplay + ';">';
+      liveHtml += _sectionHeader(t('relays'), '_relay', {
+        createOnclick: '_showRelayLinkDialog()',
+        createTitle: t('linkRelay'),
+        hideRefresh: true,
+      });
       var _rb = (data.relay_bindings && data.relay_bindings.linked) ? data.relay_bindings : {linked:{}, default:{}};
       var _rbLinked = _rb.linked || {};
       var _rbDefaults = _rb.default || {};
@@ -358,7 +397,7 @@ async function _renderResourcesData(data) {
           var _detJson = _pfpAttr(JSON.stringify(_detWithLocal));
           var defaultBadge = isDisplayedDefault ? ' <span style="font-size:9px;color:var(--pf-success);">' + escapeHtml(isAgentDefault ? t('defaultForAgent', {agent: bindingAgent}) : t('defaultRelay')) + '</span>' : '';
           var mcpBadge = det.mcp_external ? ' <span style="font-size:9px;color:var(--pf-accent);border:1px solid var(--pf-accent);padding:0 4px;border-radius:3px;">' + escapeHtml(t('mcpRelayBadge', {client: det.mcp_client_name || 'CLI'})) + '</span>' : '';
-          liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" onclick="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ',' + (isDisplayedDefault ? 'true' : 'false') + ',' + _pfpJsArg(bindingAgent) + ');return false;" oncontextmenu="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ',' + (isDisplayedDefault ? 'true' : 'false') + ',' + _pfpJsArg(bindingAgent) + ');return false;">'
+          liveHtml += '<div' + _resourceRowAttr('relay', rid, bindingAgent) + ' style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" onclick="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ',' + (isDisplayedDefault ? 'true' : 'false') + ',' + _pfpJsArg(bindingAgent) + ');return false;" oncontextmenu="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ',' + (isDisplayedDefault ? 'true' : 'false') + ',' + _pfpJsArg(bindingAgent) + ');return false;">'
             + '<span style="color:' + color + ';font-size:11px;cursor:pointer;" title="' + _pfpAttr(titleText) + '"' + clickDefault + '>' + icon + '</span>'
             + '<span style="font-size:11px;">' + connDot + '</span>'
             + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>' + defaultBadge + mcpBadge
@@ -387,14 +426,11 @@ async function _renderResourcesData(data) {
     // Filesystem bindings: rclone is mounted inside linked relays; native API
     // filesystems are made available directly to tools.
     {
-      var fsCollapsed = _isSectionCollapsed('_remote_fs');
-      var fsArrow = fsCollapsed ? '\u25B6' : '\u25BC';
-      var fsDisplay = fsCollapsed ? 'none' : 'block';
-      liveHtml += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
-        + '<span style="cursor:pointer;color:var(--pf-resource-heading, var(--pf-accent));font-weight:600;user-select:none;" onclick="_toggleSection(\'_remote_fs\')">'
-        + '<span id="res-arrow-_remote_fs">' + fsArrow + '</span> ' + escapeHtml(t('remoteFilesystems')) + '</span>'
-        + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="_showRemoteFsLinkDialog()" title="' + escapeHtml(t('linkFilesystem')) + '">+</span>'
-        + '</div><div id="res-section-_remote_fs" style="display:' + fsDisplay + ';">';
+      liveHtml += _sectionHeader(t('remoteFilesystems'), '_remote_fs', {
+        createOnclick: '_showRemoteFsLinkDialog()',
+        createTitle: t('linkFilesystem'),
+        hideRefresh: true,
+      });
       var _remoteFs = data.remote_filesystems || { linked: [], available: [] };
       var _linkedFs = _remoteFs.linked || [];
       if (_linkedFs.length) {
@@ -406,7 +442,7 @@ async function _renderResourcesData(data) {
           var mountPath = escapeHtml(isRclone ? (s.mount_path || '') : '');
           var tag = escapeHtml(isRclone ? 'rclone' : (s.service_type || 'filesystem'));
           var enabledDot = s.enabled === false ? '\u{1F534}' : '\u{1F7E2}';
-          liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+          liveHtml += '<div' + _resourceRowAttr('remote-filesystem', scope, serviceId) + ' style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
             + _scopeBadge(scope)
             + '<span style="font-size:11px;">' + enabledDot + '</span>'
             + '<span style="color:var(--pf-text);font-size:12px;flex:1;">' + escapeHtml(serviceId) + '</span>'
@@ -426,14 +462,11 @@ async function _renderResourcesData(data) {
 
     // Policy gate bound to this conversation / agent (docs/POLICY_GATING.md).
     {
-      var pgCollapsed = _isSectionCollapsed('_gating');
-      var pgArrow = pgCollapsed ? '\u25B6' : '\u25BC';
-      var pgDisplay = pgCollapsed ? 'none' : 'block';
-      liveHtml += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
-        + '<span style="cursor:pointer;color:var(--pf-resource-heading, var(--pf-accent));font-weight:600;user-select:none;" onclick="_toggleSection(\'_gating\')">'
-        + '<span id="res-arrow-_gating">' + pgArrow + '</span> ' + escapeHtml(t('policyGate')) + '</span>'
-        + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="_showGatingLinkDialog()" title="' + escapeHtml(t('linkPolicyGate')) + '">+</span>'
-        + '</div><div id="res-section-_gating" style="display:' + pgDisplay + ';">';
+      liveHtml += _sectionHeader(t('policyGate'), '_gating', {
+        createOnclick: '_showGatingLinkDialog()',
+        createTitle: t('linkPolicyGate'),
+        hideRefresh: true,
+      });
       var _pg = data.gating || {};
       var _pgRows = [];
       [['conversation', _pg.conversation], ['agent', _pg.agent]].forEach(function(pair) {
@@ -443,7 +476,7 @@ async function _renderResourcesData(data) {
         if (!eff && !entry.broken) return;
         var color = entry.broken ? 'var(--pf-danger)' : 'var(--pf-success)';
         var label = eff ? eff.service_id : (ref.service_id || '?');
-        _pgRows.push('<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+        _pgRows.push('<div' + _resourceRowAttr('policy-gate', pair[0], label) + ' style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
           + _scopeBadge((eff && eff.scope) || ref.scope || '')
           + '<span style="color:' + color + ';font-size:12px;flex:1;" title="' + escapeHtml(entry.error || '') + '">' + escapeHtml(label) + (pair[0] === 'agent' ? ' · ' + escapeHtml(t('policyGateAgent')) : '') + '</span>'
           + (entry.broken ? '<span style="font-size:9px;color:' + color + ';">' + escapeHtml(t('policyGateBroken')) + '</span>' : '')
@@ -470,13 +503,12 @@ async function _renderResourcesData(data) {
       createOnclick: "showResourceCreator('agent')",
       createTitle: t('createNewAgent'),
     });
-    if (!_isSectionCollapsed("_agent_repo")) {
       var repoAgents = (data.repo_agents || []).filter(function(a) { return !a.in_conversation; });
       if (repoAgents.length) {
         repoAgents.forEach(function(a) {
           var aName = String(a.name || '');
           var aNameAttr = _pfpAttr(aName);
-          repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"'
+          repoHtml += '<div' + _resourceRowAttr('agent-repo', a.scope, aName) + ' style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"'
             + ' oncontextmenu="showResourceMenu(event,\'agent\',' + _pfpJsArg(aName) + ',' + _pfpJsArg(a.scope || '') + ',null);return false;">'
             + _scopeBadge(a.scope)
             + '<span style="color:var(--pf-muted);font-size:12px;flex:1;">' + escapeHtml(aName) + '</span>'
@@ -488,7 +520,6 @@ async function _renderResourcesData(data) {
       } else {
         repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('allAgentsInConversation')) + '</div>';
       }
-    }
     repoHtml += _sectionFooter();
 
     if (!noConv) {
@@ -505,7 +536,7 @@ async function _renderResourcesData(data) {
             ? ' <span style="font-size:9px;" title="' + _pfpAttr(s.invalid) + '">⚠ ' + escapeHtml(s.invalid) + '</span>'
             : '';
           const skillColor = s.invalid ? 'var(--pf-danger,#e05260)' : 'var(--pf-text)';
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'skill',${_pfpJsArg(s.name)},${_pfpJsArg(s.scope || '')});return false;">
+          repoHtml += `<div${_resourceRowAttr('skill', s.scope, s.name)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'skill',${_pfpJsArg(s.name)},${_pfpJsArg(s.scope || '')});return false;">
             ${_scopeBadge(s.scope)}<span style="color:${skillColor};font-size:12px;flex:1;">${escapeHtml(s.name)}${skillInvalid || assignedTag}</span>${_ownerBadge(s)}
           </div>`;
         });
@@ -519,14 +550,13 @@ async function _renderResourcesData(data) {
     repoHtml += _repoSectionHeader(t('promptsRepository'), 'prompt', {
       createOnclick: "showResourceCreator('prompt')",
     });
-    if (!_isSectionCollapsed('prompt')) {
       const prompts = data.prompts || [];
       if (prompts.length) {
         prompts.forEach(p => {
           const title = p.title || p.name;
           const icon = p.has_parameters ? '\u{1F4DD}' : '\u{1F4CB}';
           const desc = p.description ? ' title="' + _pfpAttr(p.description) + '"' : '';
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
+          repoHtml += `<div${_resourceRowAttr('prompt', p.scope, p.name)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
             onclick="_usePrompt(${_pfpJsArg(p.name)},${p.has_parameters})" oncontextmenu="showResourceMenu(event,'prompt',${_pfpJsArg(p.name)},${_pfpJsArg(p.scope || '')});return false;">
             ${_scopeBadge(p.scope)}<span style="font-size:11px">${icon}</span>
             <span style="font-size:12px;color:var(--pf-text)">${escapeHtml(title)}</span>${_ownerBadge(p)}
@@ -535,7 +565,6 @@ async function _renderResourcesData(data) {
       } else {
         repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noPrompts')) + '</div>';
       }
-    }
     repoHtml += _sectionFooter();
 
     // ── Themes Repository (directory CSS resources) ──
@@ -543,7 +572,6 @@ async function _renderResourcesData(data) {
       createOnclick: "showThemeCreator()",
       createTitle: t('addTheme'),
     });
-    if (!_isSectionCollapsed('theme')) {
       const themes = data.themes || [];
       if (themes.length) {
         themes.forEach(t => {
@@ -552,7 +580,7 @@ async function _renderResourcesData(data) {
           const builtinArg = builtin ? 'true' : 'false';
           const cssLabel = (t.css_length || 0) + ' css';
           const desc = t.description ? ' title="' + _pfpAttr(t.description) + '"' : '';
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
+          repoHtml += `<div${_resourceRowAttr('theme', t.scope, ref)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
             onclick="_applyThemeFromResource(${_pfpJsArg(ref)})" oncontextmenu="_showThemeMenu(event,${_pfpJsArg(ref)},${builtinArg},${_pfpJsArg(t.scope || '')});return false;">
             ${_scopeBadge(t.scope)}<span style="font-size:11px;color:var(--pf-accent);">\u25A3</span>
             <span style="font-size:12px;color:var(--pf-text);flex:1;">${escapeHtml(t.title || t.name)}</span>
@@ -562,14 +590,12 @@ async function _renderResourcesData(data) {
       } else {
         repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noThemes')) + '</div>';
       }
-    }
     repoHtml += _sectionFooter();
 
     // ── Voices Repository (cloned voices, user scope) ──
     repoHtml += _repoSectionHeader(t('voicesRepository'), 'voice', {
       createOnclick: "showResourceCreator('voice')",
     });
-    if (!_isSectionCollapsed('voice')) {
       const voices = data.voices || [];
       if (voices.length) {
         voices.forEach(v => {
@@ -582,7 +608,7 @@ async function _renderResourcesData(data) {
           const previewBtn = previewUrl
             ? `<span style="cursor:pointer;color:var(--pf-accent);font-size:11px;padding:0 4px;" title="${_pfpAttr(t('previewReferenceAudio'))}" onclick="_previewVoice(${_pfpJsArg(previewUrl)})">\u25B6</span>`
             : '';
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="${_pfpAttr((v.provider || '') + ' \u2014 ' + paradigm)}">
+          repoHtml += `<div${_resourceRowAttr('voice', v.scope, v.name)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="${_pfpAttr((v.provider || '') + ' \u2014 ' + paradigm)}">
             <span style="color:${pColor};font-size:9px;font-weight:600;border:1px solid ${pColor};border-radius:3px;padding:0 3px;">${escapeHtml(pBadge)}</span>
             <span style="color:var(--pf-text);font-size:12px;flex:1;">\u{1F399} ${escapeHtml(v.name)}<span style="color:var(--pf-muted);font-size:10px;">${prov}</span></span>
             ${previewBtn}
@@ -593,7 +619,6 @@ async function _renderResourcesData(data) {
       } else {
         repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + t('noVoices') + '</div>';
       }
-    }
     repoHtml += _sectionFooter();
 
     // ── Tasks Repository (definitions, muted style like Agent Repository) ──
@@ -603,7 +628,7 @@ async function _renderResourcesData(data) {
     { const allTasks = data.task_defs || [];
       if (allTasks.length) {
         allTasks.forEach(t => {
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'task_def',${_pfpJsArg(t.name)},${_pfpJsArg(t.scope || '')});return false;">
+          repoHtml += `<div${_resourceRowAttr('task-definition', t.scope, t.name)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'task_def',${_pfpJsArg(t.name)},${_pfpJsArg(t.scope || '')});return false;">
             ${_scopeBadge(t.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;" title="${_pfpAttr(t.description)}">${escapeHtml(t.name)}</span>${_ownerBadge(t)}
             <span style="color:var(--pf-muted);font-size:10px;">[${escapeHtml(t.default_interval)}]</span>
           </div>`;
@@ -621,7 +646,6 @@ async function _renderResourcesData(data) {
       createOnclick: "showResourceCreator('mcp')",
       createTitle: t('createNew'),
     });
-    if (!_isSectionCollapsed('_mcp_repo')) {
       const mcps = data.mcp_servers || [];
       const publishedServers = Array.isArray(data.mcp_published_servers)
         ? data.mcp_published_servers
@@ -641,22 +665,19 @@ async function _renderResourcesData(data) {
       repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 ' + escapeHtml(t('configureAvailability')) + '</div>';
       if (mcps.length) {
         mcps.forEach(m => {
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'mcp',${_pfpJsArg(m.name)},${_pfpJsArg(m.scope || '')});return false;">
+          repoHtml += `<div${_resourceRowAttr('mcp', m.scope, m.name)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'mcp',${_pfpJsArg(m.name)},${_pfpJsArg(m.scope || '')});return false;">
             ${_scopeBadge(m.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(m.name)}</span>${_ownerBadge(m)}
           </div>`;
         });
       } else {
         repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noMcpServers')) + '</div>';
       }
-    }
     repoHtml += _sectionFooter();
 
     // ── A2A interoperability ──
     repoHtml += _repoSectionHeader(t('a2aRepository'), '_a2a_repo');
-    if (!_isSectionCollapsed('_a2a_repo')) {
       repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="showA2AConfigDialog()">\u21C4 ' + escapeHtml(t('a2aConfigure')) + '</div>';
       repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('a2aRepositoryHelp')) + '</div>';
-    }
     repoHtml += _sectionFooter();
 
     // ── Agent Hooks Repository (runtime hooks selectable from conversation config) ──
@@ -664,14 +685,13 @@ async function _renderResourcesData(data) {
       createOnclick: "showResourceCreator('agent_hook')",
       createTitle: t('createNewAgentHook'),
     });
-    if (!_isSectionCollapsed('agent_hook')) {
       const hooks = data.agent_hooks || [];
       repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showAgentHooksDialog()">\u2699 ' + escapeHtml(t('configureBindings')) + '</div>';
       if (hooks.length) {
         hooks.forEach(h => {
           const events = Array.isArray(h.events) ? h.events.join(', ') : '';
           const desc = h.description ? ' title="' + _pfpAttr(h.description) + '"' : '';
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"${desc} oncontextmenu="showResourceMenu(event,'agent_hook',${_pfpJsArg(h.name)},${_pfpJsArg(h.scope || '')});return false;">
+          repoHtml += `<div${_resourceRowAttr('agent-hook', h.scope, h.name)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"${desc} oncontextmenu="showResourceMenu(event,'agent_hook',${_pfpJsArg(h.name)},${_pfpJsArg(h.scope || '')});return false;">
             ${_scopeBadge(h.scope)}<span style="color:var(--pf-accent);font-size:11px">\u2693</span>
             <span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(h.name)}</span>${_ownerBadge(h)}
             <span style="color:var(--pf-muted);font-size:10px;">${escapeHtml(events)}</span>
@@ -680,7 +700,6 @@ async function _renderResourcesData(data) {
       } else {
         repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noAgentHooks')) + '</div>';
       }
-    }
     repoHtml += _sectionFooter();
 
     // ── Tools Repository (always available, no linking) ──
@@ -688,17 +707,15 @@ async function _renderResourcesData(data) {
       createOnclick: "showResourceCreator('_tool')",
       createTitle: t('createNewTool'),
     });
-    if (!_isSectionCollapsed('_tool')) {
       const tools = window._cachedTools || [];
       repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 ' + escapeHtml(t('configureAvailability')) + '</div>';
       tools.forEach(t => {
-        repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer" onclick="showToolCallDialog(${_pfpJsArg(t.name)})">
+        repoHtml += `<div${_resourceRowAttr('tool', t.name)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer" onclick="showToolCallDialog(${_pfpJsArg(t.name)})">
           <span style="color:var(--pf-accent);font-size:11px">\u26A1</span>
           <span style="font-size:12px;color:var(--pf-text)">${escapeHtml(t.name)}</span>
         </div>`;
       });
       if (!tools.length) repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted)">' + escapeHtml(t('loading')) + '</div>';
-    }
     repoHtml += _sectionFooter();
     }
 
@@ -736,10 +753,8 @@ async function _renderResourcesData(data) {
     if (!liveHtml && !repoHtml) {
       liveHtml = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('noResourcesHint')) + '</div>';
     }
-    action$('list_params_secrets', { conversation_id: conversationId })
-      .pipe(rxjs.catchError(() => rxjs.of({})))
-      .subscribe(ps => {
-      let varSecHtml = '';
+    const ps = data || {};
+    let varSecHtml = '';
       // Variables and Secrets headers render unconditionally — like every
       // other section (Services, Flows, …). Gating the header on a non-empty
       // list hid the whole section when empty, taking the '+' create button
@@ -748,7 +763,7 @@ async function _renderResourcesData(data) {
       if (ps.parameters && ps.parameters.length) {
         ps.parameters.forEach(p => {
           const truncVal = p.value.length > 30 ? p.value.substring(0, 30) + '...' : p.value;
-          varSecHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${p.key}','${p.scope}');return false;">
+          varSecHtml += `<div${_resourceRowAttr('parameter', p.scope, p.key)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${p.key}','${p.scope}');return false;">
             ${_scopeBadge(p.scope)}<span style="color:var(--pf-muted);font-size:11px;"><b>${escapeHtml(p.key)}</b> = ${escapeHtml(truncVal)}</span>
           </div>`;
         });
@@ -759,7 +774,7 @@ async function _renderResourcesData(data) {
       varSecHtml += _sectionHeader(t('secrets'), '_secret');
       if (ps.secrets && ps.secrets.length) {
         ps.secrets.forEach(s => {
-          varSecHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${s.key}','${s.scope}',true);return false;">
+          varSecHtml += `<div${_resourceRowAttr('secret', s.scope, s.key)} style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${s.key}','${s.scope}',true);return false;">
             ${_scopeBadge(s.scope)}<span style="color:var(--pf-muted);font-size:11px;"><b>${escapeHtml(s.key)}</b> = ********</span>
           </div>`;
         });
@@ -768,16 +783,16 @@ async function _renderResourcesData(data) {
       }
       varSecHtml += _sectionFooter();
       // Final assembly: live → variables/secrets → repos → PFP depot.
-      const fullHtml = _viewAllBarHtml() + liveHtml + varSecHtml + repoHtml
-        + _pfpDepotPanelHtml();
-      // Only update DOM if content actually changed (prevents flash/blink)
-      if (el.innerHTML !== fullHtml) {
-        el.innerHTML = fullHtml;
-        loadPfpDepot();
-      }
-    });
+    const fullHtml = _viewAllBarHtml() + liveHtml + varSecHtml + repoHtml
+      + _pfpDepotPanelHtml();
+    _patchResourcesContent(el, fullHtml);
+    const depot = document.getElementById('pfpDepotContent');
+    if (depot && depot.dataset.resourcesLoaded !== 'true') {
+      depot.dataset.resourcesLoaded = 'true';
+      loadPfpDepot();
+    }
   } catch (e) {
-    document.getElementById('resourcesContent').innerHTML = '';
+    _clearResourcesContent(document.getElementById('resourcesContent'));
   }
 }
 

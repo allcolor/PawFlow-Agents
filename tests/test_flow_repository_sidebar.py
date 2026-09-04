@@ -34,5 +34,7 @@ def test_resource_tree_collapsed_state_persists_in_local_storage():
     assert "'theme'" in src
     assert "_saveCollapsedSections();" in src
     assert "let _lastResourcesData = null" in src
-    assert "if (isOpening && _lastResourcesData) _renderResourcesData(_lastResourcesData);" in src
-    assert "_lastResourcesData = merged" in src
+    assert "return _setResourceSectionOpen(id, isOpening);" in src
+    assert "if (isOpening && _lastResourcesData)" not in src
+    assert "_mergedData = Object.assign({}, _resData" in src
+    assert "_lastResourcesData = _mergedData" in src

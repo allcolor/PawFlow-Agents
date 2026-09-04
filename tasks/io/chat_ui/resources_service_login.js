@@ -276,7 +276,12 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction, sc
       payload.config = _collectSchemaValues(JSON.parse(panel.dataset.schema || '{}'));
     } catch (_) {}
   }
-  if (flow === 'credential_table') {
+  if (flow === 'acp_registry_import') {
+    try {
+      if (!window.PawFlowAcpRegistry) throw new Error(t('acpRegistryInvalidResponse'));
+      await window.PawFlowAcpRegistry.open(btn, payload);
+    } catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
+  } else if (flow === 'credential_table') {
     try { await _renderCredentialPoolTable(serviceId, btn); }
     catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
   } else if (flow === 'claude_login_server' || flow === 'codex_login_server' || flow === 'gemini_login_server' || flow === 'rclone_login_server') {
@@ -442,6 +447,10 @@ function _applyShowWhen(container) { /* replaced by _applyRules */ }
 
 let _svcSchemaCache = {};
 
+function _beforeInstallServiceActions(actions) {
+  return (actions || []).filter(action => action.before_install === true);
+}
+
 async function _fetchServiceSchema(serviceType) {
   if (_svcSchemaCache[serviceType]) return _svcSchemaCache[serviceType];
   try {
@@ -519,15 +528,18 @@ async function showServiceInstallForm(template) {
     paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('loadingParameters')) + '</div>';
     const schemaData = await _fetchServiceSchema(typeSelect.value);
     const installParams = _installSchemaForServiceType(typeSelect.value, schemaData.parameters || {});
+    const installActions = _beforeInstallServiceActions(schemaData.actions);
     panel.dataset.schema = JSON.stringify(installParams);
     panel.dataset.rules = JSON.stringify(schemaData.rules || []);
     panel.dataset.actions = JSON.stringify(schemaData.actions || []);
     const params = installParams;
     if (Object.keys(params).length === 0) {
-      paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('noConfigurableParametersForServiceType')) + '</div>';
+      paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('noConfigurableParametersForServiceType')) + '</div>'
+        + _renderServiceActions(installActions, '', '');
     } else {
       paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">' + escapeHtml(t('parameters')) + '</div>'
-        + _renderSchemaFields(params, {});
+        + _renderSchemaFields(params, {})
+        + _renderServiceActions(installActions, '', '');
       _applyRules(paramsDiv, schemaData.rules || [], schemaData.actions || [], '');
       if (activeTemplate && activeTemplate.service_type === typeSelect.value) {
         _applyServiceTemplateValues(paramsDiv, activeTemplate.config || {});

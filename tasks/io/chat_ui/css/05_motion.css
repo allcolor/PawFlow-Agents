@@ -1,0 +1,38 @@
+/* Shared WebChat motion policy. Surface modules retain visual styling. */
+:root {
+  --pf-motion-fast: 120ms;
+  --pf-motion-standard: 180ms;
+  --pf-motion-disclosure: 300ms;
+  --pf-motion-layout: 300ms;
+  --pf-motion-chrome: 500ms;
+  --pf-motion-rail: 900ms;
+  --pf-motion-exit: 140ms;
+  --pf-motion-ease-standard: cubic-bezier(.2, .8, .2, 1);
+  --pf-motion-ease-emphasized: cubic-bezier(.2, .9, .25, 1);
+  --pf-motion-ease-exit: cubic-bezier(.4, 0, 1, 1);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.pf-disclosure-panel {
+  overflow: clip;
+  contain: layout paint;
+}
+
+.pf-disclosure-panel[data-pf-disclosure-state="open"] {
+  overflow: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --pf-motion-fast: 0ms;
+    --pf-motion-standard: 0ms;
+    --pf-motion-disclosure: 0ms;
+    --pf-motion-layout: 0ms;
+    --pf-motion-chrome: 0ms;
+    --pf-motion-rail: 0ms;
+    --pf-motion-exit: 0ms;
+  }
+}

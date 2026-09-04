@@ -8,6 +8,7 @@ var _workspaceSelectedTab = 'chat';
 var _workspaceTargetTab = '';
 var _workspaceSurfaces = {};
 var _workspaceResizeObserver = null;
+var _workspaceLayoutTransition = Promise.resolve({status: 'idle'});
 var _workspaceRestoreLayout = 0;
 var _workspaceStorageKey = 'pawflow.workspace.state.v2';
 var _workspaceLegacyStorageKey = 'pawflow.workspace.layout.v1';
@@ -622,19 +623,39 @@ function _workspaceResize() {
 function workspaceSetLayout(value) {
   let next = parseInt(value, 10);
   if (!Number.isFinite(next) || next < 1 || next > 6) next = 1;
-  if (next > 1 && _workspaceRestoreLayout > 1) _workspaceRestoreLayout = 0;
-  _workspaceLayout = next;
-  const shell = document.getElementById('workspaceShell');
-  if (shell) {
-    shell.dataset.layout = String(next);
-    shell.classList.toggle('workspace-tiled', true);
+  const previous = _workspaceLayout;
+  const panels = Object.keys(_workspaceSurfaces).map(function(tabId) {
+    return _workspaceSurfaces[tabId] && _workspaceSurfaces[tabId].panel;
+  }).filter(function(panel) { return !!panel; });
+  const apply = function() {
+    if (next > 1 && _workspaceRestoreLayout > 1) _workspaceRestoreLayout = 0;
+    _workspaceLayout = next;
+    const shell = document.getElementById('workspaceShell');
+    if (shell) {
+      shell.dataset.layout = String(next);
+      shell.classList.toggle('workspace-tiled', true);
+    }
+    const select = document.getElementById('workspaceLayoutSelect');
+    if (select && select.value !== String(next)) select.value = String(next);
+    _workspaceApplySelection();
+    _workspaceUpdateMaximizeState();
+    _workspaceResize();
+    _workspaceSaveState();
+    return true;
+  };
+  if (previous !== next && panels.length && window.pfMotion
+      && typeof window.pfMotion.flipGroup === 'function') {
+    _workspaceLayoutTransition = window.pfMotion.flipGroup(panels, apply, {
+      channel: 'workspace-layout',
+      duration: 300,
+      easing: 'cubic-bezier(.2, .9, .25, 1)',
+      scale: true,
+    });
+  } else {
+    apply();
+    _workspaceLayoutTransition = Promise.resolve({status: 'finished'});
   }
-  const select = document.getElementById('workspaceLayoutSelect');
-  if (select && select.value !== String(next)) select.value = String(next);
-  _workspaceApplySelection();
-  _workspaceUpdateMaximizeState();
-  _workspaceResize();
-  _workspaceSaveState();
+  return _workspaceLayoutTransition;
 }
 
 function workspaceOpenOpenspace() {

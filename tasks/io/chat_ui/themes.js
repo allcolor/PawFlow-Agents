@@ -160,13 +160,10 @@ function _applyThemeFromResource(ref) {
 
 function _showThemeMenu(e, ref, builtin, scope) {
   e.preventDefault();
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;min-width:160px;';
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
+  menu.style.minWidth = '160px';
+  _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.className = 'ctx-menu-item' + (danger ? ' danger' : '');
@@ -178,13 +175,6 @@ function _showThemeMenu(e, ref, builtin, scope) {
   if (!builtin) {
     item(t('delete'), () => _deleteTheme(ref), true);
   }
-  document.body.appendChild(menu);
-  requestAnimationFrame(() => {
-    const rect = menu.getBoundingClientRect();
-    if (rect.bottom > window.innerHeight) menu.style.top = Math.max(0, e.clientY - rect.height) + 'px';
-    if (rect.right > window.innerWidth) menu.style.left = Math.max(0, e.clientX - rect.width) + 'px';
-  });
-  setTimeout(() => document.addEventListener('click', function _close() { menu.remove(); document.removeEventListener('click', _close); }), 0);
 }
 
 function showThemeCreator() {

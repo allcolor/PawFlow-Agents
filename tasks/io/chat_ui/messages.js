@@ -472,6 +472,12 @@ function collapseTechnicalGroups() {
 function _createTechnicalGroupBefore(container, anchor) {
   const group = document.createElement('details');
   group.className = 'msg technical-group';
+  const anchorId = anchor && anchor.dataset && (
+    anchor.dataset.msgid || anchor.dataset.turnId || anchor.dataset.groupKey
+    || anchor.dataset.taskId || anchor.dataset.delegateTaskId
+  );
+  if (!anchorId) throw new Error('technical group anchor is missing a durable identity');
+  group.dataset.groupKey = 'technical:' + String(anchorId);
   group.dataset.sortTs = anchor && anchor.dataset ? (anchor.dataset.sortTs || String(Date.now() / 1000)) : String(Date.now() / 1000);
   const summary = document.createElement('summary');
   summary.className = 'technical-group-header';

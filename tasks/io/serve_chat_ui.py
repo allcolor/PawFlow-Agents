@@ -36,6 +36,9 @@ _CSS_DIR = _CHAT_UI_DIR / "css"
 # ext_runtime.js must load early so other modules can fire hooks safely.
 _JS_MODULES = [
     "i18n.js", "state.js", "rxbus.js", "semantic_runtime.js", "ext_runtime.js",
+    # Shared native motion/disclosure/projection primitives load before every
+    # surface that consumes them. They are classic scripts like the rest.
+    "ui_motion.js", "ui_disclosure.js", "ui_projection.js", "ui_floating_layer.js",
     "tooltips.js",
     "themes.js", "appearance.js", "search.js",
     # conversations.js = list/state/render/history core (loads early);
@@ -81,7 +84,7 @@ _JS_MODULES = [
     # resources.js was split into smaller modules (<=800 lines each); load
     # order is significant — resources.js (core: shared helpers + collapsed
     # state, runs top-level init) MUST stay first, the rest follow.
-    "resources.js", "resources_pfp.js", "resources_flow_templates.js",
+    "resources.js", "resources_patch.js", "resources_pfp.js", "resources_flow_templates.js",
     "resources_linked_services.js", "resources_render.js", "service_tunnels.js",
     "resources_mcp_publish.js", "resources_standard_api.js", "resources_a2a.js",
     "workflow_kanban.js", "workflow_run_inspector.js", "resources_menus.js",
@@ -90,7 +93,8 @@ _JS_MODULES = [
     # schema_form.js = the single schema-driven form renderer (services, Flow
     # Editor properties, flow parameters); must precede its first caller.
     "schema_form.js", "workflow_agent_forms.js",
-    "resources_service_dialogs.js", "resources_service_login.js",
+    "resources_service_dialogs.js", "resources_service_acp_registry.js",
+    "resources_service_login.js",
     "resources_service_templates.js",
     "services.js", "file_viewer.js", "file_explorer.js",
     "tabs.js", "desktop_dock.js",
@@ -115,6 +119,7 @@ _JS_MODULES = [
 # variable bridge rely on coming after the rules they override.
 _CSS_MODULES: Tuple[str, ...] = (
     "00_base.css",            # reset, :root, app layout, sidebar, sharing
+    "05_motion.css",          # shared motion tokens, disclosure containment
     "10_chrome.css",          # collapsible grips, header status widgets
     "20_messages.css",        # gauges, messages, simplified live view, send
     "30_mobile.css",          # narrow-viewport overrides

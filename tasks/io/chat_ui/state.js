@@ -351,26 +351,156 @@ function doLogout() {
     .finally(() => { window.location.href = '/'; });
 }
 
-function _syncToggleBtn() {
+function _syncToggleBtn(collapsedOverride) {
   const sb = document.getElementById('sidebar');
   const btn = document.getElementById('sidebarToggle');
   if (!sb || !btn) return;
-  const collapsed = sb.classList.contains('collapsed');
+  const collapsed = collapsedOverride === undefined
+    ? sb.classList.contains('collapsed') : !!collapsedOverride;
   const tabBar = document.getElementById('tabBar');
   const narrow = window.matchMedia('(max-width: 768px)').matches;
+  const tabBarWidth = narrow && tabBar ? tabBar.offsetWidth : 0;
   // Desktop owns an independent edge-hover rail. On narrow layouts the rail
   // remains coupled to the overlay drawer so the two layers cannot compete.
   if (tabBar) tabBar.classList.toggle('collapsed', narrow && collapsed);
-  const boundary = collapsed ? 0 : 260 + (narrow && tabBar ? tabBar.offsetWidth : 0);
-  btn.style.left = Math.max(0, boundary - 8) + 'px';
+  const boundary = collapsed ? 0 : 260 + tabBarWidth;
+  btn.style.setProperty('--pf-sidebar-toggle-x', Math.max(0, boundary - 8) + 'px');
   btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
 }
+let _sidebarMotionGeneration = 0;
+let _sidebarTargetCollapsed = null;
+function _setSidebarCollapsed(collapsed, animate) {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return Promise.resolve({status: 'missing'});
+  collapsed = !!collapsed;
+  _sidebarTargetCollapsed = collapsed;
+  const generation = ++_sidebarMotionGeneration;
+  const narrow = window.matchMedia('(max-width: 768px)').matches;
+  const main = document.querySelector('.main');
+  const apply = function() {
+    if (generation !== _sidebarMotionGeneration) return false;
+    sidebar.classList.toggle('collapsed', collapsed);
+    sidebar.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
+    if (collapsed) sidebar.setAttribute('inert', '');
+    else sidebar.removeAttribute('inert');
+    _syncToggleBtn(collapsed);
+    return true;
+  };
+
+  // Accessibility follows the logical target immediately; visual layout is
+  // committed in the shared write phase on desktop.
+  _syncToggleBtn(collapsed);
+  if (!collapsed) {
+    sidebar.removeAttribute('inert');
+    sidebar.setAttribute('aria-hidden', 'false');
+  }
+  if (animate === false || narrow || !main || !window.pfMotion) {
+    apply();
+    return Promise.resolve({status: 'finished'});
+  }
+  if (collapsed) {
+    sidebar.setAttribute('inert', '');
+    sidebar.setAttribute('aria-hidden', 'true');
+  }
+  return window.pfMotion.flip(main, apply, {
+    channel: 'sidebar-layout',
+    duration: 500,
+    easing: 'cubic-bezier(.4, 0, .2, 1)',
+    scale: true,
+  });
+}
 function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('collapsed');
-  _syncToggleBtn();
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return Promise.resolve({status: 'missing'});
+  const current = _sidebarTargetCollapsed === null
+    ? sidebar.classList.contains('collapsed') : _sidebarTargetCollapsed;
+  return _setSidebarCollapsed(!current, true);
 }
 document.addEventListener('DOMContentLoaded', _syncToggleBtn);
 window.addEventListener('resize', _syncToggleBtn);
+
+const _CHROME_EXPANDER_DURATION = 500;
+const _CHROME_EXPANDER_EASING = 'cubic-bezier(.4, 0, .2, 1)';
+const _chromeExpanderStates = new WeakMap();
+
+function _chromeExpanderNaturalHeight(element) {
+  const style = window.getComputedStyle(element);
+  const borders = (parseFloat(style.borderTopWidth) || 0)
+    + (parseFloat(style.borderBottomWidth) || 0);
+  return Math.max(0, Number(element.scrollHeight || 0) + borders);
+}
+
+function _setChromeExpanderOpen(
+  element, owner, collapsedClass, open, channel, animate, fade
+) {
+  if (!element || !owner) return Promise.resolve({status: 'missing'});
+  open = !!open;
+  let state = _chromeExpanderStates.get(element);
+  if (!state) {
+    state = {generation: 0, targetOpen: !owner.classList.contains(collapsedClass)};
+    _chromeExpanderStates.set(element, state);
+  }
+  state.targetOpen = open;
+  const generation = ++state.generation;
+  const rect = element.getBoundingClientRect();
+  const startHeight = Number(rect.height || 0);
+  const shouldFade = fade !== false;
+  const computedOpacity = shouldFade
+    ? Number(window.getComputedStyle(element).opacity) : 1;
+  const startOpacity = shouldFade && startHeight > 0 && Number.isFinite(computedOpacity)
+    ? computedOpacity : (shouldFade ? 0 : 1);
+
+  if (window.pfMotion) window.pfMotion.cancel(element, channel);
+  element.style.boxSizing = 'border-box';
+  element.style.overflow = 'clip';
+  element.style.height = startHeight + 'px';
+  if (shouldFade) element.style.opacity = String(startOpacity);
+  if (open) owner.classList.remove(collapsedClass);
+
+  function terminal(result) {
+    if (generation !== state.generation || open !== state.targetOpen) {
+      return {status: 'stale'};
+    }
+    owner.classList.toggle(collapsedClass, !open);
+    element.style.boxSizing = '';
+    element.style.overflow = '';
+    element.style.height = '';
+    if (shouldFade) element.style.opacity = '';
+    if (result && result.animation && typeof result.animation.cancel === 'function') {
+      result.animation.cancel();
+    }
+    return {status: open ? 'open' : 'closed'};
+  }
+
+  if (animate !== true || !window.pfMotion || window.pfMotion.reduced()) {
+    return Promise.resolve(terminal(null));
+  }
+  let endHeight = null;
+  const measured = window.pfMotion.read(function() {
+    if (generation !== state.generation || open !== state.targetOpen) return null;
+    endHeight = open ? _chromeExpanderNaturalHeight(element) : 0;
+    return endHeight;
+  });
+  const animated = window.pfMotion.write(function() {
+    if (endHeight === null || generation !== state.generation || open !== state.targetOpen) {
+      return {status: 'stale'};
+    }
+    const startFrame = {height: startHeight + 'px'};
+    const endFrame = {height: endHeight + 'px'};
+    if (shouldFade) {
+      startFrame.opacity = startOpacity;
+      endFrame.opacity = open ? 1 : 0;
+    }
+    return window.pfMotion.replace(element, channel, [startFrame, endFrame], {
+      duration: _CHROME_EXPANDER_DURATION,
+      easing: _CHROME_EXPANDER_EASING,
+      fill: 'both',
+    });
+  });
+  return Promise.all([measured, animated]).then(function(results) {
+    return terminal(results[1]);
+  });
+}
 
 // Composer drawer: the whole zone above the prompt (conversation controls +
 // action dock) folds completely behind a small centered grip. CLOSED by
@@ -380,19 +510,21 @@ function _composerDrawerOpen() {
   try { return localStorage.getItem(_COMPOSER_DRAWER_KEY) === '1'; }
   catch (_) { return false; }
 }
-function _applyComposerDrawer() {
+function _applyComposerDrawer(animate) {
   const area = document.querySelector('.input-area');
-  if (!area) return;
+  if (!area) return Promise.resolve({status: 'missing'});
   const open = _composerDrawerOpen();
-  area.classList.toggle('composer-drawer-collapsed', !open);
   const handle = document.getElementById('composerDrawerHandle');
   if (handle) handle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  return _setChromeExpanderOpen(
+    area.querySelector('.composer-context-row'), area,
+    'composer-drawer-collapsed', open, 'composer-drawer', animate === true);
 }
 function toggleComposerDrawer() {
   try {
     localStorage.setItem(_COMPOSER_DRAWER_KEY, _composerDrawerOpen() ? '0' : '1');
   } catch (_) {}
-  _applyComposerDrawer();
+  return _applyComposerDrawer(true);
 }
 document.addEventListener('DOMContentLoaded', _applyComposerDrawer);
 
@@ -403,26 +535,21 @@ function _headerBarOpen() {
   try { return localStorage.getItem(_HEADER_BAR_KEY) !== '0'; }
   catch (_) { return true; }
 }
-function _applyHeaderBar() {
+function _applyHeaderBar(animate) {
   const bar = document.getElementById('headerBar');
-  if (!bar) return;
+  const shell = bar && bar.closest('.header-shell');
+  if (!bar || !shell) return Promise.resolve({status: 'missing'});
   const open = _headerBarOpen();
-  bar.classList.toggle('collapsed', !open);
   const grip = document.getElementById('headerGrip');
-  if (grip) {
-    grip.setAttribute('aria-expanded', open ? 'true' : 'false');
-    // The grip follows the separation line: viewport top edge when the
-    // header is folded, straddling the header's bottom border when open.
-    grip.style.top = open
-      ? Math.max(0, bar.getBoundingClientRect().bottom - 8) + 'px'
-      : '0px';
-  }
+  if (grip) grip.setAttribute('aria-expanded', open ? 'true' : 'false');
+  return _setChromeExpanderOpen(
+    shell, bar, 'collapsed', open, 'header-bar', animate === true, false);
 }
 function toggleHeaderBar() {
   try {
     localStorage.setItem(_HEADER_BAR_KEY, _headerBarOpen() ? '0' : '1');
   } catch (_) {}
-  _applyHeaderBar();
+  return _applyHeaderBar(true);
 }
 document.addEventListener('DOMContentLoaded', _applyHeaderBar);
 window.addEventListener('resize', _applyHeaderBar);

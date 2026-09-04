@@ -230,8 +230,7 @@ function _clearConvState() {
   if (typeof _autoScroll !== 'undefined') _autoScroll = true;
   sseEverConnected = false;
   sseHadError = false;
-  document.getElementById('sidebar').classList.add('collapsed');
-  if (typeof _syncToggleBtn === 'function') _syncToggleBtn();
+  if (typeof _setSidebarCollapsed === 'function') _setSidebarCollapsed(true, false);
 }
 
 const VIEW_TOGGLES = {

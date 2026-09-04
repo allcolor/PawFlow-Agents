@@ -161,12 +161,12 @@ function showPlanMenu(e, planId, planStatus) {
   }
   items += '<div class="ctx-menu-item danger" onclick="event.stopPropagation();planAction(\'delete_plan\',\'' + planId + '\');closePlanMenu();">&#x1F5D1; ' + escapeHtml(t('delete')) + '</div>';
   menu.innerHTML = items;
-  setTimeout(() => document.addEventListener('click', closePlanMenu, {once: true}), 0);
 }
 
 function closePlanMenu() {
-  const m = document.getElementById('planCtxMenu');
-  if (m) m.remove();
+  if (window.pfFloatingLayer) {
+    window.pfFloatingLayer.close('context-menu', {restoreFocus: false});
+  }
 }
 
 function showPlanStepMenu(e, planId, stepIndex, currentStatus) {
@@ -199,7 +199,6 @@ function showPlanStepMenu(e, planId, stepIndex, currentStatus) {
     items += '<div class="ctx-menu-item" onclick="event.stopPropagation();verifyPlanStep(\'' + planId + '\',' + stepIndex + ',false);closePlanMenu();">&#x274C; ' + escapeHtml(t('rejectStep')) + '</div>';
   }
   menu.innerHTML = items;
-  setTimeout(() => document.addEventListener('click', closePlanMenu, {once: true}), 0);
 }
 
 function updatePlanStep(planId, stepIndex, status) {

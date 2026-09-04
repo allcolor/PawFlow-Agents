@@ -4,18 +4,9 @@
 // ── Git versioning context menu ──────────────────────────────────
 
 function showConvMenu(e, cid, status) {
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
-  document.body.appendChild(menu);
-  requestAnimationFrame(() => {
-    const rect = menu.getBoundingClientRect();
-    if (rect.bottom > window.innerHeight) menu.style.top = Math.max(0, e.clientY - rect.height) + 'px';
-    if (rect.right > window.innerWidth) menu.style.left = Math.max(0, e.clientX - rect.width) + 'px';
-  });
+  _positionMenu(menu, e);
 
   const idle = !status || status === 'idle';
   const item = (label, fn, opts = {}) => {
@@ -53,8 +44,6 @@ function showConvMenu(e, cid, status) {
     sep();
     item('\u{1F5D1} Delete branch...', () => convDeleteBranchDialog(cid), { danger: true });
   }
-
-  setTimeout(() => document.addEventListener('click', function _close() { menu.remove(); document.removeEventListener('click', _close); }), 0);
 }
 
 function showConversationSettings(cid) {

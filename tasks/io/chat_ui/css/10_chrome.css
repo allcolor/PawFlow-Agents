@@ -6,28 +6,34 @@
 .pf-grip { transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
                        background 0.15s ease, color 0.15s ease; }
 .pf-grip:hover { color: var(--pf-text, #e0e0e0); background: var(--pf-user, #0f3460); }
-/* Same hover zoom as the header/dock icons; each grip composes the zoom with
-   its own centering translation so it stays glued to its separation line. */
-.pf-grip-top:hover { transform: translateX(-50%) scale(1.4); }
-.sidebar-toggle:hover { transform: translateY(-50%) scale(1.4); }
+/* Keep the moving top grip's outer box stable. Its bars retain the hover cue
+   without adding a second scale trajectory when the grip leaves the pointer. */
+.pf-grip-top .pf-grip-bars {
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.pf-grip-top:hover .pf-grip-bars { transform: scale(1.4); }
+.sidebar-toggle:hover { transform: translate(var(--pf-sidebar-toggle-x, 0px), -50%) scale(1.4); }
 .composer-drawer-handle:hover { transform: translateX(-50%) scale(1.4); }
 .pf-grip-bars { display: block; width: 12px; height: 11px;
                 background: repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 5px); }
 /* Vertical menu -> horizontal bars; horizontal menu -> vertical bars. */
 .pf-grip-bars-h { display: block; width: 11px; height: 12px;
                   background: repeating-linear-gradient(180deg, currentColor 0 2px, transparent 2px 5px); }
-.sidebar-toggle { position: fixed; top: 50%; left: 0; transform: translateY(-50%); z-index: 100;
-                   width: 15px; height: 36px; border-left: none; border-radius: 0 8px 8px 0;
-                   transition: left 0.2s; }
-.pf-grip-top { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 210;
+.sidebar-toggle { position: fixed; top: 50%; left: 0;
+                   transform: translate(var(--pf-sidebar-toggle-x, 0px), -50%); z-index: 100;
+                   width: 15px; height: 36px; border-left: none; border-radius: 0 8px 8px 0; }
+.pf-grip-top { position: absolute; top: max(0px, calc(100% - 7.5px)); left: 50%;
+               transform: translateX(-50%); z-index: 210;
                width: 36px; height: 15px; border-top: none; border-radius: 0 0 8px 8px; }
-/* Open state: JS moves the grip down so it rides the header's bottom line. */
+/* The shell, rather than the padded header, animates its height. This keeps the
+   grip on the painted separation line all the way to zero without a 25px stop. */
 #headerGrip[aria-expanded="true"] { border: 1px solid var(--pf-border, #0f3460); border-radius: 8px; }
 .header.collapsed { display: none; }
 .header-logo { display: flex; align-items: center; line-height: 0; font-size: 0; }
 .header-logo a { display: inline-flex; align-items: center; }
 .header-logo img { display: block; width: 28px; height: 28px; }
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.header-shell { position: relative; z-index: 200; flex: 0 0 auto; min-height: 0; }
 .header { position: relative; z-index: 200; background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
            display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .header h1 { font-size: 18px; color: #e94560; }

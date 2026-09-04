@@ -29,6 +29,10 @@ const TURN_GLYPHS = 'アイウエオカキクケコサシスセソタチツテ�
 // N timers.
 const _turnRainCanvases = new Set();
 let _turnRainTimer = null;
+let _turnRainResizeObserver = null;
+let _turnRainVisibilityObserver = null;
+let _turnRainMedia = null;
+let _turnRainLifecycleBound = false;
 
 let PAWFLOW_CHAT_VIEW_MODE = 'classic';
 let simplifiedTurns = new Map();
@@ -194,7 +198,7 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
     transient: { cues: [], coalesceTimer: null, pendingText: '', pendingKind: '',
                  pendingAgent: '', deferredTools: new Map(),
                  mcpSeenAgents: new Set(), cuedTools: new Set() },
-    tabs: {},
+    tabs: {}, disclosure: null,
   };
   const block = document.createElement('section');
   block.className = 'msg simple-turn-block';
@@ -211,6 +215,7 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
   ephemeral.setAttribute('aria-live', 'polite');
   block.appendChild(ephemeral);
   const details = document.createElement('div'); details.className = 'simple-turn-details';
+  details.id = 'turn-details-' + turnId;
   const tablist = document.createElement('div'); tablist.className = 'simple-turn-tabs'; tablist.setAttribute('role', 'tablist');
   const panels = document.createElement('div');
   const defs = [
@@ -234,6 +239,11 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
   });
   details.appendChild(tablist); details.appendChild(panels); block.appendChild(details);
   state.blockEl = block; state.headerEl = header; state.ephemeralEl = ephemeral;
+  state.disclosure = pfDisclosure.create({
+    trigger: header,
+    panel: details,
+    open: false,
+  });
   state.elapsedEl = header.querySelector('.simple-turn-elapsed');
   if (state.runtimeTurnId) state.resumedTurnIds.add(state.runtimeTurnId);
   const runtime = _turnRuntime.get(state.runtimeTurnId) || {};
@@ -351,13 +361,22 @@ function _turnUpdateStatus(state, status) {
 
 function _turnSetExpanded(state, expanded) {
   state.expanded = !!expanded; state.blockEl.classList.toggle('expanded', state.expanded);
-  state.headerEl.setAttribute('aria-expanded', state.expanded ? 'true' : 'false');
   state.headerEl.setAttribute('aria-label', _turnText(state.expanded ? 'collapseTurnDetails' : 'expandTurnDetails', state.expanded ? 'Collapse turn details' : 'Expand turn details'));
-  if (state.expanded) { _turnStopTransient(state); _turnActivateTab(state, state.activeTab, false); }
+  if (state.expanded) {
+    _turnStopTransient(state);
+    _turnActivateTab(state, state.activeTab, false);
+    state.disclosure.set(true);
+  }
   // Collapsing a turn that is still running brings its surface back: the rain
   // and the pulse are what say it is alive, and expanding to look at a tab must
   // not cost the reader that for the rest of the turn.
-  else if (state.status === 'working') { _turnStartRain(state); _turnSyncIdle(state); }
+  else {
+    state.disclosure.set(false).then(() => {
+      if (!state.expanded && state.status === 'working') {
+        _turnStartRain(state); _turnSyncIdle(state);
+      }
+    });
+  }
 }
 
 function _turnActivateTab(state, key, focus) {
@@ -370,16 +389,27 @@ function _turnActivateTab(state, key, focus) {
   if (focus) current.tabEl.focus();
   // A detail panel reads like a roller: opening a tab starts it at the
   // bottom, on the newest row, not at the top of whatever was there first.
-  _turnScrollPanelToBottom(current.bodyEl);
+  _turnQueuePanelScroll(current.bodyEl, false);
 }
 
-// Anchor a detail panel at its newest row. The simple-turn panels scroll
-// independently (max-height + overflow), so the main messages scroll logic
-// never touches them — without this, long content is shown from the top and
-// the rows the reader is waiting for sit below the fold.
-function _turnScrollPanelToBottom(bodyEl) {
-  if (!bodyEl || !bodyEl.scrollHeight) return;
-  bodyEl.scrollTop = bodyEl.scrollHeight;
+// Read scroll geometry in the shared read phase and write it afterwards. This
+// keeps turn and tab click handlers free of forced post-write layout.
+function _turnQueuePanelScroll(bodyEl, followOnly) {
+  if (!bodyEl) return;
+  const generation = Number(bodyEl._pfScrollGeneration || 0) + 1;
+  bodyEl._pfScrollGeneration = generation;
+  pfMotion.read(() => {
+    if (bodyEl._pfScrollGeneration !== generation) return null;
+    const height = Number(bodyEl.scrollHeight || 0);
+    const shouldFollow = !followOnly
+      || height - Number(bodyEl.scrollTop || 0) - Number(bodyEl.clientHeight || 0) < 60;
+    if (!shouldFollow) return;
+    pfMotion.write(() => {
+      if (bodyEl._pfScrollGeneration === generation) {
+        bodyEl.scrollTop = height;
+      }
+    });
+  });
 }
 
 // Stick-to-bottom while a turn streams: keep the active panel on the newest
@@ -389,10 +419,7 @@ function _turnFollowPanelScroll(state, tabKey) {
   if (!state || !state.expanded || !state.tabs) return;
   if (state.activeTab !== tabKey) return;
   const bodyEl = state.tabs[tabKey] && state.tabs[tabKey].bodyEl;
-  if (!bodyEl || !bodyEl.scrollHeight) return;
-  if (bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 60) {
-    bodyEl.scrollTop = bodyEl.scrollHeight;
-  }
+  _turnQueuePanelScroll(bodyEl, true);
 }
 
 function _turnTabKeydown(state, key, ev) {
@@ -996,24 +1023,89 @@ function _turnReducedMotion() {
   catch (_e) { return false; }
 }
 
-// One timer for every canvas on the page. It stops itself the moment the last
-// block finishes, so a quiet conversation costs nothing.
+function _turnRainRelease(canvas) {
+  if (_turnRainResizeObserver) _turnRainResizeObserver.unobserve(canvas);
+  if (_turnRainVisibilityObserver) _turnRainVisibilityObserver.unobserve(canvas);
+  _turnRainCanvases.delete(canvas);
+}
+
+function _turnRainShouldRun() {
+  if (document.visibilityState === 'hidden' || _turnReducedMotion()) return false;
+  return Array.from(_turnRainCanvases).some(function(canvas) {
+    return canvas.isConnected && canvas._pfVisible !== false;
+  });
+}
+
+function _turnRainSyncTimer() {
+  Array.from(_turnRainCanvases).forEach(function(canvas) {
+    if (!canvas.isConnected) _turnRainRelease(canvas);
+  });
+  const shouldRun = _turnRainShouldRun();
+  if (shouldRun && !_turnRainTimer) {
+    _turnRainTimer = setInterval(_turnRainTick, TURN_RAIN_TICK_MS);
+  } else if (!shouldRun && _turnRainTimer) {
+    clearInterval(_turnRainTimer);
+    _turnRainTimer = null;
+  }
+}
+
+function _turnRainMeasure(canvas, rect) {
+  const width = Math.max(0, Math.round(Number(rect && rect.width) || 0));
+  const height = Math.max(0, Math.round(Number(rect && rect.height) || 0));
+  if (canvas._pfWidth !== width || canvas._pfHeight !== height) {
+    canvas._pfWidth = width;
+    canvas._pfHeight = height;
+    canvas._pfDrops = null;
+  }
+}
+
+function _turnRainEnsureLifecycle() {
+  if (!_turnRainResizeObserver && typeof ResizeObserver === 'function') {
+    _turnRainResizeObserver = new ResizeObserver(function(entries) {
+      entries.forEach(function(entry) {
+        _turnRainMeasure(entry.target, entry.contentRect || {});
+      });
+    });
+  }
+  if (!_turnRainVisibilityObserver && typeof IntersectionObserver === 'function') {
+    _turnRainVisibilityObserver = new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        entry.target._pfVisible = !!entry.isIntersecting;
+      });
+      _turnRainSyncTimer();
+    });
+  }
+  if (_turnRainLifecycleBound) return;
+  _turnRainLifecycleBound = true;
+  document.addEventListener('visibilitychange', _turnRainSyncTimer);
+  try {
+    _turnRainMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (_turnRainMedia && typeof _turnRainMedia.addEventListener === 'function') {
+      _turnRainMedia.addEventListener('change', _turnRainSyncTimer);
+    }
+  } catch (_error) { _turnRainMedia = null; }
+}
+
+// One visibility-aware timer for every canvas on the page. Hidden, offscreen,
+// reduced-motion, and quiet conversations consume no decorative ticks.
 function _turnRainTick() {
+  if (!_turnRainShouldRun()) {
+    _turnRainSyncTimer();
+    return;
+  }
   for (const canvas of Array.from(_turnRainCanvases)) {
-    if (!canvas.isConnected) { _turnRainCanvases.delete(canvas); continue; }
-    _turnRainDraw(canvas);
+    if (!canvas.isConnected) { _turnRainRelease(canvas); continue; }
+    if (canvas._pfVisible !== false) _turnRainDraw(canvas);
   }
-  if (!_turnRainCanvases.size && _turnRainTimer) {
-    clearInterval(_turnRainTimer); _turnRainTimer = null;
-  }
+  _turnRainSyncTimer();
 }
 
 function _turnRainDraw(canvas) {
   const ctx = canvas._pfCtx || (typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null);
   if (!ctx) return;
   canvas._pfCtx = ctx;
-  const width = canvas.clientWidth || canvas.width || 0;
-  const height = canvas.clientHeight || canvas.height || 0;
+  const width = Number(canvas._pfWidth || 0);
+  const height = Number(canvas._pfHeight || 0);
   if (!width || !height) return;
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width; canvas.height = height; canvas._pfDrops = null;
@@ -1067,18 +1159,24 @@ function _turnStartRain(state) {
   state.ephemeralEl.insertBefore(canvas, state.ephemeralEl.firstChild);
   state.rainEl = canvas;
   _turnRainColours(state, canvas);
+  _turnRainEnsureLifecycle();
+  canvas._pfVisible = true;
+  _turnRainMeasure(canvas, {
+    width: Number(canvas.clientWidth || canvas.width || 0),
+    height: Number(canvas.clientHeight || canvas.height || 0),
+  });
   _turnRainCanvases.add(canvas);
-  if (!_turnRainTimer) _turnRainTimer = setInterval(_turnRainTick, TURN_RAIN_TICK_MS);
+  if (_turnRainResizeObserver) _turnRainResizeObserver.observe(canvas);
+  if (_turnRainVisibilityObserver) _turnRainVisibilityObserver.observe(canvas);
+  _turnRainSyncTimer();
 }
 
 function _turnStopRain(state) {
   if (!state.rainEl) return;
-  _turnRainCanvases.delete(state.rainEl);
+  _turnRainRelease(state.rainEl);
   if (state.rainEl.parentNode) state.rainEl.parentNode.removeChild(state.rainEl);
   state.rainEl = null;
-  if (!_turnRainCanvases.size && _turnRainTimer) {
-    clearInterval(_turnRainTimer); _turnRainTimer = null;
-  }
+  _turnRainSyncTimer();
 }
 
 // A cue does not appear, it condenses: every character starts as a glyph from

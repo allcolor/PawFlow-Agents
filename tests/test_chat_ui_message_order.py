@@ -394,10 +394,8 @@ def test_mobile_breakpoints_scroll_header_and_overlay_sidebar():
     assert ".sidebar-toggle { left: 0 !important; z-index: 200; }" in mobile_block
     assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 0;" in mobile_block
     assert "body:has(.sidebar:not(.collapsed)) .tab-bar { left: 260px; }" in mobile_block
-    assert (
-        "body:has(.sidebar:not(.collapsed)) .sidebar-toggle"
-        " { left: 295px !important; }" in mobile_block
-    )
+    assert "body:has(.sidebar:not(.collapsed)) .sidebar-toggle" not in mobile_block
+    assert "--pf-sidebar-toggle-x" in TEMPLATE_HTML
 
 
 def test_dialog_panels_clamp_to_viewport_width():

@@ -485,18 +485,14 @@ function _submitAssign(taskDefName) {
 // ── Task instance context menu (Tasks section – management, not lifecycle) ──
 function showTaskInstanceMenu(e, taskId, agent, status) {
   e.preventDefault();
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px var(--pf-shadow);';
+  menu.style.minWidth = '140px';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
-    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
-    d.onmouseleave = () => d.style.background = '';
+    d.className = 'ctx-menu-item' + (danger ? ' danger' : '');
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
@@ -530,24 +526,19 @@ function showTaskInstanceMenu(e, taskId, agent, status) {
   sep.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
   menu.appendChild(sep);
   item('\u{1F5D1} ' + t('delete'), () => _taskAction('delete'), true);
-  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
 // ── Running task context menu ─────────────────────────────────────
 function showRunningTaskMenu(e, taskId, agent, status) {
   e.preventDefault();
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px var(--pf-shadow);';
+  menu.style.minWidth = '140px';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
-    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
-    d.onmouseleave = () => d.style.background = '';
+    d.className = 'ctx-menu-item' + (danger ? ' danger' : '');
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
@@ -588,6 +579,5 @@ function showRunningTaskMenu(e, taskId, agent, status) {
   sep2.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
   menu.appendChild(sep2);
   item('\u{1F5D1} ' + t('delete'), () => _taskAction('delete'), true);
-  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 

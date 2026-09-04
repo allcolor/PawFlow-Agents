@@ -181,16 +181,14 @@ function _renderPfpRegistries(data) {
 }
 
 function _pfpDepotPanelHtml() {
-  return '<div id="pfpDepotPanel">'
-    + _repoSectionHeader(t('pfpDepot'), '_pfp_depot', {
+  return _repoSectionHeader(t('pfpDepot'), '_pfp_depot', {
       createOnclick: '_uploadPfpToDepot()',
       createTitle: t('pfpDepotUpload'),
       refreshOnclick: 'event.stopPropagation();loadPfpDepot()',
       refreshTitle: t('refresh'),
     })
-    + '<div id="pfpDepotContent" style="max-height:35vh;overflow-y:auto;font-size:12px;color:var(--pf-muted);"></div>'
-    + _sectionFooter()
-    + '</div>';
+    + '<div id="pfpDepotPanel" data-resource-preserve="true"><div id="pfpDepotContent" style="max-height:35vh;overflow-y:auto;font-size:12px;color:var(--pf-muted);"></div></div>'
+    + _sectionFooter();
 }
 
 async function loadPfpDepot() {

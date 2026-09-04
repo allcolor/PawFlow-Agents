@@ -331,15 +331,16 @@ def test_busy_agents_visibly_move():
 
 def test_wall_screen_projects_the_live_simplified_view():
     openspace = _openspace_text()
-    # The wall is a read-only clone kept current by one observer. The canonical
-    # #messages node remains mounted in Webchat for side-by-side tiled use.
+    # The wall is a read-only keyed projection. The canonical #messages node
+    # remains mounted in Webchat for side-by-side tiled use.
     assert "function _osProjectMessages" in openspace
     assert "node.cloneNode(true)" in openspace
     assert "_osStripProjectionIds" in openspace
     assert "_osProjectedMessages.className = 'messages osv-projected'" in openspace
     assert "_osProjectedMessages.setAttribute('aria-hidden', 'true')" in openspace
-    assert "new MutationObserver(_osQueueMessageProjection)" in openspace
-    assert "_osProjectionObserver.disconnect()" in openspace
+    assert "pfProjection.create({" in openspace
+    assert "_osProjectionController.setActive(false)" in openspace
+    assert "_osProjectedMessages.innerHTML = ''" not in openspace
     assert "_osScreenHome" not in openspace
     # Perspective mapping uses the same v.project() camera as the bubbles.
     assert "function _osQuadTransform" in openspace

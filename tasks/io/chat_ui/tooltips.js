@@ -4,6 +4,27 @@
   const TARGET_SELECTOR = '.action-dock-menu > .action-menu-item, .conversation-control-button, '
     + '.header-dock-item, .pf-grip, .hdr-icon-btn, [data-pf-title]';
   let activeTarget = null;
+  let pendingTarget = null;
+  let showTimer = 0;
+  let hideTimer = 0;
+  let lastHiddenAt = 0;
+
+  function clearTimer(name) {
+    const timer = name === 'show' ? showTimer : hideTimer;
+    if (timer) window.clearTimeout(timer);
+    if (name === 'show') showTimer = 0;
+    else hideTimer = 0;
+  }
+
+  function setDescribedBy(target, enabled) {
+    if (!target) return;
+    const id = 'pfCssTooltip';
+    const ids = String(target.getAttribute('aria-describedby') || '')
+      .split(/\s+/).filter(Boolean).filter(value => value !== id);
+    if (enabled) ids.push(id);
+    if (ids.length) target.setAttribute('aria-describedby', ids.join(' '));
+    else target.removeAttribute('aria-describedby');
+  }
 
   function tooltipElement() {
     return document.getElementById('pfCssTooltip');
@@ -36,9 +57,20 @@
   }
 
   function hideTooltip() {
+    clearTimer('show');
+    clearTimer('hide');
+    pendingTarget = null;
     const tooltip = tooltipElement();
-    activeTarget = null;
     if (!tooltip) return;
+    if (window.pfFloatingLayer) {
+      window.pfFloatingLayer.close('tooltip', {
+        reason: 'hide',
+        restoreFocus: false,
+      });
+      return;
+    }
+    activeTarget = null;
+    lastHiddenAt = Date.now();
     tooltip.classList.remove('visible');
     tooltip.setAttribute('aria-hidden', 'true');
   }
@@ -64,32 +96,61 @@
       tooltip.appendChild(desc);
     }
 
-    activeTarget = target;
-    tooltip.classList.add('visible');
-    tooltip.setAttribute('aria-hidden', 'false');
-
-    const gap = 10;
-    const edge = 8;
-    const targetRect = target.getBoundingClientRect();
-    const tooltipRect = tooltip.getBoundingClientRect();
     const dock = target.closest('.action-dock-menu');
     const verticalDock = dock && window.getComputedStyle(dock).flexDirection === 'column';
-    let left;
-    let top;
-
-    if (verticalDock) {
-      left = targetRect.left - tooltipRect.width - gap;
-      top = targetRect.top + (targetRect.height - tooltipRect.height) / 2;
-    } else {
-      left = targetRect.left + (targetRect.width - tooltipRect.width) / 2;
-      top = targetRect.top - tooltipRect.height - gap;
-      if (top < edge) top = targetRect.bottom + gap;
+    if (activeTarget && activeTarget !== target) {
+      setDescribedBy(activeTarget, false);
     }
+    if (window.pfFloatingLayer) {
+      window.pfFloatingLayer.close('tooltip', {
+        reason: 'replaced',
+        restoreFocus: false,
+      });
+    }
+    activeTarget = target;
+    pendingTarget = null;
+    setDescribedBy(target, true);
+    tooltip.classList.add('visible');
+    tooltip.setAttribute('aria-hidden', 'false');
+    if (window.pfFloatingLayer) {
+      window.pfFloatingLayer.open({
+        channel: 'tooltip',
+        element: tooltip,
+        trigger: target,
+        placement: verticalDock ? 'left' : 'top',
+        removeOnClose: false,
+        restoreFocus: false,
+        closeOnSelect: false,
+        keepOnTrigger: false,
+        onClose: function() {
+          setDescribedBy(target, false);
+          if (activeTarget === target) activeTarget = null;
+          lastHiddenAt = Date.now();
+          tooltip.classList.remove('visible');
+          tooltip.setAttribute('aria-hidden', 'true');
+        },
+      });
+    }
+  }
 
-    left = Math.max(edge, Math.min(left, window.innerWidth - tooltipRect.width - edge));
-    top = Math.max(edge, Math.min(top, window.innerHeight - tooltipRect.height - edge));
-    tooltip.style.left = Math.round(left) + 'px';
-    tooltip.style.top = Math.round(top) + 'px';
+  function queueTooltip(target, immediate) {
+    clearTimer('hide');
+    if (!target || target === activeTarget || target === pendingTarget) return;
+    clearTimer('show');
+    pendingTarget = target;
+    const grouped = activeTarget || Date.now() - lastHiddenAt < 300;
+    const delay = immediate || grouped ? 0 : 140;
+    showTimer = window.setTimeout(function() {
+      showTimer = 0;
+      if (pendingTarget === target) showTooltip(target);
+    }, delay);
+  }
+
+  function queueHide() {
+    clearTimer('show');
+    pendingTarget = null;
+    clearTimer('hide');
+    hideTimer = window.setTimeout(hideTooltip, 60);
   }
 
   function targetFrom(node) {
@@ -99,20 +160,18 @@
   document.addEventListener('mouseover', function(event) {
     adoptNativeTitles(event.target);
     const target = targetFrom(event.target);
-    if (target && target !== activeTarget) showTooltip(target);
+    if (target && target !== activeTarget) queueTooltip(target, false);
   });
   document.addEventListener('mouseout', function(event) {
-    if (activeTarget && !activeTarget.contains(event.relatedTarget)) hideTooltip();
+    if (activeTarget && !activeTarget.contains(event.relatedTarget)) queueHide();
+    else if (pendingTarget && !pendingTarget.contains(event.relatedTarget)) queueHide();
   });
   document.addEventListener('focusin', function(event) {
     adoptNativeTitles(event.target);
     const target = targetFrom(event.target);
-    if (target) showTooltip(target);
+    if (target) queueTooltip(target, true);
   });
   document.addEventListener('focusout', function(event) {
-    if (activeTarget && !activeTarget.contains(event.relatedTarget)) hideTooltip();
+    if (activeTarget && !activeTarget.contains(event.relatedTarget)) queueHide();
   });
-  document.addEventListener('click', hideTooltip);
-  window.addEventListener('resize', hideTooltip);
-  window.addEventListener('scroll', hideTooltip, true);
 })();

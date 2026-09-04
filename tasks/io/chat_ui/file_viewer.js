@@ -1,8 +1,6 @@
 
 function showParamMenu(e, key, scope, isSecret) {
   e.preventDefault();
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.style.minWidth = '140px';
@@ -42,7 +40,6 @@ function showParamMenu(e, key, scope, isSecret) {
         .subscribe({ next: () => loadResources(), error: e => addMsg('error', e.message) });
     }, true);
   }
-  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
 function _showParamEditor(key, scope, isSecret, isNew) {

@@ -127,8 +127,6 @@ function _renderSharedRow(row) {
 }
 
 function showSharedConvMenu(e, cid) {
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.style.minWidth = '180px';
@@ -142,10 +140,6 @@ function showSharedConvMenu(e, cid) {
   };
   item('\u{21BB} ' + t('refresh'), () => resumeConv(cid, true));
   item('\u{1F6AA} ' + t('leaveConversation'), () => leaveSharedConv(cid), true);
-  setTimeout(() => document.addEventListener('click', function _close() {
-    menu.remove();
-    document.removeEventListener('click', _close);
-  }), 0);
 }
 
 // ── Invite responses ─────────────────────────────────────────────

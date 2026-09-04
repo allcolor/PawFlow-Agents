@@ -136,17 +136,11 @@ function _unlinkLinkedService(role) {
 }
 
 function _renderLinkedServicesSection(data) {
-  var collapsed = _isSectionCollapsed('_linked_services');
-  var arrow = collapsed ? '▶' : '▼';
-  var display = collapsed ? 'none' : 'block';
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
-    + '<span style="cursor:pointer;color:var(--pf-resource-heading, var(--pf-accent));font-weight:600;user-select:none;" '
-    + 'onclick="_toggleSection(\'_linked_services\')">'
-    + '<span id="res-arrow-_linked_services">' + arrow + '</span> '
-    + escapeHtml(t('linkedServices')) + '</span>'
-    + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" '
-    + 'onclick="_showLinkedServiceDialog()" title="' + escapeHtml(t('linkedServicesLink')) + '">+</span>'
-    + '</div><div id="res-section-_linked_services" style="display:' + display + ';">';
+  var html = _sectionHeader(t('linkedServices'), '_linked_services', {
+    createOnclick: '_showLinkedServiceDialog()',
+    createTitle: t('linkedServicesLink'),
+    hideRefresh: true,
+  });
   var roles = ((data || {}).linked_services || {}).roles || [];
   roles.forEach(function(item) {
     var binding = item.binding || {};
@@ -160,7 +154,7 @@ function _renderLinkedServicesSection(data) {
     } else if (explicit) {
       value = binding.service_id || '';
     }
-    html += '<div style="margin-left:8px;margin-bottom:6px;">'
+    html += '<div' + _resourceRowAttr('linked-service', item.role) + ' style="margin-left:8px;margin-bottom:6px;">'
       + '<div style="display:flex;align-items:center;gap:4px;">'
       + '<span style="font-size:11px;color:var(--pf-text);flex:1;">'
       + escapeHtml(_linkedServiceRoleLabel(item.role)) + '</span>'

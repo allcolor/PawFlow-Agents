@@ -157,6 +157,7 @@ const context = {
   action$: (kind, params) => observable(kind, params || {}),
   listServices$: (_type, _view, cid) => observable('list_services', { conversation_id: cid }),
   _withView: params => params,
+  _viewAllActive: () => false,
 };
 context.window = context;
 context._cachedTools = {};
@@ -170,6 +171,10 @@ const aCalls = calls.splice(0);
 focused = 'B';
 context.conversationId = 'B';
 context.loadResources('B');
+const bTimer = nextTimer;
+if (context.loadResources('B') !== false || nextTimer !== bTimer) {
+  throw new Error('identical in-flight resource request was not deduplicated');
+}
 timers.get(nextTimer)();
 const bCalls = calls.splice(0);
 
@@ -185,7 +190,9 @@ for (const call of bCalls) {
   else if (call.kind === 'list_services') call.callback({ services: [] });
   else call.callback({ packages: [] });
 }
-if (rendered.join(',') !== 'B') throw new Error('focused B resources did not render');
+if (!rendered.length || rendered.some(marker => marker !== 'B')) {
+  throw new Error('focused B resources did not render exclusively');
+}
 if (bCalls.some(call => call.params.conversation_id !== 'B')) {
   throw new Error('resource request was not explicitly bound to B');
 }

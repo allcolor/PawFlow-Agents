@@ -6,6 +6,62 @@ function _workflowRunDate(value) {
   return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
 }
 
+function _workflowRunActionOwner() {
+  let generation = 0;
+  let runId = '';
+  return {
+    begin: function(nextRunId) {
+      runId = String(nextRunId || '');
+      return {generation: ++generation, runId: runId};
+    },
+    invalidate: function() {
+      generation += 1;
+      runId = '';
+    },
+    isCurrent: function(token, currentRunId) {
+      return !!token && token.generation === generation
+        && token.runId === runId && token.runId === String(currentRunId || '');
+    },
+  };
+}
+
+function _workflowRunActionButtonHtml(kind, idleLabel, style) {
+  const faces = [
+    ['idle', idleLabel],
+    ['pending', t('workflowRunActionPending')],
+    ['success', t('workflowRunActionSucceeded')],
+    ['error', t('workflowRunActionFailed')],
+  ];
+  return '<button type="button" data-' + _pfpAttr(kind)
+    + ' data-run-action="' + _pfpAttr(kind) + '" data-pf-key="' + _pfpAttr(kind)
+    + '" data-action-state="idle" aria-busy="false" aria-label="'
+    + _pfpAttr(idleLabel) + '" class="workflow-run-action" style="' + style + '">'
+    + faces.map(function(face) {
+      return '<span class="workflow-run-action-face" data-action-face="' + face[0]
+        + '" aria-hidden="' + (face[0] === 'idle' ? 'false' : 'true') + '">'
+        + escapeHtml(face[1]) + '</span>';
+    }).join('') + '</button>';
+}
+
+function _workflowRunSetActionState(button, state) {
+  if (!button) return;
+  const next = ['idle', 'pending', 'success', 'error'].includes(state) ? state : 'idle';
+  button.dataset.actionState = next;
+  button.setAttribute('aria-busy', next === 'pending' ? 'true' : 'false');
+  button.querySelectorAll('[data-action-face]').forEach(function(face) {
+    const active = face.dataset.actionFace === next;
+    face.setAttribute('aria-hidden', active ? 'false' : 'true');
+    if (active) button.setAttribute('aria-label', face.textContent || '');
+  });
+}
+
+function _workflowRunSetControlsBusy(controls, busy) {
+  if (!controls) return;
+  controls.querySelectorAll('[data-run-action]').forEach(function(button) {
+    button.disabled = !!busy;
+  });
+}
+
 function _workflowRunUsageHtml(usage) {
   const rows = Object.entries(usage || {});
   if (!rows.length) return '<span style="color:var(--pf-muted);">\u2014</span>';
@@ -93,7 +149,9 @@ function _workflowRunStageHtml(event) {
     || data.task_id || data.task_type || event.event_type || '\u2014';
   const detail = [data.stage, data.phase, data.tool_name, data.outcome, data.service_id]
     .filter(Boolean).join(' \u00b7 ');
-  return '<li style="list-style:none;position:relative;padding:7px 9px;margin:0 0 6px;border:1px solid var(--pf-border);border-radius:5px;background:var(--pf-sidebar);">'
+  const eventKey = event.event_id || event.sequence || '';
+  return '<li data-pf-key="event:' + _pfpAttr(eventKey)
+    + '" style="list-style:none;position:relative;padding:7px 9px;margin:0 0 6px;border:1px solid var(--pf-border);border-radius:5px;background:var(--pf-sidebar);">'
     + '<div style="display:flex;justify-content:space-between;gap:8px;">'
     + '<strong style="color:var(--pf-text);font-size:12px;">' + escapeHtml(label) + '</strong>'
     + '<span style="color:var(--pf-muted);font-size:10px;">'
@@ -162,7 +220,9 @@ function _workflowFlowHtml(run) {
     const c1y = horizontal ? sy : (sy + ty) / 2;
     const c2x = horizontal ? (sx + tx) / 2 : tx;
     const c2y = horizontal ? ty : (sy + ty) / 2;
-    return '<path d="M ' + sx + ' ' + sy + ' C ' + c1x + ' ' + c1y + ', '
+    return '<path data-pf-key="edge:' + _pfpAttr([
+      relation.from, relation.to, relation.type || '',
+    ].join(':')) + '" d="M ' + sx + ' ' + sy + ' C ' + c1x + ' ' + c1y + ', '
       + c2x + ' ' + c2y + ', ' + tx + ' ' + ty
       + '" fill="none" stroke="var(--pf-muted)" stroke-width="2" marker-end="url(#workflow-run-arrow)" />';
   }).join('');
@@ -177,7 +237,8 @@ function _workflowFlowHtml(run) {
       : 'var(--pf-sidebar)';
     const label = String(task.label || task.id);
     const shortLabel = label.length > 30 ? label.slice(0, 29) + '\u2026' : label;
-    return '<g data-flow-task="' + _pfpAttr(task.id) + '" data-flow-status="'
+    return '<g data-pf-key="task:' + _pfpAttr(task.id) + '" data-flow-task="'
+      + _pfpAttr(task.id) + '" data-flow-status="'
       + _pfpAttr(status) + '" tabindex="0" transform="translate('
       + task.x + ' ' + task.y + ')">'
       + '<title>' + escapeHtml(label + ' \u2014 ' + status) + '</title>'
@@ -188,17 +249,17 @@ function _workflowFlowHtml(run) {
       + escapeHtml(shortLabel) + '</text>'
       + '<text x="12" y="48" fill="var(--pf-muted)" font-size="10">'
       + escapeHtml(task.type || '') + '</text>'
-      + (running ? '<circle cx="' + (task.width - 15)
-        + '" cy="15" r="6" fill="var(--pf-accent)"><animate attributeName="opacity" values="1;.35;1" dur="1.2s" repeatCount="indefinite" /></circle>' : '')
+      + (running ? '<circle class="workflow-run-pulse" cx="' + (task.width - 15)
+        + '" cy="15" r="6" fill="var(--pf-accent)" />' : '')
       + '</g>';
   }).join('');
   const baseViewBox = [viewX, viewY, viewWidth, viewHeight].join(' ');
-  return '<div data-workflow-flow style="position:relative;margin:10px 0 14px;border:1px solid var(--pf-border);border-radius:8px;background:var(--pf-bg);overflow:hidden;">'
-    + '<div style="position:absolute;z-index:2;top:8px;right:8px;display:flex;gap:4px;">'
+  return '<div data-workflow-flow data-pf-key="workflow-flow" style="position:relative;margin:10px 0 14px;border:1px solid var(--pf-border);border-radius:8px;background:var(--pf-bg);overflow:hidden;">'
+    + '<div data-pf-key="workflow-flow-controls" style="position:absolute;z-index:2;top:8px;right:8px;display:flex;gap:4px;">'
     + '<button type="button" data-flow-zoom="in" aria-label="' + _pfpAttr(t('workflowRunZoomIn')) + '" title="' + _pfpAttr(t('workflowRunZoomIn')) + '">+</button>'
     + '<button type="button" data-flow-zoom="out" aria-label="' + _pfpAttr(t('workflowRunZoomOut')) + '" title="' + _pfpAttr(t('workflowRunZoomOut')) + '">−</button>'
     + '<button type="button" data-flow-zoom="reset" aria-label="' + _pfpAttr(t('workflowRunResetView')) + '" title="' + _pfpAttr(t('workflowRunResetView')) + '">↺</button></div>'
-    + '<svg data-workflow-flow-svg data-base-view-box="' + baseViewBox
+    + '<svg data-workflow-flow-svg data-pf-key="workflow-flow-svg" data-base-view-box="' + baseViewBox
     + '" role="img" aria-label="' + _pfpAttr(t('workflowRunFlow'))
     + '" viewBox="' + baseViewBox
     + '" style="display:block;width:100%;min-height:300px;max-height:520px;touch-action:none;cursor:grab;">'
@@ -210,8 +271,8 @@ function _workflowFlowHtml(run) {
 function _bindWorkflowFlowControls(root) {
   root.querySelectorAll('[data-workflow-flow]').forEach(function(viewport) {
     const svg = viewport.querySelector('[data-workflow-flow-svg]');
-    if (!svg || svg.dataset.flowBound === 'true') return;
-    svg.dataset.flowBound = 'true';
+    if (!svg || svg._workflowFlowBound) return;
+    svg._workflowFlowBound = true;
     const base = svg.dataset.baseViewBox.split(' ').map(Number);
     const minimumWidth = base[2] / 4;
     const maximumWidth = base[2] * 4;
@@ -332,35 +393,36 @@ function _workflowRunDetailHtml(run, viewMode) {
       + executionEvents.map(_workflowRunStageHtml).join('') + '</ol>'
     : '<div style="color:var(--pf-muted);font-size:11px;">'
       + escapeHtml(t('workflowRunNoExecution')) + '</div>';
-  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;">'
+  return '<div data-pf-key="run-summary" style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;">'
     + '<div><strong>' + escapeHtml(flow.name || t('workflowRunFlow')) + '</strong><div style="color:var(--pf-muted);margin-top:2px;">'
     + escapeHtml(_workflowRunDate(run.updated_at)) + '</div></div>'
     + '<span style="padding:3px 7px;border-radius:999px;background:var(--pf-sidebar);border:1px solid var(--pf-border);">'
     + escapeHtml(run.status || '\u2014') + '</span></div>'
-    + '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;font-size:11px;">'
+    + '<div data-pf-key="run-progress-label" style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;font-size:11px;">'
     + '<strong>' + escapeHtml(t('workflowRunStages')) + ' ' + escapeHtml(String(currentStep))
     + (totalSteps ? '/' + escapeHtml(String(totalSteps)) : '') + '</strong>'
     + '<span style="color:var(--pf-muted);">' + escapeHtml(String(progress)) + '%</span></div>'
-    + '<div role="progressbar" aria-label="' + _pfpAttr(t('workflowRunStages'))
+    + '<div data-pf-key="run-progress" role="progressbar" aria-label="' + _pfpAttr(t('workflowRunStages'))
     + '" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + progress
     + '" style="height:7px;background:var(--pf-border);border-radius:999px;overflow:hidden;margin-top:5px;">'
-    + '<div style="height:100%;width:' + progress + '%;background:var(--pf-accent);transition:width .2s ease;"></div></div>'
-    + '<div style="margin-top:12px;padding:10px;border:2px solid var(--pf-accent);border-radius:7px;background:var(--pf-sidebar);">'
+    + '<div data-pf-key="run-progress-fill" style="height:100%;width:100%;background:var(--pf-accent);transform-origin:left center;transform:scaleX('
+    + (progress / 100) + ');transition:transform var(--pf-motion-fast) ease;"></div></div>'
+    + '<div data-pf-key="run-current-stage" style="margin-top:12px;padding:10px;border:2px solid var(--pf-accent);border-radius:7px;background:var(--pf-sidebar);">'
     + '<div style="color:var(--pf-accent);font-size:10px;font-weight:700;text-transform:uppercase;">' + escapeHtml(t('workflowRunCurrentStage')) + '</div>'
     + '<strong style="display:block;font-size:13px;margin-top:3px;">' + escapeHtml(activity) + '</strong>'
     + (activityDetail ? '<div style="color:var(--pf-muted);font-size:11px;margin-top:3px;">' + escapeHtml(activityDetail) + '</div>' : '')
     + (latestReturn ? '<div style="font-size:11px;margin-top:8px;">'
       + _workflowRunMessageValueHtml(latestReturn)
       + '</div>' : '') + '</div>'
-    + (viewMode === 'timeline' ? '<section data-workflow-run-execution style="margin-top:12px;border:1px solid var(--pf-border);border-radius:7px;padding:9px;background:var(--pf-bg);">'
+    + (viewMode === 'timeline' ? '<section data-workflow-run-execution data-pf-key="run-execution" style="margin-top:12px;border:1px solid var(--pf-border);border-radius:7px;padding:9px;background:var(--pf-bg);">'
     + '<strong style="font-size:12px;">' + escapeHtml(t('workflowRunExecution')) + '</strong>'
     + '<div data-workflow-run-execution-scroll style="max-height:360px;overflow:auto;margin-top:6px;">' + execution + '</div></section>' : '')
     + (viewMode === 'graph' ? _workflowFlowHtml(run) : '')
-    + (run.failure_reason ? '<div style="margin-top:8px;color:var(--pf-danger);"><strong>' + escapeHtml(t('workflowRunFailure')) + ':</strong> ' + escapeHtml(run.failure_reason) + '</div>' : '')
-    + (error && error.message ? '<div style="margin-top:8px;color:var(--pf-danger);"><strong>'
+    + (run.failure_reason ? '<div data-pf-key="run-failure" style="margin-top:8px;color:var(--pf-danger);"><strong>' + escapeHtml(t('workflowRunFailure')) + ':</strong> ' + escapeHtml(run.failure_reason) + '</div>' : '')
+    + (error && error.message ? '<div data-pf-key="run-error" style="margin-top:8px;color:var(--pf-danger);"><strong>'
       + escapeHtml(error.code || t('workflowRunFailure')) + ':</strong> ' + escapeHtml(error.message)
       + (error.task_id ? ' \u00b7 ' + escapeHtml(error.task_id) : '') + '</div>' : '')
-    + (viewMode === 'timeline' ? '<details data-workflow-run-metadata style="margin-top:12px;border-top:1px solid var(--pf-border);padding-top:8px;">'
+    + (viewMode === 'timeline' ? '<details data-workflow-run-metadata data-pf-key="run-metadata" style="margin-top:12px;border-top:1px solid var(--pf-border);padding-top:8px;">'
     + '<summary style="cursor:pointer;color:var(--pf-muted);font-size:11px;">'
     + escapeHtml(t('workflowRunFlow')) + ' \u00b7 ' + escapeHtml(t('workflowRunStages')) + '</summary>'
     + '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;font-size:11px;margin-top:9px;">'
@@ -385,6 +447,7 @@ async function showWorkflowRunInspector(agentName, options) {
   if (existing && typeof existing._workflowRunClose === 'function') {
     existing._workflowRunClose();
   } else if (existing) existing.remove();
+  const previousFocus = document.activeElement;
   const overlay = document.createElement('div');
   overlay.id = 'workflowRunInspectorOverlay';
   overlay.className = 'exec-overlay';
@@ -413,21 +476,40 @@ async function showWorkflowRunInspector(agentName, options) {
   let renderedRunId = '';
   let lastRunDetail = null;
   let kanbanController = null;
-  const close = function() {
+  let layerController = null;
+  let closePromise = null;
+  let controlsOwnerKey = '';
+  const actionOwner = _workflowRunActionOwner();
+  const close = function(reason, restoreFocus) {
+    if (closePromise) return closePromise;
     closed = true;
+    actionOwner.invalidate();
     if (refreshTimer) clearTimeout(refreshTimer);
-    if (kanbanController) kanbanController.destroy();
-    overlay.remove();
-    document.removeEventListener('keydown', onKey);
+    if (kanbanController) { kanbanController.destroy(); kanbanController = null; }
     document.removeEventListener('visibilitychange', onVisibilityChange);
     window.removeEventListener('pawflow:workflow-progress', onWorkflowProgress);
     window.removeEventListener('pawflow:workflow-kanban-updated', onKanbanUpdated);
+    closePromise = layerController
+      ? layerController.close({reason: reason || 'close', restoreFocus: restoreFocus})
+      : Promise.resolve(false);
+    return closePromise;
   };
   overlay._workflowRunClose = close;
-  const onKey = function(event) { if (event.key === 'Escape') close(); };
-  overlay.querySelector('[data-close]').onclick = close;
-  document.addEventListener('keydown', onKey);
-  dialog.focus();
+  overlay.querySelector('[data-close]').onclick = function() { close('button'); };
+  layerController = window.pfFloatingLayer.open({
+    channel: 'workflow-dialog',
+    element: overlay,
+    motionElement: dialog,
+    trigger: previousFocus,
+    initialFocus: dialog,
+    managePlacement: false,
+    modal: true,
+    closeOnOutside: false,
+    closeOnEnvironment: false,
+    closeOnSelect: false,
+    removeOnClose: true,
+    restoreFocus: true,
+  });
 
   function updateViewButtons() {
     overlay.querySelectorAll('[data-run-view]').forEach(function(button) {
@@ -450,9 +532,10 @@ async function showWorkflowRunInspector(agentName, options) {
   function renderRunList(runs) {
     const list = content.querySelector('[data-run-list]');
     if (!list) return;
-    list.innerHTML = runs.map(function(run) {
+    const html = runs.map(function(run) {
       const selected = run.run_id === selectedRunId;
-      return '<div role="listitem"><button type="button" data-run-id="' + _pfpAttr(run.run_id)
+      return '<div role="listitem" data-pf-key="run:' + _pfpAttr(run.run_id)
+        + '"><button type="button" data-run-id="' + _pfpAttr(run.run_id)
         + '" data-run-selected="' + (selected ? 'true' : 'false') + '" aria-label="'
         + _pfpAttr(t('workflowRunInspect', { id: run.run_id }))
         + '" style="display:block;width:100%;text-align:left;background:var(--pf-sidebar);color:var(--pf-text);border:'
@@ -464,8 +547,13 @@ async function showWorkflowRunInspector(agentName, options) {
         + '<div style="font-size:10px;color:var(--pf-muted);margin-top:2px;">'
         + escapeHtml(_workflowRunDate(run.updated_at)) + '</div></button></div>';
     }).join('');
+    window.pfDomPatch.patchHtml(list, html);
     list.querySelectorAll('[data-run-id]').forEach(function(button) {
       button.onclick = function() {
+        if (selectedRunId !== button.dataset.runId) {
+          actionOwner.invalidate();
+          controlsOwnerKey = '';
+        }
         selectedRunId = button.dataset.runId;
         followLatest = !!(lastRuns[0] && lastRuns[0].run_id === selectedRunId);
         renderRunList(lastRuns);
@@ -480,10 +568,14 @@ async function showWorkflowRunInspector(agentName, options) {
     const detail = content.querySelector('[data-run-detail]');
     const controls = content.querySelector('[data-run-controls]');
     if (viewMode === 'kanban') {
-      controls.innerHTML = '';
+      if (controlsOwnerKey) actionOwner.invalidate();
+      controlsOwnerKey = '';
+      window.pfDomPatch.patchHtml(controls, '');
       if (kanbanController && renderedRunId === run.run_id) return;
       if (kanbanController) kanbanController.destroy();
-      detail.innerHTML = '<div data-workflow-kanban-embedded></div>';
+      window.pfDomPatch.patchHtml(
+        detail, '<div data-workflow-kanban-embedded data-pf-key="kanban-embedded"></div>'
+      );
       kanbanController = mountWorkflowKanban(
         detail.querySelector('[data-workflow-kanban-embedded]'),
         agentName,
@@ -516,7 +608,7 @@ async function showWorkflowRunInspector(agentName, options) {
     const followExecution = !previousExecution
       || previousExecution.scrollHeight - previousExecution.scrollTop
         - previousExecution.clientHeight < 40;
-    detail.innerHTML = _workflowRunDetailHtml(run, viewMode);
+    window.pfDomPatch.patchHtml(detail, _workflowRunDetailHtml(run, viewMode));
     const nextSvg = detail.querySelector('[data-workflow-flow-svg]');
     if (nextSvg && previousViewBox) nextSvg.setAttribute('viewBox', previousViewBox);
     const nextMetadata = detail.querySelector('[data-workflow-run-metadata]');
@@ -538,42 +630,68 @@ async function showWorkflowRunInspector(agentName, options) {
       }
     }
     renderedRunId = run.run_id;
-    controls.innerHTML = (run.safe_retry
-      ? '<button type="button" data-retry style="background:var(--pf-warning,#d29922);color:var(--pf-bg);border:none;padding:7px 12px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('workflowRunRetry')) + '</button>'
+    const nextControlsOwnerKey = run.run_id + ':' + (run.safe_retry ? 'retry' : '')
+      + ':' + (run.can_delete ? 'delete' : '');
+    if (controlsOwnerKey === nextControlsOwnerKey) return;
+    actionOwner.invalidate();
+    controlsOwnerKey = nextControlsOwnerKey;
+    const controlsHtml = (run.safe_retry
+      ? _workflowRunActionButtonHtml(
+          'retry', t('workflowRunRetry'),
+          'background:var(--pf-warning,#d29922);color:var(--pf-bg);border:none;padding:7px 12px;border-radius:4px;cursor:pointer;',
+        )
       : '') + (run.can_delete
-      ? '<button type="button" data-delete style="background:var(--pf-danger);color:#fff;border:none;padding:7px 12px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('delete')) + '</button>'
+      ? _workflowRunActionButtonHtml(
+          'delete', t('delete'),
+          'background:var(--pf-danger);color:#fff;border:none;padding:7px 12px;border-radius:4px;cursor:pointer;',
+        )
       : '');
+    window.pfDomPatch.patchHtml(controls, controlsHtml);
     const retry = controls.querySelector('[data-retry]');
     if (retry) retry.onclick = async function() {
       if (!confirm(t('workflowRunRetryConfirm'))) return;
-      retry.disabled = true;
+      const token = actionOwner.begin(run.run_id);
+      _workflowRunSetControlsBusy(controls, true);
+      _workflowRunSetActionState(retry, 'pending');
       try {
         const result = await rxjs.firstValueFrom(action$('retry_workflow_run', {
           conversation_id: conversationId, run_id: run.run_id,
         }));
         if (result.error) throw new Error(result.error);
+        if (!actionOwner.isCurrent(token, selectedRunId) || closed) return;
+        _workflowRunSetActionState(retry, 'success');
         addMsg('system', t('workflowRunRetryStarted'));
         close();
       } catch (error) {
-        retry.disabled = false;
+        if (!actionOwner.isCurrent(token, selectedRunId) || closed) return;
+        _workflowRunSetActionState(retry, 'error');
+        _workflowRunSetControlsBusy(controls, false);
         addMsg('error', error.message);
       }
     };
     const deleteButton = controls.querySelector('[data-delete]');
     if (deleteButton) deleteButton.onclick = async function() {
       if (!confirm(t('workflowRunDeleteConfirm'))) return;
-      deleteButton.disabled = true;
+      const token = actionOwner.begin(run.run_id);
+      _workflowRunSetControlsBusy(controls, true);
+      _workflowRunSetActionState(deleteButton, 'pending');
       try {
         const result = await rxjs.firstValueFrom(action$('delete_workflow_run', {
           conversation_id: conversationId, run_id: run.run_id,
         }));
         if (result.error) throw new Error(result.error);
+        if (!actionOwner.isCurrent(token, selectedRunId) || closed) return;
+        _workflowRunSetActionState(deleteButton, 'success');
         selectedRunId = '';
         followLatest = true;
         renderedRunId = '';
+        controlsOwnerKey = '';
+        actionOwner.invalidate();
         await refresh();
       } catch (error) {
-        deleteButton.disabled = false;
+        if (!actionOwner.isCurrent(token, selectedRunId) || closed) return;
+        _workflowRunSetActionState(deleteButton, 'error');
+        _workflowRunSetControlsBusy(controls, false);
         addMsg('error', error.message);
       }
     };
@@ -632,6 +750,8 @@ async function showWorkflowRunInspector(agentName, options) {
       const runs = data.runs || [];
       lastRuns = runs;
       if (!runs.length) {
+        actionOwner.invalidate();
+        controlsOwnerKey = '';
         content.innerHTML = '<div style="color:var(--pf-muted);font-size:12px;">' + escapeHtml(t('workflowRunsEmpty')) + '</div>';
         return;
       }

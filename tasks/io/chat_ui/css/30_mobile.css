@@ -45,7 +45,6 @@
   .tab-bar { position: fixed; top: 0; bottom: 0; left: 0; z-index: 150;
              box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
   body:has(.sidebar:not(.collapsed)) .tab-bar { left: 260px; }
-  body:has(.sidebar:not(.collapsed)) .sidebar-toggle { left: 295px !important; }
   /* Desktop sizes assume a ~1400px-wide window read at arm's length; the same
      11-12px on a phone is unreadable. Bump the type scale (roughly +1-2px per
      step) and let bubbles use the full width, since horizontal space -- not

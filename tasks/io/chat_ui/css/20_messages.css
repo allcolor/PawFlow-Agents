@@ -36,9 +36,9 @@
 .view-menu-item .vmi-switch { width: 30px; height: 16px; border-radius: 8px; background: var(--pf-border);
                               position: relative; transition: background .15s ease; flex-shrink: 0; }
 .view-menu-item .vmi-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
-                                     border-radius: 50%; background: var(--pf-text); transition: left .15s ease; }
+                                     border-radius: 50%; background: var(--pf-text); transition: transform .15s ease; }
 .view-menu-item.active .vmi-switch { background: var(--pf-accent); }
-.view-menu-item.active .vmi-switch::after { left: 16px; }
+.view-menu-item.active .vmi-switch::after { transform: translateX(14px); }
 .view-menu-item.disabled { opacity: 0.6; pointer-events: none; }
 .view-menu-section-label { padding: 7px 12px 4px; color: var(--pf-muted); font-size: 10px;
                            font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
@@ -99,8 +99,7 @@
                    max-height: 140px; overflow: hidden;
                    pointer-events: none; transform-origin: 50% 100%;
                    transition: transform .42s cubic-bezier(.22, .61, .36, 1),
-                               opacity .42s ease, filter .42s ease;
-                   will-change: transform, opacity, filter; }
+                               opacity .42s ease, filter .42s ease; }
 .simple-turn-block.expanded .simple-turn-ephemeral,
 .simple-turn-block:not(.turn-working) .simple-turn-ephemeral { display: none; }
 /* Readable, not a ticker: a cue holds the front until the next one arrives, so
@@ -139,8 +138,7 @@
 .simple-turn-ephemeral-icon { width: 22px; height: 22px; color: var(--pf-accent);
                               animation: simpleTurnIcon .6s ease both; }
 .simple-turn-ephemeral-icon svg { width: 100%; height: 100%; display: block; }
-.simple-turn-details { display: none; border-top: 1px solid var(--pf-border); }
-.simple-turn-block.expanded .simple-turn-details { display: block; }
+.simple-turn-details { border-top: 1px solid var(--pf-border); }
 .simple-turn-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 6px; gap: 4px; }
 /* The inline SVGs carry a viewBox and no width/height, so without an explicit
    size they scale to the whole grid column and swallow their own label. */
@@ -184,6 +182,7 @@
   background: linear-gradient(90deg, transparent, var(--pf-accent), transparent);
   opacity: .5; animation: simpleTurnSweep 2.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
+  .view-menu-item .vmi-switch, .view-menu-item .vmi-switch::after,
   .simple-turn-cue, .simple-turn-ephemeral-icon, .simple-turn-chevron,
   .simple-turn-idle-dot { animation: none; transition: none; }
   .simple-turn-block.turn-working .simple-turn-ephemeral::after { animation: none; }

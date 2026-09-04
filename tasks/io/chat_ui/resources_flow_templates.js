@@ -8,19 +8,15 @@ function _flowPackageSectionId(packageName) {
 
 function showFlowTemplateMenu(e, templateId) {
   e.preventDefault();
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const tpl = _findFlowTemplate(templateId) || {};
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:150px;box-shadow:0 4px 12px var(--pf-shadow);';
+  menu.style.minWidth = '150px';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)') + ';';
-    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
-    d.onmouseleave = () => d.style.background = '';
+    d.className = 'ctx-menu-item' + (danger ? ' danger' : '');
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
@@ -41,9 +37,6 @@ function showFlowTemplateMenu(e, templateId) {
   }
   sep();
   item('\u{1F5D1} ' + t('delete'), () => _deleteFlowTemplate(templateId), true);
-  document.body.appendChild(menu);
-  _positionMenu(menu, e);
-  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
 function _findFlowTemplate(templateId) {
@@ -291,7 +284,7 @@ function _renderFlowPackageGroup(packageName, flows) {
   const collapsed = _isSectionCollapsed(sectionId);
   const arrow = collapsed ? '\u25B6' : '\u25BC';
   const display = collapsed ? 'none' : 'block';
-  let html = `<div style="margin:2px 0 4px 8px;">
+  let html = `<div${_resourceRowAttr('flow-package', packageName)} style="margin:2px 0 4px 8px;">
     <div style="display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;" onclick="_toggleSection('${sectionId}')">
       <span id="res-arrow-${sectionId}" style="font-size:10px;color:var(--pf-muted);">${arrow}</span>
       <span style="font-size:12px;color:var(--pf-text);font-weight:600;flex:1;">${escapeHtml(packageName || 'default')}</span>
@@ -635,25 +628,18 @@ function _showGatingDecisions() {
 
 function _showSummarizerMenu(e, canUnlink) {
   e.preventDefault();
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px var(--pf-shadow);';
+  menu.style.minWidth = '160px';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
-    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
-    d.onmouseleave = () => d.style.background = '';
+    d.className = 'ctx-menu-item' + (danger ? ' danger' : '');
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
   item(t('linkSummarizer') + '...', _showSummarizerLinkDialog);
   if (canUnlink) item(t('unlink'), _unlinkSummarizer, true);
-  setTimeout(() => document.addEventListener('click', function _close() {
-    menu.remove(); document.removeEventListener('click', _close);
-  }), 0);
 }
 

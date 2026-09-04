@@ -51,12 +51,13 @@ def test_task_tabs_js_exposes_expected_api():
     assert "window._taskTabsReset" in src
     assert "info.source" in src
     assert "node.cloneNode(true)" in src
-    assert "new MutationObserver(_queueFilteredViewRender)" in src
-    assert "_taskTabObserver.observe(source" in src
+    assert "pfProjection.create({" in src
+    assert "key: function(node)" in src
+    assert "dispose: _filteredViewDisposeClone" in src
     assert "workspaceRegisterSurface(panel" in src
     assert "new EventSource" not in src
-    assert "function _stopTaskTabObserverIfIdle()" in src
-    assert "_taskTabObserver.disconnect()" in src
+    assert "body.innerHTML = ''" not in src
+    assert "if (info.projection) info.projection.destroy()" in src
     assert "if (wasSelected && typeof switchTab === 'function')" in src
 
 

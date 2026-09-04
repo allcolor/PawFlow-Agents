@@ -59,6 +59,7 @@ function env(prelude, sources, ids) {
   const logs = { warn: [], error: [] };
   const ctx = {
     document: dom.document,
+    AbortController,
     setTimeout: dom.setTimeout,
     clearTimeout: dom.clearTimeout,
     setInterval: dom.setInterval,
@@ -216,7 +217,8 @@ test('two simplified load-more pages preserve order, live status, last message a
     function setMessagesScrollTop(value){
       scrollWrites.push(value); document.getElementById('messages').scrollTop=value;
     }
-  `, ['turn_view.js', 'conversation_sessions.js', 'conversations.js']);
+  `, ['ui_motion.js', 'ui_disclosure.js', 'turn_view.js',
+      'conversation_sessions.js', 'conversations.js']);
 
   const value = e.run(`
     const box=document.getElementById('messages');

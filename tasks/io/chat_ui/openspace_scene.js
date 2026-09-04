@@ -138,26 +138,11 @@ function _osStripProjectionIds(root) {
 }
 
 function _osRefreshMessageProjection() {
-  _osProjectionRaf = 0;
-  const messages = document.getElementById('messages');
-  if (!messages || !_osProjectedMessages) return;
-  const wasAtBottom = _osProjectedMessages.scrollHeight
-    - _osProjectedMessages.scrollTop - _osProjectedMessages.clientHeight < 40;
-  _osProjectedMessages.innerHTML = '';
-  Array.from(messages.children).forEach((node) => {
-    _osProjectedMessages.appendChild(_osStripProjectionIds(node.cloneNode(true)));
-  });
-  if (wasAtBottom) _osProjectedMessages.scrollTop = _osProjectedMessages.scrollHeight;
+  if (_osProjectionController) _osProjectionController.reconcileAll();
 }
 
-function _osQueueMessageProjection() {
-  if (_osProjectionRaf) return;
-  _osProjectionRaf = requestAnimationFrame(_osRefreshMessageProjection);
-}
-
-// Mirror the canonical transcript instead of moving it. A single MutationObserver
-// keeps this read-only wall projection current while the Webchat surface remains
-// independently visible and interactive in another tile.
+// Mirror the canonical transcript instead of moving it. The shared keyed
+// reconciler replaces only dirty top-level rows while this wall is visible.
 function _osProjectMessages(on) {
   const messages = document.getElementById('messages');
   if (!messages) return;
@@ -176,21 +161,33 @@ function _osProjectMessages(on) {
       _osScreenEl.appendChild(_osProjectedMessages);
     }
     _osScreenEl.style.display = '';
-    _osRefreshMessageProjection();
-    if (!_osProjectionObserver && typeof MutationObserver !== 'undefined') {
-      _osProjectionObserver = new MutationObserver(_osQueueMessageProjection);
-      _osProjectionObserver.observe(messages, {
-        childList: true, subtree: true, characterData: true, attributes: true,
+    if (_osProjectionController && _osProjectionSource !== messages) {
+      _osProjectionController.destroy();
+      _osProjectionController = null;
+      while (_osProjectedMessages.firstChild) {
+        _osProjectedMessages.removeChild(_osProjectedMessages.firstChild);
+      }
+    }
+    if (!_osProjectionController) {
+      _osProjectionSource = messages;
+      _osProjectionController = pfProjection.create({
+        source: messages,
+        destination: _osProjectedMessages,
+        key: pfProjection.key,
+        project: function(node) {
+          return _osStripProjectionIds(node.cloneNode(true));
+        },
+        isActive: function() {
+          return !!_osScreenEl && _osScreenEl.style.display !== 'none';
+        },
+        stickToBottom: true,
       });
+    } else {
+      _osProjectionController.setActive(true);
+      _osRefreshMessageProjection();
     }
-    _osProjectedMessages.scrollTop = _osProjectedMessages.scrollHeight;
   } else {
-    if (_osProjectionObserver) {
-      _osProjectionObserver.disconnect();
-      _osProjectionObserver = null;
-    }
-    if (_osProjectionRaf) cancelAnimationFrame(_osProjectionRaf);
-    _osProjectionRaf = 0;
+    if (_osProjectionController) _osProjectionController.setActive(false);
     if (_osScreenEl) _osScreenEl.style.display = 'none';
     _osScreenOcclusionRect = null;
     if (_osScreenOcclusionCanvas) _osScreenOcclusionCanvas.style.display = 'none';

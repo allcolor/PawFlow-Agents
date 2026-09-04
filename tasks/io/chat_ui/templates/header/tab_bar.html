@@ -1,9 +1,11 @@
 <!-- Tab bar -->
 <div class="tab-bar collapsed" id="tabBar">
   <span class="tab-bar-handle" title="Task bar" data-i18n-title="taskTabsTitle">&#8249;</span>
-  <button class="tab-btn active" id="tabChat" data-tab="chat" title="Chat" data-i18n-title="chatTitle" onclick="switchTab('chat')">💬</button>
-  <div data-pf-slot="tab_bar_ext">{{ ext_fragments('tab_bar')|safe }}</div>
-  <div class="tab-spacer"></div>
-  <button class="tab-audio-control tab-audio-toggle" id="audioToggleBtn" onclick="audioToggleMute()" title="Mute audio" data-i18n-title="muteAudioTitle">&#x1F50A;</button>
-  <button class="tab-audio-control tab-audio-restart" id="audioRestartBtn" onclick="audioRestart()" title="Restart audio stream" data-i18n-title="restartAudioTitle">&#x1F504;</button>
+  <div class="tab-bar-content">
+    <button class="tab-btn active" id="tabChat" data-tab="chat" title="Chat" data-i18n-title="chatTitle" onclick="switchTab('chat')">💬</button>
+    <div data-pf-slot="tab_bar_ext">{{ ext_fragments('tab_bar')|safe }}</div>
+    <div class="tab-spacer"></div>
+    <button class="tab-audio-control tab-audio-toggle" id="audioToggleBtn" onclick="audioToggleMute()" title="Mute audio" data-i18n-title="muteAudioTitle">&#x1F50A;</button>
+    <button class="tab-audio-control tab-audio-restart" id="audioRestartBtn" onclick="audioRestart()" title="Restart audio stream" data-i18n-title="restartAudioTitle">&#x1F504;</button>
+  </div>
 </div>

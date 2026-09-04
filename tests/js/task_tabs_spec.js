@@ -89,18 +89,29 @@ function env() {
   main.className = 'main';
   dom.documentElement.appendChild(main);
   const calls = [];
+  const observers = [];
   let activeConversation = '';
   const ctx = {
     document: dom.document,
+    AbortController,
     console,
     encodeURIComponent,
     CSS: { escape: value => String(value) },
+    matchMedia: () => ({
+      matches: true,
+      addEventListener() {},
+      removeEventListener() {},
+    }),
     requestAnimationFrame: callback => { callback(); return 1; },
     cancelAnimationFrame: () => {},
     MutationObserver: class {
-      constructor(callback) { this.callback = callback; }
-      observe() {}
-      disconnect() {}
+      constructor(callback) {
+        this.callback = callback;
+        this.connected = false;
+        observers.push(this);
+      }
+      observe() { this.connected = true; }
+      disconnect() { this.connected = false; }
     },
     t: key => key,
     displayAgentName: value => String(value || ''),
@@ -126,9 +137,11 @@ function env() {
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(path.join(CHAT_UI, 'task_tabs.js'), 'utf8'), ctx,
-    {filename: 'task_tabs.js'});
-  return {ctx, dom, source, calls};
+  for (const file of ['ui_motion.js', 'ui_disclosure.js', 'ui_projection.js', 'task_tabs.js']) {
+    vm.runInContext(fs.readFileSync(path.join(CHAT_UI, file), 'utf8'), ctx,
+      {filename: file});
+  }
+  return {ctx, dom, source, calls, observers};
 }
 
 test('an agent projection keeps only that agent inside mixed turns and aggregates', () => {
@@ -136,13 +149,13 @@ test('an agent projection keeps only that agent inside mixed turns and aggregate
   buildMixedTurn(e.dom.document, e.source);
 
   const group = append(e.source, 'div', 'msg delegate-group', undefined,
-    {agentName: 'claude'});
+    {agentName: 'claude', groupKey: 'delegate:group-1'});
   const body = append(group, 'div', 'delegate-body');
   append(body, 'div', 'delegate-message', 'assistant delegate', {agent: 'assistant'});
   append(body, 'div', 'delegate-message', 'claude delegate', {agent: 'claude'});
 
   const parentTool = append(e.source, 'div', 'msg tool', undefined,
-    {agentName: 'claude', messageRole: 'tool_call'});
+    {agentName: 'claude', messageRole: 'tool_call', msgid: 'tool-parent-1'});
   append(parentTool, 'span', 'tc-summary', 'claude parent tool');
   const children = append(parentTool, 'div', 'tc-children');
   append(children, 'div', 'msg tool', 'assistant nested tool',
@@ -204,6 +217,49 @@ test('filtered load more executes in the owning conversation session', () => {
   assert(proxy, 'the filtered projection has no load-more control');
   proxy.click();
   eq(e.calls.join(','), 'session:conv-A,load:conv-A');
+});
+
+test('one character mutation replaces only its keyed projected row', () => {
+  const e = env();
+  e.ctx.__PF_MOTION_DIAGNOSTICS__ = true;
+  append(e.source, 'div', 'msg', 'first', {msgid: 'm-1', agentName: 'assistant'});
+  append(e.source, 'div', 'msg', 'second', {msgid: 'm-2', agentName: 'assistant'});
+  const tabId = e.ctx.openAgentView('assistant', '');
+  const info = e.ctx.filteredViewRoute(tabId);
+  const before = Array.from(info.body.children);
+  const diagnosticsBefore = e.ctx.pfProjection.diagnostics();
+
+  e.source.children[0].textContent = 'first changed';
+  const text = e.source.children[0].firstChild;
+  const observer = e.observers.find(candidate => candidate.connected);
+  observer.callback([{type: 'characterData', target: text}]);
+
+  const after = Array.from(info.body.children);
+  assert(after[0] !== before[0], 'the dirty row was not replaced');
+  assert(after[1] === before[1], 'an unchanged keyed row lost DOM identity');
+  eq(after[0].textContent, 'first changed');
+  const diagnosticsAfter = e.ctx.pfProjection.diagnostics();
+  eq(diagnosticsAfter.clones - diagnosticsBefore.clones, 1,
+    'one character mutation cloned more than its owning row');
+});
+
+test('a hidden projection disconnects before doing clone work', () => {
+  const e = env();
+  e.ctx.__PF_MOTION_DIAGNOSTICS__ = true;
+  append(e.source, 'div', 'msg', 'first', {msgid: 'm-1', agentName: 'assistant'});
+  const tabId = e.ctx.openAgentView('assistant', '');
+  const info = e.ctx.filteredViewRoute(tabId);
+  const clone = info.body.children[0];
+  const observer = e.observers.find(candidate => candidate.connected);
+  const before = e.ctx.pfProjection.diagnostics().clones;
+
+  info.panel.hidden = true;
+  e.source.children[0].textContent = 'changed while hidden';
+  observer.callback([{type: 'characterData', target: e.source.children[0].firstChild}]);
+
+  eq(e.ctx.pfProjection.diagnostics().clones, before);
+  assert(info.body.children[0] === clone, 'hidden projection changed DOM');
+  assert(!observer.connected, 'hidden projection observer stayed connected');
 });
 
 if (failures.length) {

@@ -1,38 +1,18 @@
 // Part of the resources sidebar, split from resources.js (<=800 lines/file).
 // Load order matters: see _JS_MODULES in tasks/io/serve_chat_ui.py.
 
-function _positionMenu(menu, e) {
-  // Position context menu, flip up if it would overflow the viewport
-  document.body.appendChild(menu);
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
-  requestAnimationFrame(() => {
-    const rect = menu.getBoundingClientRect();
-    if (rect.bottom > window.innerHeight) {
-      menu.style.top = Math.max(0, e.clientY - rect.height) + 'px';
-    }
-    if (rect.right > window.innerWidth) {
-      menu.style.left = Math.max(0, e.clientX - rect.width) + 'px';
-    }
-  });
-}
-
 function showResourceMenu(e, rtype, name, scope, autoconv) {
   e.preventDefault();
   const isRepoAgent = rtype === 'agent' && autoconv === null;
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px var(--pf-shadow);';
+  menu.style.minWidth = '160px';
   _positionMenu(menu, e);
 
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
-    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
-    d.onmouseleave = () => d.style.background = '';
+    d.className = 'ctx-menu-item' + (danger ? ' danger' : '');
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
@@ -92,10 +72,6 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
     sep();
     item('\u{1F5D1} ' + t('delete'), () => _deleteResource(rtype, name, scope), true);
   }
-
-  setTimeout(() => document.addEventListener('click', function _close() {
-    menu.remove(); document.removeEventListener('click', _close);
-  }), 0);
 }
 
 function _moveResource(rtype, name, fromScope, targetScope, opts) {
@@ -442,18 +418,14 @@ function _saveAgentHooksDialog() {
 
 function showAgentMenu(e, name, scope, autoconv, runtimeKind) {
   e.preventDefault();
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px var(--pf-shadow);';
+  menu.style.minWidth = '160px';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
-    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
-    d.onmouseleave = () => d.style.background = '';
+    d.className = 'ctx-menu-item' + (danger ? ' danger' : '');
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
@@ -492,7 +464,6 @@ function showAgentMenu(e, name, scope, autoconv, runtimeKind) {
   if (_canEditScope(scope)) {
     item('\u{1F5D1} ' + t('deleteDefinitionMenu'), () => _deleteResource('agent', name, scope), true);
   }
-  setTimeout(() => document.addEventListener('click', function _close() { menu.remove(); document.removeEventListener('click', _close); }), 0);
 }
 
 function _showSkillAssignDialog(skillName) {

@@ -144,7 +144,8 @@ def test_workflow_run_inspector_is_accessible_redacted_and_recovery_aware():
     assert "run.safe_retry" in inspector
     assert 'role="dialog" aria-modal="true"' in inspector
     assert 'aria-live="polite"' in inspector
-    assert 'role="listitem"><button type="button"' in inspector
+    assert 'role="listitem"' in inspector
+    assert '<button type="button" data-run-id=' in inspector
     assert "event.data || {}" in inspector
     assert "_workflowRunGroupMetaHtml" in inspector
     assert "_workflowFlowHtml" in inspector
@@ -182,7 +183,7 @@ def test_workflow_run_inspector_is_accessible_redacted_and_recovery_aware():
     assert "data.arguments" in inspector
     assert "_workflowRunStructuredValueHtml(data.arguments)" in inspector
     assert "latestReturn" in inspector
-    assert '<details data-workflow-run-metadata style=' in inspector
+    assert '<details data-workflow-run-metadata data-pf-key="run-metadata"' in inspector
     assert "delete_workflow_run" in inspector
     assert "run.can_delete" in inspector
     assert "workflowRunDeleteConfirm" in inspector
@@ -192,6 +193,16 @@ def test_workflow_run_inspector_is_accessible_redacted_and_recovery_aware():
     assert "let refreshPending = false" in inspector
     assert "if (refreshing) { refreshPending = true; return; }" in inspector
     assert "if (refreshPending) scheduleRefresh(0)" in inspector
+    assert "window.pfDomPatch.patchHtml(list, html)" in inspector
+    assert "window.pfDomPatch.patchHtml(detail, _workflowRunDetailHtml(run, viewMode))" in inspector
+    assert "list.innerHTML = runs.map" not in inspector
+    assert "transform:scaleX(" in inspector
+    assert "transition:width" not in inspector
+    assert "_workflowRunActionButtonHtml" in inspector
+    assert "actionOwner.isCurrent(token, selectedRunId)" in inspector
+    assert 'data-action-state="idle"' in inspector
+    assert "workflow-run-pulse" in inspector
+    assert "<animate" not in inspector
     assert "source_body" not in inspector
     assert "runtimeKind === 'workflow'" in menus
     assert "showWorkflowRunInspector(name)" in menus
@@ -239,6 +250,10 @@ def test_workflow_kanban_is_projection_first_accessible_live_and_mobile():
     assert "blocking_parents" in Path("core/workflow_kanban.py").read_text(encoding="utf-8")
     assert "pawflow:workflow-kanban-updated" in board
     assert "refreshPending" in board
+    assert "window.pfDomPatch.patchHtml(host, html)" in board
+    assert "host.innerHTML = toolbar" not in board
+    assert 'data-pf-key="card:' in board
+    assert 'data-pf-key="lane:' in board
     assert "workflow.kanban.updated" in sse
     assert "new CustomEvent('pawflow:workflow-kanban-updated'" in sse
     assert 'data-run-view="graph"' in inspector

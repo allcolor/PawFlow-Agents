@@ -48,15 +48,21 @@ def test_shared_grip_visual_and_the_three_grips():
 
 def test_header_bar_folds_behind_a_top_grip_and_defaults_open():
     assert '<div class="header" id="headerBar">' in TEMPLATE
+    assert '<div class="header-shell">' in TEMPLATE
     assert ".header.collapsed { display: none; }" in TEMPLATE
     assert 'onclick="toggleHeaderBar()"' in TEMPLATE
-    assert ".pf-grip-top { position: fixed; top: 0; left: 50%;" in TEMPLATE
+    assert (".pf-grip-top { position: absolute; "
+            "top: max(0px, calc(100% - 7.5px)); left: 50%;" in TEMPLATE)
     # Closed only when the stored flag is explicitly '0': fresh browser = OPEN.
     assert "localStorage.getItem(_HEADER_BAR_KEY) !== '0'" in STATE_JS
     assert "localStorage.setItem(_HEADER_BAR_KEY" in STATE_JS
     assert "document.addEventListener('DOMContentLoaded', _applyHeaderBar)" in STATE_JS
-    # When open, the grip follows the header's bottom separation line.
-    assert "bar.getBoundingClientRect().bottom - 8" in STATE_JS
+    # Layout anchors the grip to the animated shell; no second animation or
+    # frame-delayed observer can drift away from the painted edge.
+    assert ".header-shell { position: relative;" in TEMPLATE
+    assert "function _positionHeaderGrip(bar, grip)" not in STATE_JS
+    assert "new ResizeObserver(sync)" not in STATE_JS
+    assert "window.pfMotion.replace(grip, 'header-grip'" not in STATE_JS
     assert "window.addEventListener('resize', _applyHeaderBar)" in STATE_JS
 
 
@@ -81,14 +87,21 @@ def test_sidebar_grip_is_an_edge_tab_and_sidebar_defaults_closed():
     assert ".tab-bar:focus-within" in TEMPLATE
     assert "top: 0; right: 0; bottom: 0; left: auto;" in TEMPLATE
     assert "transform: translateX(calc(100% - 4px));" in TEMPLATE
+    assert '<div class="tab-bar-content">' in TEMPLATE
+    assert "--pf-motion-rail: 900ms;" in TEMPLATE
+    assert "transition: transform var(--pf-motion-rail) cubic-bezier(.4, 0, .2, 1)" in TEMPLATE
+    assert "transform: translateX(calc(-100% + 4px)); opacity: 0;" not in TEMPLATE
+    assert "opacity var(--pf-motion-chrome)" not in TEMPLATE
     assert ('class="tab-bar-handle" title="Task bar" '
             'data-i18n-title="taskTabsTitle"' in TEMPLATE)
     assert ".tab-bar-handle { position: absolute;" in TEMPLATE
     assert "right: 100%; left: auto;" in TEMPLATE
     # Mobile: retain the existing coupling to the overlay drawer.
     assert "tabBar.classList.toggle('collapsed', narrow && collapsed)" in STATE_JS
-    assert "260 + (narrow && tabBar ? tabBar.offsetWidth : 0)" in STATE_JS
-    assert "btn.style.left = Math.max(0, boundary - 8) + 'px'" in STATE_JS
+    assert "const tabBarWidth = narrow && tabBar ? tabBar.offsetWidth : 0" in STATE_JS
+    assert "const boundary = collapsed ? 0 : 260 + tabBarWidth" in STATE_JS
+    assert ("btn.style.setProperty('--pf-sidebar-toggle-x', "
+            "Math.max(0, boundary - 8) + 'px')" in STATE_JS)
     assert "&#9776;" not in TEMPLATE  # old hamburger glyph is gone
 
 
@@ -102,9 +115,11 @@ def test_composer_grip_rides_the_separation_line():
 def test_header_icon_widgets_share_the_dock_hover_zoom():
     assert (".hdr-icon-btn:hover, .header-logo a:hover { transform: scale(1.4);"
             in TEMPLATE)
-    # The grips zoom too, composing with their centering translation.
-    assert ".pf-grip-top:hover { transform: translateX(-50%) scale(1.4); }" in TEMPLATE
-    assert ".sidebar-toggle:hover { transform: translateY(-50%) scale(1.4); }" in TEMPLATE
+    # The moving top grip keeps a stable outer box; only its bars zoom.
+    assert ".pf-grip-top:hover .pf-grip-bars { transform: scale(1.4); }" in TEMPLATE
+    assert ".pf-grip-top:hover { transform:" not in TEMPLATE
+    assert (".sidebar-toggle:hover { transform: "
+            "translate(var(--pf-sidebar-toggle-x, 0px), -50%) scale(1.4); }" in TEMPLATE)
     assert (".composer-drawer-handle:hover { transform: translateX(-50%) scale(1.4); }"
             in TEMPLATE)
 

@@ -28,7 +28,6 @@ function showFileMenu(e, fileId, filename, access) {
     '<div class="ctx-menu-item"' + hrefAttr + ' onclick="event.stopPropagation();window.open(this.dataset.href,\'_blank\');closeFileMenu();">&#x2B07; ' + escapeHtml(t('download')) + '</div>' +
     shareToggle +
     '<div class="ctx-menu-item danger"' + idAttr + ' onclick="event.stopPropagation();deleteFile(this.dataset.fileId);closeFileMenu();">&#x1F5D1; ' + escapeHtml(t('delete')) + '</div>';
-  setTimeout(() => document.addEventListener('click', closeFileMenu, {once: true}), 0);
 }
 
 // Share a FileStore file via an unguessable gateway-key link (no login,
@@ -72,8 +71,9 @@ function makeFilePrivate(fileId) {
 }
 
 function closeFileMenu() {
-  const m = document.getElementById('fileCtxMenu');
-  if (m) m.remove();
+  if (window.pfFloatingLayer) {
+    window.pfFloatingLayer.close('context-menu', {restoreFocus: false});
+  }
 }
 
 function deleteFile(fileId) {
@@ -182,12 +182,12 @@ function showFlowMenu(e, flowId, flowStatus) {
     menu.innerHTML = '<div class="ctx-menu-item" onclick="flowAction(\'' + flowId + '\', \'start\')">&#x25B6; ' + escapeHtml(t('flowStart')) + '</div>' +
       '<div class="ctx-menu-item danger" onclick="flowAction(\'' + flowId + '\', \'delete\')">&#x1F5D1; ' + escapeHtml(t('delete')) + '</div>';
   }
-  setTimeout(() => document.addEventListener('click', closeFlowMenu, {once: true}), 0);
 }
 
 function closeFlowMenu() {
-  const m = document.getElementById('flowCtxMenu');
-  if (m) m.remove();
+  if (window.pfFloatingLayer) {
+    window.pfFloatingLayer.close('context-menu', {restoreFocus: false});
+  }
 }
 
 function flowAction(flowId, action) {

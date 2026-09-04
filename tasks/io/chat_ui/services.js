@@ -1,8 +1,6 @@
 // ── Flow instance context menu ───────────────────────────────────
 function showFlowInstanceMenu(e, instanceId, status, scope, flowFqn) {
   e.preventDefault();
-  const old = document.querySelector('.ctx-menu');
-  if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.style.minWidth = '140px';
@@ -48,7 +46,6 @@ function showFlowInstanceMenu(e, instanceId, status, scope, flowFqn) {
     if (!confirm(t('flowUndeployConfirm', { id: instanceId }))) return;
     _flowAction(instanceId, 'undeploy_flow');
   }, true);
-  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
 async function _openFlowGraphTab(instanceId) {

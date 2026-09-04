@@ -366,6 +366,9 @@ def test_todo_list_has_a_dock_action_and_safe_read_only_dialog():
 
 def test_control_docks_use_an_external_css_tooltip_without_horizontal_scroll():
     serve_src = Path("tasks/io/serve_chat_ui.py").read_text(encoding="utf-8")
+    floating_js = Path(
+        "tasks/io/chat_ui/ui_floating_layer.js"
+    ).read_text(encoding="utf-8")
     i18n_js = Path("tasks/io/chat_ui/i18n.js").read_text(encoding="utf-8")
     dock = _between('<div class="action-menu-wrap action-dock"', '<!-- /action dock -->')
 
@@ -384,7 +387,8 @@ def test_control_docks_use_an_external_css_tooltip_without_horizontal_scroll():
     assert '"tooltips.js"' in serve_src
     assert '.action-dock-menu > .action-menu-item' in TOOLTIPS_JS
     assert '.conversation-control-button' in TOOLTIPS_JS
-    assert "getBoundingClientRect()" in TOOLTIPS_JS
+    assert "getBoundingClientRect()" in floating_js
+    assert "placement: verticalDock ? 'left' : 'top'" in TOOLTIPS_JS
 
 
 def test_conversation_control_buttons_are_thin_and_share_dock_motion():

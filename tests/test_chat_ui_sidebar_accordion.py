@@ -52,13 +52,30 @@ def test_headers_expose_the_single_active_section_accessibly():
     assert "sidebarSectionHeaderKey(event, 'resources')" in sidebar
 
 
-def test_active_body_slides_and_owns_the_remaining_height():
+def test_active_body_owns_remaining_height_without_layout_bound_css_transition():
     assert ".sidebar-section.active { flex: 1 1 0;" in TEMPLATE
     assert ".sidebar-section-body {" in TEMPLATE
-    assert "transition: flex-grow 0.22s ease, opacity 0.16s ease;" in TEMPLATE
+    assert "transition: flex-grow" not in TEMPLATE
+    assert "transition: width" not in TEMPLATE
     assert ".sidebar-section.active > .sidebar-section-body" in TEMPLATE
     assert ".sidebar-settings#resourcesPanel" not in TEMPLATE
     assert "max-height: 50%" not in TEMPLATE
+
+
+def test_sidebar_and_resource_controls_use_replaceable_motion_without_button_tiles():
+    base = (UI / "css" / "00_base.css").read_text(encoding="utf-8")
+    bridge = (UI / "css" / "99_theme_bridge.css").read_text(encoding="utf-8")
+
+    assert "_sidebarAccordionAnimate(parts, first, generation)" in RESOURCES
+    assert "'sidebar-accordion-section'" in RESOURCES
+    assert "'sidebar-accordion-body'" in RESOURCES
+    assert "duration: 500" in RESOURCES
+    assert "easing: 'cubic-bezier(.4, 0, .2, 1)'" in RESOURCES
+    assert 'class="resource-section-control resource-section-toggle"' in RESOURCES
+    assert "resource-section-control resource-section-action" in RESOURCES
+    assert ".resource-section-control { appearance: none;" in base
+    assert ".resource-section .resource-section-control:hover" in bridge
+    assert "background: transparent !important" in bridge
 
 
 def test_one_controller_drives_clicks_commands_and_resource_hydration():
@@ -99,13 +116,13 @@ function classList(active) {
 }
 function part() {
   return {
-    attrs: {}, textContent: '',
+    attrs: {}, textContent: '', style: {},
     setAttribute: function (name, value) { this.attrs[name] = value; },
   };
 }
 function section(name, active) {
   const header = part(), body = part(), chevron = part();
-  return {
+  const result = {
     classList: classList(active), header, body, chevron,
     querySelector: function (selector) {
       if (selector === '[data-sidebar-header="' + name + '"]') return header;
@@ -114,10 +131,27 @@ function section(name, active) {
       return null;
     },
   };
+  result.style = {};
+  result.getBoundingClientRect = () => ({height: result.classList.contains('active') ? 320 : 42});
+  body.getBoundingClientRect = () => ({height: result.classList.contains('active') ? 278 : 0});
+  return result;
 }
 const conversations = section('conversations', true);
 const resources = section('resources', false);
-global.window = {localStorage: {getItem: () => '', setItem: () => {}}};
+const animations = [];
+global.window = {
+  localStorage: {getItem: () => '', setItem: () => {}},
+  pfMotion: {
+    reduced: () => false,
+    cancel: () => {},
+    read: callback => Promise.resolve(callback()),
+    write: callback => Promise.resolve(callback()),
+    replace: (element, channel, frames) => {
+      animations.push({element, channel, frames});
+      return Promise.resolve({status: 'finished', animation: null});
+    },
+  },
+};
 global.document = {
   querySelector: function (selector) {
     if (selector === '[data-sidebar-section="conversations"]') return conversations;
@@ -128,6 +162,11 @@ global.document = {
 };
 let loads = 0;
 global.loadResources = function () { loads += 1; };
+const sectionRequests = [];
+global._setResourceSectionOpen = function (id, open) {
+  sectionRequests.push([id, open]);
+  return Promise.resolve({status: open ? 'open' : 'closed'});
+};
 eval(fs.readFileSync(process.argv[1], 'utf8'));
 
 if (!setSidebarSection('resources')) throw new Error('resources rejected');
@@ -136,7 +175,14 @@ if (!resources.classList.contains('active')) throw new Error('resources did not 
 if (resources.header.attrs['aria-expanded'] !== 'true') throw new Error('resources aria');
 if (conversations.body.attrs['aria-hidden'] !== 'true') throw new Error('conversation body aria');
 if (resources.chevron.textContent !== '\u25BC') throw new Error('resources chevron');
-if (loads !== 1) throw new Error('resources did not hydrate once');
+if (loads !== 0) throw new Error('opening resources started data acquisition');
+if (animations.length !== 4) throw new Error('accordion did not animate both sections and bodies');
+if (animations[0].frames[0].height !== '320px' || animations[0].frames[1].height !== '42px') {
+  throw new Error('conversation section did not animate closed');
+}
+if (animations[2].frames[0].height !== '42px' || animations[2].frames[1].height !== '320px') {
+  throw new Error('resources section did not animate open');
+}
 
 const event = {
   key: 'Enter', target: resources.header, currentTarget: resources.header,

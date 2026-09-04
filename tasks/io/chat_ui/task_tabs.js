@@ -6,10 +6,6 @@
 var _taskTabRegistry = {};    // tabId -> filter descriptor
 var _openTaskTabOrder = [];   // tabId[], creation order
 var _activeTaskTabId = null;  // active filtered tab id
-var _taskTabObserverStarted = false;
-var _taskTabObserver = null;
-var _taskTabObservedSources = new Set();
-var _taskTabRenderRaf = 0;
 
 function _filteredViewToken(value) {
   return encodeURIComponent(String(value || ''))
@@ -200,8 +196,10 @@ function _filteredViewClone(node, info) {
   return _filteredViewPrune(clone, info);
 }
 
-function _filteredViewTurnKey(block, index) {
-  return String((block && block.dataset && block.dataset.turnId) || ('index-' + index));
+function _filteredViewTurnKey(block) {
+  const key = String((block && block.dataset && block.dataset.turnId) || '');
+  if (!key) throw new Error('filtered turn is missing data-turn-id');
+  return key;
 }
 
 function _filteredViewRememberTurnState(info, block, index) {
@@ -210,24 +208,16 @@ function _filteredViewRememberTurnState(info, block, index) {
   const selected = Array.from(block.querySelectorAll('.simple-turn-tab')).find(function(tab) {
     return tab.getAttribute('aria-selected') === 'true';
   });
-  info.turnStates[_filteredViewTurnKey(block, index)] = {
+  info.turnStates[_filteredViewTurnKey(block)] = {
     expanded: block.classList.contains('expanded'),
     activeTab: selected ? String(selected.dataset.filteredTurnTab || '') : '',
   };
 }
 
-function _filteredViewCaptureTurnStates(info) {
-  if (!info || !info.body) return;
-  Array.from(info.body.querySelectorAll('.simple-turn-block')).forEach(function(block, index) {
-    _filteredViewRememberTurnState(info, block, index);
-  });
-}
-
 function _filteredViewSetTurnExpanded(info, block, index, expanded) {
   const value = !!expanded;
   block.classList.toggle('expanded', value);
-  const header = block.querySelector('.simple-turn-header');
-  if (header) header.setAttribute('aria-expanded', value ? 'true' : 'false');
+  if (block._pfDisclosure) block._pfDisclosure.set(value);
   _filteredViewRememberTurnState(info, block, index);
 }
 
@@ -250,7 +240,7 @@ function _filteredViewActivateTurnTab(info, block, index, tabKey, focus) {
 }
 
 function _filteredViewHydrateTurn(info, block, index) {
-  const key = _filteredViewTurnKey(block, index);
+  const key = _filteredViewTurnKey(block);
   const saved = info.turnStates && info.turnStates[key];
   const header = block.querySelector('.simple-turn-header');
   const tabs = Array.from(block.querySelectorAll('.simple-turn-tab'));
@@ -293,6 +283,14 @@ function _filteredViewHydrateTurn(info, block, index) {
     header.addEventListener('click', function() {
       _filteredViewSetTurnExpanded(
         info, block, index, !block.classList.contains('expanded'));
+    });
+  }
+  const details = block.querySelector('.simple-turn-details');
+  if (header && details) {
+    block._pfDisclosure = pfDisclosure.create({
+      trigger: header,
+      panel: details,
+      open: saved ? saved.expanded : block.classList.contains('expanded'),
     });
   }
   const initialTab = saved && saved.activeTab
@@ -342,75 +340,74 @@ function _filteredViewLoadMoreProxy(info, sourceBanner) {
   return button;
 }
 
-function _renderFilteredView(tabId) {
-  const info = _taskTabRegistry[tabId];
-  if (!info || !info.body) return;
-  const source = info.source;
-  if (!source) return;
-
-  const body = info.body;
-  const wasAtBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
-  _filteredViewCaptureTurnStates(info);
-  const sourceBanner = Array.from(source.children).find(_filteredViewIsLoadMoreBanner);
-  body.innerHTML = '';
-  Array.from(source.children).forEach(function(node) {
-    if (_filteredViewIsLoadMoreBanner(node)) return;
-    const clone = _filteredViewClone(node, info);
-    if (clone) body.appendChild(_filteredViewHydrateClone(info, clone));
+function _filteredViewDisposeClone(node) {
+  const turns = [];
+  if (node && node.classList && node.classList.contains('simple-turn-block')) turns.push(node);
+  if (node && node.querySelectorAll) {
+    turns.push.apply(turns, Array.from(node.querySelectorAll('.simple-turn-block')));
+  }
+  turns.forEach(function(block) {
+    if (block._pfDisclosure) block._pfDisclosure.destroy();
+    block._pfDisclosure = null;
   });
-  if (sourceBanner) {
-    body.insertBefore(_filteredViewLoadMoreProxy(info, sourceBanner), body.firstChild);
-  }
-
-  if (!body.children.length) {
-    const empty = document.createElement('div');
-    empty.className = 'workspace-filter-empty';
-    empty.textContent = t('workspaceFilterEmpty');
-    body.appendChild(empty);
-  }
-  if (wasAtBottom) body.scrollTop = body.scrollHeight;
 }
 
-function _renderAllFilteredViews() {
-  _taskTabRenderRaf = 0;
-  Object.keys(_taskTabRegistry).forEach(_renderFilteredView);
-}
-
-function _queueFilteredViewRender() {
-  if (_taskTabRenderRaf) return;
-  _taskTabRenderRaf = requestAnimationFrame(_renderAllFilteredViews);
-}
-
-function _startTaskTabObserver() {
-  if (typeof MutationObserver === 'undefined') return;
-  if (!_taskTabObserver) {
-    _taskTabObserver = new MutationObserver(_queueFilteredViewRender);
-  } else {
-    _taskTabObserver.disconnect();
-  }
-  _taskTabObservedSources = new Set();
-  Object.keys(_taskTabRegistry).forEach(function(tabId) {
-    const source = _taskTabRegistry[tabId].source;
-    if (!source || _taskTabObservedSources.has(source)) return;
-    _taskTabObservedSources.add(source);
-    _taskTabObserver.observe(source, {
-      childList: true, subtree: true, characterData: true, attributes: true,
-    });
+function _filteredViewBeforePatch(info, existing) {
+  const turns = [];
+  if (existing.classList && existing.classList.contains('simple-turn-block')) turns.push(existing);
+  turns.push.apply(turns, Array.from(existing.querySelectorAll('.simple-turn-block')));
+  turns.forEach(function(block, index) {
+    _filteredViewRememberTurnState(info, block, index);
   });
-  _taskTabObserverStarted = _taskTabObservedSources.size > 0;
 }
 
-function _stopTaskTabObserverIfIdle() {
-  if (Object.keys(_taskTabRegistry).length) {
-    _startTaskTabObserver();
+function _filteredViewRenderEmpty(info, body, projectedCount) {
+  const current = body.querySelector('.workspace-filter-empty');
+  if (projectedCount) {
+    if (current) current.remove();
     return;
   }
-  if (_taskTabObserver) _taskTabObserver.disconnect();
-  _taskTabObserver = null;
-  _taskTabObservedSources = new Set();
-  _taskTabObserverStarted = false;
-  if (_taskTabRenderRaf) cancelAnimationFrame(_taskTabRenderRaf);
-  _taskTabRenderRaf = 0;
+  if (current) return;
+  const empty = document.createElement('div');
+  empty.className = 'workspace-filter-empty';
+  empty.textContent = t('workspaceFilterEmpty');
+  body.appendChild(empty);
+}
+
+function _filteredViewCreateProjection(info) {
+  return pfProjection.create({
+    source: info.source,
+    destination: info.body,
+    key: function(node) {
+      return _filteredViewIsLoadMoreBanner(node) ? 'load-more' : pfProjection.key(node);
+    },
+    project: function(node) {
+      if (_filteredViewIsLoadMoreBanner(node)) {
+        return _filteredViewLoadMoreProxy(info, node);
+      }
+      const clone = _filteredViewClone(node, info);
+      return clone ? _filteredViewHydrateClone(info, clone) : null;
+    },
+    beforePatch: function(existing) {
+      _filteredViewBeforePatch(info, existing);
+    },
+    dispose: _filteredViewDisposeClone,
+    renderEmpty: function(body, count) {
+      _filteredViewRenderEmpty(info, body, count);
+    },
+    isActive: function() {
+      return !!info.panel && !info.panel.hidden
+        && info.panel.getAttribute('aria-hidden') !== 'true';
+    },
+    stickToBottom: true,
+  });
+}
+
+function _renderFilteredView(tabId) {
+  const info = _taskTabRegistry[tabId];
+  if (!info || !info.body || !info.source) return;
+  if (!info.projection) info.projection = _filteredViewCreateProjection(info);
+  else info.projection.reconcileAll();
 }
 
 function filteredViewRoute(tabId) {
@@ -485,6 +482,7 @@ function openAgentView(agentName, taskId) {
     body: body,
     panel: panel,
     turnStates: {},
+    projection: null,
   };
   _openTaskTabOrder.push(tabId);
   _activeTaskTabId = tabId;
@@ -509,7 +507,6 @@ function openAgentView(agentName, taskId) {
     document.querySelector('.main').appendChild(panel);
   }
 
-  _startTaskTabObserver();
   _renderFilteredView(tabId);
   if (typeof switchTab === 'function') switchTab(tabId);
   return tabId;
@@ -533,10 +530,10 @@ function closeFilteredView(tabId) {
     _activeTaskTabId = _openTaskTabOrder.length
       ? _openTaskTabOrder[_openTaskTabOrder.length - 1] : null;
   }
+  if (info.projection) info.projection.destroy();
   if (typeof workspaceRemoveTabButton === 'function') workspaceRemoveTabButton(tabId);
   if (typeof workspaceUnregisterSurface === 'function') workspaceUnregisterSurface(tabId);
   if (info.panel) info.panel.remove();
-  _stopTaskTabObserverIfIdle();
 
   const next = _activeTaskTabId || 'chat';
   if (wasSelected && typeof switchTab === 'function') switchTab(next);
@@ -572,6 +569,7 @@ window._taskTabsReset = function() {
   const selectedWasFiltered = !!_taskTabRegistry[selectedTab];
   Object.keys(_taskTabRegistry).forEach(function(tabId) {
     const info = _taskTabRegistry[tabId];
+    if (info.projection) info.projection.destroy();
     if (typeof workspaceRemoveTabButton === 'function') workspaceRemoveTabButton(tabId);
     if (typeof workspaceUnregisterSurface === 'function') workspaceUnregisterSurface(tabId);
     if (info.panel) info.panel.remove();
@@ -579,6 +577,5 @@ window._taskTabsReset = function() {
   _taskTabRegistry = {};
   _openTaskTabOrder = [];
   _activeTaskTabId = null;
-  _stopTaskTabObserverIfIdle();
   if (selectedWasFiltered && typeof switchTab === 'function') switchTab('chat');
 };

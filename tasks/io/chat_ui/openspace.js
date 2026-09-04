@@ -93,8 +93,8 @@ const OSV_SCREEN_OCCLUSION_EPSILON = 0.01;
 let _osScreenEl = null;
 let _osScreenCorners = null;
 let _osProjectedMessages = null;
-let _osProjectionObserver = null;
-let _osProjectionRaf = 0;
+let _osProjectionController = null;
+let _osProjectionSource = null;
 let _osScreenOcclusionRect = null;
 // Blackboard: chalk roster of the active agents, projected like the wall
 // screen. Batteries above heads mirror window._contextUsage.

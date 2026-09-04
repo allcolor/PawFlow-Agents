@@ -6,7 +6,7 @@
 .osv-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
 .osv-canvas:active { cursor: grabbing; }
 .osv-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
-.osv-overlay > div { position: absolute; top: 0; left: 0; will-change: transform; }
+.osv-overlay > div { position: absolute; top: 0; left: 0; }
 .osv-screen-occlusion { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3000; display: none; }
 /* Projected panels depth-sort via z-index (≤ ~2500); avatar chrome —
    labels, bubbles, status, batteries — must always stay readable above

@@ -22,6 +22,7 @@
       throw new Error('projection source row has no dataset');
     }
     const fields = [
+      ['projection', node.dataset.projectionKey],
       ['msg', node.dataset.msgid || node.dataset.messageId],
       ['turn', node.dataset.turnId],
       ['group', node.dataset.groupKey],

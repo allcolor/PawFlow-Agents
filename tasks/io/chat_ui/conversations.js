@@ -479,6 +479,8 @@ function _getHistTaskBlock(taskId, iteration, agentName) {
   if (_histTaskBlocks[blockKey]) return _histTaskBlocks[blockKey];
   const details = document.createElement('details');
   details.className = 'msg task-block';
+  details.dataset.projectionKey = 'task:' + blockKey;
+  details.dataset.taskId = taskId;
   details.style.cssText = 'margin:6px 0;border:1px solid #333;border-radius:8px;padding:0;background:#1a1a2e;';
   const summary = document.createElement('summary');
   summary.style.cssText = 'cursor:pointer;padding:8px 12px;font-size:12px;color:#6c5ce7;user-select:none;font-weight:600;display:flex;align-items:center;gap:6px;';

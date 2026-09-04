@@ -250,6 +250,38 @@ def test_streaming_projection_updates_only_one_key(chromium_browser, row_count):
         context.close()
 
 
+def test_projection_keeps_processing_explicitly_keyed_non_message_rows(chromium_browser):
+    context, page = _new_motion_page(chromium_browser, rows=0)
+    try:
+        result = page.evaluate(
+            """
+            async () => {
+              const source = window.__pfFixture.source;
+              for (const key of ['task:job-1::iter0', 'exec:event-1']) {
+                const row = document.createElement('div');
+                row.dataset.projectionKey = key;
+                row.textContent = key;
+                source.appendChild(row);
+              }
+              await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+              source.lastElementChild.textContent += ':updated';
+              await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+              return {
+                keys: Array.from(window.__pfFixture.destination.children)
+                  .map(node => node.dataset.pfProjectionKey),
+                text: window.__pfFixture.destination.lastElementChild.textContent,
+              };
+            }
+            """
+        )
+        assert result == {
+            "keys": ["projection:task:job-1::iter0", "projection:exec:event-1"],
+            "text": "exec:event-1:updated",
+        }
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize("viewport", [(1280, 800), (390, 844)])
 @pytest.mark.parametrize("reduced", [False, True])
 def test_disclosure_geometry_accessibility_and_first_paint(

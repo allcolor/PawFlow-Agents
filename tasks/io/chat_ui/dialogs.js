@@ -166,6 +166,12 @@ function appendExecOutput(data) {
   const { action, command, exit_code, stdout, stderr, duration_ms } = data;
   const el = document.createElement('div');
   el.className = 'terminal-output';
+  const eventId = data.msg_id || data.message_id || data.event_id || data.request_id || data.id;
+  if (!appendExecOutput._localSequence) appendExecOutput._localSequence = 0;
+  appendExecOutput._localSequence += 1;
+  el.dataset.projectionKey = eventId
+    ? 'exec:' + String(eventId)
+    : 'exec-local:' + String(Date.now()) + ':' + String(appendExecOutput._localSequence);
   let html = '<div class="term-header">$ ' + escapeHtml(command) + '</div>';
   if (stdout) html += '<div class="term-stdout">' + escapeHtml(stdout) + '</div>';
   if (stderr) html += '<div class="term-stderr">' + escapeHtml(stderr) + '</div>';

@@ -747,6 +747,12 @@ Rollback is by reverting the relevant atomic commit, not by preserving dormant o
 | Custom themes regress | Preserve theme variables and visual selectors; test default themes and operator CSS ordering |
 | Mobile drawer becomes unreachable | Preserve fixed positioning and explicitly test toggle/rail geometry throughout the transition |
 
+Task containers and terminal-output rows are canonical top-level projection
+sources even though they are not transcript messages. They therefore carry an
+explicit `data-projection-key`: task keys include the iteration while retaining
+`data-task-id` for filtering, and terminal rows prefer the SSE event/message ID
+with a unique local fallback. Missing identities remain a hard reconciler error.
+
 ## Definition of done
 
 The project is complete only when all of the following are true:

@@ -112,6 +112,19 @@ def test_migrated_hot_paths_have_no_full_projection_clear_or_click_layout_read()
         assert "getBoundingClientRect" not in source
 
 
+def test_all_non_message_projection_rows_have_explicit_durable_keys():
+    projection = (CHAT_UI / "ui_projection.js").read_text(encoding="utf-8")
+    conversations = (CHAT_UI / "conversations.js").read_text(encoding="utf-8")
+    sse_state = (CHAT_UI / "sse_state.js").read_text(encoding="utf-8")
+    dialogs = (CHAT_UI / "dialogs.js").read_text(encoding="utf-8")
+
+    assert "['projection', node.dataset.projectionKey]" in projection
+    assert "details.dataset.projectionKey = 'task:' + blockKey" in conversations
+    assert "details.dataset.projectionKey = 'task:' + blockKey" in sse_state
+    assert "el.dataset.projectionKey = eventId" in dialogs
+    assert "data.msg_id || data.message_id || data.event_id" in dialogs
+
+
 def test_reduced_motion_tokens_remove_temporal_work():
     css = (CHAT_UI / "css" / "05_motion.css").read_text(encoding="utf-8")
     assert "@media (prefers-reduced-motion: reduce)" in css

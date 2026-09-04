@@ -181,6 +181,7 @@ function _getTaskBlock(taskId, iteration, agentName) {
   // First event for this iteration — create the block
   const details = document.createElement('details');
   details.className = 'msg task-block';
+  details.dataset.projectionKey = 'task:' + blockKey;
   details.dataset.taskId = taskId;
   details.setAttribute('open', '');
   details.style.cssText = 'margin:6px 0;border:1px solid #333;border-radius:8px;padding:0;background:#1a1a2e;';

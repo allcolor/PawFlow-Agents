@@ -309,12 +309,23 @@ so the relay never retains a large corpus in RAM. The gzip/base64 delta stays
 below the relay's bounded text-output transport; the server validates and decodes
 that versioned payload before merging it.
 
-1. **Server sends** the cached `{rel_path: mtime}` map to the relay
+Graph format v2 scopes every internal node ID by its relay-relative source path,
+so homonymous files and symbols cannot overwrite or inherit each other's edges.
+Cross-file imports resolve against the complete merged graph, including files
+unchanged in an incremental build. Original references are retained so target
+deletion, restoration, or an ambiguous homonym updates existing edges correctly.
+Ambiguous or unresolved imports use a separate external namespace. Upgrading from an older
+cache forces one full rebuild. Generated bundles and vendored/minified JavaScript
+are excluded from discovery and ranking so reports describe application code.
+External references remain available for traversal but are excluded from god-node
+rankings in both the report and the prompt digest.
+
+1. **Server sends** the cached `{rel_path: mtime_ns:size}` fingerprint map to the relay
    via `PAWFLOW_GRAPH_KNOWN` (gzip+base64, so large maps stay under the
    ~32K per-variable Windows cap).
 2. **Relay walks** the workspace tree, skipping standard junk dirs
    (venv, node_modules, .git, build, dist, __pycache__, etc.).
-3. **Re-parses only files** whose mtime differs from `known` (or are
+3. **Re-parses only files** whose high-resolution fingerprint differs from `known` (or are
    new). Unchanged files keep their cached nodes/edges.
 4. **Reports**: `parsed_files` (re-parsed), `removed` (in `known` but
    missing now), `mtimes` (new map), `nodes`/`edges` (just for the
@@ -334,7 +345,8 @@ Supported file extensions: `*.py`, `*.js`, `*.ts`, `*.tsx`, `*.go`, `*.rs`, `*.j
 
 ### 4.2 Query / Report / Node
 
-**query**: BFS traversal starting from nodes matching the question text. Returns edges with source, target, relation, and confidence.
+**query**: BFS traversal starting from nodes whose label or source path matches
+the question text. Returns edges with source, target, relation, and confidence.
 
 ```
 > project_graph(action="query", question="AuthGateway", depth=3)
@@ -344,7 +356,9 @@ Project graph query 'AuthGateway' (12 edges):
   ...
 ```
 
-**report**: Summary including node/edge counts, confidence breakdown, and god nodes (most connected code entities).
+**report**: Summary including node/edge counts, confidence breakdown, and
+high-signal god nodes. Builtin helpers, dangling endpoints, generated bundles,
+and vendored/minified sources are excluded from the ranking.
 
 **node**: Details about a specific code entity -- file, location, type, and neighbor edges (up to 20).
 

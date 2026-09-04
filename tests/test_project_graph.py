@@ -210,7 +210,8 @@ def test_relay_script_runs_from_env_var_command(tmp_path):
     project.mkdir()
     src = project / "a.py"
     src.write_text("x = 1\n", encoding="utf-8")
-    known = {"a.py": int(src.stat().st_mtime)}
+    info = src.stat()
+    known = {"a.py": f"{info.st_mtime_ns}:{info.st_size}"}
 
     result = subprocess.run(
         [sys.executable, "-c",
@@ -373,7 +374,8 @@ def test_get_report(tmp_path):
     pg = ProjectGraph(str(tmp_path / "graph.json"))
     pg._graph = {
         "nodes": [
-            {"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "c", "label": "C"},
+            {"id": "a", "label": "Alpha"}, {"id": "b", "label": "Beta"},
+            {"id": "c", "label": "Gamma"},
         ],
         "edges": [
             {"source": "a", "target": "b", "relation": "r", "confidence": "EXTRACTED"},
@@ -386,7 +388,7 @@ def test_get_report(tmp_path):
     assert "Nodes: 3" in report
     assert "Edges: 2" in report
     assert "EXTRACTED=1" in report
-    assert "A (2 connections)" in report
+    assert "Alpha (2 connections)" in report
 
 
 def test_has_graph(tmp_path):
@@ -442,7 +444,7 @@ def test_incremental_unchanged_keeps_graph(tmp_path):
     pg._graph = {
         "nodes": [{"id": "a", "label": "A", "source_file": "a.py"}],
         "edges": [{"source": "a", "target": "b", "source_file": "a.py"}],
-        "metadata": {"root": ".", "files": {"a.py": 100}},
+        "metadata": {"root": ".", "format_version": 2, "files": {"a.py": 100}},
     }
     pg._save()
 
@@ -467,7 +469,7 @@ def test_root_change_discards_old_graph_and_sends_empty_known_map(tmp_path):
     pg._graph = {
         "nodes": [{"id": "old", "label": "Old", "source_file": "old.py"}],
         "edges": [{"source": "old", "target": "gone", "source_file": "old.py"}],
-        "metadata": {"root": ".", "files": {"old.py": 100}},
+        "metadata": {"root": ".", "format_version": 2, "files": {"old.py": 100}},
     }
     svc = _make_relay_mock({
         "stdout": json.dumps({
@@ -500,12 +502,13 @@ def test_incremental_replaces_reparsed_file(tmp_path):
         "nodes": [
             {"id": "a_old", "label": "A", "source_file": "a.py"},
             {"id": "b", "label": "B", "source_file": "b.py"},
+            {"id": "x", "label": "X", "source_file": "b.py"},
         ],
         "edges": [
             {"source": "a_old", "target": "b", "source_file": "a.py"},
             {"source": "b", "target": "x", "source_file": "b.py"},
         ],
-        "metadata": {"root": ".", "files": {"a.py": 100, "b.py": 200}},
+        "metadata": {"root": ".", "format_version": 2, "files": {"a.py": 100, "b.py": 200}},
     }
     pg._save()
 
@@ -529,7 +532,7 @@ def test_incremental_replaces_reparsed_file(tmp_path):
     assert result["reparsed"] == 1
     assert result["removed"] == 0
     node_ids = {n["id"] for n in pg.nodes}
-    assert node_ids == {"a_new", "b"}  # a_old dropped, a_new added, b kept
+    assert node_ids == {"a_new", "b", "x"}  # a_old replaced, b.py kept
     edge_targets = {(e["source"], e["target"]) for e in pg.edges}
     assert ("a_new", "b") in edge_targets
     assert ("b", "x") in edge_targets
@@ -548,7 +551,7 @@ def test_incremental_garbage_collects_removed_files(tmp_path):
             {"source": "a", "target": "orphan", "source_file": "a.py"},
             {"source": "orphan", "target": "a", "source_file": "deleted.py"},
         ],
-        "metadata": {"root": ".", "files": {"a.py": 100, "deleted.py": 50}},
+        "metadata": {"root": ".", "format_version": 2, "files": {"a.py": 100, "deleted.py": 50}},
     }
     pg._save()
 
@@ -582,7 +585,7 @@ def test_incremental_passes_known_mtimes_to_script(tmp_path):
     pg = ProjectGraph(str(tmp_path / "graph.json"))
     pg._graph = {
         "nodes": [], "edges": [],
-        "metadata": {"root": ".", "files": {"a.py": 42, "b.py": 99}},
+        "metadata": {"root": ".", "format_version": 2, "files": {"a.py": 42, "b.py": 99}},
     }
     svc = _make_relay_mock({
         "stdout": json.dumps({

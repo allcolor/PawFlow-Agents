@@ -14,6 +14,7 @@ at the file/module level, not the symbol level.
 
 import logging
 import os.path
+import re
 from collections import Counter, defaultdict
 from typing import List, Set
 
@@ -66,7 +67,7 @@ _EXT_TO_LANG = {
 def _is_noise(node_id: str, label: str) -> bool:
     """Heuristic: builtin/method-of-builtin noise that shouldn't be
     surfaced as a god node."""
-    if not node_id:
+    if not node_id or node_id.startswith("external:"):
         return True
     # Normalize callable labels: 'foo()' / '.foo()' → 'foo' / '.foo'.
     nid = node_id[:-2] if node_id.endswith("()") else node_id
@@ -78,6 +79,19 @@ def _is_noise(node_id: str, label: str) -> bool:
     if len(lab) <= 2:
         return True
     return False
+
+
+def _is_low_signal_source(source_file: str) -> bool:
+    """Return whether a source is generated/vendor code, not project structure."""
+    normalized = str(source_file or "").replace("\\", "/").lower()
+    name = normalized.rsplit("/", 1)[-1]
+    parts = set(normalized.split("/"))
+    if "vendor" in parts or "node_modules" in parts:
+        return True
+    if any(marker in name for marker in (".min.", ".bundle.", ".umd.", "-vendor.")):
+        return True
+    return bool("/assets/" in "/" + normalized
+                and re.fullmatch(r"index-[a-z0-9_-]{8,}\.(?:js|ts)", name, re.I))
 
 
 def _lang_from_path(rel_path: str) -> str:
@@ -120,7 +134,9 @@ def build_project_graph_digest(user_id: str, relay_id: str,
     # extension lookup so the digest never says 'unknown' when the data
     # is right there in source_file.
     langs: Counter = Counter()
-    for n in nodes:
+    signal_nodes = [n for n in nodes
+                    if not _is_low_signal_source(n.get("source_file", ""))]
+    for n in signal_nodes:
         lang = (n.get("language") or n.get("lang") or "").lower()
         if not lang:
             lang = _lang_from_path(n.get("source_file", ""))
@@ -135,7 +151,7 @@ def build_project_graph_digest(user_id: str, relay_id: str,
     # codebase — a god-node tells you a name; a top-module tells you
     # where to open the editor.
     by_module: Counter = Counter()
-    for n in nodes:
+    for n in signal_nodes:
         src = n.get("source_file", "") or ""
         if not src:
             continue
@@ -150,11 +166,14 @@ def build_project_graph_digest(user_id: str, relay_id: str,
         degree[e["source"]] += 1
         degree[e["target"]] += 1
     label_by_id = {n["id"]: n.get("label", n["id"]) for n in nodes}
+    source_by_id = {n["id"]: n.get("source_file", "") for n in nodes}
     ranked = sorted(degree.items(), key=lambda x: -x[1])
     god_pairs = []
     for nid, d in ranked:
+        if nid not in label_by_id:
+            continue
         label = label_by_id.get(nid, nid)
-        if _is_noise(nid, label):
+        if _is_noise(nid, label) or _is_low_signal_source(source_by_id.get(nid, "")):
             continue
         god_pairs.append((label, d))
         if len(god_pairs) >= top_god:

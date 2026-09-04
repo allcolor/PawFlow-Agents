@@ -131,6 +131,30 @@ class TestProjectGraphDigest(unittest.TestCase):
         self.assertNotIn(".get", god_section)
         self.assertNotIn("str (", god_section)
 
+    def test_external_stubs_do_not_displace_project_hubs(self):
+        nodes = [
+            {"id": "external:typing_optional", "label": "typing_optional",
+             "source_file": ""},
+            {"id": "app", "label": "ApplicationService",
+             "source_file": "core/application.py"},
+            *[{"id": f"importer{i}", "label": f"Importer{i}",
+               "source_file": f"core/importer{i}.py"} for i in range(20)],
+        ]
+        edges = [
+            {"source": f"importer{i}", "target": "external:typing_optional"}
+            for i in range(20)
+        ]
+        edges.extend({"source": f"importer{i}", "target": "app"}
+                     for i in range(5))
+        self._seed_graph("u", "c", {"nodes": nodes, "edges": edges})
+        graph = ProjectGraph.for_relay("u", "c")
+        for output in (build_project_graph_digest("u", "c", top_god=1),
+                       graph.get_report()):
+            self.assertIn("ApplicationService", output)
+            self.assertNotIn("typing_optional", output)
+        self.assertEqual(graph.nodes, nodes)
+        self.assertEqual(graph.edges, edges)
+
     def test_top_files_section(self):
         # File a.py has 3 entities, b.py has 2, c.py has 1
         self._seed_graph("u", "c", {
@@ -147,6 +171,30 @@ class TestProjectGraphDigest(unittest.TestCase):
         out = build_project_graph_digest("u", "c")
         self.assertIn("Top files: a.py (3)", out)
         self.assertIn("b.py (2)", out)
+
+    def test_generated_and_vendor_sources_are_not_ranked(self):
+        self._seed_graph("u", "c", {
+            "nodes": [
+                {"id": "vendor", "label": "VendorHub",
+                 "source_file": "ui/vendor/library.umd.min.js"},
+                {"id": "bundle", "label": "BundleHub",
+                 "source_file": "site/assets/index-AbCdEf123.js"},
+                {"id": "app", "label": "ApplicationService",
+                 "source_file": "core/application.py"},
+                {"id": "helper", "label": "helper",
+                 "source_file": "core/helper.py"},
+            ],
+            "edges": [
+                *[{"source": "vendor", "target": "v" + str(i)} for i in range(20)],
+                *[{"source": "bundle", "target": "b" + str(i)} for i in range(10)],
+                {"source": "app", "target": "helper"},
+            ],
+        })
+        out = build_project_graph_digest("u", "c")
+        self.assertIn("ApplicationService", out)
+        self.assertNotIn("library.umd.min.js", out)
+        self.assertNotIn("index-AbCdEf123.js", out)
+        self.assertNotIn("VendorHub", out)
 
     def test_unknown_languages_default(self):
         self._seed_graph("u", "c", {

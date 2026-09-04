@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _RELAY_PAYLOAD_PREFIX = "pawflow-project-graph-v1:gzip-base64:"
+_GRAPH_FORMAT_VERSION = 2
 
 import core.paths as _paths
 
@@ -33,7 +34,7 @@ _CODE_EXTENSIONS = (
 
 # Python script that runs ON THE RELAY to extract AST and return JSON
 _RELAY_EXTRACT_SCRIPT = '''
-import base64, gc, gzip, json, os, sys, tempfile
+import base64, gc, gzip, json, os, re, sys, tempfile
 from pathlib import Path
 
 # Discover code files
@@ -44,7 +45,9 @@ EXTENSIONS = {".py", ".js", ".ts", ".tsx", ".go", ".rs", ".java",
 
 SKIP_DIRS = {"venv", ".venv", "env", ".env", "node_modules", "__pycache__",
     ".git", "dist", "build", "target", "out", "site-packages", ".tox",
-    ".eggs", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+    ".eggs", ".pytest_cache", ".mypy_cache", ".ruff_cache", "vendor"}
+LOW_SIGNAL_MARKERS = (".min.", ".bundle.", ".umd.", "-vendor.")
+HASHED_ASSET = re.compile(r"^index-[A-Za-z0-9_-]{8,}\\.(?:js|ts)$", re.I)
 
 root = Path(os.environ.get("PAWFLOW_GRAPH_ROOT", ".")).resolve()
 # Incremental build: caller may pass a JSON dict {rel_path: mtime_int}
@@ -72,12 +75,18 @@ for dirpath, dirnames, filenames in os.walk(root):
         p = Path(dirpath) / fname
         if p.suffix not in EXTENSIONS:
             continue
+        lower_name = fname.lower()
+        if any(marker in lower_name for marker in LOW_SIGNAL_MARKERS):
+            continue
+        if Path(dirpath).name.lower() == "assets" and HASHED_ASSET.fullmatch(fname):
+            continue
         try:
             rel = str(p.relative_to(root)).replace(os.sep, "/")
         except ValueError:
             rel = p.name
         try:
-            mt = int(p.stat().st_mtime)
+            info = p.stat()
+            mt = f"{info.st_mtime_ns}:{info.st_size}"
         except OSError:
             continue
         all_files.append(rel)
@@ -143,8 +152,11 @@ def relative_source(value):
             pass
     return sf.replace(os.sep, "/")
 
-def node_payload(item):
-    node_id, data = item
+def scoped_id(source_file, node_id):
+    rel = relative_source(source_file)
+    return ("source:" + rel + ":" + node_id) if rel else ("external:" + node_id)
+
+def node_payload(node_id, data):
     return {
         "id": node_id, "label": data.get("label", node_id),
         "file_type": data.get("file_type", "code"),
@@ -183,30 +195,58 @@ with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as edge_spool, \
         with contextlib.redirect_stdout(sys.stderr):
             for batch in extraction_batches:
                 extraction = extract(batch)
-                node_by_id = {
-                    str(node["id"]): node
-                    for node in extraction.get("nodes", [])
-                    if isinstance(node, dict) and node.get("id")
-                }
-                for item in node_by_id.items():
+                raw_nodes = [node for node in extraction.get("nodes", [])
+                             if isinstance(node, dict) and node.get("id")]
+                local_ids = {}
+                node_by_id = {}
+                for node in raw_nodes:
+                    old_id = str(node["id"])
+                    rel = relative_source(node.get("source_file", ""))
+                    new_id = scoped_id(node.get("source_file", ""), old_id)
+                    node_by_id[new_id] = node
+                    if rel:
+                        local_ids[(rel, old_id)] = new_id
+                for node_id, data in node_by_id.items():
                     if not first_node:
                         out.write(",")
-                    json.dump(node_payload(item), out, separators=(",", ":"))
+                    json.dump(node_payload(node_id, data), out, separators=(",", ":"))
                     first_node = False
                 edge_by_pair = {}
                 for edge in extraction.get("edges", []):
                     if not isinstance(edge, dict):
                         continue
-                    source = str(edge.get("source", ""))
-                    target = str(edge.get("target", ""))
-                    if not source or not target:
+                    old_source = str(edge.get("source", ""))
+                    old_target = str(edge.get("target", ""))
+                    if not old_source or not old_target:
                         continue
+                    owner = relative_source(edge.get("source_file", ""))
+                    def resolve_endpoint(old_id):
+                        local = local_ids.get((owner, old_id))
+                        if local:
+                            return local
+                        # Cross-file references must wait for the complete
+                        # server-side graph, not this extraction batch.
+                        return "external:" + old_id
+                    source = resolve_endpoint(old_source)
+                    target = resolve_endpoint(old_target)
+                    for old_id, endpoint in ((old_source, source), (old_target, target)):
+                        if not endpoint.startswith("external:") or endpoint in node_by_id:
+                            continue
+                        external = {"label": old_id, "file_type": "code",
+                                    "source_file": "", "source_location": ""}
+                        if not first_node:
+                            out.write(",")
+                        json.dump(node_payload(endpoint, external), out,
+                                  separators=(",", ":"))
+                        first_node = False
+                        node_by_id[endpoint] = external
+                    edge = dict(edge, source=source, target=target)
                     edge_by_pair[tuple(sorted((source, target)))] = edge
                 for edge in edge_by_pair.values():
                     json.dump(edge_payload(edge), edge_spool,
                               separators=(",", ":"))
                     edge_spool.write("\\n")
-                del extraction, node_by_id, edge_by_pair
+                del extraction, raw_nodes, node_by_id, local_ids, edge_by_pair
                 gc.collect()
         out.write('],"edges":[')
         edge_spool.seek(0)
@@ -334,10 +374,12 @@ class ProjectGraph:
             # What we know from the cached graph: per-file mtimes from
             # metadata.files. The relay script reads this via env var.
             old_meta = self._graph.get("metadata", {}) or {}
+            format_changed = old_meta.get("format_version") != _GRAPH_FORMAT_VERSION
             root_changed = bool(
                 old_meta.get("root") and old_meta.get("root") != root_path)
+            reset_graph = root_changed or format_changed
             known_files: Dict[str, int] = (
-                {} if root_changed else old_meta.get("files", {}) or {})
+                {} if reset_graph else old_meta.get("files", {}) or {})
             # The script and the known-files map travel via env vars,
             # never the command line: cmd.exe caps a command at 8191
             # chars while an env var holds up to 32767. KNOWN is
@@ -414,31 +456,61 @@ class ProjectGraph:
             # disk (orphan GC).
             gone = parsed_files | removed
 
-            kept_nodes = [] if root_changed else [
+            kept_nodes = [] if reset_graph else [
                 n for n in self.nodes if n.get("source_file", "") not in gone]
-            kept_edges = [] if root_changed else [
+            kept_edges = [] if reset_graph else [
                 e for e in self.edges if e.get("source_file", "") not in gone]
-            available_node_ids = {
-                str(node.get("id")) for node in kept_nodes + new_nodes
-                if isinstance(node, dict) and node.get("id")
-            }
+            merged_by_id = {node["id"]: node for node in kept_nodes + new_nodes}
+            symbols = {}
+            for node_id, node in merged_by_id.items():
+                prefix = "source:" + node.get("source_file", "") + ":"
+                if node.get("source_file") and node_id.startswith(prefix):
+                    symbols.setdefault(node_id[len(prefix):], []).append(node_id)
+
+            def resolve_reference(reference):
+                if reference.startswith("external:"):
+                    symbol = reference[len("external:"):]
+                    matches = symbols.get(symbol, [])
+                    if len(matches) == 1:
+                        return matches[0]
+                    merged_by_id.setdefault(reference, {
+                        "id": reference, "label": symbol, "file_type": "code",
+                        "source_file": "", "source_location": "",
+                    })
+                    return reference
+                return reference if reference in merged_by_id else ""
+
             edge_by_pair = {}
-            for edge in raw_new_edges:
+            for edge in kept_edges + raw_new_edges:
                 if not isinstance(edge, dict):
                     continue
-                source = str(edge.get("source", ""))
-                target = str(edge.get("target", ""))
-                if source not in available_node_ids or target not in available_node_ids:
+                source_ref = str(edge.get("source_ref", edge.get("source", "")))
+                target_ref = str(edge.get("target_ref", edge.get("target", "")))
+                source = resolve_reference(source_ref)
+                target = resolve_reference(target_ref)
+                if not source or not target:
                     continue
-                edge_by_pair[tuple(sorted((source, target)))] = edge
-            new_edges = list(edge_by_pair.values())
-            merged_nodes = kept_nodes + new_nodes
-            merged_edges = kept_edges + new_edges
+                edge = dict(edge, source=source, target=target)
+                # Retain unresolved identities so deletion, restoration or a
+                # newly ambiguous homonym re-resolves unchanged callers too.
+                if source_ref.startswith("external:"):
+                    edge["source_ref"] = source_ref
+                if target_ref.startswith("external:"):
+                    edge["target_ref"] = target_ref
+                key = (*sorted((source, target)), edge.get("relation", ""),
+                       edge.get("source_file", ""))
+                edge_by_pair[key] = edge
+            merged_edges = list(edge_by_pair.values())
+            referenced = {edge[key] for edge in merged_edges
+                          for key in ("source", "target")}
+            merged_nodes = [node for node_id, node in merged_by_id.items()
+                            if not node_id.startswith("external:") or node_id in referenced]
 
             self._graph = {
                 "nodes": merged_nodes, "edges": merged_edges,
                 "metadata": {
                     "root": root_path,
+                    "format_version": _GRAPH_FORMAT_VERSION,
                     "relay_id": self.relay_id,
                     "total_files": data.get("total_files", len(new_mtimes)),
                     "node_count": len(merged_nodes),
@@ -469,7 +541,9 @@ class ProjectGraph:
               depth: int = 3, max_results: int = 50) -> List[Dict]:
         """BFS/DFS traversal on the project graph."""
         q = question.lower()
-        seeds = [n["id"] for n in self.nodes if q in n.get("label", "").lower()]
+        seeds = [n["id"] for n in self.nodes
+                 if q in n.get("label", "").lower()
+                 or q in n.get("source_file", "").lower()]
         if not seeds:
             return []
 
@@ -498,7 +572,9 @@ class ProjectGraph:
         """Get a node by label (fuzzy match)."""
         q = label.lower()
         for n in self.nodes:
-            if q in n.get("label", "").lower() or q in n.get("id", "").lower():
+            if (q in n.get("label", "").lower()
+                    or q in n.get("id", "").lower()
+                    or q in n.get("source_file", "").lower()):
                 neighbors = [
                     e for e in self.edges
                     if e["source"] == n["id"] or e["target"] == n["id"]
@@ -582,7 +658,19 @@ class ProjectGraph:
         for e in edges:
             degree[e["source"]] = degree.get(e["source"], 0) + 1
             degree[e["target"]] = degree.get(e["target"], 0) + 1
-        top = sorted(degree.items(), key=lambda x: -x[1])[:10]
+        from core.project_graph_digest import _is_low_signal_source, _is_noise
+        by_id = {n["id"]: n for n in nodes}
+        top = []
+        for node_id, node_degree in sorted(degree.items(), key=lambda x: -x[1]):
+            if node_id not in by_id:
+                continue
+            node = by_id.get(node_id, {})
+            if (_is_noise(node_id, node.get("label", node_id))
+                    or _is_low_signal_source(node.get("source_file", ""))):
+                continue
+            top.append((node_id, node_degree))
+            if len(top) == 10:
+                break
 
         # Confidence breakdown
         conf_counts = {}

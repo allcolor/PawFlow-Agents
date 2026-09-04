@@ -121,7 +121,7 @@ def _resolve_cross_file_imports(
                         raw = source[child.start_byte:child.end_byte].decode("utf-8", errors="replace")
                         target_stem = raw.split(".")[-1]
 
-                if not target_stem or target_stem not in stem_to_entities:
+                if not target_stem:
                     return
 
                 # Collect imported names: dotted_name children of import_from_statement
@@ -148,7 +148,11 @@ def _resolve_cross_file_imports(
 
                 line = node.start_point[0] + 1
                 for name in imported_names:
-                    tgt_nid = stem_to_entities[target_stem].get(name)
+                    # Preserve imports outside this extraction batch. The
+                    # project graph resolves these references after merging
+                    # every file, including unchanged incremental sources.
+                    tgt_nid = (stem_to_entities.get(target_stem, {}).get(name)
+                               or _make_id(target_stem, name))
                     if tgt_nid:
                         for src_class_nid in local_classes:
                             new_edges.append({

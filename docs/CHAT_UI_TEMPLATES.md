@@ -67,6 +67,7 @@ tasks/io/chat_ui/templates/
   boot/scripts.html                 # asset-version guard, i18n block, extensions block, <script defer> loop
 tasks/io/chat_ui/css/               # CSS modules, served by serveAssets at /chat/js/css/<file>?v=<asset_version>
   00_base.css                       # reset, :root, app layout, sidebar, sharing
+  05_motion.css                     # shared motion tokens, disclosure containment, reduced-motion policy
   10_chrome.css                     # collapsible grips, header status widgets
   20_messages.css                   # gauges, messages, simplified live view, send button
   30_mobile.css                     # narrow-viewport overrides
@@ -92,6 +93,41 @@ theme, then `<style id="custom-theme">` (the user's theme). Adding a module
 means adding the file **and** its entry in `_CSS_MODULES`; the contract test
 checks both. The old single inline `<style>` is gone: a CSS-only change now
 ships one small cacheable file.
+
+## Motion and incremental DOM contract
+
+The WebChat uses native DOM, CSS transforms, and the Web Animations API; it does
+not ship a component framework or a parallel legacy path. The ordered controller
+modules load before their consumers:
+
+- `ui_motion.js` owns reduced-motion state, read-before-write frame batching,
+  replaceable animation channels, FLIP transitions, and optional diagnostics;
+- `ui_disclosure.js` owns interruptible disclosure state, live-size retargeting,
+  `aria-expanded`/`aria-hidden`/`hidden`/`inert`, focus restoration, and teardown;
+- `ui_projection.js` observes canonical transcript rows and patches only dirty
+  keyed rows. Filtered and OpenSpace projections disconnect while hidden;
+- `ui_floating_layer.js` owns viewport placement, Escape/outside-interaction
+  handling, focus behavior, listeners, and portal cleanup for tooltips, menus,
+  popovers, and workflow dialogs;
+- `resources_patch.js` preserves the Resources root and keyed section identity,
+  so opening a section is independent from refresh and refresh does not erase
+  focus, scroll, or disclosure state.
+
+Workflow lanes, cards, run rows, inspector regions, and action controls are
+patched by stable keys. Action buttons reserve idle, pending, success, and error
+faces inside one stable box; a local generation owns completion so a stale
+request cannot regress the visible state. Simplified-turn rain uses one
+visibility-aware timer plus shared observers, and stops while hidden or under
+reduced motion. Sidebar grips, view switches, and progress indicators move with
+transforms; no migrated CSS rule retains a layout-bound position transition or
+a permanent `will-change` hint. The padded header is clipped by an animated
+outer shell so it can travel continuously to zero, while the desktop right tab
+rail and its content move as one 900 ms drawer. The separate rail token becomes
+zero under reduced motion without changing the other 500 ms chrome expanders.
+
+Diagnostics are inert unless tests set `__PF_MOTION_DIAGNOSTICS__` or
+`__PF_FLOATING_DIAGNOSTICS__`. They expose counts and timings only, never message
+content or user/resource values.
 
 ## Personal appearance and compact AI surfaces
 
@@ -166,6 +202,18 @@ Rules for partials:
   (`tests/test_chat_ui_templates.py` pins the id / slot / i18n-key sets).
 
 ## Tests
+
+`tests/test_webchat_motion.py` pins module ordering and the source-level cost
+boundaries. The focused Node suites under `tests/js/` cover interruption,
+generation ownership, keyed reconciliation, accessibility, and teardown.
+`tests/test_webchat_motion_browser.py` uses the rendered production shell and
+real controller modules in Chromium: 500/1,000-row streaming projections,
+30-interaction disclosure matrices at desktop/mobile widths with normal/reduced
+motion, computed geometry and screenshots, a CDP trace, and a 100-cycle lifecycle
+soak. Functional, geometry, accessibility, clone-count, and lifecycle assertions
+run wherever Chromium is installed. Timing and Long Task budgets are release
+gates only when `PAWFLOW_REFERENCE_BROWSER=1` selects the declared reference
+browser environment.
 
 ## Extension points (PFP `ui.v1` template fragments)
 

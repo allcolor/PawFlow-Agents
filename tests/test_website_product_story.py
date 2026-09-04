@@ -304,3 +304,9 @@ def test_beta_264_provider_and_history_story_is_public() -> None:
     assert "registered but unavailable" not in faq
     assert "StopHookArgs.finalModelOutput" in faq
     assert "| `agy_mcp` | Available" in providers
+    assert "external_agui" in readme
+    assert "external_agui" in providers
+    assert "This is not an `llmConnection` provider" in providers
+    assert "agent-level protocol/runtime" in providers
+    assert "never starts or falls back to a local LLM" in providers
+    assert "`aguiConnection`" in readme

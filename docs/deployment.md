@@ -44,21 +44,26 @@ single hot append target does not grow into a large file on Windows/WSL mounts.
 
 ### Reading a transcript
 
-A transcript is read a bounded window at a time, never as a whole. Both the UI
-pagination (`load_page`) and the `read_history` tool answer from
-`iter_display_windows` / `load_window_by_index` / `find_display_index`, which
-stream rows and keep only the page they return. `ConversationStore.load()`
+A transcript is read a bounded window at a time, never as a whole. UI tail
+pagination (`load_page`) reads backward, while `load_window_by_index` uses the
+segment index's exact display-row counts to jump directly to the segment that
+owns an absolute message index. Full-history operations such as filtered
+counts, broad searches, and unresolved anchor lookup still stream bounded
+windows, but retain only the page they return. `ConversationStore.load()`
 loads everything and exists for the callers that genuinely need the full
 conversation; a request handler is not one of them. Conversations reach
 hundreds of thousands of messages and `read_history` is called in chains, so a
-reader whose cost tracks the conversation instead of the answer will take the
-server down under a handful of calls -- which is exactly what it did.
+direct index reader whose cost tracks the conversation prefix instead of the
+answer will take the server down under a handful of calls -- which is exactly
+what it did.
 Plaintext searches use ripgrep, standard grep, or a dependency-free bounded
 scanner to select candidate segment files before the normal decoder and trace
 composer run. Segment index version 2 stores exact display-row counts, so
-absolute result indices do not require decoding skipped prefixes; version-1
-indexes are upgraded once with a lightweight row-prefix scan. Encrypted logs
-fall back to the exact windowed scan and never persist plaintext search data.
+absolute result indices and direct index windows do not require decoding
+skipped prefixes; version-1 indexes are upgraded once with a lightweight
+row-prefix scan. Encrypted logs use the same non-plaintext row counts for
+direct index windows, while search falls back to the exact windowed scan and
+never persists plaintext search data.
 
 ## Updating
 

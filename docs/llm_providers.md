@@ -1,8 +1,11 @@
 # LLM Providers
 
-PawFlow can run agents through direct HTTP APIs, CLI-backed coding agents, and
-outbound Agent Client Protocol (ACP) processes. Agents reference an LLM service
-by id, so different agents in the same conversation can use different backends.
+PawFlow can run agents through direct HTTP APIs, CLI-backed coding agents,
+outbound Agent Client Protocol (ACP) processes, and remote AG-UI agents. Most
+backends on this page are `llmConnection` providers. The deliberate exception is
+`external_agui`: it is an agent-level runtime selected on a conversation member,
+but it is listed here because it replaces that member's intelligence backend in
+the same user-facing provider choice.
 
 For new CLI-backed agent services, use `claude-code-interactive` for Claude Code and `codex-interactive` for Codex. The non-interactive `claude-code` transport (`claude -p`, commonly called `cc -p`) and `codex-app-server` are legacy agent providers retained for existing configurations and migration only. Their identifiers still name the shared OAuth credential pools, so credential references do not need to change when an agent service migrates to the interactive provider.
 
@@ -15,6 +18,8 @@ For new CLI-backed agent services, use `claude-code-interactive` for Claude Code
 | `omniroute` | Explicit gateway API | OmniRoute Chat Completions and virtual routes such as `auto` | Requires an explicit `base_url`, `omniroute_auth_mode`, and `default_model`. Supports bounded routing controls, sanitized gateway metadata, and model discovery. |
 | `anthropic` | Direct API | Claude API and Anthropic-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. |
 | `acp` | Outbound ACP agent process | Any configured ACP v1 agent command | PawFlow launches the command without a shell, negotiates the official ACP protocol, and exposes only explicitly enabled PawFlow MCP and client filesystem capabilities. |
+| `antigravity-acp` | Google's official Antigravity ACP server in the `pawflow-claude-code` image | Antigravity subscription through Google's sanctioned integration surface | PawFlow is a plain ACP client of `agy_acp_server`; no vendor traffic is inspected. Logs in through the server's own OAuth or an API key. See [Antigravity ACP](ANTIGRAVITY_ACP.md). |
+| `external_agui` | Remote agent runtime | An agent exposed through an AG-UI POST/SSE endpoint | Set `runtime_kind=external_agui` on the conversation member, leave `llm_service` empty, and configure `agui_service` or a direct `agui_url`. This is not an `llmConnection` provider and never falls back to one. |
 | `cc_mcp` | Managed Claude Code CLI with native hooks | Claude subscription sessions without vendor-traffic interception | Reuses the Claude interactive pool and PawFlow MCP tools; final text comes from the official Stop hook. |
 | `codex_mcp` | Managed Codex CLI with native hooks | Codex subscription sessions without vendor-traffic interception | Reuses the Codex interactive pool and native rollout context counters; built-in Codex tools are not observable. |
 | `agy_mcp` | Managed Antigravity CLI with native hooks | Agy subscription sessions without vendor-traffic interception | Reuses the Antigravity pool; final text comes from the native `StopHookArgs.finalModelOutput` field. |
@@ -86,6 +91,128 @@ publication API key and optional gateway key. The matching server endpoint is
 scheduled in `docs/ACP_INTEGRATION_PLAN.md` (WP4); until it ships the proxy
 has nothing to connect to.
 
+### Antigravity ACP server
+
+`antigravity-acp` is the generic ACP runtime with the command fixed to Google's
+official Antigravity ACP server, executed inside the `pawflow-claude-code`
+image (`docker exec -i`). Set `antigravity_acp_auth_method` to one of
+`oauth-personal`, `oauth-business`, `gemini-api-key`, `agent-platform`; use
+`auth_mode=none` for browser logins and ADC, or `auth_mode=api_key` with
+`api_key` for the API-key methods. `cli_environment` lines are forwarded into
+the container by name. `GEMINI_HOME` is kept per `(user, service)` so one login
+serves every conversation; PawFlow's MCP bridge is always exposed. Details,
+directories, and lifecycle: [Antigravity ACP](ANTIGRAVITY_ACP.md). The
+`antigravity-interactive` and `agy_mcp` providers remain available.
+
+### ACP registry import
+
+`core/acp/registry.py` is a client for the public ACP registry
+(`https://agentclientprotocol.com/registry`). It turns a listed agent into the
+configuration of an `acp` service so that no `acp_command`/`acp_args` has to be
+written by hand:
+
+- The index, the quarantine list and the protocol matrix are fetched over HTTPS
+  only and cached for 24 h under `data/runtime/acp_registry/`. When a fetch
+  fails the cached copy is used and reported as stale; with no cache the
+  catalogue is unavailable rather than empty.
+- Every entry is validated against the vendored `core/acp/registry_schema.json`
+  (the upstream `agent.schema.json`); invalid rows and archives that are not
+  `https` are skipped. Quarantined entries stay listed with their reason but
+  cannot be imported. `license`/`license_url` are part of every catalogue row
+  so proprietary terms can be shown before import.
+- `npx` and `uvx` distributions become `acp_command=<runner>` plus
+  `acp_args=[--yes, <package>, ...]` (`npx`) or `[<package>, ...]` (`uvx`); a
+  runner missing where ACP agents launch is an error naming the tool, not a
+  service that fails on its first turn.
+- `binary` distributions are downloaded for the resolved platform
+  (`linux-x86_64`, `linux-aarch64`, ...), verified against the published
+  `sha256` when there is one, extracted under
+  `data/runtime/acp_agents/<id>/<version>/<platform>/` (zip, tar.gz, tgz,
+  tar.bz2, tbz2 or a raw binary; archive entries may not escape that
+  directory) and `cmd` is made executable. Installer formats (`.dmg`, `.pkg`,
+  `.deb`, `.rpm`, `.msi`, `.appimage`) are refused. The observed digest is
+  always recorded in the service (`acp_registry.archive_sha256`,
+  `archive_verified`).
+- The protocol matrix pre-fills `acp_load_session` and, when exactly one
+  authentication type is advertised, enables
+  `acp_auto_auth_single_method`; otherwise the user picks
+  `acp_auth_method_id` after the first `initialize`.
+- The imported `version` is pinned in `acp_registry`; `check_update` only
+  reports a newer registry version. Upgrading is a deliberate re-import.
+
+In Resources › Services, an `llmConnection` with provider `acp` offers
+**Import from ACP registry** (on the install form and on an existing service):
+pick an entry and a distribution, and the server fills `acp_command`,
+`acp_args`, `acp_env`, `acp_cwd`, `acp_load_session`,
+`acp_auto_auth_single_method`, `acp_title_override` and the `acp_registry`
+record (`tasks/ai/actions/_sf_acp_registry.py`: `acp_registry_catalogue`,
+`acp_registry_prepare`, `acp_registry_prepare_status`). The catalogue shows
+license, authentication types and quarantine state, disables distributions
+whose runner is missing on the server, and only offers `binary` for the
+server's platform; a binary download runs as a background job the form polls.
+Saving the service is the normal submit, so nothing is created behind the
+user's back. **Check ACP registry updates** (`acp_registry_check_update`)
+reports a newer registry version for the pinned import without changing the
+service. An empty `acp_cwd` defaults to
+`data/runtime/acp_agents/<id>/workspace/`.
+
+`antigravity-acp` has its own provider and is not imported through this path.
+
+### External AG-UI agent runtime
+
+`external_agui` is presented beside providers because selecting it replaces the
+intelligence backend of one conversation member. Internally it is not an
+`llmConnection` implementation: it is an agent-level protocol/runtime. Set
+`runtime_kind` to `external_agui` and leave `llm_service` empty. PawFlow routes
+the turn to the configured AG-UI endpoint, translates its SSE lifecycle into the
+normal transcript and UI events, and never starts or falls back to a local LLM
+turn for that member.
+
+The preferred configuration references a scoped `aguiConnection` service:
+
+```json
+{
+  "name": "remote_reviewer",
+  "definition": "external",
+  "runtime_kind": "external_agui",
+  "llm_service": "",
+  "agui_service": "remote_agui",
+  "tools": ["read", "search"]
+}
+```
+
+The service owns the full POST/SSE `endpoint`, optional `auth_secret`
+(a SecretStore key containing a Bearer token), `allow_private`, `timeout`, and
+`max_tool_rounds`. This binds credentials and private/relay routing policy to an
+endpoint controlled by the service owner.
+
+A direct endpoint is also supported:
+
+```json
+{
+  "name": "public_remote_reviewer",
+  "definition": "external",
+  "runtime_kind": "external_agui",
+  "llm_service": "",
+  "agui_url": "https://agent.example/agui",
+  "tools": ["read", "search"]
+}
+```
+
+A direct `agui_url` is always public and unauthenticated. Bearer credentials and
+private or relay targets require `agui_service`. Configure one route; if both
+fields are present, the scoped service is authoritative. At least one of
+`agui_service` or `agui_url` is required.
+
+PawFlow keeps the shared conversation transcript authoritative, sends
+`RunAgentInput`, displays streamed text and remote tool calls, persists the final
+assistant message, and returns allowed tool results in bounded follow-up runs.
+The member's `tools` list is the hard exposure allowlist; normal PawFlow tool
+policy and approval still apply. Runs are serialized per conversation member.
+See [AG-UI integration](agui_integration.md) for publishing PawFlow agents in the
+opposite direction and [Agent system](AGENT_SYSTEM.md) for the full runtime
+contract.
+
 ### Managed MCP CLI providers
 
 `cc_mcp` and `codex_mcp` run the official interactive Claude Code and Codex
@@ -110,12 +237,13 @@ available on their matching managed provider. See the
 
 ## Which Provider To Use
 
-Use the credential source to choose the provider surface:
+Use the backend and credential source to choose the provider surface:
 
-| Credential source | Preferred provider(s) | Why |
+| Backend or credential source | Preferred provider(s) | Why |
 |---|---|---|
 | Generic API key for an OpenAI-compatible endpoint | `openai` | Direct HTTP, tool calling, vision when `supports_vision=true`, `base_url` support, and `/v1/embeddings` support when the endpoint exposes it. |
 | Installed ACP v1 agent command | `acp` | Launch an explicitly configured agent process and use its negotiated ACP session, streaming, tools, and usage capabilities. |
+| Remote agent exposing an AG-UI POST/SSE endpoint | `external_agui` agent runtime | Make the remote AG-UI agent the member's complete intelligence backend. Prefer a scoped `aguiConnection`; no `llm_service` fallback is used. |
 | An endpoint you want to drive through the Responses API | `openai-responses` | Reasoning items, server-side built-in tools, and the event stream those need. Prefer plain `openai` unless you specifically want the Responses surface. |
 | Anthropic API key | `anthropic`, or `claude-code-interactive` with `api_key` | Use `anthropic` for direct API agents. Use `claude-code-interactive` when you want the native Claude Code session behavior and PawFlow MCP bridge. |
 | Claude subscription login | `claude-code-interactive` | Long-lived interactive Claude Code session with OAuth credentials from the `claude-code` credential pool. |
@@ -193,7 +321,9 @@ page contains the header.
 
 ## Agent Configuration
 
-Agents reference a service id:
+Agents with `runtime_kind: "llm"` reference an LLM service id. An
+`external_agui` member instead uses the agent-level configuration documented
+above and leaves `llm_service` empty.
 
 ```json
 {

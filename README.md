@@ -67,9 +67,14 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - **Multi-provider agents**: mix direct OpenAI Chat Completions or Responses,
   Anthropic, OmniRoute, and OpenAI-compatible APIs; native Codex, Claude Code,
   Antigravity/Agy, and Gemini CLI sessions; managed native-hook CLI variants;
-  or any installed ACP v1 agent process. Providers stay selectable per agent or
-  conversation. The old Codex app-server and Claude Code `-p` transports remain
-  available only for legacy configurations.
+  any installed ACP v1 agent process; or an external AG-UI agent as the complete
+  intelligence backend for a conversation member. Providers stay selectable per
+  agent or conversation. Configure that last case with
+  `runtime_kind=external_agui` plus a direct endpoint or a scoped
+  `aguiConnection`; it does not use or fall back to `llm_service`. See
+  [LLM providers and agent runtimes](docs/llm_providers.md#external-ag-ui-agent-runtime).
+  The old Codex app-server and Claude Code `-p` transports remain available only
+  for legacy configurations.
 - **Native CLI engines, not API reimplementations**: subscription providers run the real interactive Codex, Claude Code, Antigravity, and Gemini CLI engines per conversation — native harness and reasoning preserved — with native Codex plugins (`codex_plugins`) and Claude Code plugin marketplaces (`claude_plugins`/`claude_marketplaces`) declarable per LLM service.
 - **External agent interoperability**: publish several agents from one
   conversation as independent authenticated MCP endpoints, publish one or more

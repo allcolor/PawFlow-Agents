@@ -6,6 +6,69 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Added `antigravity-acp`, an `llmConnection` provider that runs Google's
+  official Antigravity ACP server (`agy_acp_server`, ACP registry entry
+  `antigravity-acp`) inside the `pawflow-claude-code` image and drives it
+  through the shared ACP runtime as a plain ACP client. The server is baked
+  into the image with a pinned version and archive digest, `GEMINI_HOME` is
+  kept per `(user, service)` so one login serves every conversation, the four
+  advertised authentication methods are selectable, environment entries are
+  forwarded by name so secrets never enter argv, and PawFlow's MCP bridge is
+  always exposed. `AcpProcessSession` gained `stderr_path` so a verbose agent
+  can no longer block on an unread stderr pipe. `antigravity-interactive` and
+  `agy_mcp` remain available. See `docs/ANTIGRAVITY_ACP.md` and
+  `docs/ACP_REGISTRY_ANTIGRAVITY_PLAN.md`.
+- Added the `antigravity-acp` server-side login: the service action **Login
+  via server (Antigravity ACP)** reuses the Antigravity noVNC dialog, runs
+  `docker/claude-code/agy_acp_auth_login.sh` in the `pawflow-claude-code`
+  image, and `agy_acp_login.py` drives one `initialize` + `authenticate` round
+  trip against the ACP server while the in-container browser completes the
+  OAuth redirect. The token stays in the service `GEMINI_HOME`; the action
+  result only reports success, the method used, and the advertised methods.
+- Added `core/acp/registry.py`, a client for the public ACP registry: HTTPS
+  only fetch with a 24 h cache and stale fallback, validation against the
+  vendored `registry_schema.json`, quarantine and protocol-matrix
+  annotations, digest-verified extraction of `binary` distributions with
+  installer formats and path escapes refused, and `acp` service configurations
+  for `npx`/`uvx`/`binary` entries with the imported version pinned and an
+  update check that never upgrades on its own.
+- Added **Import from ACP registry** and **Check ACP registry updates** to
+  `acp` services in Resources › Services (`tasks/ai/actions/_sf_acp_registry.py`,
+  service actions `acp_registry_catalogue`, `acp_registry_prepare`,
+  `acp_registry_prepare_status`, `acp_registry_check_update`). The picker
+  shows license, authentication types and quarantine state, offers only
+  distributions this server can run, downloads binaries as a polled background
+  job, fills the form, and leaves saving to the normal submit. The import is
+  recorded in the new `acp_registry` field so updates can be checked without
+  ever upgrading in place.
+- Added a native WebChat motion and interaction system: shared read/write and
+  replaceable-animation ownership, interruptible accessible disclosures, dirty
+  keyed transcript projections, stable Resources/workflow reconciliation,
+  centralized floating-layer placement and cleanup, generation-owned action
+  faces, and visibility-aware live cues. Sidebar, view, and progress motion use
+  transforms; reduced motion removes temporal/decorative work; and deterministic
+  Chromium gates cover 500/1,000-row streaming, desktop/mobile geometry and
+  screenshots, CDP tracing, and a 100-cycle lifecycle soak.
+- The `pawflow-claude-code` image now installs `ripgrep` and GNU `time` like
+  the server and relay images, so tools running inside it use `rg` instead of
+  a slower fallback scan.
+
+### Fixed
+
+- `read_history` now excludes its own nested tool-result copies from normal
+  searches before segment decoding, while explicit `role_filter="tool"`
+  searches still expose them. Exact-phrase candidates are resolved before the
+  keyword fallback, multi-term prefilters reject weak one-token segments, and
+  indexed tail reads skip unrelated earlier transcript segments.
+- WebChat's top grip now follows the header's painted separation line throughout
+  its 500 ms transition instead of drifting on an independently started `top`
+  animation. The desktop tab rail also uses a 500 ms counter-transformed content
+  layer, so its buttons remain present during both opening and closing instead of
+  appearing only after the rail settles. The bottom expander and 300 ms workspace
+  tile motion are unchanged.
+
 ## [1.0.0-beta.264] — 2026-09-04
 
 ### Fixed

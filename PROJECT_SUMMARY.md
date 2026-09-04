@@ -1,7 +1,7 @@
 # PawFlow Project Summary — Current State
 
-**Last updated**: 2026-09-03
-**Package version**: `1.0.0b263` (beta.263)
+**Last updated**: 2026-09-04
+**Package version**: `1.0.0b264` (beta.264)
 
 **Status**: functional beta, remaining API changes before 1.0.0 expected to be minor
 
@@ -17,21 +17,18 @@ The current core value is twofold:
    delegation, streaming.
 2. **Pipeline engine**: DAG execution over FlowFiles, task catalog, triggers, backpressure, checkpoints, crash recovery, provenance, and IO/data/control integrations.
 
-## beta.263 implementation highlights
+## beta.264 implementation highlights
 
-- Added the outbound `acp` provider for explicitly configured Agent Client
-  Protocol v1 processes, including warm-session reuse, cancellation, policy
-  checks, and opt-in PawFlow MCP/client filesystem capabilities.
-- Added managed native-hook CLI providers `cc_mcp` and `codex_mcp`, then after
-  beta.263 completed `agy_mcp` using Agy's native
-  `StopHookArgs.finalModelOutput` field and the existing Antigravity managed
-  pool; it is now selectable without vendor-traffic interception.
-- Made delegate observability restart-durable, fixed delegate-reply routing and
-  late preempt work after force stop, and kept terminal provider failures visible
-  in webchat.
-- Made over-quota ScratchDirs recoverable, completed the relay filesystem module
-  manifests, and accelerated large plaintext history search and incremental
-  conversation indexing.
+- Completed `agy_mcp` as a selectable managed native-hook provider using Agy's
+  `StopHookArgs.finalModelOutput` field and the existing Antigravity pool,
+  without vendor-traffic interception.
+- Kept large plaintext `read_history(search)` result indices exact without
+  decoding every earlier segment; segment indexes now retain display-row counts
+  and candidate selection works with ripgrep, standard grep, or a dependency-free
+  fallback.
+- Isolated Grab state across tiled conversations so background Active Agents
+  polls and late terminal inventories cannot repaint another conversation's
+  shared controls.
 
 ## What lives in the repository
 

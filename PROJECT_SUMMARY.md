@@ -1,7 +1,7 @@
 # PawFlow Project Summary — Current State
 
 **Last updated**: 2026-09-04
-**Package version**: `1.0.0b265` (beta.265)
+**Package version**: `1.0.0b266` (beta.266)
 
 **Status**: functional beta, remaining API changes before 1.0.0 expected to be minor
 
@@ -17,20 +17,19 @@ The current core value is twofold:
    delegation, streaming.
 2. **Pipeline engine**: DAG execution over FlowFiles, task catalog, triggers, backpressure, checkpoints, crash recovery, provenance, and IO/data/control integrations.
 
-## beta.265 implementation highlights
+## beta.266 implementation highlights
 
-- Added the official `antigravity-acp` provider with persistent per-service
-  authentication, four advertised login methods, server-side noVNC OAuth, and
-  the PawFlow MCP bridge always exposed to the ACP process.
-- Added safe import and update discovery from the public ACP registry, including
-  schema validation, quarantine metadata, digest-verified binary extraction,
-  and an explicit user-reviewed service configuration flow.
-- Added native, interruptible WebChat motion controllers with reduced-motion
-  support, stable transcript/resource reconciliation, centralized floating-layer
-  placement, and deterministic Chromium performance and lifecycle gates.
-- Kept `read_history` searches bounded by excluding nested tool-result copies,
-  resolving exact phrases first, and shipping ripgrep plus GNU `time` in every
-  execution image.
+- Standardized PawFlow's versioned User-Agent across direct LLM HTTP traffic and
+  added conversation-bound `x-opencode-session` headers exclusively for OpenCode
+  Go requests, with provider wire dialects kept isolated.
+- Unified every WebChat button with the prompt-bar surface contract: transparent
+  at rest, accent border plus accessible tooltip on hover or focus, and the
+  established 1.4x dock or 1.08x ordinary-button zoom preserved.
+- Made the desktop sidebar an interruptible sliding rail whose content and grip
+  stay mounted, and restored disclosure-owned inline styles so bounded Resources
+  sections remain scrollable after animation.
+- Added visible focused-tile treatment and title-bar drag reordering to tiled
+  WebChat workspaces, with DOM order and slot assignments restored across loads.
 
 ## What lives in the repository
 

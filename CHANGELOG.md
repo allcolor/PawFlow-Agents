@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.266] — 2026-09-04
+
+### Added
+
+- Tiled WebChat workspaces now highlight the focused surface and allow a tile
+  title bar to be dragged onto another tile or an empty slot. The resulting DOM
+  order and slot assignments persist in `pawflow.workspace.state.v2`, while
+  title-bar actions remain independently clickable.
+
+### Fixed
+
+- PawFlow-owned direct LLM HTTP traffic now sends the versioned
+  `PawFlow/<version>` User-Agent consistently for inference, model discovery,
+  streaming, and OAuth refresh without mixing provider-specific wire dialects.
+  OpenCode Go requests under `https://opencode.ai/zen/go/` additionally send the
+  required PawFlow conversation ID as `x-opencode-session`; the header cannot
+  leak to another host or path, and a missing conversation now fails explicitly.
+- WebChat buttons now share the prompt-bar surface contract after theme and
+  operator CSS: transparent with no visible border at rest, then an accent
+  border, zoom, and accessible tooltip on hover or keyboard focus. Existing
+  amplitudes are preserved—1.4x for compact docks and 1.08x for ordinary
+  buttons—and semantic state remains visible through glyph or text color.
+- The desktop sidebar now slides its complete fixed-width shell, mounted content,
+  and grip as one interruptible rail without shifting workspace geometry.
+  Disclosure cleanup also restores pre-existing height, opacity, and overflow
+  styles, so bounded Resources sections such as Services retain wheel and
+  trackpad scrolling after open/close transitions.
+
 ## [1.0.0-beta.265] — 2026-09-04
 
 ### Added

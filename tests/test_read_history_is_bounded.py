@@ -191,6 +191,7 @@ class StillCorrect(unittest.TestCase):
 
         log = self.store._transcript_log("c")
         rows = list(log.iter_rows())
+        rows[8]["content"] = "unique-late-needle"
         rows.insert(2, {
             "t": "trace_update", "trace_id": "orphan",
             "entry": {"role": "assistant", "content": "not a display row"},
@@ -198,20 +199,65 @@ class StillCorrect(unittest.TestCase):
         SegmentedJsonl(
             self.store._transcript_path("c"), max_rows=3,
         ).replace_dicts(rows)
-        match_path = self.store._transcript_log("c").iter_paths()[-1]
-        rg_result = SimpleNamespace(
-            returncode=0, stdout=f"{match_path}\n", stderr="")
+        paths = self.store._transcript_log("c").iter_paths()
+        skipped_paths = set(paths[:-2])
+        iter_file = SegmentedJsonl._iter_file
+
+        def reject_skipped_segment_reads(path):
+            if path in skipped_paths:
+                raise AssertionError(
+                    "search decoded a non-candidate transcript segment")
+            return iter_file(path)
 
         with patch("core._conversation_store_transcript.shutil.which",
-                   return_value="/test/rg"), patch(
+                   return_value=None), patch.object(
+                       SegmentedJsonl, "_iter_file",
+                       side_effect=reject_skipped_segment_reads):
+            out = self.handler.execute({
+                "action": "search", "query": "unique-late-needle", "limit": 10,
+            })
+
+        self.assertIn("unique-late-needle", out)
+        self.assertIn("[#8]", out)
+
+    def test_search_uses_standard_grep_when_ripgrep_is_unavailable(self):
+        path = self.store._transcript_log("c").iter_paths()[0]
+        result = SimpleNamespace(
+            returncode=0, stdout=f"{path}\n", stderr="")
+
+        def which(name):
+            return None if name == "rg" else "/test/grep"
+
+        with patch("core._conversation_store_transcript.shutil.which",
+                   side_effect=which), patch(
                        "core._conversation_store_transcript.subprocess.run",
-                       return_value=rg_result):
+                       return_value=result) as run:
             out = self.handler.execute({
                 "action": "search", "query": "line 8", "limit": 10,
             })
 
         self.assertIn("line 8", out)
-        self.assertIn("[#8]", out)
+        self.assertEqual(run.call_args.args[0][:6], [
+            "/test/grep", "-F", "-i", "-l", "-f", "-",
+        ])
+
+    def test_dependency_free_search_keeps_unicode_case_insensitive(self):
+        self.assertEqual(
+            self.store.edit_message("c", "m8", "ÉTÉ BRÛLANT"), 1)
+        checked = []
+
+        def which(name):
+            checked.append(name)
+            return None if name == "rg" else "/test/grep"
+
+        with patch("core._conversation_store_transcript.shutil.which",
+                   side_effect=which):
+            out = self.handler.execute({
+                "action": "search", "query": "été brûlant", "limit": 10,
+            })
+
+        self.assertIn("ÉTÉ BRÛLANT", out)
+        self.assertEqual(checked, ["rg"])
 
     def test_range_returns_exactly_the_closed_interval(self):
         out = self.handler.execute({"action": "range", "from_msg_id": "m4",

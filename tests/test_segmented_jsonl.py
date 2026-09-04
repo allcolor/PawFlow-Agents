@@ -244,6 +244,42 @@ def test_segmented_jsonl_trusts_disk_index_without_recounting(monkeypatch, tmp_p
     warmed.append_dicts([{"seq": 2, "content": "two"}])
 
 
+def test_role_row_counts_upgrade_v1_index_without_decoding_canonical_rows(
+        monkeypatch, tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    log = SegmentedJsonl(path, max_rows=2)
+    log.replace_dicts([
+        {"role": "user", "content": "one"},
+        {"t": "trace_update", "entry": {"role": "assistant"}},
+        {"channel": "final", "content": "two", "role": "assistant"},
+    ])
+    index_path = tmp_path / "transcript" / "index.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    index["version"] = 1
+    for segment in index["segments"]:
+        segment.pop("role_rows")
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+    SegmentedJsonl.invalidate_index_cache(tmp_path)
+
+    decoded_rows = []
+    original_loads = json.loads
+
+    def track_ambiguous_rows(value, *args, **kwargs):
+        if isinstance(value, bytes):
+            decoded_rows.append(value)
+        return original_loads(value, *args, **kwargs)
+
+    monkeypatch.setattr("core._segmented_jsonl_io.json.loads",
+                        track_ambiguous_rows)
+    counts = SegmentedJsonl(path, max_rows=2).role_rows_by_path()
+
+    assert list(counts.values()) == [1, 1]
+    assert len(decoded_rows) == 2
+    upgraded = original_loads(index_path.read_text(encoding="utf-8"))
+    assert upgraded["version"] == 2
+    assert [segment["role_rows"] for segment in upgraded["segments"]] == [1, 1]
+
+
 def test_segmented_jsonl_append_reuses_hot_segment_handle(tmp_path):
     path = tmp_path / "transcript.jsonl"
     log = SegmentedJsonl(path, max_rows=10)

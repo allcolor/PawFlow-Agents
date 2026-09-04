@@ -25,7 +25,8 @@ _INDEX_CACHE_LOCK = threading.RLock()
 _APPEND_HANDLES: Dict[str, Dict[str, Any]] = {}
 _APPEND_HANDLES_LOCK = threading.RLock()
 
-from core._segmented_jsonl_io import _SegmentedJsonlIOMixin  # noqa: E402
+from core._segmented_jsonl_io import (  # noqa: E402
+    _SEGMENT_INDEX_VERSION, _SegmentedJsonlIOMixin)
 
 
 
@@ -80,15 +81,20 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
     def append_dicts(self, rows: Iterable[Dict[str, Any]]) -> None:
         from core.secret_sanitization import strip_secret_runtime_values
 
-        rows = (strip_secret_runtime_values(row) for row in rows)
-        if self.codec is not None:
-            rows = [self.codec.encode(row) for row in rows]
-        lines = [json.dumps(row, ensure_ascii=False) + "\n" for row in rows]
+        lines = []
+        role_flags = []
+        for row in rows:
+            row = strip_secret_runtime_values(row)
+            role_flags.append(bool(row.get("role")))
+            if self.codec is not None:
+                row = self.codec.encode(row)
+            lines.append(json.dumps(row, ensure_ascii=False) + "\n")
         if not lines:
             return
-        self.append_lines(lines)
+        self.append_lines(lines, role_flags=role_flags)
 
-    def append_lines(self, lines: Iterable[str]) -> None:
+    def append_lines(self, lines: Iterable[str],
+                     role_flags: Optional[Iterable[bool]] = None) -> None:
         started = time.monotonic()
         timings: Dict[str, float] = {}
 
@@ -98,6 +104,12 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         lines = [line if line.endswith("\n") else line + "\n" for line in lines]
         if not lines:
             return
+        if role_flags is None:
+            role_flags = [self._line_has_role(line) for line in lines]
+        else:
+            role_flags = list(role_flags)
+            if len(role_flags) != len(lines):
+                raise ValueError("role_flags must match lines")
         line_sizes = [len(line.encode("utf-8")) for line in lines]
         total_bytes = sum(line_sizes)
         cache_key = self._cache_key()
@@ -127,7 +139,7 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
             directory_ready = True
             if index_missing and not segment_dir_exists:
                 index = {
-                    "version": 1,
+                    "version": _SEGMENT_INDEX_VERSION,
                     "max_rows": self.max_rows,
                     "max_bytes": self.max_bytes,
                     "segments": [],
@@ -147,7 +159,7 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
                 state["directory_ready"] = True
         created_segment = False
         pending_by_path: Dict[Path, List[str]] = {}
-        for line, line_bytes in zip(lines, line_sizes):
+        for line, line_bytes, has_role in zip(lines, line_sizes, role_flags):
             t0 = time.monotonic()
             before = len(index.get("segments") or [])
             current = self._current_segment(index, next_bytes=line_bytes)
@@ -156,6 +168,9 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
             path = self.segment_dir / current["file"]
             pending_by_path.setdefault(path, []).append(line)
             current["rows"] = int(current.get("rows") or 0) + 1
+            if "role_rows" in current:
+                current["role_rows"] = int(
+                    current.get("role_rows") or 0) + int(bool(has_role))
             current["bytes"] = int(current.get("bytes") or 0) + line_bytes
             index["total_rows"] = int(index.get("total_rows") or 0) + 1
         append_detail = {
@@ -208,10 +223,15 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
     def replace_dicts(self, rows: Iterable[Dict[str, Any]]) -> None:
         from core.secret_sanitization import strip_secret_runtime_values
 
-        rows = (strip_secret_runtime_values(row) for row in rows)
-        if self.codec is not None:
-            rows = (self.codec.encode(row) for row in rows)
-        self.replace_lines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+        lines = []
+        role_flags = []
+        for row in rows:
+            row = strip_secret_runtime_values(row)
+            role_flags.append(bool(row.get("role")))
+            if self.codec is not None:
+                row = self.codec.encode(row)
+            lines.append(json.dumps(row, ensure_ascii=False) + "\n")
+        self.replace_lines(lines, role_flags=role_flags)
 
     def truncate_after_msg_id(self, msg_id: str) -> Dict[str, Any]:
         """Keep rows through ``msg_id`` and discard everything after it.
@@ -292,13 +312,15 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         target_item = {
             "file": target_path.name,
             "rows": len(kept_target_rows),
+            "role_rows": sum(1 for row in kept_target_rows if row.get("role")),
             "bytes": target_path.stat().st_size if target_path.exists() else 0,
         }
         total_rows += len(kept_target_rows)
         segments.append(target_item)
 
         new_index = {
-            "version": 1,
+            "version": (_SEGMENT_INDEX_VERSION if all(
+                "role_rows" in item for item in segments) else 1),
             "max_rows": self.max_rows,
             "max_bytes": self.max_bytes,
             "segments": segments,
@@ -343,7 +365,8 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         with _INDEX_CACHE_LOCK:
             _INDEX_CACHE.pop(self._cache_key(), None)
 
-    def replace_lines(self, lines: Iterable[str]) -> None:
+    def replace_lines(self, lines: Iterable[str],
+                      role_flags: Optional[Iterable[bool]] = None) -> None:
         self._close_append_handles(self.segment_dir)
         self._close_append_handles(self.flat_path)
         self.flat_path.parent.mkdir(parents=True, exist_ok=True)
@@ -352,19 +375,24 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir(parents=True, exist_ok=True)
         index = {
-            "version": 1,
+            "version": _SEGMENT_INDEX_VERSION,
             "max_rows": self.max_rows,
             "max_bytes": self.max_bytes,
             "segments": [],
             "total_rows": 0,
         }
         pending_by_path: Dict[Path, List[str]] = {}
+        role_iter = iter(role_flags) if role_flags is not None else None
         for line in lines:
             line = line if line.endswith("\n") else line + "\n"
+            has_role = (bool(next(role_iter)) if role_iter is not None
+                        else self._line_has_role(line))
             line_bytes = len(line.encode("utf-8"))
             current = self._current_segment(index, tmp_dir, next_bytes=line_bytes)
             pending_by_path.setdefault(tmp_dir / current["file"], []).append(line)
             current["rows"] = int(current.get("rows") or 0) + 1
+            current["role_rows"] = int(
+                current.get("role_rows") or 0) + int(has_role)
             current["bytes"] = int(current.get("bytes") or 0) + line_bytes
             index["total_rows"] = int(index.get("total_rows") or 0) + 1
         for path, path_lines in pending_by_path.items():
@@ -514,7 +542,7 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         data = {
-            "version": 1,
+            "version": _SEGMENT_INDEX_VERSION,
             "max_rows": self.max_rows,
             "max_bytes": self.max_bytes,
             "segments": [],
@@ -527,13 +555,19 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         segments = []
         if self.segment_dir.is_dir():
             for path in sorted(self.segment_dir.glob("*.jsonl")):
+                rows = 0
+                role_rows = 0
+                for row in self._iter_file(path):
+                    rows += 1
+                    role_rows += int(bool(row.get("role")))
                 segments.append({
                     "file": path.name,
-                    "rows": sum(1 for _ in self._iter_file(path)),
+                    "rows": rows,
+                    "role_rows": role_rows,
                     "bytes": path.stat().st_size,
                 })
         data = {
-            "version": 1,
+            "version": _SEGMENT_INDEX_VERSION,
             "max_rows": self.max_rows,
             "max_bytes": self.max_bytes,
             "segments": segments,

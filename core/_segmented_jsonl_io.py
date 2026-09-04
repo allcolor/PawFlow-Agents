@@ -18,6 +18,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
 
+_SEGMENT_INDEX_VERSION = 2
+_ROLE_KEY_BYTES = b'"role":'
+_ROLE_STRING_PREFIX = b'{"role": "'
+
+
 def _is_windows_wsl_unc_path(path: Path) -> bool:
     if os.name != "nt":
         return False
@@ -94,6 +99,8 @@ class _SegmentedJsonlIOMixin:
             for item in index.get("segments") or []:
                 if str(item.get("file") or "") == path.name:
                     item["rows"] = len(rows)
+                    item["role_rows"] = sum(
+                        1 for row in rows if row.get("role"))
                     item["bytes"] = path.stat().st_size if path.exists() else 0
                     break
             index["total_rows"] = sum(
@@ -149,8 +156,10 @@ class _SegmentedJsonlIOMixin:
             if current.get("file"):
                 self._close_append_handles(root / str(current.get("file")))
         name = f"{len(segments):06d}.jsonl"
-        item = {"file": name, "rows": 0, "bytes": 0}
+        item = {"file": name, "rows": 0, "role_rows": 0, "bytes": 0}
         segments.append(item)
+        if all("role_rows" in segment for segment in segments):
+            index["version"] = _SEGMENT_INDEX_VERSION
         return item
 
     def _segment_paths(self) -> List[Path]:
@@ -162,6 +171,63 @@ class _SegmentedJsonlIOMixin:
         if self.segment_dir.is_dir():
             return sorted(self.segment_dir.glob("*.jsonl"))
         return []
+
+    @staticmethod
+    def _line_has_role(line: str) -> bool:
+        try:
+            row = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            return False
+        return isinstance(row, dict) and bool(row.get("role"))
+
+    @classmethod
+    def _count_role_rows(cls, path: Path) -> int:
+        """Count display rows without decoding ordinary message payloads.
+
+        Canonical messages serialize ``role`` first. Only reordered or nested
+        occurrences take the slower JSON path; trace updates have no top-level
+        role and are therefore excluded exactly.
+        """
+        count = 0
+        try:
+            with open(path, "rb") as fh:
+                for raw in fh:
+                    stripped = raw.lstrip()
+                    if (stripped.startswith(_ROLE_STRING_PREFIX)
+                            and len(stripped) > len(_ROLE_STRING_PREFIX)
+                            and stripped[len(_ROLE_STRING_PREFIX)] != ord('"')):
+                        count += 1
+                    elif _ROLE_KEY_BYTES in raw:
+                        try:
+                            row = json.loads(raw)
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            continue
+                        if isinstance(row, dict) and row.get("role"):
+                            count += 1
+        except FileNotFoundError:
+            return 0
+        return count
+
+    def role_rows_by_path(self) -> Dict[Path, int]:
+        """Return exact display-row counts, upgrading old indexes once."""
+        self._flush_own_append_handles()
+        index = self._load_index()
+        changed = False
+        counts: Dict[Path, int] = {}
+        for item in index.get("segments") or []:
+            path = self.segment_dir / str(item.get("file") or "")
+            try:
+                count = int(item["role_rows"])
+            except (KeyError, TypeError, ValueError):
+                count = self._count_role_rows(path)
+                item["role_rows"] = count
+                changed = True
+            counts[path] = count
+        if changed:
+            index["version"] = _SEGMENT_INDEX_VERSION
+            self._remember_index(index, flushed=True)
+            self._write_index(index)
+        return counts
 
     @staticmethod
     def _iter_file(path: Path) -> Iterator[Dict[str, Any]]:

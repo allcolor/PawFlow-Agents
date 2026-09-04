@@ -393,8 +393,8 @@ class _CsTranscriptMixin:
     def iter_display_search_windows(self, cid: str, terms: List[str]):
         """Return plaintext windows whose segment contains a search term.
 
-        ``None`` requests the exact fallback (encrypted rows or failed rg).
-        Candidate rows still pass through decoding, sanitizing and composing.
+        ``None`` requests the exact fallback for encrypted rows. Candidate rows
+        still pass through decoding, sanitizing and composing.
         """
         if not self.exists(cid):
             return iter(())
@@ -404,9 +404,6 @@ class _CsTranscriptMixin:
         paths = log.iter_paths()
         if not paths:
             return iter(())
-        rg = shutil.which("rg")
-        if not rg:
-            return None
         patterns = []
         for term in terms:
             term = str(term or "")
@@ -417,27 +414,56 @@ class _CsTranscriptMixin:
             patterns.append(json.dumps(term, ensure_ascii=False)[1:-1])
         if not patterns:
             return iter(())
-        try:
-            result = subprocess.run(  # nosec B603 -- fixed executable + argv
-                [rg, "--files-with-matches", "--fixed-strings", "--ignore-case",
-                 "--no-messages", "--file", "-"] + [str(path) for path in paths],
-                input="\n".join(patterns) + "\n",
-                capture_output=True, text=True, timeout=10, check=False)
-        except (OSError, subprocess.SubprocessError):
-            logger.debug("history search prefilter unavailable", exc_info=True)
-            return None
-        if result.returncode == 1:
-            return iter(())
-        if result.returncode != 0:
-            logger.debug("history search prefilter failed: %s",
-                         result.stderr.strip())
-            return None
-        matched = {line.strip() for line in result.stdout.splitlines()
-                   if line.strip()}
+        lowered = [pattern.lower() for pattern in patterns]
+        ascii_patterns = all(pattern.isascii() for pattern in lowered)
+        matched = None
+        searcher = shutil.which("rg")
+        if searcher:
+            argv = [searcher, "--files-with-matches", "--fixed-strings",
+                    "--ignore-case", "--no-messages", "--file", "-"]
+        else:
+            searcher = shutil.which("grep") if ascii_patterns else None
+            argv = ([searcher, "-F", "-i", "-l", "-f", "-"]
+                    if searcher else [])
+        if searcher:
+            try:
+                result = subprocess.run(  # nosec B603 -- fixed executable + argv
+                    argv + [str(path) for path in paths],
+                    input="\n".join(patterns) + "\n",
+                    capture_output=True, text=True, timeout=10, check=False)
+                if result.returncode in (0, 1):
+                    matched = {line.strip() for line in result.stdout.splitlines()
+                               if line.strip()}
+                else:
+                    logger.debug("history search prefilter failed: %s",
+                                 result.stderr.strip())
+            except (OSError, subprocess.SubprocessError):
+                logger.debug("history search prefilter unavailable",
+                             exc_info=True)
+        if matched is None:
+            needles = ([pattern.encode("ascii") for pattern in lowered]
+                       if ascii_patterns else lowered)
+            matched = set()
+            try:
+                for path in paths:
+                    haystack = (path.read_bytes().lower() if ascii_patterns
+                                else path.read_text(
+                                    encoding="utf-8", errors="replace").lower())
+                    if any(needle in haystack for needle in needles):
+                        matched.add(str(path))
+            except OSError:
+                logger.debug("history search Python prefilter failed",
+                             exc_info=True)
+                return None
         if not matched:
             return iter(())
         selected = {i for i, path in enumerate(paths) if str(path) in matched}
         selected |= {i - 1 for i in selected if i}
+        # A version-1 index is upgraded here. Share the append lock while its
+        # active-segment count is measured and persisted so no row can land
+        # between those operations.
+        with self._get_conv_lock(cid):
+            role_rows = log.role_rows_by_path()
 
         def _windows():
             from core.secret_sanitization import strip_secret_runtime_values
@@ -456,8 +482,7 @@ class _CsTranscriptMixin:
                         start_index += len(messages)
                         raw = []
                         seen = 0
-                    start_index += sum(
-                        1 for row in log._iter_file(path) if row.get("role"))
+                    start_index += int(role_rows.get(path, 0))
                     continue
                 for row in log._iter_file(path):
                     if self._is_trace_update_row(row):

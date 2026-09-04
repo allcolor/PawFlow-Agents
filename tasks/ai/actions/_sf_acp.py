@@ -38,7 +38,7 @@ LOGIN_DRIVER = "agy_acp_login.py"
 LOGIN_IMAGE = "pawflow-claude-code:latest"
 CONTAINER_PREFIX = "pawflow-agyacp-login-"
 CONTAINER_RESULT = "/tmp/agy-acp-login.result.json"  # nosec B108 - path inside the login container
-CONTAINER_TOKEN_DIR = "/workspace/.gemini/antigravity-acp"
+CONTAINER_TOKEN_DIR = "/workspace/.gemini/antigravity-acp"  # nosec B105 - filesystem path, not a credential
 TOKEN_FILES = ("acp_token.json", "acp_business_token.json")
 LOGIN_TIMEOUT_SECONDS = 300
 #: Methods that need the browser; the API-key methods are configured, not logged in.

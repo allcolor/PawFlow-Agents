@@ -141,6 +141,42 @@ def _default_fetch(url: str, limit: int) -> bytes:
 Fetcher = Callable[[str, int], bytes]
 
 
+def _download_to_file(url: str, limit: int, destination: Path,
+                      fetch: Optional[Fetcher] = None) -> str:
+    """Download one archive to disk and return its SHA-256 digest.
+
+    Production downloads stream directly into the staging directory so a large
+    registry archive is never duplicated in memory.  ``fetch`` remains an
+    injectable byte-returning seam for deterministic tests and callers.
+    """
+    digest = hashlib.sha256()
+    size = 0
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    response = None
+    try:
+        if fetch is not None:
+            chunks = (fetch(_require_https(url), limit),)
+        else:
+            import requests
+
+            response = requests.get(_require_https(url), timeout=30, stream=True)
+            response.raise_for_status()
+            chunks = response.iter_content(chunk_size=64 * 1024)
+        with destination.open("wb") as output:
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                size += len(chunk)
+                if size > limit:
+                    raise RegistryError(f"{url} exceeds {limit} bytes")
+                digest.update(chunk)
+                output.write(chunk)
+    finally:
+        if response is not None:
+            response.close()
+    return digest.hexdigest()
+
+
 class RegistryCache:
     """Fetch registry documents with a TTL cache and offline fallback."""
 
@@ -287,6 +323,11 @@ def validate_entry(raw: Mapping[str, Any]) -> None:
         where = "/".join(str(p) for p in first.path) or "<root>"
         raise RegistryError(
             f"registry entry {raw.get('id', '?')!r} is invalid at {where}: {first.message}"
+        )
+    version = str(raw["version"])
+    if "/" in version or "\\" in version or ".." in version:
+        raise RegistryError(
+            f"registry entry {raw.get('id', '?')!r} has unsafe version: {version!r}"
         )
     distribution = raw["distribution"]
     env_maps = []
@@ -504,11 +545,19 @@ def _safe_extract_tar(archive: Path, target: Path) -> None:
         tf.extractall(target, filter="data")
 
 
-def _resolve_cmd(target: Path, cmd: str) -> Path:
-    rel = cmd.replace("\\", "/")
+def _target_path(target: Path, relative: str, *, field: str) -> Path:
+    """Resolve an untrusted registry path below ``target`` without touching it."""
+    rel = relative.replace("\\", "/")
     candidate = (target / rel).resolve()
     if target.resolve() not in candidate.parents:
-        raise RegistryError(f"registry cmd escapes the extracted directory: {cmd!r}")
+        raise RegistryError(
+            f"registry {field} escapes the extracted directory: {relative!r}"
+        )
+    return candidate
+
+
+def _resolve_cmd(target: Path, cmd: str) -> Path:
+    candidate = _target_path(target, cmd, field="cmd")
     if not candidate.is_file():
         raise RegistryError(f"registry cmd not found after extraction: {cmd!r}")
     return candidate
@@ -537,17 +586,14 @@ def materialise_binary(entry: RegistryEntry, platform_id: str, *,
     digest_file = directory / "archive.sha256"
     if digest_file.is_file():
         observed = digest_file.read_text(encoding="utf-8").strip()
+        if target_spec.sha256 and observed != target_spec.sha256:
+            raise RegistryError(
+                f"{entry.id} cached archive digest mismatch: registry "
+                f"{target_spec.sha256}, cached {observed}"
+            )
         command = _resolve_cmd(directory, target_spec.cmd)
         return Materialised(directory, command, target_spec.args, dict(target_spec.env),
                             observed, verified=bool(target_spec.sha256))
-
-    fetch = fetch or _default_fetch
-    raw = fetch(_require_https(target_spec.archive), MAX_ARCHIVE_BYTES)
-    observed = hashlib.sha256(raw).hexdigest()
-    if target_spec.sha256 and observed != target_spec.sha256:
-        raise RegistryError(
-            f"{entry.id} archive digest mismatch: registry {target_spec.sha256}, "
-            f"downloaded {observed}")
 
     staging = directory.with_name(directory.name + ".partial")
     if staging.exists():
@@ -555,13 +601,18 @@ def materialise_binary(entry: RegistryEntry, platform_id: str, *,
     staging.mkdir(parents=True)
     try:
         if kind == "raw":
-            cmd_name = target_spec.cmd.replace("\\", "/").lstrip("./") or "agent"
-            binary = staging / cmd_name
-            binary.parent.mkdir(parents=True, exist_ok=True)
-            binary.write_bytes(raw)
+            binary = _target_path(staging, target_spec.cmd, field="cmd")
+            observed = _download_to_file(
+                target_spec.archive, MAX_ARCHIVE_BYTES, binary, fetch=fetch)
         else:
             archive = staging / ("archive.zip" if kind == "zip" else "archive.tar")
-            archive.write_bytes(raw)
+            observed = _download_to_file(
+                target_spec.archive, MAX_ARCHIVE_BYTES, archive, fetch=fetch)
+        if target_spec.sha256 and observed != target_spec.sha256:
+            raise RegistryError(
+                f"{entry.id} archive digest mismatch: registry {target_spec.sha256}, "
+                f"downloaded {observed}")
+        if kind != "raw":
             try:
                 if kind == "zip":
                     _safe_extract_zip(archive, staging)
@@ -578,6 +629,11 @@ def materialise_binary(entry: RegistryEntry, platform_id: str, *,
         os.replace(staging, directory)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
+        for parent in (staging.parent, staging.parent.parent):
+            try:
+                parent.rmdir()
+            except OSError:
+                break
         raise
     command = _resolve_cmd(directory, target_spec.cmd)
     return Materialised(directory, command, target_spec.args, dict(target_spec.env),

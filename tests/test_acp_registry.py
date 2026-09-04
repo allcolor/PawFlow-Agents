@@ -214,6 +214,12 @@ def test_vendored_schema_is_the_upstream_agent_schema():
     with pytest.raises(reg.RegistryError, match="environment name"):
         reg.validate_entry({"id": "x", "name": "x", "version": "1.0.0", "description": "x",
                             "distribution": {"npx": {"package": "p", "env": {"BAD-NAME": "1"}}}})
+    for version in ("1.2.3/../../outside", "1.2.3\\..\\outside", "1.2.3..outside"):
+        with pytest.raises(reg.RegistryError, match="unsafe version"):
+            reg.validate_entry({
+                "id": "x", "name": "x", "version": version, "description": "x",
+                "distribution": {"npx": {"package": "p"}},
+            })
 
 
 # -- platform -------------------------------------------------------------------
@@ -257,6 +263,10 @@ def test_materialise_verifies_digest_extracts_and_reuses(cache, tmp_path):
     calls = len(cache.fetch.calls)
     again = reg.materialise_binary(goose, "linux-x86_64", base_dir=base, fetch=cache.fetch)
     assert again.command == done.command and len(cache.fetch.calls) == calls
+
+    (done.directory / "archive.sha256").write_text("0" * 64, encoding="utf-8")
+    with pytest.raises(reg.RegistryError, match="cached archive digest mismatch"):
+        reg.materialise_binary(goose, "linux-x86_64", base_dir=base, fetch=cache.fetch)
 
     with pytest.raises(reg.RegistryError, match="no binary for linux-aarch64"):
         reg.materialise_binary(goose, "linux-aarch64", base_dir=base, fetch=cache.fetch)
@@ -324,6 +334,56 @@ def test_zip_and_raw_binaries_extract_and_escapes_are_refused(tmp_path):
     missing = FakeFetch({"https://x/z.zip": _zip({"bin/other": b""})})
     with pytest.raises(reg.RegistryError, match="cmd not found"):
         reg.materialise_binary(entry, "linux-x86_64", base_dir=tmp_path / "miss", fetch=missing)
+
+    raw_escape = reg.parse_entry({
+        "id": "raw-escape", "name": "Raw escape", "version": "1.0.0",
+        "description": "raw", "distribution": {"binary": {
+            "linux-x86_64": {
+                "archive": "https://x/raw-agent", "cmd": "sub/../../../outside",
+            },
+        }},
+    })
+    with pytest.raises(reg.RegistryError, match="cmd escapes"):
+        reg.materialise_binary(
+            raw_escape, "linux-x86_64", base_dir=tmp_path / "raw",
+            fetch=FakeFetch({"https://x/raw-agent": b"binary"}),
+        )
+    assert not (tmp_path / "raw" / "raw-escape" / "outside").exists()
+
+
+@pytest.mark.parametrize("limit", [6, 5])
+def test_archive_download_streams_to_disk_and_hashes(monkeypatch, tmp_path, limit):
+    class Response:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size == 64 * 1024
+            yield b"abc"
+            yield b""
+            yield b"def"
+
+    response = Response()
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: response)
+    destination = tmp_path / "archive.bin"
+
+    if limit < 6:
+        with pytest.raises(reg.RegistryError, match="exceeds"):
+            reg._download_to_file("https://example.com/archive.bin", limit, destination)
+        assert response.closed
+        return
+
+    observed = reg._download_to_file(
+        "https://example.com/archive.bin", limit, destination)
+
+    assert destination.read_bytes() == b"abcdef"
+    assert observed == hashlib.sha256(b"abcdef").hexdigest()
+    assert response.closed
 
 
 def test_zip_extraction_refuses_an_expanded_archive_over_the_limit(monkeypatch, tmp_path):

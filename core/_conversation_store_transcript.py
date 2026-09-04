@@ -390,11 +390,16 @@ class _CsTranscriptMixin:
         if seen:
             yield start_index, self._compose_display_traces(raw)
 
-    def iter_display_search_windows(self, cid: str, terms: List[str]):
-        """Return plaintext windows whose segment contains a search term.
+    def iter_display_search_windows(
+            self, cid: str, terms: List[str], minimum_matches: int = 1,
+            standalone_terms: Optional[List[str]] = None,
+            excluded_tool_names: Optional[List[str]] = None):
+        """Return plaintext windows whose segment can satisfy a search tier.
 
         ``None`` requests the exact fallback for encrypted rows. Candidate rows
-        still pass through decoding, sanitizing and composing.
+        still pass through decoding, sanitizing and composing. For lexical
+        fallback, ``minimum_matches`` and ``standalone_terms`` reject broad
+        one-word segments before their JSON rows are decoded.
         """
         if not self.exists(cid):
             return iter(())
@@ -411,11 +416,66 @@ class _CsTranscriptMixin:
                 continue
             # Match the representation written by json.dumps, including quotes,
             # newlines and backslashes, without putting user text in argv.
-            patterns.append(json.dumps(term, ensure_ascii=False)[1:-1])
+            pattern = json.dumps(term, ensure_ascii=False)[1:-1]
+            if pattern not in patterns:
+                patterns.append(pattern)
         if not patterns:
             return iter(())
+        minimum_matches = max(1, int(minimum_matches or 1))
         lowered = [pattern.lower() for pattern in patterns]
+        standalone = {
+            json.dumps(str(term), ensure_ascii=False)[1:-1].lower()
+            for term in (standalone_terms or []) if str(term or "")
+        }
+        excluded_tools = {
+            str(name).casefold() for name in (excluded_tool_names or [])
+            if str(name or "")
+        }
+        excluded_markers = {
+            json.dumps(f'<tool_output tool="{name}">')[1:-1].casefold()
+            for name in excluded_tools
+        }
+        excluded_name_markers = {
+            f'"tool_name": "{name}"'.casefold() for name in excluded_tools
+        }
         ascii_patterns = all(pattern.isascii() for pattern in lowered)
+        ascii_patterns = ascii_patterns and all(
+            pattern.isascii() for pattern in standalone)
+        needles = ([pattern.encode("ascii") for pattern in lowered]
+                   if ascii_patterns else lowered)
+        standalone_needles = ({pattern.encode("ascii") for pattern in standalone}
+                              if ascii_patterns else standalone)
+
+        def _qualifies(haystack) -> bool:
+            matches = sum(needle in haystack for needle in needles)
+            return (matches >= minimum_matches
+                    or any(needle in haystack for needle in standalone_needles))
+
+        def _read_haystack(path):
+            if ascii_patterns:
+                lines = path.read_bytes().lower().splitlines()
+                role_markers = (b'"role": "tool"', b'"role":"tool"')
+                markers = tuple(marker.encode("ascii")
+                                for marker in excluded_markers)
+                name_markers = tuple(marker.encode("ascii")
+                                     for marker in excluded_name_markers)
+            else:
+                lines = path.read_text(
+                    encoding="utf-8", errors="replace").lower().splitlines()
+                role_markers = ('"role": "tool"', '"role":"tool"')
+                markers = tuple(excluded_markers)
+                name_markers = tuple(excluded_name_markers)
+            if excluded_tools:
+                lines = [
+                    line for line in lines
+                    if not (any(role in line for role in role_markers)
+                            and (any(marker in line for marker in markers)
+                                 or any(marker in line
+                                        for marker in name_markers)))
+                ]
+            separator = b"\n" if ascii_patterns else "\n"
+            return separator.join(lines)
+
         matched = None
         searcher = shutil.which("rg")
         if searcher:
@@ -441,18 +501,23 @@ class _CsTranscriptMixin:
                 logger.debug("history search prefilter unavailable",
                              exc_info=True)
         if matched is None:
-            needles = ([pattern.encode("ascii") for pattern in lowered]
-                       if ascii_patterns else lowered)
             matched = set()
             try:
                 for path in paths:
-                    haystack = (path.read_bytes().lower() if ascii_patterns
-                                else path.read_text(
-                                    encoding="utf-8", errors="replace").lower())
-                    if any(needle in haystack for needle in needles):
+                    if _qualifies(_read_haystack(path)):
                         matched.add(str(path))
             except OSError:
                 logger.debug("history search Python prefilter failed",
+                             exc_info=True)
+                return None
+        elif minimum_matches > 1 or excluded_tools:
+            try:
+                matched = {
+                    str(path) for path in paths
+                    if str(path) in matched and _qualifies(_read_haystack(path))
+                }
+            except OSError:
+                logger.debug("history search threshold prefilter failed",
                              exc_info=True)
                 return None
         if not matched:
@@ -506,30 +571,55 @@ class _CsTranscriptMixin:
     def load_window_by_index(self, cid: str, start: int, count: int) -> List[Dict]:
         """``count`` display messages from absolute display index ``start``.
 
-        Reads forward and stops as soon as the window is closed, so the cost
-        is the distance to the window plus its size -- never the whole file.
+        Segment display-row counts locate the first relevant file without
+        decoding the transcript prefix. Reading then stops as soon as the
+        window is closed, so an index near the tail costs one segment plus the
+        requested page instead of the whole conversation.
         """
         if count <= 0 or start < 0 or not self.exists(cid):
             return []
         log = self._transcript_log(cid)
         if not log.exists():
             return []
+        # role_rows is maintained on append by the version-2 segment index.
+        # Older indexes are upgraded once by role_rows_by_path(); the upgrade
+        # counts display rows without decoding ordinary message payloads.
+        with self._get_conv_lock(cid):
+            paths = log.iter_paths()
+            role_rows = log.role_rows_by_path()
+        remaining = start
+        first_path = -1
+        for path_index, path in enumerate(paths):
+            path_rows = int(role_rows.get(path, 0))
+            if remaining < path_rows:
+                first_path = path_index
+                break
+            remaining -= path_rows
+        if first_path < 0:
+            return []
+
+        from core.secret_sanitization import strip_secret_runtime_values
+
         raw: List[Dict[str, Any]] = []
         idx = 0
         taken = 0
-        for row in log.iter_rows():
-            if self._is_trace_update_row(row):
-                if taken:
+        codec = log.codec
+        for path in paths[first_path:]:
+            for stored_row in log._iter_file(path):
+                row = codec.decode(stored_row) if codec is not None else stored_row
+                row = strip_secret_runtime_values(row)
+                if self._is_trace_update_row(row):
+                    if taken:
+                        raw.append(row)
+                    continue
+                if not row.get("role"):
+                    continue
+                if taken >= count:
+                    return self._compose_display_traces(raw)
+                if idx >= remaining:
                     raw.append(row)
-                continue
-            if not row.get("role"):
-                continue
-            if taken >= count:
-                break
-            if idx >= start:
-                raw.append(row)
-                taken += 1
-            idx += 1
+                    taken += 1
+                idx += 1
         return self._compose_display_traces(raw)
 
     def find_display_index(self, cid: str, msg_id: str = "", seq: int = 0,

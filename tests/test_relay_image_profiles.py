@@ -33,6 +33,7 @@ def test_relay_catalog_has_required_base_runtime():
     assert "python3" in base["apt"]
     assert "python3-dev" in base["apt"]
     assert "ripgrep" in base["apt"]
+    assert "time" in base["apt"]
     assert "vim-tiny" in base["apt"]
     assert "nano" in base["apt"]
     assert "procps" in base["apt"]

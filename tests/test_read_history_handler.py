@@ -111,8 +111,11 @@ def test_read_history_search_prefers_exact_phrase_matches():
 
 def test_read_history_search_uses_candidate_windows_when_available():
     class CandidateStore(FakeConversationStore):
-        def iter_display_search_windows(self, conversation_id, terms):
-            self.terms = terms
+        def iter_display_search_windows(
+                self, conversation_id, terms, minimum_matches=1,
+                standalone_terms=None, excluded_tool_names=None):
+            self.request = (terms, minimum_matches, standalone_terms,
+                            excluded_tool_names)
             return iter([(40, [self.messages[40]])])
 
         def iter_display_windows(self, conversation_id, chunk=0):
@@ -129,9 +132,95 @@ def test_read_history_search_uses_candidate_windows_when_available():
         store, {"query": "exact needle", "limit": 20},
         role_filter="", agent_filter="")
 
-    assert store.terms == ["exact needle", "exact", "needle"]
+    assert store.request == (["exact needle"], 1, [], ["read_history"])
     assert "Found 1 match(es)" in result
     assert "[#40]" in result
+
+
+def test_read_history_search_excludes_its_legacy_plain_results():
+    handler = ReadHistoryHandler()
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "rh1",
+                "name": "mcp__pawflow__use_tool",
+                "arguments": {"tool_name": "read_history", "arguments_json": "{}"},
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "rh1",
+            "content": "nested transcript critical needle private-copy",
+        },
+        {"role": "assistant", "content": "genuine critical needle answer"},
+    ]
+
+    result = handler._do_search(
+        FakeConversationStore(messages),
+        {"query": "critical needle", "limit": 20},
+        role_filter="", agent_filter="")
+
+    assert "Found 1 match(es)" in result
+    assert "genuine critical needle answer" in result
+    assert "private-copy" not in result
+
+
+def test_read_history_search_excludes_wrapped_results_without_parent_call():
+    handler = ReadHistoryHandler()
+    messages = [{
+        "role": "tool",
+        "content": (
+            '<tool_output tool="read_history">\n'
+            "nested-only-needle copied transcript\n"
+            "</tool_output>"
+        ),
+    }]
+
+    result = handler._do_search(
+        FakeConversationStore(messages),
+        {"query": "nested-only-needle", "limit": 20},
+        role_filter="", agent_filter="")
+
+    assert "No messages matching" in result
+    assert "copied transcript" not in result
+
+
+def test_read_history_tool_role_explicitly_restores_recursive_results():
+    handler = ReadHistoryHandler()
+    messages = [{
+        "role": "tool",
+        "content": (
+            '<tool_output tool="read_history">\n'
+            "nested-only-needle copied transcript\n"
+            "</tool_output>"
+        ),
+    }]
+
+    result = handler._do_search(
+        FakeConversationStore(messages),
+        {"query": "nested-only-needle", "limit": 20},
+        role_filter="tool", agent_filter="")
+
+    assert "Found 1 match(es)" in result
+    assert "copied transcript" in result
+
+
+def test_read_history_search_keeps_other_tool_results():
+    handler = ReadHistoryHandler()
+    messages = [{
+        "role": "tool",
+        "content": '<tool_output tool="bash">\nreal-tool-needle\n</tool_output>',
+    }]
+
+    result = handler._do_search(
+        FakeConversationStore(messages),
+        {"query": "real-tool-needle", "limit": 20},
+        role_filter="", agent_filter="")
+
+    assert "Found 1 match(es)" in result
+    assert "real-tool-needle" in result
 
 
 def test_read_history_keyword_fallback_rejects_single_generic_term_hits():

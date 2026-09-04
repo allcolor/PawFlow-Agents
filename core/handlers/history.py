@@ -459,14 +459,20 @@ class ReadHistoryHandler(ToolHandler):
         for start, msgs in store.iter_display_windows(self._conversation_id):
             yield start, msgs
 
-    def _search_windows(self, store, terms: List[str]):
+    def _search_windows(self, store, terms: List[str], minimum_matches: int = 1,
+                        standalone_terms: Optional[List[str]] = None,
+                        excluded_tool_names: Optional[List[str]] = None):
         """Use the store's optional candidate-segment reader when available."""
         if not self._owns_conversation(store):
             return
         candidate_reader = getattr(store, "iter_display_search_windows", None)
         if candidate_reader is not None:
             try:
-                candidates = candidate_reader(self._conversation_id, terms)
+                candidates = candidate_reader(
+                    self._conversation_id, terms,
+                    minimum_matches=minimum_matches,
+                    standalone_terms=standalone_terms or [],
+                    excluded_tool_names=excluded_tool_names or [])
             except Exception:
                 logger.debug("history search prefilter failed", exc_info=True)
                 candidates = None
@@ -504,6 +510,71 @@ class ReadHistoryHandler(ToolHandler):
         elif role_filter and _msg_role(msg) != role_filter:
             return False
         return not agent_filter or agent_filter in _msg_agents_involved(msg)
+
+    @staticmethod
+    def _remember_tool_calls(msg, tool_names: Dict[str, str]) -> None:
+        """Remember tool names so legacy plain results can be classified."""
+        if isinstance(msg, dict):
+            role = msg.get("role", "")
+            calls = [msg] if role == "tool_call" else msg.get("tool_calls") or []
+        else:
+            role = getattr(msg, "role", "")
+            calls = ([msg] if role == "tool_call"
+                     else getattr(msg, "tool_calls", None) or [])
+        for call in calls:
+            if isinstance(call, dict):
+                call_id = call.get("id") or call.get("tool_call_id") or call.get("tc_id")
+                name = call.get("name") or call.get("tool_name") or call.get("tool")
+                arguments = call.get("arguments", {})
+            else:
+                call_id = (getattr(call, "id", "")
+                           or getattr(call, "tool_call_id", ""))
+                name = (getattr(call, "name", "")
+                        or getattr(call, "tool_name", ""))
+                arguments = getattr(call, "arguments", {})
+            if not call_id or not name:
+                continue
+            from core.llm_client import unwrap_mcp_tool
+            tool_names[str(call_id)] = str(
+                unwrap_mcp_tool(str(name), arguments)[0]).casefold()
+
+    @classmethod
+    def _is_recursive_history_result(cls, msg,
+                                     tool_names: Dict[str, str]) -> bool:
+        """True only for a tool result produced by ``read_history`` itself."""
+        if _msg_role(msg) != "tool":
+            return False
+        if isinstance(msg, dict):
+            call_id = msg.get("tool_call_id") or msg.get("tc_id") or ""
+            direct_name = msg.get("tool_name") or msg.get("tool") or ""
+        else:
+            call_id = (getattr(msg, "tool_call_id", "")
+                       or getattr(msg, "tc_id", ""))
+            direct_name = (getattr(msg, "tool_name", "")
+                           or getattr(msg, "tool", ""))
+        if str(direct_name).casefold() == "read_history":
+            return True
+        if call_id and tool_names.get(str(call_id)) == "read_history":
+            return True
+        content = cls._get_content(msg).lstrip()
+        return bool(re.match(
+            r"<tool_output\s+tool=(['\"])read_history\1(?:\s|>)",
+            content, re.IGNORECASE))
+
+    @classmethod
+    def _iter_search_messages(cls, windows, role_filter: str,
+                              agent_filter: str):
+        """Yield searchable rows while preventing read_history recursion."""
+        tool_names: Dict[str, str] = {}
+        for start, msgs in windows:
+            for i, msg in enumerate(msgs):
+                cls._remember_tool_calls(msg, tool_names)
+                if not cls._matches(msg, role_filter, agent_filter):
+                    continue
+                if (role_filter != "tool"
+                        and cls._is_recursive_history_result(msg, tool_names)):
+                    continue
+                yield start + i, msg
 
     @staticmethod
     def _budget(offset_arg, limit_arg) -> tuple:
@@ -562,24 +633,42 @@ class ReadHistoryHandler(ToolHandler):
         offset, limit, budget = self._budget(
             arguments.get("offset"), arguments.get("limit"))
         exact_hits = []      # (index, msg), first `budget` of them
-        token_hits = []      # min-heap of (score, -index, index, msg)
         exact_total = 0
-        token_total = 0
         query_lower = query.lower()
         tokens = _search_tokens(query)
-        terms = [query] + [token for token in tokens
-                           if token.lower() != query_lower]
-        for start, msgs in self._search_windows(store, terms):
-            for i, msg in enumerate(msgs):
-                if not self._matches(msg, role_filter, agent_filter):
-                    continue
+        excluded_tools = [] if role_filter == "tool" else ["read_history"]
+        exact_windows = self._search_windows(
+            store, [query], excluded_tool_names=excluded_tools)
+        for index, msg in self._iter_search_messages(
+                exact_windows, role_filter, agent_filter):
+            content_lower = self._render_body(msg, role_filter).lower()
+            if query_lower in content_lower:
+                exact_total += 1
+                if len(exact_hits) < budget:
+                    exact_hits.append((index, msg))
+        token_hits = []      # min-heap of (score, -index, index, msg)
+        token_total = 0
+        if not exact_total and tokens:
+            minimum_matches = 1 if len(tokens) == 1 else 2
+            standalone_terms = [
+                token for token in tokens
+                if any(char in token for char in "_.-")
+            ]
+            token_windows = self._search_windows(
+                store, tokens, minimum_matches, standalone_terms,
+                excluded_tool_names=excluded_tools)
+            for index, msg in self._iter_search_messages(
+                    token_windows, role_filter, agent_filter):
                 content_lower = self._render_body(msg, role_filter).lower()
+                # A composed trace can contain an exact phrase which did
+                # not occur contiguously in one raw JSON row. Exact still
+                # wins if the lexical pass discovers such a message.
                 if query_lower in content_lower:
                     exact_total += 1
                     if len(exact_hits) < budget:
-                        exact_hits.append((start + i, msg))
+                        exact_hits.append((index, msg))
                     continue
-                if not tokens or exact_total:
+                if exact_total:
                     continue
                 score = _keyword_score(tokens, content_lower)
                 if not score:
@@ -588,13 +677,12 @@ class ReadHistoryHandler(ToolHandler):
                 # Bounded best-of in O(log(budget)). The previous linear
                 # minimum scan per hit made broad searches cost
                 # O(total_hits * page_size).
-                index = start + i
                 candidate = (score, -index, index, msg)
                 if len(token_hits) < budget:
                     heapq.heappush(token_hits, candidate)
                 elif candidate[:2] > token_hits[0][:2]:
                     heapq.heapreplace(token_hits, candidate)
-        if exact_hits:
+        if exact_total:
             hits, total = exact_hits, exact_total
         else:
             token_hits.sort(key=lambda h: (-h[0], h[2]))

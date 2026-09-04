@@ -156,6 +156,33 @@ class BoundedReads(unittest.TestCase):
                          "read_history called store.load() -- that reads the "
                          "whole conversation to answer one page")
 
+    def test_read_by_tail_index_skips_earlier_segments(self):
+        """Bounded memory must not hide an O(index) prefix scan."""
+        from core.segmented_jsonl import SegmentedJsonl
+
+        log = self.store._transcript_log("big")
+        rows = list(log.iter_rows())
+        SegmentedJsonl(
+            self.store._transcript_path("big"), max_rows=100,
+        ).replace_dicts(rows)
+        paths = self.store._transcript_log("big").iter_paths()
+        skipped_paths = set(paths[:-1])
+        iter_file = SegmentedJsonl._iter_file
+
+        def reject_skipped_segment_reads(path):
+            if path in skipped_paths:
+                raise AssertionError(
+                    "read(index) decoded a segment before the target")
+            return iter_file(path)
+
+        with patch.object(
+                SegmentedJsonl, "_iter_file",
+                side_effect=reject_skipped_segment_reads):
+            out = self.handler.execute({"action": "read", "index": 4900})
+
+        self.assertIn("message number 4900", out)
+        self.assertIn("[#4900]", out)
+
 
 class StillCorrect(unittest.TestCase):
     """Bounded is worthless if it also became wrong."""
@@ -219,6 +246,192 @@ class StillCorrect(unittest.TestCase):
 
         self.assertIn("unique-late-needle", out)
         self.assertIn("[#8]", out)
+
+    def test_exact_search_does_not_decode_token_only_segments(self):
+        """An exact hit must win before broad token candidates are decoded."""
+        from core.segmented_jsonl import SegmentedJsonl
+
+        log = self.store._transcript_log("c")
+        rows = list(log.iter_rows())
+        rows[0]["content"] = "alpha appears alone here"
+        rows[8]["content"] = "the exact alpha beta phrase"
+        SegmentedJsonl(
+            self.store._transcript_path("c"), max_rows=2,
+        ).replace_dicts(rows)
+        paths = self.store._transcript_log("c").iter_paths()
+        token_only_path = paths[0]
+        iter_file = SegmentedJsonl._iter_file
+
+        def reject_token_only_segment(path):
+            if path == token_only_path:
+                raise AssertionError(
+                    "exact search decoded a token-only transcript segment")
+            return iter_file(path)
+
+        with patch("core._conversation_store_transcript.shutil.which",
+                   return_value=None), patch.object(
+                       SegmentedJsonl, "_iter_file",
+                       side_effect=reject_token_only_segment):
+            out = self.handler.execute({
+                "action": "search", "query": "alpha beta", "limit": 10,
+            })
+
+        self.assertIn("the exact alpha beta phrase", out)
+        self.assertIn("[#8]", out)
+
+    def test_keyword_search_decodes_only_segments_meeting_its_threshold(self):
+        """One ordinary token cannot make a multi-term segment a candidate."""
+        from core.segmented_jsonl import SegmentedJsonl
+
+        log = self.store._transcript_log("c")
+        rows = list(log.iter_rows())
+        rows[0]["content"] = "alpha appears alone here"
+        rows[2]["content"] = "beta appears alone here"
+        rows[8]["content"] = "alpha and later beta qualify together"
+        SegmentedJsonl(
+            self.store._transcript_path("c"), max_rows=2,
+        ).replace_dicts(rows)
+        paths = self.store._transcript_log("c").iter_paths()
+        token_only_paths = set(paths[:2])
+        iter_file = SegmentedJsonl._iter_file
+
+        def reject_token_only_segments(path):
+            if path in token_only_paths:
+                raise AssertionError(
+                    "keyword search decoded a one-token transcript segment")
+            return iter_file(path)
+
+        with patch("core._conversation_store_transcript.shutil.which",
+                   return_value=None), patch.object(
+                       SegmentedJsonl, "_iter_file",
+                       side_effect=reject_token_only_segments):
+            out = self.handler.execute({
+                "action": "search", "query": "alpha beta gamma", "limit": 10,
+            })
+
+        self.assertIn("alpha and later beta qualify together", out)
+        self.assertIn("[#8]", out)
+
+    def test_external_search_candidates_are_thresholded_before_decode(self):
+        """Ripgrep's broad file list is narrowed before parsing JSON rows."""
+        from core.segmented_jsonl import SegmentedJsonl
+
+        log = self.store._transcript_log("c")
+        rows = list(log.iter_rows())
+        rows[0]["content"] = "alpha appears alone here"
+        rows[2]["content"] = "beta appears alone here"
+        rows[8]["content"] = "alpha and later beta qualify together"
+        SegmentedJsonl(
+            self.store._transcript_path("c"), max_rows=2,
+        ).replace_dicts(rows)
+        paths = self.store._transcript_log("c").iter_paths()
+        token_only_paths = set(paths[:2])
+        iter_file = SegmentedJsonl._iter_file
+
+        def search_result(*_args, **kwargs):
+            if "alpha beta gamma" in kwargs["input"]:
+                return SimpleNamespace(returncode=1, stdout="", stderr="")
+            return SimpleNamespace(
+                returncode=0,
+                stdout="".join(f"{path}\n" for path in paths), stderr="")
+
+        def reject_token_only_segments(path):
+            if path in token_only_paths:
+                raise AssertionError(
+                    "external prefilter left a one-token segment selected")
+            return iter_file(path)
+
+        with patch("core._conversation_store_transcript.shutil.which",
+                   return_value="/test/rg"), patch(
+                       "core._conversation_store_transcript.subprocess.run",
+                       side_effect=search_result) as run, patch.object(
+                           SegmentedJsonl, "_iter_file",
+                           side_effect=reject_token_only_segments):
+            out = self.handler.execute({
+                "action": "search", "query": "alpha beta gamma", "limit": 10,
+            })
+
+        self.assertEqual(run.call_count, 2)
+        self.assertIn("alpha and later beta qualify together", out)
+
+    def test_keyword_segment_prefilter_keeps_structured_standalone_terms(self):
+        from core.segmented_jsonl import SegmentedJsonl
+
+        log = self.store._transcript_log("c")
+        rows = list(log.iter_rows())
+        rows[0]["content"] = "alpha appears alone here"
+        rows[8]["content"] = "PAWFLOW_USE_RTK remains disabled"
+        SegmentedJsonl(
+            self.store._transcript_path("c"), max_rows=2,
+        ).replace_dicts(rows)
+        paths = self.store._transcript_log("c").iter_paths()
+        iter_file = SegmentedJsonl._iter_file
+
+        def reject_generic_segment(path):
+            if path == paths[0]:
+                raise AssertionError(
+                    "structured-token search decoded a generic-token segment")
+            return iter_file(path)
+
+        with patch("core._conversation_store_transcript.shutil.which",
+                   return_value=None), patch.object(
+                       SegmentedJsonl, "_iter_file",
+                       side_effect=reject_generic_segment):
+            out = self.handler.execute({
+                "action": "search",
+                "query": "alpha PAWFLOW_USE_RTK missing", "limit": 10,
+            })
+
+        self.assertIn("PAWFLOW_USE_RTK remains disabled", out)
+        self.assertIn("[#8]", out)
+
+    def test_search_prefilter_skips_nested_read_history_result_segments(self):
+        """Copied search output must not select or decode its own segment."""
+        from core.segmented_jsonl import SegmentedJsonl
+
+        log = self.store._transcript_log("c")
+        rows = list(log.iter_rows())
+        rows[0].update({
+            "role": "assistant", "content": "",
+            "tool_calls": [{
+                "id": "rh1", "name": "read_history",
+                "arguments": {"action": "search"},
+            }],
+        })
+        rows[1].update({
+            "role": "tool", "tool_call_id": "rh1",
+            "content": (
+                '<tool_output tool="read_history">\n'
+                "[#999] assistant: unique-nested-needle copied-result\n"
+                "</tool_output>"
+            ),
+        })
+        rows[8]["content"] = "genuine unique-nested-needle answer"
+        SegmentedJsonl(
+            self.store._transcript_path("c"), max_rows=2,
+        ).replace_dicts(rows)
+        paths = self.store._transcript_log("c").iter_paths()
+        nested_result_path = paths[0]
+        iter_file = SegmentedJsonl._iter_file
+
+        def reject_nested_result_segment(path):
+            if path == nested_result_path:
+                raise AssertionError(
+                    "search decoded a segment selected only by nested output")
+            return iter_file(path)
+
+        with patch("core._conversation_store_transcript.shutil.which",
+                   return_value=None), patch.object(
+                       SegmentedJsonl, "_iter_file",
+                       side_effect=reject_nested_result_segment):
+            out = self.handler.execute({
+                "action": "search", "query": "unique-nested-needle",
+                "limit": 10,
+            })
+
+        self.assertIn("genuine unique-nested-needle answer", out)
+        self.assertIn("[#8]", out)
+        self.assertNotIn("copied-result", out)
 
     def test_search_uses_standard_grep_when_ripgrep_is_unavailable(self):
         path = self.store._transcript_log("c").iter_paths()[0]

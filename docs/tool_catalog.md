@@ -334,16 +334,27 @@ Four properties worth knowing before relying on it:
 
 `read_history` reads the conversation it is called in, a bounded window at a
 time — it never loads a transcript whole, which is what a conversation of a
-few hundred thousand messages makes fatal.
+few hundred thousand messages makes fatal. `recent` reads backward from the
+tail. `read(index)` and the index window used by `around` jump to the owning
+segment from its display-row count instead of decoding every earlier message.
 
-For `search`, plaintext segmented logs are filtered at the file-name level by
-ripgrep, standard grep, or a bounded in-process scan when neither executable is
-available. Only candidate segments and their immediate trace-anchor neighbours
-are decoded and composed. Exact display-row counts live in each segment's
-derived index metadata, so skipped prefixes preserve absolute `[#index]` labels
-without being decoded; version-1 indexes are upgraded once by scanning ordinary
-row prefixes and decoding only ambiguous rows. Encrypted transcripts retain the
-exact bounded streaming scan because plaintext search metadata is forbidden.
+For `search`, plaintext segmented logs use two file-level passes: exact phrase
+candidates first, then (only when there is no exact result) lexical candidates
+that can satisfy the same score threshold as the message matcher. Ripgrep,
+standard grep, or a bounded in-process scan identifies candidates; only those
+segments and their immediate trace-anchor neighbours are decoded and composed.
+By default, search excludes results produced by `read_history` itself before
+segment qualification, preventing prior search output from recursively becoming
+new search output. Other tool results remain searchable; `role_filter="tool"`
+explicitly includes `read_history` results for diagnostics.
+The server, relay-base, and agent CLI images bundle ripgrep and GNU time so this
+path and its benchmarks do not depend on optional container packages. Exact
+display-row counts live in each segment's derived index metadata, so skipped
+prefixes preserve absolute `[#index]` labels and also accelerate direct index
+windows without being decoded; version-1 indexes are upgraded once by scanning
+ordinary row prefixes and decoding only ambiguous rows. Encrypted transcripts
+use the non-plaintext counts for direct index windows but retain the exact
+bounded streaming search because plaintext search metadata is forbidden.
 
 Ownership is therefore checked once, up front, in `_owns_conversation`
 (`core/handlers/history.py`): `recent` pages through `load_page`, which is

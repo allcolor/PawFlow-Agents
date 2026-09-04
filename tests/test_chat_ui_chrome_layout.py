@@ -54,13 +54,17 @@ def test_appearance_and_language_are_compact_controls_in_the_header():
         "tasks/io/chat_ui/css/100_component_contract.css"
     ).read_text(encoding="utf-8")
     assert ".header .header-dock-item" in component_contract
-    assert ".hdr-icon-btn" in component_contract
     assert ".conversation-control-button" in component_contract
     assert ".action-dock-menu > .action-menu-item" in component_contract
-    assert "background: var(--pf-sidebar) !important" in component_contract
+    assert "#pawflowChat :is(button," in component_contract
+    assert "background: transparent !important" in component_contract
+    assert "border: 1px solid transparent !important" in component_contract
+    assert "border-color: var(--pf-accent) !important" in component_contract
+    assert "transform: scale(1.08)" in component_contract
     chat_template = Path("tasks/io/chat_ui/templates/chat.html").read_text(
         encoding="utf-8"
     )
+    assert '<body id="pawflowChat">' in chat_template
     assert chat_template.index("{{ theme_block|safe }}") < chat_template.index(
         "/chat/js/css/100_component_contract.css"
     )
@@ -92,6 +96,8 @@ def test_appearance_and_language_reuse_dock_tooltips_and_hover_zoom():
         assert 'class="ami-desc"' in control
 
     assert ".header-dock-item" in TOOLTIPS_JS
+    assert "const TARGET_SELECTOR = 'button," in TOOLTIPS_JS
+    assert "target.textContent || target.value" in TOOLTIPS_JS
     assert "transform: scale(1.4);" in TEMPLATE_HTML
     assert 'id="themeSelectControl"' not in header_controls
     assert 'id="appearanceBtn"' in header_controls

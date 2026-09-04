@@ -150,9 +150,9 @@ def test_skeleton_only_includes_and_partials_stay_small():
     assert len(includes) >= 12
     for name in includes:
         assert (TEMPLATES_DIR / name).is_file(), name
-    # Only the component-contract stylesheet lives in the skeleton itself;
-    # the workspace partial owns every conversation-stage wrapper.
-    assert _ids(skeleton) == ["component-contract-css"]
+    # The global component contract needs one stable page root; the workspace
+    # partial still owns every conversation-stage wrapper.
+    assert _ids(skeleton) == ["component-contract-css", "pawflowChat"]
     for path in TEMPLATES_DIR.rglob("*.html"):
         rel = path.relative_to(TEMPLATES_DIR).as_posix()
         if rel == "chat.html":

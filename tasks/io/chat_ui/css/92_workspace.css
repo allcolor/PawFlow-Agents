@@ -81,6 +81,14 @@
   color: var(--pf-text);
   font-size: 11px;
   user-select: none;
+  cursor: grab;
+}
+.workspace-surface-header:active {
+  cursor: grabbing;
+}
+.workspace-surface.workspace-selected > .workspace-surface-header {
+  background: color-mix(in srgb, var(--pf-accent) 18%, var(--pf-sidebar)) !important;
+  border-bottom-color: var(--pf-accent) !important;
 }
 .workspace-surface-identity {
   flex: 1 1 auto;
@@ -191,6 +199,30 @@ body.pf-android-app .workspace-surface-actions {
   border-radius: 7px;
   scroll-snap-align: start;
   box-shadow: 0 3px 12px color-mix(in srgb, var(--pf-shadow) 62%, transparent);
+}
+.workspace-drop-slot {
+  display: none;
+}
+.workspace-tiled .workspace-drop-slot {
+  display: flex;
+  width: var(--workspace-tile-width);
+  height: var(--workspace-tile-height);
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed color-mix(in srgb, var(--pf-border) 70%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--pf-panel) 20%, transparent);
+  color: var(--pf-muted);
+  scroll-snap-align: start;
+}
+.workspace-tiled .workspace-drop-slot.workspace-drop-active,
+.workspace-tiled .workspace-surface.workspace-drop-active {
+  border-color: var(--pf-accent-2);
+  box-shadow: inset 0 0 0 1px var(--pf-accent-2);
+}
+.workspace-surface.workspace-dragging {
+  opacity: 0.58;
 }
 .workspace-tiled .workspace-surface-header {
   display: flex;

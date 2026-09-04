@@ -77,8 +77,11 @@ def test_header_shows_the_pawflow_logo_linking_to_the_site():
 
 
 def test_sidebar_grip_is_an_edge_tab_and_sidebar_defaults_closed():
+    assert '<div class="sidebar-shell collapsed" id="sidebarShell">' in TEMPLATE
     assert '<div class="sidebar collapsed" id="sidebar">' in TEMPLATE
-    assert ".sidebar-toggle { position: fixed; top: 50%; left: 0;" in TEMPLATE
+    assert ".sidebar-toggle { position: absolute; top: 50%; left: 100%;" in TEMPLATE
+    assert ".sidebar-shell.collapsed { transform: translateX(-100%);" in TEMPLATE
+    assert ".sidebar.collapsed > * { display: none; }" not in TEMPLATE
     # Desktop: independent edge-hover rail with a persistent visual hint.
     assert '<div class="tab-bar collapsed" id="tabBar">' in TEMPLATE
     assert ".tab-bar.collapsed { display: none; }" in TEMPLATE
@@ -99,9 +102,10 @@ def test_sidebar_grip_is_an_edge_tab_and_sidebar_defaults_closed():
     # Mobile: retain the existing coupling to the overlay drawer.
     assert "tabBar.classList.toggle('collapsed', narrow && collapsed)" in STATE_JS
     assert "const tabBarWidth = narrow && tabBar ? tabBar.offsetWidth : 0" in STATE_JS
-    assert "const boundary = collapsed ? 0 : 260 + tabBarWidth" in STATE_JS
-    assert ("btn.style.setProperty('--pf-sidebar-toggle-x', "
-            "Math.max(0, boundary - 8) + 'px')" in STATE_JS)
+    assert ("const boundary = narrow && !collapsed "
+            "? Math.max(0, tabBarWidth - 8) : 0" in STATE_JS)
+    assert ("btn.style.setProperty('--pf-sidebar-toggle-x', boundary + 'px')"
+            in STATE_JS)
     assert "&#9776;" not in TEMPLATE  # old hamburger glyph is gone
 
 
@@ -119,7 +123,8 @@ def test_header_icon_widgets_share_the_dock_hover_zoom():
     assert ".pf-grip-top:hover .pf-grip-bars { transform: scale(1.4); }" in TEMPLATE
     assert ".pf-grip-top:hover { transform:" not in TEMPLATE
     assert (".sidebar-toggle:hover { transform: "
-            "translate(var(--pf-sidebar-toggle-x, 0px), -50%) scale(1.4); }" in TEMPLATE)
+            "translate(var(--pf-sidebar-toggle-x, 0px), -50%) scale(1.4); }"
+            in TEMPLATE)
     assert (".composer-drawer-handle:hover { transform: translateX(-50%) scale(1.4); }"
             in TEMPLATE)
 

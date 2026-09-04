@@ -41,7 +41,7 @@
   /* With the resource drawer collapsed the task rail is hidden too
      (_syncToggleBtn couples them on narrow layouts), so the grip hugs the
      viewport edge. Once open, both move past the 260px overlay drawer. */
-  .sidebar-toggle { left: 0 !important; z-index: 200; }
+  .sidebar-toggle { left: 100% !important; z-index: 200; }
   .tab-bar { position: fixed; top: 0; bottom: 0; left: 0; z-index: 150;
              box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
   body:has(.sidebar:not(.collapsed)) .tab-bar { left: 260px; }

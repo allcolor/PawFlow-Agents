@@ -30,7 +30,7 @@ def test_full_height_elements_use_dvh_so_the_header_stays_on_screen():
     """Regression: with plain `100vh` + `overflow: hidden`, mobile browsers size
     the layout to the URL-bar-hidden height, pushing .header above the visible
     viewport with no way to scroll it back — the top bar simply vanished."""
-    for selector in ("body {", ".sidebar {"):
+    for selector in ("body {", ".sidebar-shell {"):
         start = TEMPLATE_HTML.index(selector)
         rule = TEMPLATE_HTML[start:TEMPLATE_HTML.index("}", start)]
         assert "height: 100dvh" in rule, f"{selector} must size to the dynamic viewport"
@@ -43,11 +43,11 @@ def test_mobile_sidebar_toggle_clears_the_persistent_rail_then_tracks_the_open_d
     """Regression: on mobile the sidebar becomes a fixed overlay (z-index 150).
     While the resource drawer is hidden the task rail is hidden with it
     (_syncToggleBtn couples them), so the toggle hugs the viewport edge —
-    An old left: 35px offset floated over the chat text. The toggle now tracks
-    the drawer edge with the shared compositor transform."""
+    An old left: 35px offset floated over the chat text. The toggle is now an
+    absolute child whose left: 100% anchor follows the drawer edge."""
     mobile = _mobile_block()
     assert ".sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;" in mobile
-    assert ".sidebar-toggle { left: 0 !important; z-index: 200; }" in mobile
+    assert ".sidebar-toggle { left: 100% !important; z-index: 200; }" in mobile
     assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 0;" in mobile
     assert "body:has(.sidebar:not(.collapsed)) .tab-bar { left: 260px; }" in mobile
     assert "body:has(.sidebar:not(.collapsed)) .sidebar-toggle" not in mobile

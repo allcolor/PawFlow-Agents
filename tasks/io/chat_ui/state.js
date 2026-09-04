@@ -363,22 +363,25 @@ function _syncToggleBtn(collapsedOverride) {
   // Desktop owns an independent edge-hover rail. On narrow layouts the rail
   // remains coupled to the overlay drawer so the two layers cannot compete.
   if (tabBar) tabBar.classList.toggle('collapsed', narrow && collapsed);
-  const boundary = collapsed ? 0 : 260 + tabBarWidth;
-  btn.style.setProperty('--pf-sidebar-toggle-x', Math.max(0, boundary - 8) + 'px');
+  const boundary = narrow && !collapsed ? Math.max(0, tabBarWidth - 8) : 0;
+  btn.style.setProperty('--pf-sidebar-toggle-x', boundary + 'px');
   btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
 }
 let _sidebarMotionGeneration = 0;
 let _sidebarTargetCollapsed = null;
+const _SIDEBAR_RAIL_DURATION = 900;
+const _SIDEBAR_RAIL_EASING = 'cubic-bezier(.4, 0, .2, 1)';
 function _setSidebarCollapsed(collapsed, animate) {
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return Promise.resolve({status: 'missing'});
+  const shell = document.getElementById('sidebarShell') || sidebar;
   collapsed = !!collapsed;
   _sidebarTargetCollapsed = collapsed;
   const generation = ++_sidebarMotionGeneration;
   const narrow = window.matchMedia('(max-width: 768px)').matches;
-  const main = document.querySelector('.main');
   const apply = function() {
     if (generation !== _sidebarMotionGeneration) return false;
+    shell.classList.toggle('collapsed', collapsed);
     sidebar.classList.toggle('collapsed', collapsed);
     sidebar.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
     if (collapsed) sidebar.setAttribute('inert', '');
@@ -387,33 +390,34 @@ function _setSidebarCollapsed(collapsed, animate) {
     return true;
   };
 
-  // Accessibility follows the logical target immediately; visual layout is
-  // committed in the shared write phase on desktop.
-  _syncToggleBtn(collapsed);
-  if (!collapsed) {
-    sidebar.removeAttribute('inert');
-    sidebar.setAttribute('aria-hidden', 'false');
-  }
-  if (animate === false || narrow || !main || !window.pfMotion) {
+  if (animate === false || narrow || !window.pfMotion || window.pfMotion.reduced()) {
+    if (window.pfMotion) window.pfMotion.cancel(shell, 'sidebar-rail');
     apply();
     return Promise.resolve({status: 'finished'});
   }
-  if (collapsed) {
-    sidebar.setAttribute('inert', '');
-    sidebar.setAttribute('aria-hidden', 'true');
-  }
-  return window.pfMotion.flip(main, apply, {
-    channel: 'sidebar-layout',
-    duration: 500,
-    easing: 'cubic-bezier(.4, 0, .2, 1)',
-    scale: true,
+  const rect = shell.getBoundingClientRect();
+  const startX = Number(rect.left || 0);
+  const endX = collapsed ? -Number(rect.width || sidebar.offsetWidth || 260) : 0;
+  apply();
+  return window.pfMotion.replace(shell, 'sidebar-rail', [
+    {transform: 'translateX(' + startX + 'px)'},
+    {transform: 'translateX(' + endX + 'px)'},
+  ], {
+    duration: _SIDEBAR_RAIL_DURATION,
+    easing: _SIDEBAR_RAIL_EASING,
+    fill: 'both',
+  }).then(function(result) {
+    if (generation === _sidebarMotionGeneration && result && result.animation
+        && typeof result.animation.cancel === 'function') result.animation.cancel();
+    return result;
   });
 }
 function toggleSidebar() {
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return Promise.resolve({status: 'missing'});
+  const shell = document.getElementById('sidebarShell') || sidebar;
   const current = _sidebarTargetCollapsed === null
-    ? sidebar.classList.contains('collapsed') : _sidebarTargetCollapsed;
+    ? shell.classList.contains('collapsed') : _sidebarTargetCollapsed;
   return _setSidebarCollapsed(!current, true);
 }
 document.addEventListener('DOMContentLoaded', _syncToggleBtn);

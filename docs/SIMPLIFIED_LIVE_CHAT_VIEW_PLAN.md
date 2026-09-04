@@ -167,6 +167,13 @@ controls:
   every icon labelled without creating a horizontal scrollbar on hover. The
   linked-account and power controls in the header reuse the dock's exact tooltip
   structure and 1.4x hover zoom.
+- All WebChat buttons follow the prompt-bar surface contract after the active
+  theme and operator CSS are applied: transparent background and visually absent
+  reserved border at rest, an accent border plus zoom on hover or keyboard focus,
+  and a shared accessible tooltip. Semantic states remain visible through their
+  glyph/text color instead of a permanently filled button. Text buttons use their
+  visible label as the tooltip fallback; compact docks retain their established
+  1.4x zoom while other buttons use a restrained 1.08x zoom.
 - View mode, TTS, realtime voice, conversation refresh and tool permission mode
   occupy the left of that row, while active agents occupy the right. The two side
   tracks remain equal, so the action dock stays centered on the conversation even

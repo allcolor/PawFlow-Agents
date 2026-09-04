@@ -29,6 +29,39 @@
     return Number((element && (element.offsetHeight || element.scrollHeight)) || 0);
   }
 
+  function _captureInlineStyles(element, names) {
+    return names.map(function(name) {
+      const property = name.replace(/-([a-z])/g, function(_match, letter) {
+        return letter.toUpperCase();
+      });
+      const cssom = typeof element.style.getPropertyValue === 'function';
+      return {
+        name: name,
+        property: property,
+        value: cssom ? element.style.getPropertyValue(name) : (element.style[property] || ''),
+        priority: cssom && typeof element.style.getPropertyPriority === 'function'
+          ? element.style.getPropertyPriority(name) : '',
+      };
+    });
+  }
+
+  function _restoreInlineStyles(element, snapshot) {
+    const cssom = typeof element.style.removeProperty === 'function';
+    snapshot.forEach(function(entry) {
+      if (cssom) element.style.removeProperty(entry.name);
+      else delete element.style[entry.property];
+    });
+    snapshot.forEach(function(entry) {
+      if (entry.value) {
+        if (typeof element.style.setProperty === 'function') {
+          element.style.setProperty(entry.name, entry.value, entry.priority);
+        } else {
+          element.style[entry.property] = entry.value;
+        }
+      }
+    });
+  }
+
   function create(options) {
     options = options || {};
     const trigger = options.trigger;
@@ -52,6 +85,13 @@
     let resizeQueued = false;
     let openingTargetHeight = 0;
     let destroyed = false;
+    const animatedInlineStyles = _captureInlineStyles(panel, [
+      'height', 'opacity', 'overflow', 'overflow-x', 'overflow-y',
+    ]);
+
+    function _restoreAnimatedInlineStyles() {
+      _restoreInlineStyles(panel, animatedInlineStyles);
+    }
 
     panel.classList.add('pf-disclosure-panel');
     if (!panel.id) panel.id = 'pf-disclosure-' + (++disclosureSequence);
@@ -66,9 +106,7 @@
       if (destroyed || currentGeneration !== generation || open !== targetOpen) {
         return {status: 'stale'};
       }
-      panel.style.height = '';
-      panel.style.opacity = '';
-      panel.style.overflow = '';
+      _restoreAnimatedInlineStyles();
       openingTargetHeight = 0;
       if (open) {
         panel.hidden = false;
@@ -176,9 +214,7 @@
       if (observer) observer.disconnect();
       root.pfMotion.cancel(panel, 'disclosure');
       owner.abort();
-      panel.style.height = '';
-      panel.style.opacity = '';
-      panel.style.overflow = '';
+      _restoreAnimatedInlineStyles();
       panel.classList.remove('pf-disclosure-panel');
       delete panel.dataset.pfDisclosureState;
     }

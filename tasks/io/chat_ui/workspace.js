@@ -17,6 +17,7 @@ var _workspaceRestoredSelection = '';
 var _workspaceRestoredSurfaces = {};
 var _workspaceHydrating = false;
 var _workspaceMaxStoredSurfaces = 64;
+var _workspaceDraggedTab = '';
 
 function _workspaceLabel(key, fallback) {
   if (typeof t !== 'function') return fallback;
@@ -55,10 +56,83 @@ function _workspaceSurfaceOrder() {
   }).filter(function(tabId) { return !!_workspaceSurfaces[tabId]; });
 }
 
+function _workspaceSlotNumber(value) {
+  const slot = Number(value);
+  return Number.isInteger(slot) && slot >= 0 && slot < _workspaceMaxStoredSurfaces
+    ? slot : -1;
+}
+
+function _workspaceClaimSlot(tabId, preferred) {
+  const used = new Set(Object.keys(_workspaceSurfaces).filter(function(id) {
+    return id !== tabId;
+  }).map(function(id) {
+    return _workspaceSlotNumber(_workspaceSurfaces[id].slot);
+  }).filter(function(slot) { return slot >= 0; }));
+  let slot = _workspaceSlotNumber(preferred);
+  if (slot < 0 || used.has(slot)) {
+    slot = 0;
+    while (used.has(slot) && slot < _workspaceMaxStoredSurfaces) slot += 1;
+  }
+  return Math.min(slot, _workspaceMaxStoredSurfaces - 1);
+}
+
+function _workspaceLayoutCapacity() {
+  const layouts = {1: [1, 1], 2: [2, 1], 3: [3, 1], 4: [2, 2], 5: [3, 2], 6: [3, 2]};
+  const layout = layouts[_workspaceLayout] || layouts[1];
+  return layout[0] * layout[1];
+}
+
+function _workspaceRenderSlots() {
+  const board = document.getElementById('workspaceBoard');
+  if (!board || !board.children || typeof board.appendChild !== 'function') return;
+  const occupied = new Map();
+  Object.keys(_workspaceSurfaces).forEach(function(tabId) {
+    const entry = _workspaceSurfaces[tabId];
+    if (!entry || !entry.panel) return;
+    entry.slot = _workspaceClaimSlot(tabId, entry.slot);
+    entry.panel.dataset.workspaceSlot = String(entry.slot);
+    occupied.set(entry.slot, entry.panel);
+  });
+  Array.from(board.children).forEach(function(node) {
+    if (!node.classList || !node.classList.contains('workspace-drop-slot')) return;
+    if (typeof node.remove === 'function') node.remove();
+    else if (typeof board.removeChild === 'function') board.removeChild(node);
+  });
+  const slots = Array.from(occupied.keys());
+  const last = Math.max(_workspaceLayoutCapacity() - 1, slots.length ? Math.max.apply(null, slots) : 0);
+  for (let slot = 0; slot <= last; slot += 1) {
+    let node = occupied.get(slot);
+    if (!node && _workspaceLayout > 1 && typeof document.createElement === 'function') {
+      node = document.createElement('div');
+      node.className = 'workspace-drop-slot';
+      node.dataset.workspaceSlot = String(slot);
+      node.setAttribute('aria-label', _workspaceLabel('workspaceEmptySlot', 'Empty tile'));
+    }
+    if (node) board.appendChild(node);
+  }
+}
+
+function _workspaceMoveSurface(panel, target) {
+  const board = document.getElementById('workspaceBoard');
+  if (!board || !panel || !target || panel === target) return false;
+  const source = _workspaceSurfaces[panel.dataset.tab];
+  const destination = target.dataset.tab ? _workspaceSurfaces[target.dataset.tab] : null;
+  const sourceSlot = _workspaceSlotNumber(source && source.slot);
+  const targetSlot = _workspaceSlotNumber(target.dataset.workspaceSlot);
+  if (!source || sourceSlot < 0 || targetSlot < 0) return false;
+  if (destination) destination.slot = sourceSlot;
+  source.slot = targetSlot;
+  board.insertBefore(panel, target);
+  _workspaceRenderSlots();
+  _workspaceResize();
+  _workspaceSaveState();
+  return true;
+}
+
 function _workspaceSaveState() {
   if (_workspaceHydrating) return;
   const surfaces = _workspaceSurfaceOrder().slice(0, _workspaceMaxStoredSurfaces)
-    .map(function(tabId) {
+    .map(function(tabId, index) {
       const entry = _workspaceSurfaces[tabId] || {};
       return {
         surfaceId: tabId,
@@ -66,6 +140,7 @@ function _workspaceSaveState() {
         conversationId: entry.conversationId || '',
         title: entry.title || '',
         conversationTitle: entry.conversationTitle || '',
+        slot: _workspaceSlotNumber(entry.slot) >= 0 ? entry.slot : index,
       };
     });
   const state = {
@@ -85,7 +160,7 @@ function _workspaceLoadState() {
   if (state && state.version === 2 && Array.isArray(state.surfaces)) {
     _workspaceRestoredOrder = [];
     _workspaceRestoredSurfaces = {};
-    state.surfaces.slice(0, _workspaceMaxStoredSurfaces).forEach(function(surface) {
+    state.surfaces.slice(0, _workspaceMaxStoredSurfaces).forEach(function(surface, index) {
       const surfaceId = surface && typeof surface.surfaceId === 'string'
         && surface.surfaceId.length <= 256 ? surface.surfaceId : '';
       if (!surfaceId) return;
@@ -95,6 +170,7 @@ function _workspaceLoadState() {
           ? surface.title : '',
         conversationTitle: typeof surface.conversationTitle === 'string'
           && surface.conversationTitle.length <= 512 ? surface.conversationTitle : '',
+        slot: _workspaceSlotNumber(surface.slot) >= 0 ? surface.slot : index,
       };
     });
     _workspaceRestoredSelection = typeof state.selectedSurfaceId === 'string'
@@ -168,6 +244,7 @@ function _workspaceConversationTitle(conversationId) {
 function _workspaceHeader(tabId, options) {
   const header = document.createElement('div');
   header.className = 'workspace-surface-header';
+  header.draggable = true;
 
   const identity = document.createElement('span');
   identity.className = 'workspace-surface-identity';
@@ -254,6 +331,8 @@ function workspaceRegisterSurface(panel, options) {
       : (previous.conversationId || panel.dataset.conversationId
         || (typeof focusedConversationId === 'function' ? focusedConversationId() : '')
         || (typeof conversationId !== 'undefined' ? conversationId : '') || ''),
+    slot: _workspaceClaimSlot(tabId,
+      previous.slot !== undefined ? previous.slot : restored.slot),
   };
   _workspaceSurfaces[tabId].conversationTitle = options.conversationTitle
     || previous.conversationTitle
@@ -273,6 +352,7 @@ function workspaceRegisterSurface(panel, options) {
     header = _workspaceHeader(tabId, _workspaceSurfaces[tabId]);
     panel.insertBefore(header, panel.firstChild);
   } else {
+    header.draggable = true;
     const title = header.querySelector('.workspace-surface-title');
     if (title) {
       title.textContent = _workspaceSurfaces[tabId].title;
@@ -284,6 +364,8 @@ function workspaceRegisterSurface(panel, options) {
       conversation.title = _workspaceSurfaces[tabId].conversationTitle;
     }
   }
+
+  _workspaceRenderSlots();
 
   if (firstRegistration) {
     const restored = _workspaceRestoreSurfacePosition(board, panel, tabId);
@@ -386,6 +468,7 @@ function workspaceUnregisterSurface(tabId, keepPanel) {
     _workspaceSelectedTab = nextTab || (_workspaceSurfaces.chat ? 'chat'
       : (Object.keys(_workspaceSurfaces)[0] || 'chat'));
   }
+  _workspaceRenderSlots();
   _workspaceApplySelection();
   _workspaceResize();
   _workspaceSaveState();
@@ -635,6 +718,7 @@ function workspaceSetLayout(value) {
       shell.dataset.layout = String(next);
       shell.classList.toggle('workspace-tiled', true);
     }
+    _workspaceRenderSlots();
     const select = document.getElementById('workspaceLayoutSelect');
     if (select && select.value !== String(next)) select.value = String(next);
     _workspaceApplySelection();
@@ -724,6 +808,49 @@ function workspaceInit() {
           _workspaceApplySelection();
         }
       }
+    });
+    board.addEventListener('dragstart', function(event) {
+      if (event.target.closest('.workspace-surface-actions')) {
+        event.preventDefault();
+        return;
+      }
+      const header = event.target.closest('.workspace-surface-header');
+      const panel = header && header.parentNode;
+      if (!panel || !_workspaceSurfaces[panel.dataset.tab]) return;
+      _workspaceDraggedTab = panel.dataset.tab;
+      panel.classList.add('workspace-dragging');
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', _workspaceDraggedTab);
+      }
+    });
+    board.addEventListener('dragover', function(event) {
+      const target = event.target.closest('.workspace-surface, .workspace-drop-slot');
+      if (!_workspaceDraggedTab || !target || target.dataset.tab === _workspaceDraggedTab) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      board.querySelectorAll('.workspace-drop-active').forEach(function(node) {
+        node.classList.remove('workspace-drop-active');
+      });
+      target.classList.add('workspace-drop-active');
+    });
+    board.addEventListener('drop', function(event) {
+      const target = event.target.closest('.workspace-surface, .workspace-drop-slot');
+      const panel = _workspaceSurfaces[_workspaceDraggedTab]
+        && _workspaceSurfaces[_workspaceDraggedTab].panel;
+      if (panel && target && target !== panel) {
+        event.preventDefault();
+        _workspaceMoveSurface(panel, target);
+      }
+    });
+    board.addEventListener('dragend', function() {
+      const panel = _workspaceSurfaces[_workspaceDraggedTab]
+        && _workspaceSurfaces[_workspaceDraggedTab].panel;
+      if (panel) panel.classList.remove('workspace-dragging');
+      board.querySelectorAll('.workspace-drop-active').forEach(function(node) {
+        node.classList.remove('workspace-drop-active');
+      });
+      _workspaceDraggedTab = '';
     });
   }
 

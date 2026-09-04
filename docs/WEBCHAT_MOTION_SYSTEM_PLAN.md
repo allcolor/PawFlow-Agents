@@ -288,6 +288,9 @@ The data pipeline and visibility pipeline are separated:
 - late generations cannot render into the focused conversation;
 - variables/secrets join the data model without delaying unrelated sections;
 - a cold section may show its existing loading state inside the already-open panel;
+- disclosure animation restores the section's pre-existing inline height, opacity,
+  and overflow declarations after settling, so bounded inner viewports such as
+  Services keep wheel and trackpad scrolling instead of leaking it to Resources;
 - root `resourcesContent.innerHTML` replacement is removed.
 
 `resources_render.js` is already near the repository's 800-line ceiling. Incremental section rendering must be split by responsibility rather than expanding that file. Each section renderer owns a stable container and patches rows keyed by durable resource identity. A refresh preserves disclosure, focus, and scroll state.
@@ -302,7 +305,15 @@ Accordion headers become real buttons with `aria-expanded` and `aria-controls`; 
 
 Section accordions that contain arbitrary interactive controls do not pretend to be ARIA trees. They use disclosure semantics. Tree roles are reserved for actual hierarchical rows.
 
-The desktop sidebar commits its final application layout once and uses FLIP transforms for the visual transition. Its Conversations/Resources accordion interpolates both bounded section bodies together, so the upper body closes while the lower body opens without a blank or snapped frame. The sidebar and accordion use a balanced 500 ms path with an observable intermediate geometry; the 300 ms workspace-tile motion remains independent. Mobile retains a fixed drawer; its toggle and task rail remain reachable throughout the animation.
+The desktop sidebar is a fixed-width shell outside the workspace layout. Opening
+or closing translates that whole shell, including its grip and mounted content,
+over 900 ms while the workspace position and width remain unchanged. Content is
+never hidden during the slide, and rapid reversals start from the currently
+painted position. Its Conversations/Resources accordion still interpolates both
+bounded section bodies over 500 ms, so the upper body closes while the lower body
+opens without a blank or snapped frame. The 300 ms workspace-tile motion remains
+independent. Mobile retains a fixed drawer; its toggle and task rail remain
+reachable throughout the state change.
 
 The top header and bottom composer grips animate their panel height and opacity over the same balanced 500 ms path. Their existing `display: none` terminal states are applied only after closing settles, so neither expander snaps, and rapid reversals restart from the current visual height. The header and its top grip share a relative shell: the grip is anchored to the shell's animated block size, so layout itself keeps its visual center on the painted separation line without a second animation, observer lag, or hover-scale drift.
 

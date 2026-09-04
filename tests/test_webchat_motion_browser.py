@@ -68,8 +68,15 @@ def _shell_html() -> str:
     # Production scripts need a backend. The browser fixture uses the exact
     # rendered shell/CSS and injects only the real modules under test.
     html = rendered_chat_html(inline_css=True)
-    return re.sub(r"<script\b[^>]*>.*?</script>", "", html,
+    html = re.sub(r"<script\b[^>]*>.*?</script>", "", html,
                   flags=re.IGNORECASE | re.DOTALL)
+    # The component contract is deliberately linked after the server-rendered
+    # theme instead of joining _CSS_MODULES. Inline that final production layer
+    # too, otherwise set_content() cannot resolve its relative HTTP URL.
+    contract = (CHAT_UI / "css" / "100_component_contract.css").read_text(
+        encoding="utf-8"
+    )
+    return html.replace("</head>", f"<style>{contract}</style></head>")
 
 
 def _new_motion_page(chromium_browser, *, rows: int = 0,
@@ -495,6 +502,64 @@ def test_sidebar_accordion_and_workspace_layout_morph_in_real_chromium(
         context.close()
 
 
+def test_resources_service_node_keeps_its_own_scroll_after_opening(
+        chromium_browser):
+    context = chromium_browser.new_context(
+        viewport={"width": 1280, "height": 800}, reduced_motion="no-preference",
+    )
+    page = context.new_page()
+    try:
+        page.set_content(_shell_html(), wait_until="domcontentloaded")
+        for script in (
+            "ui_motion.js", "ui_disclosure.js", "resources_patch.js", "resources.js",
+        ):
+            page.add_script_tag(path=str(CHAT_UI / script))
+        page.evaluate(
+            """
+            async () => {
+              document.getElementById('sidebarShell').classList.remove('collapsed');
+              document.getElementById('sidebar').classList.remove('collapsed');
+              setSidebarSection('resources');
+              const content = document.getElementById('resourcesContent');
+              const rows = Array.from({length: 40}, (_, index) =>
+                '<div style="height:24px">service ' + index + '</div>').join('');
+              _patchResourcesContent(content, [
+                '<section class="resource-section" data-resource-section="_svc">',
+                '<div class="resource-section-header-row">',
+                '<button class="resource-section-toggle" aria-controls="res-section-_svc"',
+                ' aria-expanded="false">Services</button></div>',
+                '<div class="resource-section-body" id="res-section-_svc"',
+                ' style="max-height:260px;overflow-y:auto" hidden aria-hidden="true" inert>',
+                rows, '</div></section>',
+              ].join(''));
+              await _toggleSection('_svc');
+            }
+            """
+        )
+        service_body = page.locator("#res-section-_svc")
+        box = service_body.bounding_box()
+        assert box is not None
+        before = service_body.evaluate(
+            "element => ({"
+            " scrollTop: element.scrollTop,"
+            " clientHeight: element.clientHeight,"
+            " scrollHeight: element.scrollHeight,"
+            " overflowY: getComputedStyle(element).overflowY"
+            "})"
+        )
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.mouse.wheel(0, 240)
+        page.wait_for_timeout(50)
+        after = service_body.evaluate("element => element.scrollTop")
+
+        assert before["scrollHeight"] > before["clientHeight"]
+        assert before["overflowY"] == "auto"
+        assert before["scrollTop"] == 0
+        assert after > 0
+    finally:
+        context.close()
+
+
 def test_desktop_tab_rail_keeps_content_present_while_sliding(chromium_browser):
     context = chromium_browser.new_context(
         viewport={"width": 1280, "height": 800}, reduced_motion="no-preference",
@@ -629,7 +694,6 @@ def test_chrome_grips_move_through_intermediate_geometry_in_real_chromium(
               await Promise.all([
                 _applyHeaderBar(false),
                 _applyComposerDrawer(false),
-                _setSidebarCollapsed(false, false),
               ]);
               document.getElementById('promptControlsPanel').classList.add('visible');
               await _applyComposerDrawer(false);
@@ -646,20 +710,15 @@ def test_chrome_grips_move_through_intermediate_geometry_in_real_chromium(
               const composerOpening = await sample(
                 document.querySelector('.composer-context-row'), 'height',
                 toggleComposerDrawer);
-              const sidebar = await sample(
-                document.querySelector('.main'), 'width', toggleSidebar);
               return {
                 headerClosing,
                 headerOpening,
                 composerClosing,
                 composerOpening,
-                sidebar,
                 headerCollapsed: document.getElementById('headerBar')
                   .classList.contains('collapsed'),
                 composerCollapsed: document.querySelector('.input-area')
                   .classList.contains('composer-drawer-collapsed'),
-                sidebarCollapsed: document.getElementById('sidebar')
-                  .classList.contains('collapsed'),
               };
             }
             """
@@ -681,15 +740,215 @@ def test_chrome_grips_move_through_intermediate_geometry_in_real_chromium(
             assert 0.15 < progress < 0.85
         for name in ("headerClosing", "headerOpening"):
             assert max(result[name]["followerDeltas"]) < 1, (name, result[name])
-        sidebar = result["sidebar"]
-        assert set(sidebar["durations"]) == {500}
-        assert sidebar["before"] < sidebar["during"] < sidebar["after"]
-        sidebar_progress = ((sidebar["during"] - sidebar["before"])
-                            / (sidebar["after"] - sidebar["before"]))
-        assert 0.15 < sidebar_progress < 0.85
         assert result["headerCollapsed"] is False
         assert result["composerCollapsed"] is False
-        assert result["sidebarCollapsed"] is True
+    finally:
+        context.close()
+
+
+def test_desktop_sidebar_keeps_content_present_while_sliding(chromium_browser):
+    context = chromium_browser.new_context(
+        viewport={"width": 1280, "height": 800}, reduced_motion="no-preference",
+    )
+    page = context.new_page()
+    try:
+        page.set_content(_shell_html(), wait_until="domcontentloaded")
+        page.evaluate("() => { window.LOGIN_URL = ''; }")
+        for script in ("ui_motion.js", "state.js"):
+            page.add_script_tag(path=str(CHAT_UI / script))
+
+        def snapshot():
+            return page.evaluate(
+                """
+                () => {
+                  const shell = document.getElementById('sidebarShell');
+                  const sidebar = document.getElementById('sidebar');
+                  const content = document.getElementById('conversationsPanel');
+                  const grip = document.getElementById('sidebarToggle');
+                  const main = document.querySelector('.main');
+                  const shellRect = shell.getBoundingClientRect();
+                  const sidebarRect = sidebar.getBoundingClientRect();
+                  const contentRect = content.getBoundingClientRect();
+                  const gripRect = grip.getBoundingClientRect();
+                  const mainRect = main.getBoundingClientRect();
+                  const style = getComputedStyle(content);
+                  return {
+                    shellLeft: shellRect.left,
+                    sidebarOffset: sidebarRect.left - shellRect.left,
+                    contentOffset: contentRect.left - sidebarRect.left,
+                    gripOffset: gripRect.left - shellRect.right,
+                    opacity: Number(style.opacity),
+                    visibility: style.visibility,
+                    railDurations: shell.getAnimations()
+                      .map(animation => animation.effect.getTiming().duration),
+                    contentAnimationCount: content.getAnimations().length,
+                    mainLeft: mainRect.left,
+                    mainWidth: mainRect.width,
+                  };
+                }
+                """
+            )
+
+        closed = snapshot()
+        page.evaluate("() => { window.__sidebarMotion = toggleSidebar(); }")
+        page.wait_for_timeout(300)
+        opening = snapshot()
+        page.wait_for_timeout(650)
+        opened = snapshot()
+        page.evaluate("() => { window.__sidebarMotion = toggleSidebar(); }")
+        page.wait_for_timeout(300)
+        closing = snapshot()
+        page.wait_for_timeout(650)
+        closed_again = snapshot()
+
+        assert closed["shellLeft"] < opening["shellLeft"] < opened["shellLeft"]
+        assert closed_again["shellLeft"] < closing["shellLeft"] < opened["shellLeft"]
+        for state in (closed, opening, opened, closing, closed_again):
+            assert state["opacity"] == pytest.approx(1, abs=0.01)
+            assert state["visibility"] == "visible"
+            assert state["contentAnimationCount"] == 0
+            assert abs(state["sidebarOffset"]) < 1
+            assert abs(state["contentOffset"]) < 1
+            assert abs(state["gripOffset"]) < 1
+            assert abs(state["mainLeft"] - closed["mainLeft"]) < 1
+            assert abs(state["mainWidth"] - closed["mainWidth"]) < 1
+        assert 900 in opening["railDurations"]
+        assert 900 in closing["railDurations"]
+    finally:
+        context.close()
+
+
+def test_workspace_selected_header_and_title_drag_persist_in_real_chromium(
+        chromium_browser):
+    context = chromium_browser.new_context(
+        viewport={"width": 1280, "height": 800}, reduced_motion="no-preference",
+    )
+    page = context.new_page()
+    try:
+        page.set_content(_shell_html(), wait_until="domcontentloaded")
+        page.evaluate(
+            """
+            () => {
+              const values = new Map();
+              Object.defineProperty(window, 'localStorage', {
+                configurable: true,
+                value: {
+                  getItem: key => values.has(key) ? values.get(key) : null,
+                  setItem: (key, value) => values.set(key, String(value)),
+                },
+              });
+            }
+            """
+        )
+        for script in ("ui_motion.js", "workspace.js"):
+            page.add_script_tag(path=str(CHAT_UI / script))
+        page.evaluate(
+            """
+            () => {
+              const openspace = document.getElementById('tabContentOpenspace');
+              workspaceRegisterSurface(openspace, {
+                tabId: 'openspace', type: 'openspace', title: 'OpenSpace', closable: true,
+              });
+              workspaceSetLayout(2);
+              workspaceFocusSurface('openspace');
+            }
+            """
+        )
+
+        selected = page.locator(
+            "#tabContentOpenspace > .workspace-surface-header")
+        unselected = page.locator(
+            "#tabContentChat > .workspace-surface-header")
+        assert selected.evaluate("element => getComputedStyle(element).backgroundColor") \
+            != unselected.evaluate("element => getComputedStyle(element).backgroundColor")
+        assert selected.get_attribute("draggable") == "true"
+
+        selected.drag_to(unselected, target_position={"x": 8, "y": 14})
+        page.wait_for_timeout(50)
+        result = page.evaluate(
+            """
+            () => {
+              const order = Array.from(document.getElementById('workspaceBoard').children)
+                .map(panel => panel.dataset.tab)
+                .filter(Boolean);
+              const state = JSON.parse(
+                localStorage.getItem('pawflow.workspace.state.v2') || 'null');
+              return {
+                order,
+                stored: state.surfaces.map(surface => surface.surfaceId),
+                selected: workspaceSelectedTab(),
+              };
+            }
+            """
+        )
+        assert result["order"][:2] == ["openspace", "chat"]
+        assert result["stored"][:2] == ["openspace", "chat"]
+        assert result["selected"] == "openspace"
+    finally:
+        context.close()
+
+
+def test_all_buttons_share_prompt_bar_surface_zoom_and_tooltip_in_chromium(
+        chromium_browser):
+    context = chromium_browser.new_context(
+        viewport={"width": 1280, "height": 800}, reduced_motion="no-preference",
+    )
+    page = context.new_page()
+    try:
+        page.set_content(_shell_html(), wait_until="domcontentloaded")
+        for script in ("ui_motion.js", "ui_floating_layer.js", "tooltips.js"):
+            page.add_script_tag(path=str(CHAT_UI / script))
+        page.evaluate(
+            """
+            () => {
+              const button = document.createElement('button');
+              button.id = 'buttonContractFixture';
+              button.type = 'button';
+              button.title = 'Confirm action';
+              button.textContent = 'Confirm';
+              button.style.cssText = 'position:fixed;left:520px;top:240px;padding:8px 12px';
+              document.body.appendChild(button);
+            }
+            """
+        )
+
+        rest = page.evaluate(
+            """
+            () => ['appearanceBtn', 'fileAttachBtn', 'sendBtn', 'buttonContractFixture']
+              .map(id => {
+                const style = getComputedStyle(document.getElementById(id));
+                return {id, background: style.backgroundColor, border: style.borderTopColor};
+              })
+            """
+        )
+        for state in rest:
+            assert state["background"] == "rgba(0, 0, 0, 0)", state
+            assert state["border"] == "rgba(0, 0, 0, 0)", state
+
+        fixture = page.locator("#buttonContractFixture")
+        fixture.hover()
+        page.wait_for_timeout(220)
+        hovered = fixture.evaluate(
+            """
+            element => {
+              const style = getComputedStyle(element);
+              const matrix = new DOMMatrixReadOnly(style.transform);
+              return {
+                background: style.backgroundColor,
+                border: style.borderTopColor,
+                scale: Math.hypot(matrix.a, matrix.b),
+              };
+            }
+            """
+        )
+        tooltip = page.locator("#pfCssTooltip")
+        assert hovered["background"] == "rgba(0, 0, 0, 0)"
+        assert hovered["border"] != "rgba(0, 0, 0, 0)"
+        assert hovered["scale"] > 1.05
+        assert tooltip.get_attribute("aria-hidden") == "false"
+        assert "Confirm action" in tooltip.inner_text()
+        assert fixture.get_attribute("title") is None
+        assert fixture.get_attribute("aria-describedby") == "pfCssTooltip"
     finally:
         context.close()
 

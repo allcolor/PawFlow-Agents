@@ -19,7 +19,7 @@
 /* Vertical menu -> horizontal bars; horizontal menu -> vertical bars. */
 .pf-grip-bars-h { display: block; width: 11px; height: 12px;
                   background: repeating-linear-gradient(180deg, currentColor 0 2px, transparent 2px 5px); }
-.sidebar-toggle { position: fixed; top: 50%; left: 0;
+.sidebar-toggle { position: absolute; top: 50%; left: 100%;
                    transform: translate(var(--pf-sidebar-toggle-x, 0px), -50%); z-index: 100;
                    width: 15px; height: 36px; border-left: none; border-radius: 0 8px 8px 0; }
 .pf-grip-top { position: absolute; top: max(0px, calc(100% - 7.5px)); left: 50%;

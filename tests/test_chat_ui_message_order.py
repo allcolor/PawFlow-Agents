@@ -391,7 +391,7 @@ def test_mobile_breakpoints_scroll_header_and_overlay_sidebar():
     # The task rail hides together with the closed drawer (_syncToggleBtn
     # couples them on narrow layouts), so the grip hugs the viewport edge;
     # both move past the fixed sidebar while the drawer is open.
-    assert ".sidebar-toggle { left: 0 !important; z-index: 200; }" in mobile_block
+    assert ".sidebar-toggle { left: 100% !important; z-index: 200; }" in mobile_block
     assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 0;" in mobile_block
     assert "body:has(.sidebar:not(.collapsed)) .tab-bar { left: 260px; }" in mobile_block
     assert "body:has(.sidebar:not(.collapsed)) .sidebar-toggle" not in mobile_block

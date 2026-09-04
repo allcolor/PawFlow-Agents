@@ -1,7 +1,8 @@
-<button class="sidebar-toggle pf-grip" id="sidebarToggle" type="button" aria-expanded="false"
-        aria-controls="sidebar" onclick="toggleSidebar()"
-        title="Show/hide menu" data-i18n-title="sidebarGripTitle"><span class="pf-grip-bars-h"></span></button>
-<div class="sidebar collapsed" id="sidebar">
+<div class="sidebar-shell collapsed" id="sidebarShell">
+  <button class="sidebar-toggle pf-grip" id="sidebarToggle" type="button" aria-expanded="false"
+          aria-controls="sidebar" onclick="toggleSidebar()"
+          title="Show/hide menu" data-i18n-title="sidebarGripTitle"><span class="pf-grip-bars-h"></span></button>
+  <div class="sidebar collapsed" id="sidebar">
   <div id="conversationsPanel" class="sidebar-section active" data-sidebar-section="conversations">
     <div class="sidebar-header sidebar-section-header" data-sidebar-header="conversations"
          role="button" tabindex="0" aria-controls="conversationsBody" aria-expanded="true"
@@ -21,4 +22,5 @@
     </div>
   </div>
 {% include "sidebar/resources.html" %}
+  </div>
 </div>

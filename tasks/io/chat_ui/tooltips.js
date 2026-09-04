@@ -1,7 +1,7 @@
 // Shared CSS tooltip portal for compact icon controls. The tooltip lives outside
 // scrollable docks so revealing it cannot change their overflow dimensions.
 (function() {
-  const TARGET_SELECTOR = '.action-dock-menu > .action-menu-item, .conversation-control-button, '
+  const TARGET_SELECTOR = 'button, .action-dock-menu > .action-menu-item, .conversation-control-button, '
     + '.header-dock-item, .pf-grip, .hdr-icon-btn, [data-pf-title]';
   let activeTarget = null;
   let pendingTarget = null;
@@ -33,9 +33,12 @@
   function tooltipText(target) {
     const label = target.querySelector('.ami-label');
     const desc = target.querySelector('.ami-desc');
+    const buttonText = target.matches && target.matches('button')
+      ? (target.textContent || target.value || '') : '';
     return {
       label: (label ? label.textContent
-              : target.dataset.pfTitle || target.getAttribute('aria-label') || '').trim(),
+              : target.dataset.pfTitle || target.getAttribute('aria-label')
+                || buttonText).trim(),
       desc: (desc ? desc.textContent : '').trim(),
     };
   }

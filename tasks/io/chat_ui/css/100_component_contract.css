@@ -1,20 +1,50 @@
-/* Component invariants intentionally load after the selected theme. Themes may
-   choose the --pf-* palette, but must not turn compact chrome controls back
-   into generic content buttons. */
-.header .header-dock-item,
-.header .hdr-icon-btn,
-.conversation-control-button,
-.action-dock-menu > .action-menu-item {
-  background: var(--pf-sidebar) !important;
-  color: var(--pf-text) !important;
-  border-color: var(--pf-accent) !important;
+/* Component invariants intentionally load after the selected theme and custom
+   CSS. Every action uses the prompt-bar surface contract: transparent at rest,
+   with a reserved transparent border that becomes visible on hover/focus. */
+#pawflowChat :is(button,
+    .header .header-dock-item,
+    .action-dock-menu > .action-menu-item,
+    .conversation-control-button) {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+  transition: transform .18s cubic-bezier(.34, 1.56, .64, 1),
+              background .15s ease, border-color .15s ease !important;
 }
 
-:is(.header .header-dock-item,
-    .header .hdr-icon-btn,
-    .conversation-control-button,
-    .action-dock-menu > .action-menu-item):is(:hover, :focus-visible, [aria-expanded="true"]) {
-  background: color-mix(in srgb, var(--pf-accent) 18%, var(--pf-sidebar)) !important;
-  color: var(--pf-text) !important;
+#pawflowChat :is(button,
+    .header .header-dock-item,
+    .action-dock-menu > .action-menu-item,
+    .conversation-control-button):not(:disabled):is(:hover, :focus-visible) {
+  background: transparent !important;
   border-color: var(--pf-accent) !important;
+  box-shadow: none !important;
+}
+
+/* Low specificity lets controls with position-preserving transforms (grips and
+   compact docks) keep their established trajectories and larger hover zoom. */
+:where(#pawflowChat button:not(:disabled):hover,
+       #pawflowChat button:not(:disabled):focus-visible) {
+  transform: scale(1.08);
+  z-index: 3;
+}
+
+#pawflowChat .composer-send-button {
+  color: var(--pf-accent) !important;
+}
+#pawflowChat .composer-send-button:is(:hover, :focus-visible) {
+  color: var(--pf-text) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #pawflowChat :is(button,
+      .header .header-dock-item,
+      .action-dock-menu > .action-menu-item,
+      .conversation-control-button) {
+    transition: none !important;
+  }
+  :where(#pawflowChat button:not(:disabled):hover,
+         #pawflowChat button:not(:disabled):focus-visible) {
+    transform: none;
+  }
 }

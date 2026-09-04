@@ -149,17 +149,21 @@ def test_small_position_controls_animate_with_transforms():
     assert "btn.style.setProperty('--pf-sidebar-toggle-x'" in state
 
 
-def test_sidebar_uses_the_shared_flip_without_layout_bound_css_transition():
+def test_sidebar_uses_the_same_whole_rail_slide_as_the_taskbar():
     state = (CHAT_UI / "state.js").read_text(encoding="utf-8")
     base = (CHAT_UI / "css" / "00_base.css").read_text(encoding="utf-8")
+    chrome = (CHAT_UI / "css" / "10_chrome.css").read_text(encoding="utf-8")
 
     toggle = state[state.index("function toggleSidebar()"):]
     toggle = toggle[:toggle.index("document.addEventListener")]
     assert "_setSidebarCollapsed(!current, true)" in toggle
     assert "classList.toggle('collapsed')" not in toggle
-    assert "window.pfMotion.flip(main, apply" in state
-    assert "scale: true" in state
-    assert "duration: 500" in state
+    assert "window.pfMotion.replace(shell, 'sidebar-rail'" in state
+    assert "_SIDEBAR_RAIL_DURATION = 900" in state
+    assert "window.pfMotion.flip(main, apply" not in state
+    assert ".sidebar-shell.collapsed { transform: translateX(-100%);" in base
+    assert ".sidebar.collapsed > * { display: none; }" not in base
+    assert ".sidebar-toggle { position: absolute;" in chrome
     assert "transition: width" not in base
     assert "transition: flex-grow" not in base
 

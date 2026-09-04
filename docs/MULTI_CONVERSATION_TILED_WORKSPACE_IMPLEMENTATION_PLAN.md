@@ -50,6 +50,13 @@ Pointer, keyboard, taskbar, or programmatic focus of any surface:
 - does not close another conversation SSE, clear another transcript, or reset an
   unrelated surface.
 
+The selected tile's title bar uses the accent surface and border so focus is
+visible independently of tile content. A title bar is also the tile's drag
+handle: dragging it onto another tile or an empty layout slot reorders the
+surfaces, while title-bar action buttons never start a drag. The resulting DOM
+order and slot assignments are saved in `pawflow.workspace.state.v2` and restored
+on the next workspace load.
+
 ### 2.3 Simple layout
 
 Layout 1 means:

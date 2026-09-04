@@ -302,6 +302,28 @@ def test_surfaces_stay_mounted_and_support_targeted_insertion():
     assert "switchTab(panel.dataset.tab)" in WORKSPACE_JS
 
 
+def test_selected_tile_header_is_distinct_and_owns_persistent_reordering():
+    assert (".workspace-surface.workspace-selected > .workspace-surface-header"
+            in WORKSPACE_CSS)
+    selected_header = WORKSPACE_CSS[
+        WORKSPACE_CSS.index(
+            ".workspace-surface.workspace-selected > .workspace-surface-header"
+        ):
+    ].split("}", 1)[0]
+    assert "background:" in selected_header
+    assert "border-bottom-color: var(--pf-accent)" in selected_header
+    assert "header.draggable = true" in WORKSPACE_JS
+    assert "event.target.closest('.workspace-surface-actions')" in WORKSPACE_JS
+    assert "board.addEventListener('dragstart'" in WORKSPACE_JS
+    assert "board.addEventListener('dragover'" in WORKSPACE_JS
+    assert "board.addEventListener('drop'" in WORKSPACE_JS
+    assert "function _workspaceMoveSurface" in WORKSPACE_JS
+    move = WORKSPACE_JS[WORKSPACE_JS.index("function _workspaceMoveSurface"):]
+    move = move[:move.index("\n}") + 2]
+    assert "board.insertBefore" in move
+    assert "_workspaceSaveState()" in move
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
 def test_workspace_surface_title_updates_the_visible_tile_header():
     harness = r"""

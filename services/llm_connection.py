@@ -752,6 +752,21 @@ class LLMConnectionService(BaseService):
                     "transforms, route, or include_reasoning."
                 ),
             },
+            "extra_headers": {
+                "type": "object", "default": {},
+                "description": (
+                    "Extra HTTP headers for direct API providers, as a JSON "
+                    "object of header name to value. Values accept expressions: "
+                    "${request.session_id} (conversation id, or a stable id "
+                    "generated for calls outside a conversation), "
+                    "${request.conversation_id}, ${request.user_id}, "
+                    "${request.agent_name}, ${request.request_id}, "
+                    "${pawflow.version}, plus parameters and secrets. Example "
+                    "for OpenCode Go: {\"x-opencode-session\": "
+                    "\"${request.session_id}\"}. Authorization, x-api-key, "
+                    "Content-Type and transport headers cannot be overridden."
+                ),
+            },
             "store": {
                 "type": "select", "default": "",
                 "options": ["", "true", "false"],
@@ -961,6 +976,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
+                    "extra_headers": {"visible": False},
                     "store":         {"visible": False},
                     "cli_environment": {"visible": False},
                     "codex_config_toml": {"visible": False},
@@ -972,6 +988,7 @@ class LLMConnectionService(BaseService):
                                      "copilot"]},
                 "set": {
                     "extra_body":    {"visible": True},
+                    "extra_headers": {"visible": True},
                 }
             },
             {
@@ -1035,6 +1052,7 @@ class LLMConnectionService(BaseService):
                     "omniroute_budget_usd": {"visible": True},
                     "omniroute_budget_fallback": {"visible": True},
                     "extra_body": {"visible": False},
+                    "extra_headers": {"visible": False},
                     "reasoning_effort": {"visible": False},
                 }
             },
@@ -1061,6 +1079,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body": {"visible": False},
+                    "extra_headers": {"visible": False},
                     "store": {"visible": False},
                     "cli_environment": {"visible": False},
                     "codex_config_toml": {"visible": False},
@@ -1108,6 +1127,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body": {"visible": False},
+                    "extra_headers": {"visible": False},
                     "store": {"visible": False},
                     "cli_environment": {"visible": True},
                     "codex_config_toml": {"visible": False},
@@ -1140,6 +1160,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": True},
                     "claude_marketplaces": {"visible": True},
                     "extra_body":    {"visible": False},
+                    "extra_headers": {"visible": False},
                     "cli_environment": {"visible": True},
                     "codex_config_toml": {"visible": False},
                     "codex_models_json": {"visible": False},
@@ -1166,6 +1187,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": True},
                     "claude_marketplaces": {"visible": True},
                     "extra_body":    {"visible": False},
+                    "extra_headers": {"visible": False},
                     "cli_environment": {"visible": True},
                     "codex_config_toml": {"visible": False},
                     "codex_models_json": {"visible": False},
@@ -1192,6 +1214,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": True},
                     "claude_marketplaces": {"visible": True},
                     "extra_body":    {"visible": False},
+                    "extra_headers": {"visible": False},
                     "cli_environment": {"visible": True},
                     "codex_config_toml": {"visible": False},
                     "codex_models_json": {"visible": False},
@@ -1218,6 +1241,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
+                    "extra_headers": {"visible": False},
                     "cli_environment": {"visible": True},
                     "codex_config_toml": {"visible": False},
                     "codex_models_json": {"visible": False},
@@ -1244,6 +1268,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
+                    "extra_headers": {"visible": False},
                     "cli_environment": {"visible": True},
                     "codex_config_toml": {"visible": True},
                     "codex_models_json": {"visible": True},
@@ -1275,6 +1300,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
+                    "extra_headers": {"visible": False},
                     "cli_environment": {"visible": True},
                     "codex_config_toml": {"visible": True},
                     "codex_models_json": {"visible": True},
@@ -1305,6 +1331,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
+                    "extra_headers": {"visible": False},
                     "cli_environment": {"visible": True},
                     "codex_config_toml": {"visible": True},
                     "codex_models_json": {"visible": True},
@@ -1331,6 +1358,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
+                    "extra_headers": {"visible": False},
                     "cli_environment": {"visible": True},
                     "codex_config_toml": {"visible": False},
                     "codex_models_json": {"visible": False},

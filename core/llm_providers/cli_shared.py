@@ -697,9 +697,10 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
             json_body = self._clean_control_chars(raw_json).encode("utf-8")
             headers = {
                 **headers,
-                "User-Agent": pawflow_user_agent(),
                 "Content-Length": str(len(json_body)),
             }
+            if not any(name.lower() == "user-agent" for name in headers):
+                headers["User-Agent"] = pawflow_user_agent()
             full_path = request_path(
                 base_url, ("/" + path.lstrip("/")) if path else "")
             conn.request("POST", full_path, body=json_body, headers=headers)

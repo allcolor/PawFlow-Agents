@@ -31,7 +31,6 @@ import re
 from typing import Any, Dict, List, Tuple
 from urllib.parse import urlparse
 
-from core.llm_http_headers import llm_api_headers
 from core.token_counter import count_messages_tokens
 
 logger = logging.getLogger(__name__)
@@ -397,8 +396,7 @@ class LLMOpenaiResponsesMixin:
             self._active_http_conn = conn
             json_body = json.dumps(body).encode("utf-8")
             headers = {
-                **llm_api_headers(
-                    base_url, conversation_id=call_conversation_id),
+                **self.request_headers(call_conversation_id),
                 "Content-Type": "application/json",
                 "Content-Length": str(len(json_body)),
                 "Authorization": f"Bearer {self.api_key}",

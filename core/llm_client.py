@@ -9,6 +9,7 @@ Used by:
 
 import json
 import logging
+import uuid
 import re
 import threading
 import time
@@ -161,6 +162,12 @@ class LLMClient(
         # Abort signal — set from another thread to cancel the current LLM call
         self._abort = threading.Event()
         self._active_http_conn = None
+        # Session identity for gateways that key prompt-cache affinity on a
+        # per-conversation header (OpenCode Go's x-opencode-session). Inside a
+        # conversation the conversation id is that key; outside one (background
+        # jobs, curation, wiki) this id keeps the service's calls grouped.
+        # Clones inherit it so every call of one service shares it.
+        self._session_fallback_id = uuid.uuid4().hex
 
     def clone_for_call(self) -> "LLMClient":
         """Return a fresh LLMClient instance sharing this one's config but
@@ -228,6 +235,7 @@ class LLMClient(
         _max_ctx = getattr(self, '_max_context_size', 0)
         if _max_ctx:
             clone._max_context_size = _max_ctx
+        clone._session_fallback_id = self._session_fallback_id
         if self.provider in ACP_PROVIDERS:
             sessions, lock = self._acp_shared_state()
             clone._acp_live_sessions = sessions
@@ -454,6 +462,56 @@ class LLMClient(
                 continue
             result[key] = value
         return result
+
+    @property
+    def extra_headers(self) -> Dict[str, Any]:
+        """Operator-configured HTTP header templates (see core.llm_http_headers).
+
+        Read raw, like ``base_url``: the service config resolves ``${...}`` on
+        every ``.get()`` without the request scope, and the templates must be
+        rendered exactly once, at request time, with it.
+        """
+        raw = {}
+        if self._config_ref:
+            try:
+                raw = dict.__getitem__(self._config_ref, "extra_headers")
+            except KeyError:
+                raw = {}
+        if raw in (None, ""):
+            return {}
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning("Ignoring invalid llm extra_headers JSON string")
+                return {}
+        if not isinstance(raw, dict):
+            logger.warning("Ignoring llm extra_headers because it is not an object")
+            return {}
+        return dict(raw)
+
+    def llm_session_id(self, conversation_id: str = "") -> str:
+        """Stable session key for this call: the conversation, else the service."""
+        return (str(conversation_id or "")
+                or str(getattr(self, "_conversation_id", "") or "")
+                or self._session_fallback_id)
+
+    def request_headers(self, conversation_id: str = "") -> Dict[str, str]:
+        """Identity headers plus rendered ``extra_headers`` for one HTTP request."""
+        from core.llm_http_headers import llm_api_headers, request_scope
+
+        conversation_id = (str(conversation_id or "")
+                           or str(getattr(self, "_conversation_id", "") or ""))
+        user_id = str(getattr(self, "_user_id", "") or "")
+        extra = self.extra_headers
+        scope = request_scope(
+            session_id=self.llm_session_id(conversation_id),
+            conversation_id=conversation_id,
+            user_id=user_id,
+            agent_name=str(getattr(self, "_agent_name", "") or ""),
+        ) if extra else None
+        return llm_api_headers(extra, scope, owner=user_id,
+                               conversation_id=conversation_id)
 
     @staticmethod
     def _parse_context_overflow(error_text: str) -> Optional[int]:

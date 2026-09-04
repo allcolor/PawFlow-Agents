@@ -95,14 +95,9 @@ class LLMOpenaiMixin:
             return {}
         return {"Authorization": f"Bearer {credential}"}
 
-    def _openai_provider_headers(
-            self, base_url: str = "", conversation_id: str = "",
-    ) -> Dict[str, str]:
-        """Return provider-specific Chat Completions request headers."""
-        from core.llm_http_headers import llm_api_headers
-
-        headers = llm_api_headers(
-            base_url or self.base_url, conversation_id=conversation_id)
+    def _openai_provider_headers(self, conversation_id: str = "") -> Dict[str, str]:
+        """Identity, operator ``extra_headers`` and gateway-dialect headers."""
+        headers = self.request_headers(conversation_id)
         if getattr(self, "provider", "openai") != "omniroute":
             return headers
         from core.llm_providers.omniroute import request_headers
@@ -213,8 +208,7 @@ class LLMOpenaiMixin:
                 "Content-Length": str(len(json_body)),
             }
             headers.update(self._openai_auth_headers())
-            headers.update(self._openai_provider_headers(
-                base_url, call_conversation_id))
+            headers.update(self._openai_provider_headers(call_conversation_id))
             logger.info(
                 "OpenAI stream request model=%s host=%s port=%s path=%s base_url=%s body_bytes=%d",
                 model, host, port, full_path, safe_base_url, len(json_body),
@@ -322,8 +316,11 @@ class LLMOpenaiMixin:
                             choices = data.get("choices", [])
                             if not choices:
                                 continue
-                            choice0 = choices[0]
-                            delta = choice0.get("delta", {})
+                            choice0 = choices[0] or {}
+                            # Some gateways (OpenCode Go serving GLM) send
+                            # explicit JSON nulls for absent fields; treat
+                            # them exactly like missing keys.
+                            delta = choice0.get("delta") or {}
                             fr = choice0.get("finish_reason")
                             if fr:
                                 finish_reason = _normalize_finish_reason(fr)
@@ -345,20 +342,23 @@ class LLMOpenaiMixin:
                                     callback(text)
 
                             # Tool calls (streamed incrementally)
-                            for tc_delta in delta.get("tool_calls", []):
-                                idx = tc_delta.get("index", 0)
+                            for tc_delta in delta.get("tool_calls") or []:
+                                if not isinstance(tc_delta, dict):
+                                    continue
+                                idx = tc_delta.get("index") or 0
+                                fn = tc_delta.get("function") or {}
                                 if idx not in tool_calls_map:
                                     tool_calls_map[idx] = {
-                                        "id": tc_delta.get("id", ""),
-                                        "name": tc_delta.get("function", {}).get("name", ""),
+                                        "id": tc_delta.get("id") or "",
+                                        "name": fn.get("name") or "",
                                         "arguments_str": "",
                                     }
                                 tc = tool_calls_map[idx]
                                 if tc_delta.get("id"):
                                     tc["id"] = tc_delta["id"]
-                                if tc_delta.get("function", {}).get("name"):
-                                    tc["name"] = tc_delta["function"]["name"]
-                                tc["arguments_str"] += tc_delta.get("function", {}).get("arguments", "")
+                                if fn.get("name"):
+                                    tc["name"] = fn["name"]
+                                tc["arguments_str"] += fn.get("arguments") or ""
 
                         except (json.JSONDecodeError, IndexError, KeyError):
                             pass
@@ -800,8 +800,7 @@ class LLMOpenaiMixin:
                 self._openai_endpoint_path(base_url, model),
                 body,
                 headers={**self._openai_auth_headers(),
-                         **self._openai_provider_headers(
-                             base_url, call_conversation_id),
+                         **self._openai_provider_headers(call_conversation_id),
                          "Content-Type": "application/json"},
                 base_url=base_url,
             )
@@ -819,15 +818,15 @@ class LLMOpenaiMixin:
                 self._openai_endpoint_path(base_url, model),
                 body,
                 headers={**self._openai_auth_headers(),
-                         **self._openai_provider_headers(
-                             base_url, call_conversation_id),
+                         **self._openai_provider_headers(call_conversation_id),
                          "Content-Type": "application/json"},
                 base_url=base_url,
             )
-        choice = data.get("choices", [{}])[0]
-        usage = data.get("usage", {})
-        message = choice.get("message", {})
-        finish_reason = _normalize_finish_reason(choice.get("finish_reason", ""))
+        # Explicit JSON nulls (OpenCode Go serving GLM) read as absent fields.
+        choice = (data.get("choices") or [{}])[0] or {}
+        usage = data.get("usage") or {}
+        message = choice.get("message") or {}
+        finish_reason = _normalize_finish_reason(choice.get("finish_reason") or "")
 
         # A successful HTTP envelope can still carry an upstream failure. This
         # is the non-streaming equivalent of the in-band stream error handled
@@ -847,8 +846,10 @@ class LLMOpenaiMixin:
         # Parse tool calls if present
         tool_calls = []
         from core.tool_json import parse_tool_arguments
-        for tc in message.get("tool_calls", []):
-            func = tc.get("function", {})
+        for tc in message.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            func = tc.get("function") or {}
             raw_args = func.get("arguments")
             if raw_args is None:
                 logger.warning(

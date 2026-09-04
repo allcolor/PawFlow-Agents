@@ -1,7 +1,7 @@
 # PawFlow Project Summary — Current State
 
 **Last updated**: 2026-09-04
-**Package version**: `1.0.0b264` (beta.264)
+**Package version**: `1.0.0b265` (beta.265)
 
 **Status**: functional beta, remaining API changes before 1.0.0 expected to be minor
 
@@ -17,18 +17,20 @@ The current core value is twofold:
    delegation, streaming.
 2. **Pipeline engine**: DAG execution over FlowFiles, task catalog, triggers, backpressure, checkpoints, crash recovery, provenance, and IO/data/control integrations.
 
-## beta.264 implementation highlights
+## beta.265 implementation highlights
 
-- Completed `agy_mcp` as a selectable managed native-hook provider using Agy's
-  `StopHookArgs.finalModelOutput` field and the existing Antigravity pool,
-  without vendor-traffic interception.
-- Kept large plaintext `read_history(search)` result indices exact without
-  decoding every earlier segment; segment indexes now retain display-row counts
-  and candidate selection works with ripgrep, standard grep, or a dependency-free
-  fallback.
-- Isolated Grab state across tiled conversations so background Active Agents
-  polls and late terminal inventories cannot repaint another conversation's
-  shared controls.
+- Added the official `antigravity-acp` provider with persistent per-service
+  authentication, four advertised login methods, server-side noVNC OAuth, and
+  the PawFlow MCP bridge always exposed to the ACP process.
+- Added safe import and update discovery from the public ACP registry, including
+  schema validation, quarantine metadata, digest-verified binary extraction,
+  and an explicit user-reviewed service configuration flow.
+- Added native, interruptible WebChat motion controllers with reduced-motion
+  support, stable transcript/resource reconciliation, centralized floating-layer
+  placement, and deterministic Chromium performance and lifecycle gates.
+- Kept `read_history` searches bounded by excluding nested tool-result copies,
+  resolving exact phrases first, and shipping ripgrep plus GNU `time` in every
+  execution image.
 
 ## What lives in the repository
 

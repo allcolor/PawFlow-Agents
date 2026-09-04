@@ -388,6 +388,23 @@ def test_agent_login_image_installs_antigravity_cli():
     assert "bash -s -- --dir /usr/local/bin" in src
 
 
+def test_agent_cli_image_installs_ripgrep_and_gnu_time():
+    """Every PawFlow image ships `rg` and `/usr/bin/time` as baseline tools.
+
+    The agent CLIs and the MCP bridge shell out to `rg`; without it the tools
+    silently fall back to slower scans. The two packages are adjacent so one
+    assertion covers both, mirroring the server and relay image checks in
+    tests/test_installation_artifacts.py.
+    """
+    src = Path("docker/claude-code/Dockerfile").read_text(encoding="utf-8")
+
+    apt_line = next(
+        line for line in src.splitlines()
+        if "ripgrep" in line and not line.lstrip().startswith("#"))
+    assert " ripgrep time " in apt_line + " "
+    assert src.index("ripgrep time") < src.index("rm -rf /var/lib/apt/lists/*")
+
+
 def test_agent_cli_image_installs_bubblewrap_for_codex_sandbox():
     src = Path("docker/claude-code/Dockerfile").read_text(encoding="utf-8")
 

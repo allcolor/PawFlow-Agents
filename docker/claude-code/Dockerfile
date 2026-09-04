@@ -1,8 +1,10 @@
 FROM node:22-slim
 
-# System deps for Claude Code/Codex/Gemini + Python for MCP bridge + display for auth login
+# System deps for Claude Code/Codex/Gemini + Python for MCP bridge + display for auth login.
+# ripgrep + GNU time are baseline tools every PawFlow image ships (agent CLIs
+# and the MCP bridge shell out to `rg`; benchmarks use `/usr/bin/time`).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip git ca-certificates curl unzip chrony tmux bubblewrap tini \
+    python3 python3-pip git ca-certificates curl unzip chrony tmux bubblewrap tini ripgrep time \
     xvfb x11vnc novnc websockify chromium dbus-x11 xterm \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,6 +34,23 @@ RUN npm install -g \
         "@openai/codex@${CODEX_VERSION}" \
         "@google/gemini-cli@${GEMINI_VERSION}" \
     && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin
+
+# Google's official Antigravity ACP server (ACP registry entry `antigravity-acp`).
+# It is a self-contained ELF; core/antigravity_acp_pool.py execs
+# /opt/pawflow/antigravity-acp/agy_acp_server.par --uid= inside this image.
+# Pinned by version and archive digest: a new release is a deliberate change
+# of both build args, never a silent download of "latest".
+ARG ANTIGRAVITY_ACP_VERSION=1.1.1
+ARG ANTIGRAVITY_ACP_SHA256=38f62d01b32deb0907b3d39a71ec301fd36369f6ffd1cf262d4af385177f79df
+RUN set -eux; \
+    curl -fsSL "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_${ANTIGRAVITY_ACP_VERSION}-linux-x86_64.zip" \
+      -o /tmp/agy-acp.zip; \
+    echo "${ANTIGRAVITY_ACP_SHA256}  /tmp/agy-acp.zip" | sha256sum -c -; \
+    mkdir -p /opt/pawflow/antigravity-acp; \
+    unzip -q /tmp/agy-acp.zip -d /opt/pawflow/antigravity-acp; \
+    chmod 0755 /opt/pawflow/antigravity-acp/agy_acp_server.par /opt/pawflow/antigravity-acp/localharness_external; \
+    printf '%s\n' "${ANTIGRAVITY_ACP_VERSION}" > /opt/pawflow/antigravity-acp/VERSION; \
+    rm -f /tmp/agy-acp.zip
 
 # Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 # node:22-slim has UID 1000 as 'node' — rename to 'pawflow' for consistency
@@ -63,8 +82,10 @@ COPY auth_login.sh /opt/pawflow/auth_login.sh
 COPY codex_auth_login.sh /opt/pawflow/codex_auth_login.sh
 COPY gemini_auth_login.sh /opt/pawflow/gemini_auth_login.sh
 COPY agy_auth_login.sh /opt/pawflow/agy_auth_login.sh
+COPY agy_acp_auth_login.sh /opt/pawflow/agy_acp_auth_login.sh
+COPY agy_acp_login.py /opt/pawflow/agy_acp_login.py
 COPY rclone_auth_login.sh /opt/pawflow/rclone_auth_login.sh
-RUN chmod +x /opt/pawflow/auth_login.sh /opt/pawflow/codex_auth_login.sh /opt/pawflow/gemini_auth_login.sh /opt/pawflow/agy_auth_login.sh /opt/pawflow/rclone_auth_login.sh
+RUN chmod +x /opt/pawflow/auth_login.sh /opt/pawflow/codex_auth_login.sh /opt/pawflow/gemini_auth_login.sh /opt/pawflow/agy_auth_login.sh /opt/pawflow/agy_acp_auth_login.sh /opt/pawflow/agy_acp_login.py /opt/pawflow/rclone_auth_login.sh
 
 # Browser wrapper for Claude Code auth login (Chromium with Docker-safe flags)
 RUN printf '#!/bin/bash\nexec chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --window-size=1280,800 "$@"\n' \

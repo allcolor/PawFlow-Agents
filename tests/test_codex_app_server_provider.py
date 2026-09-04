@@ -363,7 +363,12 @@ def test_codex_app_server_registers_live_app_server_session():
     # llmCredentialOAuthProvider, not here. Copilot's device flow is not one:
     # it ends on a plain api_key.
     assert [a["id"] for a in LLMConnectionService({}).get_service_actions()] == [
-        "omniroute_models_list", "copilot_device_login"]
+        "omniroute_models_list",
+        "copilot_device_login",
+        "antigravity_acp_server_login",
+        "acp_registry_import",
+        "acp_registry_check_update",
+    ]
 
     rules = LLMConnectionService({}).get_parameter_rules()
     assert any(

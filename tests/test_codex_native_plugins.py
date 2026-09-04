@@ -214,8 +214,8 @@ class TestServiceSchema:
         env_visible = [r["when"]["provider"] for r in rules
                        if r["set"].get("cli_environment", {}).get("visible")]
         assert env_visible == [
-            ["claude-code"], ["claude-code-interactive"], ["cc_mcp"],
-            ["antigravity-interactive"], ["codex-app-server"],
+            ["antigravity-acp"], ["claude-code"], ["claude-code-interactive"],
+            ["cc_mcp"], ["antigravity-interactive"], ["codex-app-server"],
             ["codex-interactive"], ["codex_mcp"], ["gemini"],
         ]
         toml_visible = [r["when"]["provider"] for r in rules

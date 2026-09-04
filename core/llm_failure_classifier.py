@@ -164,6 +164,11 @@ _CLI_ALLOWLISTS = {
         "quota_exhausted": ("resource_exhausted",),
         "context_overflow": ("input token count exceeds",),
     },
+    "antigravity-acp": {
+        "auth_invalid": ("unauthenticated", "authentication required"),
+        "quota_exhausted": ("resource_exhausted",),
+        "context_overflow": ("input token count exceeds",),
+    },
 }
 
 

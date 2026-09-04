@@ -126,6 +126,21 @@ class LLMConnectionService(BaseService):
                 validate_acp_config(self.config)
             except ValueError as exc:
                 raise ServiceError(str(exc)) from exc
+        if self.provider == "antigravity-acp":
+            from core.llm_auth_modes import OAUTH, resolve_mode
+            from core.llm_providers.antigravity_acp import (
+                validate_antigravity_acp_config,
+            )
+
+            if resolve_mode(self.provider, self.config) == OAUTH:
+                raise ServiceError(
+                    "provider 'antigravity-acp' logs in through the Antigravity "
+                    "ACP server itself; it does not use a credential pool. Use "
+                    "auth_mode=none (browser login) or auth_mode=api_key.")
+            try:
+                validate_antigravity_acp_config(self.config)
+            except ValueError as exc:
+                raise ServiceError(str(exc)) from exc
         # One credential rule for every provider. It used to fork on provider
         # family -- CLI providers could use an OAuth pool, everything else had
         # to carry an api_key -- but that is not a property of the provider:
@@ -158,7 +173,7 @@ class LLMConnectionService(BaseService):
         return {"provider": self.provider, "ready": True}
 
     def _close_connection(self):
-        if self.provider == "acp":
+        if self.provider in ("acp", "antigravity-acp"):
             self._client._acp_close_all()
 
     def _apply_defaults(self, temperature, max_tokens, model):
@@ -340,7 +355,7 @@ class LLMConnectionService(BaseService):
         tokens_out = response.tokens_out
 
         if (
-            self.provider == "acp"
+            self.provider in ("acp", "antigravity-acp")
             and getattr(response, "input_usage_native", None) is False
         ):
             return
@@ -797,6 +812,29 @@ class LLMConnectionService(BaseService):
                 "type": "string", "default": "",
                 "description": "Optional display title for responses from this ACP agent",
             },
+            "acp_registry": {
+                "type": "string", "default": "", "multiline": True,
+                "description": (
+                    "Registry import record (JSON: id, version, distribution, "
+                    "digest) written by 'Import from ACP registry' and read by "
+                    "'Check ACP registry updates'; empty for hand-written agents"
+                ),
+            },
+            "antigravity_acp_auth_method": {
+                "type": "select", "default": "oauth-personal",
+                "options": [
+                    "oauth-personal", "oauth-business",
+                    "gemini-api-key", "agent-platform",
+                ],
+                "description": (
+                    "antigravity-acp only: authentication method id advertised "
+                    "by Google's Antigravity ACP server. oauth-personal and "
+                    "oauth-business log in through the browser (Antigravity "
+                    "ACP login action); gemini-api-key uses api_key as "
+                    "GEMINI_API_KEY; agent-platform uses Application Default "
+                    "Credentials or api_key as GOOGLE_API_KEY."
+                ),
+            },
             "docker_image": {
                 "type": "string", "default": "pawflow-claude-code:latest",
                 "description": "Docker image for containerized execution",
@@ -877,7 +915,7 @@ class LLMConnectionService(BaseService):
                                      "claude-code", "claude-code-interactive",
                                      "antigravity-interactive", "codex-app-server",
                                      "codex-interactive",
-                                     "gemini", "acp",
+                                     "gemini", "acp", "antigravity-acp",
                                      "cc_mcp", "codex_mcp", "agy_mcp"]},
                 "set": {
                     "azure_deployment":  {"visible": False},
@@ -898,6 +936,8 @@ class LLMConnectionService(BaseService):
                     "acp_mcp_mode": {"visible": False},
                     "acp_use_client_io": {"visible": False},
                     "acp_title_override": {"visible": False},
+                    "acp_registry": {"visible": False},
+                    "antigravity_acp_auth_method": {"visible": False},
                 }
             },
             {
@@ -1035,6 +1075,46 @@ class LLMConnectionService(BaseService):
                     "acp_load_session": {"visible": True},
                     "acp_additional_directories": {"visible": True},
                     "acp_mcp_mode": {"visible": True},
+                    "acp_use_client_io": {"visible": True},
+                    "acp_title_override": {"visible": True},
+                    "acp_registry": {"visible": True},
+                }
+            },
+            {
+                "when": {"provider": ["antigravity-acp"]},
+                "set": {
+                    "auth_mode": {"visible": True, "default": "none"},
+                    "api_key": {
+                        "visible": True,
+                        "description": (
+                            "Gemini API key (gemini-api-key) or Google API key "
+                            "(agent-platform); empty for browser login"),
+                    },
+                    "credential_service_id": {"visible": False},
+                    "base_url": {"visible": False},
+                    "relay_local": {"visible": False},
+                    "default_model": {"visible": False},
+                    "fallback_model": {"visible": False},
+                    "max_retries": {"visible": False},
+                    "supports_vision": {"visible": True},
+                    "vision_llm_service": {"visible": False},
+                    "max_concurrent": {"visible": False},
+                    "docker_image": {"visible": False},
+                    "docker_cpu_limit": {"visible": False},
+                    "docker_memory_limit": {"visible": False},
+                    "effort": {"visible": False},
+                    "reasoning_effort": {"visible": False},
+                    "codex_plugins": {"visible": False},
+                    "claude_plugins": {"visible": False},
+                    "claude_marketplaces": {"visible": False},
+                    "extra_body": {"visible": False},
+                    "store": {"visible": False},
+                    "cli_environment": {"visible": True},
+                    "codex_config_toml": {"visible": False},
+                    "codex_models_json": {"visible": False},
+                    "antigravity_acp_auth_method": {"visible": True, "required": True},
+                    "acp_reuse_process": {"visible": True},
+                    "acp_load_session": {"visible": True},
                     "acp_use_client_io": {"visible": True},
                     "acp_title_override": {"visible": True},
                 }
@@ -1294,6 +1374,39 @@ class LLMConnectionService(BaseService):
                 "when": {"provider": ["copilot"]},
                 "server_action": "copilot_device_login",
                 "flow": "device_code",
+            },
+            {
+                # The Antigravity ACP server owns its login (browser OAuth on
+                # its own loopback listener), so no credential pool is
+                # involved. It reuses the Agy noVNC dialog and action
+                # namespace; the server branches on the service provider.
+                "id": "antigravity_acp_server_login",
+                "label": "Login via server (Antigravity ACP)",
+                "icon": "",
+                "when": {"provider": ["antigravity-acp"]},
+                "server_action": "agy_server_login",
+                "flow": "gemini_login_server",
+            },
+            {
+                # Picks a public ACP registry entry and fills the acp_* fields
+                # (tasks/ai/actions/_sf_acp_registry.py). `before_install`
+                # renders it on the install form too: importing is how a new
+                # acp service is created. Saving is the normal submit.
+                "id": "acp_registry_import",
+                "label": "Import from ACP registry",
+                "icon": "",
+                "when": {"provider": ["acp"]},
+                "server_action": "acp_registry_catalogue",
+                "flow": "acp_registry_import",
+                "before_install": True,
+            },
+            {
+                "id": "acp_registry_check_update",
+                "label": "Check ACP registry updates",
+                "icon": "",
+                "when": {"provider": ["acp"]},
+                "server_action": "acp_registry_check_update",
+                "flow": "simple",
             },
         ]
 

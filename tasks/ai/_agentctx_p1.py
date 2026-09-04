@@ -451,7 +451,7 @@ class _PACPhase1Mixin:
         st._is_gemini_acp = (st._provider_name == "gemini")
         st._is_codex_app_server = (st._provider_name == "codex-app-server")
         st._is_codex_interactive = (st._provider_name == "codex-interactive")
-        st._is_acp = (st._provider_name == "acp")
+        st._is_acp = (st._provider_name in ("acp", "antigravity-acp"))
         st._is_managed_mcp = st._provider_name in (
             "cc_mcp", "codex_mcp", "agy_mcp")
         st._is_cli_provider = (

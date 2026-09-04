@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from typing import Any
 
 from acp import RequestError, run_agent
 from acp.schema import (
     AgentMessageChunk,
     AgentThoughtChunk,
+    AuthenticateResponse,
     LoadSessionResponse,
     NewSessionResponse,
     PermissionOption,
@@ -27,6 +29,35 @@ def _text(value: str) -> TextContentBlock:
     return TextContentBlock(type="text", text=value)
 
 
+#: Authentication method ids advertised by Google's Antigravity ACP server
+#: 1.1.1, replayed when PAWFLOW_ACP_FIXTURE_AUTH=antigravity.
+ANTIGRAVITY_AUTH_IDS = (
+    "oauth-personal",
+    "oauth-business",
+    "gemini-api-key",
+    "agent-platform",
+)
+
+
+def _auth_required() -> bool:
+    return os.environ.get("PAWFLOW_ACP_FIXTURE_AUTH") == "antigravity"
+
+
+def _mcp_server_summary(mcp_servers: list[Any] | None) -> list[dict[str, Any]]:
+    summary = []
+    for server in mcp_servers or []:
+        summary.append({
+            "name": str(getattr(server, "name", "") or ""),
+            "command": str(getattr(server, "command", "") or ""),
+            "args": [str(arg) for arg in (getattr(server, "args", None) or [])],
+            "env_names": sorted(
+                str(getattr(item, "name", "") or "")
+                for item in (getattr(server, "env", None) or [])
+            ),
+        })
+    return summary
+
+
 class RuntimeFixtureAgent:
     def __init__(self) -> None:
         self.client: Any = None
@@ -34,6 +65,8 @@ class RuntimeFixtureAgent:
         self.loaded = False
         self.stale_load_seen = False
         self.new_session_calls = 0
+        self.authenticated_with = ""
+        self.last_session_request: dict[str, Any] = {}
 
     def on_connect(self, connection: Any) -> None:
         self.client = connection
@@ -46,7 +79,7 @@ class RuntimeFixtureAgent:
         **kwargs: Any,
     ) -> Any:
         del client_capabilities, client_info, kwargs
-        return {
+        result: dict[str, Any] = {
             "protocolVersion": protocol_version,
             "agentCapabilities": {
                 "loadSession": True,
@@ -61,6 +94,21 @@ class RuntimeFixtureAgent:
                 "version": "1",
             },
         }
+        if _auth_required():
+            result["agentCapabilities"]["mcpCapabilities"] = {"http": True, "sse": True}
+            result["agentCapabilities"]["sessionCapabilities"] = {"list": {}, "resume": {}}
+            result["authMethods"] = [
+                {"id": method_id, "name": method_id, "description": method_id}
+                for method_id in ANTIGRAVITY_AUTH_IDS
+            ]
+        return result
+
+    async def authenticate(self, method_id: str, **kwargs: Any) -> AuthenticateResponse:
+        del kwargs
+        if method_id not in ANTIGRAVITY_AUTH_IDS:
+            raise RequestError.invalid_params({"message": f"unknown auth method {method_id}"})
+        self.authenticated_with = method_id
+        return AuthenticateResponse()
 
     async def new_session(
         self,
@@ -69,7 +117,13 @@ class RuntimeFixtureAgent:
         mcp_servers: list[Any] | None = None,
         **kwargs: Any,
     ) -> NewSessionResponse:
-        del cwd, additional_directories, mcp_servers, kwargs
+        del additional_directories, kwargs
+        if _auth_required() and not self.authenticated_with:
+            raise RequestError(-32000, "Authentication required")
+        self.last_session_request = {
+            "cwd": cwd,
+            "mcp_servers": _mcp_server_summary(mcp_servers),
+        }
         self.loaded = False
         self.new_session_calls += 1
         return NewSessionResponse(
@@ -86,10 +140,16 @@ class RuntimeFixtureAgent:
         mcp_servers: list[Any] | None = None,
         **kwargs: Any,
     ) -> LoadSessionResponse:
-        del cwd, additional_directories, mcp_servers, kwargs
+        del additional_directories, kwargs
+        if _auth_required() and not self.authenticated_with:
+            raise RequestError(-32000, "Authentication required")
         if session_id == os.environ.get("PAWFLOW_ACP_FIXTURE_STALE_SESSION"):
             self.stale_load_seen = True
             raise RequestError(-32002, "unknown ACP session")
+        self.last_session_request = {
+            "cwd": cwd,
+            "mcp_servers": _mcp_server_summary(mcp_servers),
+        }
         self.loaded = True
         return LoadSessionResponse()
 
@@ -100,6 +160,9 @@ class RuntimeFixtureAgent:
         **kwargs: Any,
     ) -> PromptResponse:
         del kwargs
+        stderr_line = os.environ.get("PAWFLOW_ACP_FIXTURE_STDERR", "")
+        if stderr_line:
+            print(stderr_line, file=sys.stderr, flush=True)
         if os.environ.get("PAWFLOW_ACP_FIXTURE_MODE") == "provider":
             text = "\n".join(
                 str(getattr(block, "text", "") or "")
@@ -135,8 +198,11 @@ class RuntimeFixtureAgent:
                 )
 
             payload = {
+                "auth_method": self.authenticated_with,
+                "cwd": self.last_session_request.get("cwd", ""),
                 "inherited": os.environ.get("PAWFLOW_ACP_INHERITED", ""),
                 "loaded": self.loaded,
+                "mcp_servers": self.last_session_request.get("mcp_servers", []),
                 "mime_types": [
                     str(getattr(block, "mime_type", "") or "")
                     for block in prompt

@@ -133,7 +133,7 @@ class _LLMClientDriverMixin:
         Returns:
             LLMResponse with content and/or tool_calls populated.
         """
-        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "acp", "cc_mcp", "codex_mcp", "agy_mcp"):
+        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "acp", "antigravity-acp", "cc_mcp", "codex_mcp", "agy_mcp"):
             raise LLMClientError("api_key is required")
         if self.provider not in self.PROVIDERS:
             raise LLMClientError(
@@ -238,7 +238,7 @@ class _LLMClientDriverMixin:
                     call_event_cid=call_event_cid,
                     call_ephemeral_stream=call_ephemeral_stream,
                 )
-            elif self.provider == "acp":
+            elif self.provider in ("acp", "antigravity-acp"):
                 result = self._stream_acp(
                     messages, mdl, temperature, wire_max_tokens, None,
                     call_user_id=call_user_id,
@@ -260,9 +260,9 @@ class _LLMClientDriverMixin:
                 call_user_id=call_user_id or "",
                 call_event_cid=call_event_cid or "",
             )
-            if self.provider not in ("acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_in and messages:
+            if self.provider not in ("acp", "antigravity-acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_in and messages:
                 result.tokens_in = count_messages_tokens(messages)
-            if self.provider not in ("acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_out and result.content:
+            if self.provider not in ("acp", "antigravity-acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_out and result.content:
                 result.tokens_out = len(result.content) // 4
             self._report_tokens(result, messages)
             self._circuit_after_success(mdl)
@@ -395,7 +395,7 @@ class _LLMClientDriverMixin:
                 getattr(self, f"cancel_{self.provider}")(force=True)
             except Exception:
                 logger.debug("Managed MCP abort failed", exc_info=True)
-        if getattr(self, "provider", "") == "acp":
+        if getattr(self, "provider", "") in ("acp", "antigravity-acp"):
             try:
                 self._acp_abort_active(force=True)
             except Exception:
@@ -454,7 +454,7 @@ class _LLMClientDriverMixin:
 
         Supports both OpenAI and Anthropic streaming.
         """
-        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "acp", "cc_mcp", "codex_mcp", "agy_mcp"):
+        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "acp", "antigravity-acp", "cc_mcp", "codex_mcp", "agy_mcp"):
             raise LLMClientError("api_key is required")
 
         self._apply_call_identity(
@@ -632,7 +632,7 @@ class _LLMClientDriverMixin:
                                                call_agent_name=call_agent_name,
                                                call_event_cid=call_event_cid,
                                                call_ephemeral_stream=call_ephemeral_stream)
-            elif self.provider == "acp":
+            elif self.provider in ("acp", "antigravity-acp"):
                 result = self._stream_acp(
                     messages, mdl, temperature, wire_max_tokens, None,
                     _visible_callback,
@@ -665,9 +665,9 @@ class _LLMClientDriverMixin:
                 call_user_id=call_user_id or "",
                 call_event_cid=call_event_cid or "",
             )
-            if self.provider not in ("acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_in and messages:
+            if self.provider not in ("acp", "antigravity-acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_in and messages:
                 result.tokens_in = count_messages_tokens(messages)
-            if self.provider not in ("acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_out and result.content:
+            if self.provider not in ("acp", "antigravity-acp", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_out and result.content:
                 result.tokens_out = len(result.content) // 4
             self._report_tokens(result, messages)
             self._circuit_after_success(mdl)

@@ -59,7 +59,7 @@ def test_interactive_cli_provider_set_covers_every_tmux_provider():
         "antigravity-interactive",
         # Managed MCP providers reuse the same tmux pools.
         "cc_mcp", "codex_mcp", "agy_mcp"}
-    assert NO_REPLAY_PROVIDERS == INTERACTIVE_CLI_PROVIDERS | {"acp"}
+    assert NO_REPLAY_PROVIDERS == INTERACTIVE_CLI_PROVIDERS | {"acp", "antigravity-acp"}
 
 
 def _failing_client(monkeypatch, provider, exc, calls):

@@ -16,6 +16,7 @@ _CLI_CONTEXT_PROVIDERS = (
     "codex-interactive",
     "gemini",
     "acp",
+    "antigravity-acp",
     "cc_mcp",
     "codex_mcp",
     "agy_mcp",

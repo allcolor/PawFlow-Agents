@@ -200,9 +200,9 @@ def test_the_cli_providers_checked_here_are_the_gauge_s_own_list():
 
     managed = managed_mcp_capability_matrix()
     assert set(_CLI_CONTEXT_PROVIDERS) == {
-        "acp", "claude-code", "claude-code-interactive", "antigravity-interactive",
-        "codex-app-server", "codex-interactive", "gemini",
-        "cc_mcp", "codex_mcp", "agy_mcp"}
+        "acp", "antigravity-acp", "claude-code", "claude-code-interactive",
+        "antigravity-interactive", "codex-app-server", "codex-interactive",
+        "gemini", "cc_mcp", "codex_mcp", "agy_mcp"}
     assert managed["cc_mcp"]["context_source"] == "unavailable"
     assert managed["codex_mcp"]["context_source"] == "codex_rollout_token_count"
     assert managed["agy_mcp"]["context_source"] == "unavailable"

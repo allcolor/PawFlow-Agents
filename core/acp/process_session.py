@@ -63,6 +63,7 @@ class AcpProcessSession:
         startup_timeout: float = 15.0,
         shutdown_timeout: float = 2.0,
         client_info: Implementation | None = None,
+        stderr_path: str | None = None,
     ) -> None:
         if not isinstance(command, str) or not command.strip():
             raise ValueError("command is required")
@@ -84,6 +85,10 @@ class AcpProcessSession:
         self.args = tuple(args)
         self.env = dict(env) if env is not None else None
         self.cwd = cwd
+        # Where the agent's stderr goes. The SDK default is an unread pipe,
+        # which blocks a verbose agent once the pipe buffer fills; a file
+        # keeps its diagnostics without that back-pressure.
+        self.stderr_path = str(stderr_path) if stderr_path else None
         self.events = AcpEventChannel(event_capacity)
         self._handlers = handlers or AcpClientHandlers()
         self._startup_timeout = startup_timeout
@@ -336,13 +341,34 @@ class AcpProcessSession:
             self._stop_event = stop_event
             self._adapter = adapter
 
+        transport_kwargs: dict[str, Any] = {
+            "shutdown_timeout": self._shutdown_timeout,
+        }
+        stderr_file = None
+        if self.stderr_path:
+            os.makedirs(os.path.dirname(self.stderr_path) or ".", exist_ok=True)
+            stderr_file = open(self.stderr_path, "ab", buffering=0)  # noqa: SIM115
+            transport_kwargs["stderr"] = stderr_file.fileno()
+        try:
+            await self._run_process(adapter, generation, stop_event, transport_kwargs)
+        finally:
+            if stderr_file is not None:
+                stderr_file.close()
+
+    async def _run_process(
+        self,
+        adapter: AcpClientAdapter,
+        generation: int,
+        stop_event: asyncio.Event,
+        transport_kwargs: Mapping[str, Any],
+    ) -> None:
         async with spawn_agent_process(
             adapter,
             self.command,
             *self.args,
             env=({**os.environ, **self.env} if self.env is not None else None),
             cwd=self.cwd,
-            transport_kwargs={"shutdown_timeout": self._shutdown_timeout},
+            transport_kwargs=dict(transport_kwargs),
         ) as (connection, process):
             with self._lock:
                 self._connection = connection

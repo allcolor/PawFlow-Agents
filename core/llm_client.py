@@ -27,8 +27,10 @@ from core.llm_providers import (
     LLMCodexInteractiveMixin,
     LLMManagedMcpMixin,
     LLMAcpMixin,
+    LLMAntigravityAcpMixin,
     LLMGeminiMixin,
 )
+from core.llm_providers.acp import ACP_PROVIDERS
 from core._llm_types import (  # noqa: F401 -- re-exported for back-compat (invariant 1)
     AgentSuperseded,
     CCCompactDetected,
@@ -78,6 +80,7 @@ class LLMClient(
     LLMCodexAppServerMixin,
     LLMCodexInteractiveMixin,
     LLMManagedMcpMixin,
+    LLMAntigravityAcpMixin,
     LLMAcpMixin,
     LLMGeminiMixin,
 ):
@@ -94,7 +97,7 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "openai-responses", "azure-openai", "copilot", "omniroute", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "acp", "cc_mcp", "codex_mcp", "agy_mcp")
+    PROVIDERS = ("openai", "openai-responses", "azure-openai", "copilot", "omniroute", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "acp", "antigravity-acp", "cc_mcp", "codex_mcp", "agy_mcp")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
@@ -225,7 +228,7 @@ class LLMClient(
         _max_ctx = getattr(self, '_max_context_size', 0)
         if _max_ctx:
             clone._max_context_size = _max_ctx
-        if self.provider == "acp":
+        if self.provider in ACP_PROVIDERS:
             sessions, lock = self._acp_shared_state()
             clone._acp_live_sessions = sessions
             clone._acp_live_lock = lock
@@ -629,7 +632,7 @@ class LLMClient(
         tokens_in = response.tokens_in
         tokens_out = response.tokens_out
         if (
-            self.provider == "acp"
+            self.provider in ACP_PROVIDERS
             and getattr(response, "input_usage_native", None) is False
         ):
             return
@@ -691,7 +694,7 @@ class LLMClient(
 
 _PROVIDERS_WITHOUT_DEFAULT_MODEL = (
     "claude-code", "claude-code-interactive", "antigravity-interactive",
-    "codex-app-server", "codex-interactive", "gemini", "acp",
+    "codex-app-server", "codex-interactive", "gemini", "acp", "antigravity-acp",
     "cc_mcp", "codex_mcp", "agy_mcp")
 
 

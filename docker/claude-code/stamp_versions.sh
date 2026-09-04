@@ -20,5 +20,7 @@ printf '{\n'
 printf '  "claude": "%s",\n' "$(version_of claude)"
 printf '  "codex": "%s",\n' "$(version_of codex)"
 printf '  "gemini": "%s",\n' "$(version_of gemini)"
-printf '  "antigravity": "%s"\n' "$(version_of agy)"
+printf '  "antigravity": "%s",\n' "$(version_of agy)"
+# The ACP server is pinned by build arg; its VERSION file is the record.
+printf '  "antigravity_acp": "%s"\n' "$(cat /opt/pawflow/antigravity-acp/VERSION 2>/dev/null | head -n1)"
 printf '}\n'

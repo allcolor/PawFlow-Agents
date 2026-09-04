@@ -11,4 +11,5 @@ from core.llm_providers.codex_app_server import LLMCodexAppServerMixin  # noqa: 
 from core.llm_providers.codex_interactive import LLMCodexInteractiveMixin  # noqa: F401
 from core.llm_providers.managed_mcp import LLMManagedMcpMixin  # noqa: F401
 from core.llm_providers.acp import LLMAcpMixin  # noqa: F401
+from core.llm_providers.antigravity_acp import LLMAntigravityAcpMixin  # noqa: F401
 from core.llm_providers.gemini import LLMGeminiMixin  # noqa: F401

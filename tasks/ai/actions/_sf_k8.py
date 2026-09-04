@@ -12,6 +12,7 @@ from tasks.ai.actions._sf_base import (
     _store_gemini_tokens,
     _resolve_service_definition_for_action,
 )
+from tasks.ai.actions._sf_acp import _is_antigravity_acp_service
 from tasks.ai.actions._sf_routes import (
     _docker_published_host,
     _ensure_vnc_routes,
@@ -280,6 +281,13 @@ def _handle_sf_k8(self, action, body, store, user_id, flowfile, _helpers):
             if not sdef:
                 flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
                 return [flowfile]
+            if action == "agy_server_login" and _is_antigravity_acp_service(sdef):
+                # Same dialog, different login: the Antigravity ACP server
+                # authenticates itself and stores no Gemini pool credential.
+                from tasks.ai.actions._sf_acp import start_antigravity_acp_login
+                return start_antigravity_acp_login(
+                    body, user_id, flowfile, sdef=sdef, service_id=service_id,
+                    conversation_id=conversation_id)
             if _credential_provider_for_service(service_id, user_id) != "gemini":
                 flowfile.set_content(json.dumps({"error": f"Service '{service_id}' is not a gemini credential provider"}).encode())
                 return [flowfile]
@@ -418,6 +426,18 @@ def _handle_sf_k8(self, action, body, store, user_id, flowfile, _helpers):
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
         conv_id = body.get("conversation_id", "") or session.get("conversation_id", "") or ""
+        if action == "agy_server_login_status":
+            try:
+                from core.service_registry import ServiceRegistry
+                _acp_sdef = ServiceRegistry.get_instance().resolve_definition(
+                    service_id, user_id=user_id, conv_id=conv_id)
+            except Exception:
+                _acp_sdef = None
+            if _acp_sdef is not None and _is_antigravity_acp_service(_acp_sdef):
+                from tasks.ai.actions._sf_acp import antigravity_acp_login_status
+                return antigravity_acp_login_status(
+                    user_id, flowfile, session_id=session_id, session=session,
+                    service_id=service_id, conv_id=conv_id)
         if session.get("error"):
             unregister_session(session_id)
             flowfile.set_content(json.dumps({"error": session["error"]}).encode())

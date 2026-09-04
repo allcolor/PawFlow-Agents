@@ -36,6 +36,10 @@ from core.acp import AcpClientHandlers, AcpProcessSession
 from core.acp.client_adapter import select_permission_response
 from core._llm_types import ColdStartRequired, LLMClientError
 
+#: Providers that run through ``LLMAcpMixin``. The generic ``acp`` provider
+#: takes its command from the service; specializations fix it themselves.
+ACP_PROVIDERS = frozenset({"acp", "antigravity-acp"})
+
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _MAX_MEDIA_BYTES = 16 * 1024 * 1024
 _TERMINAL_TOOL_STATUSES = frozenset({"completed", "failed"})
@@ -603,6 +607,11 @@ class LLMAcpMixin:
             and int(getattr(exc, "code", 0) or 0) == -32002
         )
 
+    def _acp_process_kwargs(self, config: Mapping[str, Any]) -> dict[str, Any]:
+        """Extra ``AcpProcessSession`` keyword arguments for this provider."""
+        del config
+        return {}
+
     def _acp_open_session(
         self,
         live: _AcpLiveSession,
@@ -614,6 +623,10 @@ class LLMAcpMixin:
         service_id: str,
         persist_session: bool,
     ) -> tuple[str, bool]:
+        # The process cwd is where PawFlow launches the command; the session
+        # cwd is the workspace the agent sees. They differ when the command
+        # is a container bridge such as ``docker exec``.
+        session_cwd = str(config.get("session_cwd") or config["cwd"])
         process = AcpProcessSession(
             config["command"],
             config["args"],
@@ -628,6 +641,7 @@ class LLMAcpMixin:
             cwd=config["cwd"],
             startup_timeout=15.0,
             shutdown_timeout=2.0,
+            **self._acp_process_kwargs(config),
         )
         live.process = process
         initialized = process.start()
@@ -664,7 +678,7 @@ class LLMAcpMixin:
             try:
                 process.call(
                     "load_session",
-                    cwd=config["cwd"],
+                    cwd=session_cwd,
                     session_id=stored,
                     mcp_servers=mcp_servers,
                     additional_directories=additional_directories or None,
@@ -680,7 +694,7 @@ class LLMAcpMixin:
 
         created = process.call(
             "new_session",
-            cwd=config["cwd"],
+            cwd=session_cwd,
             mcp_servers=mcp_servers,
             additional_directories=additional_directories or None,
         )
@@ -1327,4 +1341,4 @@ class LLMAcpMixin:
             self._acp_close_entry(key, live, force=True)
 
 
-__all__ = ["LLMAcpMixin", "validate_acp_config"]
+__all__ = ["ACP_PROVIDERS", "LLMAcpMixin", "validate_acp_config"]

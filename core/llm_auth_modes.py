@@ -27,7 +27,7 @@ MODES = (NONE, API_KEY, OAUTH)
 CLI_PROVIDERS = frozenset({
     "claude-code", "claude-code-interactive", "antigravity-interactive",
     "codex-app-server", "codex-interactive", "gemini", "acp",
-    "cc_mcp", "codex_mcp", "agy_mcp",
+    "antigravity-acp", "cc_mcp", "codex_mcp", "agy_mcp",
 })
 
 

@@ -2,7 +2,7 @@
 """Lifecycle hook bridge for PawFlow-managed interactive CLIs.
 
 Installed as the ``UserPromptSubmit`` / ``Stop`` / compaction / session hooks
-of Claude Code and Codex (and, once its probe passes, Antigravity). It sends
+of Claude Code, Codex and Antigravity. It sends
 one fire-and-forget ``hook`` event per invocation to ``CCInteractiveEventService``
 over the managed session's authenticated WebSocket registration.
 
@@ -253,6 +253,11 @@ def _normalize_client_input(raw: dict, client: str) -> dict:
         out["transcript_path"] = out.get("transcriptPath")
     if "session_id" not in out and out.get("sessionId"):
         out["session_id"] = out.get("sessionId")
+    if ("last_assistant_message" not in out
+            and isinstance(out.get("finalModelOutput"), str)):
+        out["last_assistant_message"] = out.get("finalModelOutput")
+    if "reason" not in out and out.get("terminationReason"):
+        out["reason"] = out.get("terminationReason")
     if out.get("hook_event_name") == "PreInvocation":
         out["hook_event_name"] = "UserPromptSubmit"
         if not isinstance(out.get("prompt"), str) or not out.get("prompt"):

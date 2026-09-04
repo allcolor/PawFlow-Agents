@@ -7,8 +7,8 @@ substitution is observation: the pools launch the CLI in ``managed_mcp`` mode
 (no proxy, no CA, no vendor host redirection) and the turn completes on the
 CLI's native ``Stop`` hook through :class:`_ManagedMcpTurnCoordinator`.
 
-``agy_mcp`` is probe-gated and refuses every turn with a typed error until the
-official ``agy`` build proves a final-answer source (see the spec table).
+``agy_mcp`` normalizes Antigravity's native ``finalModelOutput`` Stop-hook
+field onto the same final-only event contract.
 
 Thin entrypoints only: this module holds no process, transport or vendor
 logic of its own.
@@ -73,6 +73,9 @@ class LLMManagedMcpMixin:
         if spec.pool_family == "claude-code-interactive":
             from core.claude_code_interactive_pool import InteractiveClaudeCodePool
             return InteractiveClaudeCodePool.instance()
+        if spec.pool_family == "antigravity-interactive":
+            from core.antigravity_observer_pool import AntigravityObserverPool
+            return AntigravityObserverPool.instance()
         from core.llm_client import LLMClientError
         raise LLMClientError(
             f"{spec.provider}: no managed pool for {spec.pool_family}")
@@ -373,7 +376,6 @@ class LLMManagedMcpMixin:
         call_conversation_id=None, call_agent_name=None, call_event_cid=None,
         call_ephemeral_stream=None,
     ):
-        # Probe-gated: raises the typed unavailable error, never falls back.
         return self._managed_mcp_stream(
             "agy_mcp", messages, model, tools=tools, callback=callback,
             turn_callback=turn_callback, block_callback=block_callback,

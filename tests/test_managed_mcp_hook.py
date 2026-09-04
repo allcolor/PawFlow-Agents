@@ -204,9 +204,14 @@ class TestAntigravityClient:
         assert raw["session_id"] == "s1"
         assert raw["prompt"] == "typed in agy"
         stop = hook._compact_input(hook._normalize_client_input({
-            "hookEventName": "Stop", "transcriptPath": str(transcript)}, "agy"))
-        assert stop["last_assistant_message"] == "agy said"
-        assert stop["final_source"] == "transcript"
+            "hookEventName": "Stop",
+            "transcriptPath": str(transcript),
+            "finalModelOutput": "native agy final",
+            "terminationReason": "STOP",
+        }, "agy"))
+        assert stop["last_assistant_message"] == "native agy final"
+        assert stop["final_source"] == "hook_field"
+        assert stop["reason"] == "STOP"
 
     def test_non_agy_clients_are_untouched(self, hook):
         raw = {"hook_event_name": "Stop", "hookEventName": "ignored"}

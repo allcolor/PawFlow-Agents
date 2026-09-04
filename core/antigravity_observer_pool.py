@@ -197,6 +197,17 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
                 self._sessions.pop(key, None)
         return None
 
+    def find_by_session_token(
+            self, session_token: str) -> Optional[AntigravityObserverSession]:
+        """Return the managed session registered under ``session_token``."""
+        if not session_token:
+            return None
+        with self._lock:
+            for state in self._sessions.values():
+                if state.session_token == session_token:
+                    return state
+        return None
+
     def list_sessions(self, user_id: str, conversation_id: str, service_id: str = "") -> list[dict]:
         now = time.time()
         out = []
@@ -258,7 +269,21 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         return len(victims)
 
     def touch(self, state: AntigravityObserverSession) -> None:
-        state.last_used = time.time()
+        with self._lock:
+            state.last_used = time.time()
+
+    def begin_turn(self, state: AntigravityObserverSession) -> None:
+        """Mark a managed turn as running so it cannot be treated as idle."""
+        with self._lock:
+            state.in_flight += 1
+            state.last_used = time.time()
+
+    def end_turn(self, state: AntigravityObserverSession) -> None:
+        """Release a managed turn and clear its duplicate-submit guard."""
+        self.mark_submit_complete(state)
+        with self._lock:
+            state.in_flight = max(0, state.in_flight - 1)
+            state.last_used = time.time()
 
     @staticmethod
     def _client_provider(client) -> str:
@@ -322,6 +347,18 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
 
         hook_env: dict = {}
         session_token = ""  # nosec B105 - filled below in managed mode
+        event_service = None
+
+        def _unregister_failed_managed_session() -> None:
+            if event_service is None or not session_token:
+                return
+            try:
+                event_service.unregister_session(session_token)
+            except Exception:
+                logger.debug(
+                    "[antigravity-interactive] failed launch event cleanup",
+                    exc_info=True)
+
         if managed:
             # Managed MCP mode: the lifecycle hook is the only observation
             # channel. Register the event session first so the hook's
@@ -350,11 +387,19 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
                     self._container_workdir(user_id, conversation_id, agent_name)
                     + "/.pawflow_ag/injected_prompts.jsonl"),
             }
-            self._write_agy_managed_hooks(workdir)
+            try:
+                self._write_agy_managed_hooks(workdir)
+            except Exception:
+                _unregister_failed_managed_session()
+                raise
 
-        name = self._spawn_container(
-            user_id=user_id, conversation_id=conversation_id,
-            agent_name=agent_name, intercept=not managed)
+        try:
+            name = self._spawn_container(
+                user_id=user_id, conversation_id=conversation_id,
+                agent_name=agent_name, intercept=not managed)
+        except Exception:
+            _unregister_failed_managed_session()
+            raise
         physical_workdir = self._physical_container_workdir(user_id, conversation_id, agent_name)
         container_workdir = self._container_workdir(user_id, conversation_id, agent_name)
         try:
@@ -367,6 +412,7 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
                 cli_environment=cli_environment, hook_env=hook_env)
         except Exception:
             subprocess.run(docker_cmd() + ["rm", "-f", name], capture_output=True, timeout=15)  # nosec B603
+            _unregister_failed_managed_session()
             raise
 
         state = AntigravityObserverSession(
@@ -384,13 +430,12 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         state.session_token = session_token
         return state
 
-    # Hook events the supported agy build exposes (probe: binary identifiers
+    # Hook events the supported agy build exposes (binary identifiers
     # PreInvocation, PostInvocation, SessionStart, SessionEnd, PreToolUse,
     # PostToolUse; hooks.json under ~/.gemini/config). ``Stop`` is documented
     # in the agy changelog as running once hooks precede the built-in
-    # termination checks. The final-answer field is NOT proven -- see the
-    # probe record in docs/CLAUDE_CODE_INTERACTIVE.md -- which is why the
-    # agy_mcp provider stays unavailable.
+    # termination checks. Its StopHookArgs protobuf exposes finalModelOutput,
+    # which the shared lifecycle hook normalizes into the common final field.
     _AGY_MANAGED_HOOK_EVENTS = ("PreInvocation", "Stop", "SessionEnd")
 
     @classmethod
@@ -816,6 +861,10 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         except (OSError, subprocess.SubprocessError):
             return False
 
+    def session_is_live(self, name: str) -> bool:
+        """Whether the managed Agy container and tmux session are alive."""
+        return self._is_alive(name) and self._tmux_is_alive(name)
+
     @staticmethod
     def _proxy_log_ready(log_path: str) -> bool:
         path = Path(log_path)
@@ -886,6 +935,28 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
             # very orphan this cleanup exists to prevent.
             if self._sessions.get(state.key) is state:
                 self._sessions.pop(state.key, None)
+        if state.session_token:
+            try:
+                from services.cc_interactive_event_service import (
+                    get_or_create_cc_interactive_event_service,
+                )
+                get_or_create_cc_interactive_event_service()[2].unregister_session(
+                    state.session_token)
+            except Exception:
+                logger.debug(
+                    "[antigravity-interactive] event session cleanup failed",
+                    exc_info=True)
+
+    def kill_session(self, user_id: str, conversation_id: str,
+                     agent_name: str, service_id: str = "") -> bool:
+        """Evict and kill one Agy session by its managed-pool identity."""
+        key = (user_id, conversation_id, agent_name, service_id or "")
+        with self._lock:
+            state = self._sessions.pop(key, None)
+        if state is None:
+            return False
+        self.kill(state)
+        return True
 
     def destroy_ephemeral(self, state: AntigravityObserverSession) -> None:
         """Destroy exactly one ephemeral session and its runtime directory."""

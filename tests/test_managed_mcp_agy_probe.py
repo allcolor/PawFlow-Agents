@@ -1,9 +1,8 @@
-"""Managed MCP: the ``agy_mcp`` WP0 probe record and its gate verdict.
+"""Managed MCP: the ``agy_mcp`` WP0 probe record and its verdict.
 
-The recorded evidence is what was observed on the pinned image; the verdict
-function is what CI will re-run once an authenticated probe records hook
-payloads. Until then the provider must stay unavailable and this test pins
-that outcome to the evidence rather than to an opinion.
+The recorded evidence is what was observed on the pinned image. The verdict
+requires a native Stop contract, a dedicated final source and proxy-independent
+liveness; it never treats tmux output as a response source.
 """
 import json
 from pathlib import Path
@@ -23,14 +22,13 @@ def _record():
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
-def test_recorded_probe_keeps_agy_mcp_unavailable():
+def test_recorded_probe_enables_agy_mcp():
     record = _record()
     verdict = evaluate_probe(record)
-    assert verdict["agy_mcp_available"] is False
-    assert "final_source_proven" in verdict["missing"]
-    assert "stop_hook_fired" in verdict["missing"]
+    assert verdict["agy_mcp_available"] is True
+    assert verdict["missing"] == []
     # The spec table and the evidence agree.
-    assert managed_mcp_spec("agy_mcp").available is False
+    assert managed_mcp_spec("agy_mcp").available is True
 
 
 def test_recorded_binary_evidence():
@@ -40,14 +38,21 @@ def test_recorded_binary_evidence():
     assert verdict["has_inject_steps"] is True
     assert verdict["has_transcript_path"] is True
     assert verdict["has_user_prompt_submit"] is False
-    assert verdict["has_final_field_identifier"] is False
+    assert verdict["has_final_field_identifier"] is True
+    assert record["final_field"] == "finalModelOutput"
+    assert "finalModelOutput" in record["stop_hook_schema_fields"]
     assert {"PreInvocation", "PostInvocation", "SessionStart", "SessionEnd",
             "PreToolUse", "PostToolUse"} <= set(verdict["hooks_in_binary"])
 
 
 def test_verdict_flips_only_with_a_proven_final_source():
     record = _record()
-    proven = dict(record)
+    unproven = dict(record)
+    unproven["stop_hook_schema_fields"] = []
+    unproven["stop_hook_runs"] = False
+    unproven["final_field"] = ""
+    assert evaluate_probe(unproven)["agy_mcp_available"] is False
+    proven = dict(unproven)
     proven["hook_payloads"] = {"Stop": ["hookEventName", "transcriptPath",
                                         "lastAssistantMessage"]}
     proven["final_field"] = "lastAssistantMessage"
@@ -67,5 +72,7 @@ def test_identifier_parser_and_commands():
     commands = probe_commands("pawflow-claude-code:latest")
     assert commands["version"][-1] == "--version"
     assert all(identifier in commands["identifiers"][-1]
-               for identifier in ("PreInvocation", "injectSteps"))
-    assert set(HOOK_IDENTIFIERS) >= {"Stop" if False else "PreInvocation", "transcriptPath"}
+               for identifier in ("PreInvocation", "injectSteps",
+                                   "finalModelOutput"))
+    assert set(HOOK_IDENTIFIERS) >= {
+        "PreInvocation", "transcriptPath", "finalModelOutput"}

@@ -37,13 +37,29 @@ class TestRegistration:
                                   observation_mode=MANAGED_MCP_OBSERVATION_MODE)
         codex = svc.register_session("b", provider="codex_mcp",
                                      observation_mode=MANAGED_MCP_OBSERVATION_MODE)
+        agy = svc.register_session("d", provider="agy_mcp",
+                                   observation_mode=MANAGED_MCP_OBSERVATION_MODE)
         mitm = svc.register_session("c", provider="codex-interactive")
         assert svc._pool_family(cc) == "claude-code-interactive"
         assert svc._pool_family(codex) == "codex-interactive"
+        assert svc._pool_family(agy) == "antigravity-interactive"
         assert svc._tmux_input_tag(cc) == "cc_mcp_tmux"
         assert svc._tmux_input_tag(codex) == "codex_mcp_tmux"
+        assert svc._tmux_input_tag(agy) == "agy_mcp_tmux"
         assert svc._tmux_input_tag(mitm) == "codex_interactive_tmux"
         assert svc._is_managed(cc) and not svc._is_managed(mitm)
+
+    def test_agy_pool_is_used_for_capture_and_liveness(self, monkeypatch):
+        from core.antigravity_observer_pool import AntigravityObserverPool
+
+        marker = object()
+        monkeypatch.setattr(AntigravityObserverPool, "instance",
+                            classmethod(lambda cls: marker))
+        svc = _svc()
+        state = svc.register_session(
+            "agy", provider="agy_mcp",
+            observation_mode=MANAGED_MCP_OBSERVATION_MODE)
+        assert svc._pool_for(state) is marker
 
     def test_hook_registration_records_container_for_managed_session(self):
         svc = _svc()

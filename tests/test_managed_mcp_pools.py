@@ -67,12 +67,11 @@ class TestSpecTable:
         assert managed_mcp_observation_mode("") == MITM_OBSERVATION_MODE
         assert is_managed_mcp_provider("external_mcp") is False
 
-    def test_agy_is_probe_gated(self):
+    def test_agy_is_available_from_native_stop_final(self):
         spec = managed_mcp_spec("agy_mcp")
-        assert spec.available is False
-        assert "probe-gated" in spec.unavailable_reason
-        with pytest.raises(ValueError, match="probe-gated"):
-            require_available("agy_mcp")
+        assert spec.available is True
+        assert spec.unavailable_reason == ""
+        assert require_available("agy_mcp") is spec
         assert require_available("cc_mcp").available is True
         with pytest.raises(ValueError):
             require_available("claude-code-interactive")
@@ -84,7 +83,7 @@ class TestSpecTable:
         assert matrix["cc_mcp"]["builtin_tools_visible"] is True
         assert matrix["codex_mcp"]["builtin_tools_visible"] is False
         assert matrix["codex_mcp"]["context_source"] == "codex_rollout_token_count"
-        assert matrix["agy_mcp"]["available"] is False
+        assert matrix["agy_mcp"]["available"] is True
         assert matrix["cc_mcp"]["label"] == "Claude Code \u2014 MCP hooks"
 
 
@@ -350,6 +349,74 @@ class TestCodexLaunch:
 
 
 class TestAntigravityPool:
+    def test_managed_pool_contract(self, monkeypatch):
+        from core._antigravity_base import AntigravityObserverSession
+        from core.antigravity_observer_pool import AntigravityObserverPool
+        from core.llm_providers.managed_mcp import LLMManagedMcpMixin
+
+        pool = AntigravityObserverPool()
+        monkeypatch.setattr(AntigravityObserverPool, "instance",
+                            classmethod(lambda cls: pool))
+        assert LLMManagedMcpMixin._managed_mcp_pool(
+            managed_mcp_spec("agy_mcp")) is pool
+        state = AntigravityObserverSession(
+            key=("u", "c", "a", "svc"), name="ctr", workdir="/w",
+            container_workdir="/cc_sessions/c/a", log_path="/l",
+            session_token="session")
+        pool._sessions[state.key] = state
+        pool.begin_turn(state)
+        assert state.in_flight == 1
+        pool.end_turn(state)
+        assert state.in_flight == 0
+        assert pool.find_by_session_token("session") is state
+        monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+        monkeypatch.setattr(pool, "_tmux_is_alive", lambda name: True)
+        assert pool.session_is_live("ctr") is True
+
+    def test_managed_launch_failure_unregisters_event_session(
+            self, monkeypatch, tmp_path):
+        from core.antigravity_observer_pool import AntigravityObserverPool
+
+        registered = []
+        unregistered = []
+
+        class _Events:
+            def register_session(self, token, **kwargs):
+                registered.append(token)
+
+            def unregister_session(self, token):
+                unregistered.append(token)
+
+        pool = AntigravityObserverPool()
+        client = SimpleNamespace(
+            provider="agy_mcp", _agent_service="",
+            _gemini_setup_credentials=lambda workdir: None)
+        monkeypatch.setattr(pool, "_workdir", lambda *args: str(tmp_path))
+        monkeypatch.setattr(pool, "_write_antigravity_config",
+                            lambda *args, **kwargs: None)
+        monkeypatch.setattr(pool, "_write_agy_managed_hooks",
+                            lambda workdir: {})
+        monkeypatch.setattr(
+            "core.cli_process_config.shell_cli_environment",
+            lambda *args, **kwargs: "")
+        monkeypatch.setattr("core.docker_utils.get_host_ip",
+                            lambda: "host.docker.internal")
+        monkeypatch.setattr(
+            "services.cc_interactive_event_service."
+            "get_or_create_cc_interactive_event_service",
+            lambda: ("ws://localhost/events", "secret", _Events()))
+
+        def fail_spawn(**kwargs):
+            raise RuntimeError("spawn failed")
+
+        monkeypatch.setattr(pool, "_spawn_container", fail_spawn)
+
+        with pytest.raises(RuntimeError, match="spawn failed"):
+            pool._start_new("u", "c", "a", "svc", "gemini", client=client)
+
+        assert len(registered) == 1
+        assert unregistered == registered
+
     def test_managed_liveness_ignores_proxy_log(self, monkeypatch):
         from core._antigravity_base import AntigravityObserverSession
         from core.antigravity_observer_pool import AntigravityObserverPool

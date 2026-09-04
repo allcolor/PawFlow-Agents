@@ -258,9 +258,6 @@ def test_cli_providers_do_not_force_default_model_flags():
 
 
 def test_managed_mcp_unknown_native_usage_is_not_estimated(monkeypatch):
-    import pytest
-
-    from core import ServiceError
     from core.llm_client import LLMMessage, LLMResponse
     from services.llm_connection import LLMConnectionService
     from services.llm_credential_oauth import normalize_provider
@@ -291,14 +288,30 @@ def test_managed_mcp_unknown_native_usage_is_not_estimated(monkeypatch):
     assert normalize_provider("cc_mcp") == "claude-code"
     assert normalize_provider("codex_mcp") == "codex-app-server"
     assert normalize_provider("agy_mcp") == "gemini"
-    unavailable = LLMConnectionService({
+
+    agy_client = LLMClient(provider="agy_mcp", config={})
+    monkeypatch.setattr(
+        agy_client, "_stream_agy_mcp",
+        lambda *args, **kwargs: LLMResponse(content="native agy final"))
+    agy_response = agy_client.complete([
+        LLMMessage(role="user", content="prompt", conversation_id="conv"),
+    ])
+    assert agy_response.tokens_in == 0
+    assert agy_response.tokens_out == 0
+
+    agy_service = LLMConnectionService({
         "provider": "agy_mcp",
         "auth_mode": "none",
     })
-    with pytest.raises(
-        ServiceError, match="Antigravity — MCP hooks is unavailable",
-    ):
-        unavailable._create_connection()
+    assert agy_service._create_connection()["provider"] == "agy_mcp"
+    agy_service._track_tokens(agy_response, [
+        LLMMessage(role="user", content="prompt", conversation_id="conv"),
+    ])
+    assert agy_service.get_token_stats() == {
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "calls": 0,
+    }
 
 
 def test_gemini_acp_capacity_error_is_non_retryable_text():

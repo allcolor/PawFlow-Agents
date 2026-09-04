@@ -12,6 +12,7 @@ import pytest
 from core._llm_types import LLMCallError
 from core.llm_client import CCCompactDetected
 from core.llm_providers._managed_mcp_turn import _ManagedMcpTurnCoordinator
+from tools import cc_interactive_hook
 
 
 class FakeEventService:
@@ -79,6 +80,27 @@ class TestFinal:
         assert [b for b in calls["blocks"] if b[0] == "text"] == [
             ("text", {"text": "final text"})]
         assert coord.prompt_submitted is True
+
+    def test_agy_native_final_model_output_reaches_response(self):
+        info = cc_interactive_hook._compact_input(
+            cc_interactive_hook._normalize_client_input({
+                "hookEventName": "Stop",
+                "finalModelOutput": "native agy final",
+                "terminationReason": "STOP",
+            }, "agy"))
+        hook_name = info.pop("hook_event_name")
+        coord, calls, _ = _coord([
+            _hook("UserPromptSubmit", pawflow_injected_prompt=True),
+            _hook(hook_name, **info),
+        ], provider="agy_mcp")
+
+        response = coord.run()
+
+        assert response.content == "native agy final"
+        assert response.raw["provider"] == "agy_mcp"
+        assert response.raw["telemetry"]["final_source"] == "hook_field"
+        assert response.raw["lifecycle_events"][-1]["input"]["reason"] == "STOP"
+        assert calls["text"] == ["native agy final"]
 
     def test_turn_callback_without_block_callback_gets_text(self):
         svc = FakeEventService([_hook("Stop", last_assistant_message="t")])

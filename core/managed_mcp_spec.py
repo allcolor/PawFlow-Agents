@@ -26,7 +26,7 @@ FINAL_SOURCE_STOP_HOOK = "stop_hook"
 #: Bump when the managed launch/config shape changes in a way that makes a live
 #: session incompatible with a new turn (hook set, MCP config, env contract).
 #: Stored on the session and compared on reuse so a mismatch recreates it.
-MANAGED_MCP_LAUNCH_REVISION = "1"
+MANAGED_MCP_LAUNCH_REVISION = "2"
 
 
 @dataclass(frozen=True)
@@ -114,14 +114,10 @@ MANAGED_MCP_PROVIDERS: dict[str, ManagedMcpProviderSpec] = {
         builtin_tools_visible=False,
         usage_source=TELEMETRY_UNAVAILABLE,
         context_source=TELEMETRY_UNAVAILABLE,
-        # Probe-gated: the supported ``agy`` build has not proven a reliable
-        # final-answer source through its hooks (see the WP0 probe record in
-        # docs/CLAUDE_CODE_INTERACTIVE.md). Registration stays refused until
-        # the probe passes in CI.
-        available=False,
-        unavailable_reason=(
-            "agy_mcp is probe-gated: the official agy CLI has not proven a "
-            "native final-answer hook field or transcript source"),
+        # The native StopHookArgs protobuf exposes ``finalModelOutput``. The
+        # shared hook normalizes that field without reading tmux or vendor
+        # traffic; see the recorded binary evidence and regression fixture.
+        available=True,
     ),
 }
 

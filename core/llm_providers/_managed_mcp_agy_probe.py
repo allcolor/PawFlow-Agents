@@ -1,8 +1,8 @@
 """WP0 probe for ``agy_mcp``: does the official agy build expose a final hook?
 
 The managed MCP plan enables ``agy_mcp`` only after the supported Antigravity
-CLI proves, on a real build, (1) which lifecycle hooks it fires, (2) their
-payload fields, (3) a transcript path, and (4) a reliable final-answer source.
+CLI proves, on a real build, (1) its Stop-hook runtime contract, (2) the native
+payload fields, and (3) a reliable final-answer source.
 This module records that probe as data plus a deterministic verdict, so CI
 can re-run it against the pinned image and the provider flips to available
 only when the evidence says so -- never from the UI.
@@ -29,15 +29,15 @@ HOOK_IDENTIFIERS = (
     "PreInvocation", "PostInvocation", "UserPromptSubmit", "SessionStart",
     "SessionEnd", "PreToolUse", "PostToolUse", "injectSteps",
     "transcriptPath", "hookEventName", "hookSpecificOutput",
-    "lastAssistantMessage", "last_assistant_message", "additionalContext",
-    "stopReason", "hooks.json",
+    "lastAssistantMessage", "last_assistant_message", "finalModelOutput",
+    "additionalContext", "stopReason", "hooks.json",
 )
 
 #: What ``agy_mcp`` needs before it can claim a native final answer.
 REQUIRED_FINAL_EVIDENCE = (
-    # A hook that fires when the turn is over, with a payload we have seen.
+    # A Stop hook whose runtime behavior and input schema are both proven.
     "stop_hook_fired",
-    # Either a final-text field in that payload or a transcript path whose
+    # Either a final-text field in that schema/payload or a transcript whose
     # last assistant message is the answer.
     "final_source_proven",
     # Liveness that does not depend on the observer proxy log.
@@ -83,19 +83,22 @@ def parse_identifier_counts(text: str) -> dict[str, int]:
 def evaluate_probe(evidence: dict) -> dict:
     """Turn collected evidence into the gate verdict.
 
-    ``evidence`` carries ``identifier_counts`` (from the binary), the observed
-    hook payloads (``hook_payloads``: event name -> list of field names), an
-    optional ``final_field`` observed on the Stop payload, ``transcript_final``
-    (whether the transcript's last assistant message matched the visible
-    answer) and ``proxy_independent_liveness``.
+    ``evidence`` carries ``identifier_counts`` (from the binary), optional
+    observed hook payloads (``hook_payloads``), the protobuf-derived
+    ``stop_hook_schema_fields``, whether the CLI documents that Stop hooks run,
+    the native ``final_field``, and ``proxy_independent_liveness``.
     """
     counts = dict(evidence.get("identifier_counts") or {})
     payloads = dict(evidence.get("hook_payloads") or {})
     hooks_in_binary = sorted(
         name for name in HOOK_IDENTIFIERS
         if counts.get(name, 0) > 0 and name[0].isupper() and "." not in name)
-    stop_fields = list(payloads.get("Stop") or [])
-    stop_hook_fired = bool(stop_fields)
+    observed_stop_fields = list(payloads.get("Stop") or [])
+    schema_stop_fields = list(evidence.get("stop_hook_schema_fields") or [])
+    stop_fields = observed_stop_fields or schema_stop_fields
+    stop_hook_fired = bool(
+        observed_stop_fields
+        or (evidence.get("stop_hook_runs") and schema_stop_fields))
     final_field = str(evidence.get("final_field") or "")
     transcript_final = bool(evidence.get("transcript_final"))
     final_source_proven = bool(
@@ -114,7 +117,8 @@ def evaluate_probe(evidence: dict) -> dict:
         "has_transcript_path": counts.get("transcriptPath", 0) > 0,
         "has_final_field_identifier": any(
             counts.get(name, 0) > 0 for name in (
-                "lastAssistantMessage", "last_assistant_message")),
+                "lastAssistantMessage", "last_assistant_message",
+                "finalModelOutput")),
         "checks": checks,
         "missing": missing,
         "agy_mcp_available": not missing,

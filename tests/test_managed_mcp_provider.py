@@ -3,8 +3,8 @@
 The shared LLMClient registry is integrated by the assistant; these tests
 drive ``LLMManagedMcpMixin`` on a stub client with a fake pool, a fake event
 service and a fake coordinator, so the isolated contract is proven before the
-registry lands: exactly one paste, one claim/release, one final answer, no
-MITM fallback, and a typed refusal for the probe-gated ``agy_mcp``.
+registry lands: exactly one paste, one claim/release, one final answer, and no
+MITM fallback for any of the three providers.
 """
 import inspect
 from types import SimpleNamespace
@@ -201,11 +201,14 @@ class TestStream:
         assert harness.pool.turns == ["begin", "end"]
         assert harness.built == []
 
-    def test_agy_is_refused_with_a_typed_error_before_any_pool_work(self, harness):
+    def test_agy_uses_the_same_managed_turn_contract(self, harness):
+        harness.state.provider = "agy_mcp"
         client = _Client()
-        with pytest.raises(LLMClientError, match="probe-gated"):
-            client._stream_agy_mcp(_messages(), "gemini")
-        assert harness.pool.sent == [] and harness.pool.turns == []
+        response = client._stream_agy_mcp(_messages(), "gemini")
+        assert response.content == "final"
+        assert harness.pool.sent == ["COLD prompt"]
+        assert harness.pool.turns == ["begin", "end"]
+        assert harness.built[0]["provider"] == "agy_mcp"
 
     def test_identity_is_required(self, harness):
         client = _Client()
@@ -267,4 +270,4 @@ class TestDispatchParity:
     def test_capability_matrix_is_exposed_on_the_client(self):
         matrix = _Client().managed_mcp_capabilities()
         assert matrix["cc_mcp"]["available"] is True
-        assert matrix["agy_mcp"]["available"] is False
+        assert matrix["agy_mcp"]["available"] is True

@@ -330,6 +330,9 @@ class CCInteractiveEventService(BaseService):
         if cls._pool_family(state) == "codex-interactive":
             from core.codex_interactive_pool import CodexInteractivePool
             return CodexInteractivePool.instance()
+        if cls._pool_family(state) == "antigravity-interactive":
+            from core.antigravity_observer_pool import AntigravityObserverPool
+            return AntigravityObserverPool.instance()
         from core.claude_code_interactive_pool import InteractiveClaudeCodePool
         return InteractiveClaudeCodePool.instance()
 

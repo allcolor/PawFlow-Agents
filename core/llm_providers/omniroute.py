@@ -142,6 +142,8 @@ def parse_response_metadata(
 
 def fetch_models(client: Any) -> list[Dict[str, str]]:
     """Fetch and validate a bounded OpenAI-shaped model list."""
+    from core.llm_http_headers import pawflow_user_agent
+
     base_url = str(client.base_url or "").strip()
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -159,7 +161,10 @@ def fetch_models(client: Any) -> list[Dict[str, str]]:
         kwargs["context"] = relay_proxy_ssl_context(base_url)
     conn = connection_cls(parsed.hostname, parsed.port, **kwargs)
     try:
-        conn.request("GET", path, headers=client._openai_auth_headers())
+        conn.request("GET", path, headers={
+            **client._openai_auth_headers(),
+            "User-Agent": pawflow_user_agent(),
+        })
         response = conn.getresponse()
         raw = response.read(_MAX_MODELS_BYTES + 1)
         if len(raw) > _MAX_MODELS_BYTES:

@@ -16,6 +16,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.llm_http_headers import pawflow_user_agent
 from core.relay_proxy_url import CONV_RELAY_EXPR
 
 
@@ -429,17 +430,9 @@ def _fetch_json(url: str, headers: Dict[str, str], timeout: int = 8) -> Dict[str
     # HTTP 403, e.g. opencode.ai), which made the live catalog silently fall
     # back to the bundled list.
     req = urllib.request.Request(
-        url, headers={"User-Agent": _pawflow_user_agent(), **headers})
+        url, headers={**headers, "User-Agent": pawflow_user_agent()})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 - curated provider model endpoints.
         return json.loads(resp.read().decode("utf-8"))
-
-
-def _pawflow_user_agent() -> str:
-    from importlib.metadata import PackageNotFoundError, version
-    try:
-        return "PawFlow/" + version("pawflow")
-    except PackageNotFoundError:
-        return "PawFlow/1.0"
 
 
 def _live_model_values(

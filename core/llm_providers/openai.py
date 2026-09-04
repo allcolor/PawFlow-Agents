@@ -95,12 +95,19 @@ class LLMOpenaiMixin:
             return {}
         return {"Authorization": f"Bearer {credential}"}
 
-    def _openai_provider_headers(self) -> Dict[str, str]:
+    def _openai_provider_headers(
+            self, base_url: str = "", conversation_id: str = "",
+    ) -> Dict[str, str]:
         """Return provider-specific Chat Completions request headers."""
+        from core.llm_http_headers import llm_api_headers
+
+        headers = llm_api_headers(
+            base_url or self.base_url, conversation_id=conversation_id)
         if getattr(self, "provider", "openai") != "omniroute":
-            return {}
+            return headers
         from core.llm_providers.omniroute import request_headers
-        return request_headers(self._config_ref)
+        headers.update(request_headers(self._config_ref))
+        return headers
 
     def _openai_provider_metadata(self, response_headers=(), sse_comments=()):
         if getattr(self, "provider", "openai") != "omniroute":
@@ -206,7 +213,8 @@ class LLMOpenaiMixin:
                 "Content-Length": str(len(json_body)),
             }
             headers.update(self._openai_auth_headers())
-            headers.update(self._openai_provider_headers())
+            headers.update(self._openai_provider_headers(
+                base_url, call_conversation_id))
             logger.info(
                 "OpenAI stream request model=%s host=%s port=%s path=%s base_url=%s body_bytes=%d",
                 model, host, port, full_path, safe_base_url, len(json_body),
@@ -792,7 +800,8 @@ class LLMOpenaiMixin:
                 self._openai_endpoint_path(base_url, model),
                 body,
                 headers={**self._openai_auth_headers(),
-                         **self._openai_provider_headers(),
+                         **self._openai_provider_headers(
+                             base_url, call_conversation_id),
                          "Content-Type": "application/json"},
                 base_url=base_url,
             )
@@ -810,7 +819,8 @@ class LLMOpenaiMixin:
                 self._openai_endpoint_path(base_url, model),
                 body,
                 headers={**self._openai_auth_headers(),
-                         **self._openai_provider_headers(),
+                         **self._openai_provider_headers(
+                             base_url, call_conversation_id),
                          "Content-Type": "application/json"},
                 base_url=base_url,
             )

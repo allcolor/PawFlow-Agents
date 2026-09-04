@@ -30,7 +30,28 @@ For new CLI-backed agent services, use `claude-code-interactive` for Claude Code
 | `claude-code` | Legacy non-interactive CLI container or subprocess (`claude -p`) | Existing agent configurations only | Migrate to `claude-code-interactive`; the legacy transport remains available for compatibility. |
 | `codex-app-server` | Legacy Codex `app-server` transport in a pooled container | Existing agent configurations only | Migrate to `codex-interactive`; the identifier remains canonical for the shared Codex OAuth pool. |
 
-Direct API providers are normal HTTP clients. CLI providers launch a provider CLI, keep provider-specific session state, and route tools through PawFlow's relay/MCP bridge. The managed MCP variants use official lifecycle hooks and local CLI metadata instead of inspecting vendor traffic; their capability matrix reports unavailable telemetry explicitly.
+Direct API providers are normal HTTP clients. CLI providers launch a provider
+CLI, keep provider-specific session state, and route tools through PawFlow's
+relay/MCP bridge. The managed MCP variants use official lifecycle hooks and
+local CLI metadata instead of inspecting vendor traffic; their capability
+matrix reports unavailable telemetry explicitly.
+
+### Direct API request identity
+
+Every outbound HTTP request owned by a direct LLM provider identifies itself as
+`PawFlow/<version>`, including streaming and non-streaming inference, model
+discovery, and provider OAuth refresh calls. Provider-specific headers stay on
+their own wire dialect: for example, Anthropic authentication/version headers
+are never added to OpenAI-compatible requests, and OmniRoute controls are never
+added to another gateway.
+
+OpenCode Go is configured through the generic `openai` provider with a base URL
+under `https://opencode.ai/zen/go/`. In addition to the versioned User-Agent,
+PawFlow sends `x-opencode-session` with the exact PawFlow conversation ID on
+those inference requests, matching OpenCode's prompt-cache session contract.
+The header is never sent to another host or another path on `opencode.ai`, and
+an OpenCode Go call without a conversation ID fails instead of generating an
+anonymous or unstable session value.
 
 `llmRouter` is a composite service, not a provider. It selects among direct
 `llmConnection` services once per logical turn, keeps the chosen child through

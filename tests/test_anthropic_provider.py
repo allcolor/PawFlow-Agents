@@ -245,12 +245,14 @@ def test_anthropic_stream_accepts_compatible_text_delta_without_type(monkeypatch
 
     class _Conn:
         request_body = None
+        request_headers = None
 
         def __init__(self, *args, **kwargs):
             pass
 
         def request(self, method, path, body=None, headers=None):
             type(self).request_body = json.loads(body)
+            type(self).request_headers = dict(headers or {})
 
         def getresponse(self):
             return _Resp()
@@ -272,6 +274,11 @@ def test_anthropic_stream_accepts_compatible_text_delta_without_type(monkeypatch
     assert resp.tokens_in == 10
     assert resp.tokens_out == 2
     assert _Conn.request_body["output_config"] == {"effort": "medium"}
+    assert _Conn.request_headers["User-Agent"].startswith("PawFlow/")
+    assert _Conn.request_headers["anthropic-version"] == "2023-06-01"
+    assert "x-opencode-session" not in _Conn.request_headers
+    assert not any(key.startswith("X-OmniRoute-")
+                   for key in _Conn.request_headers)
 
 
 def test_anthropic_stream_emits_interleaved_deltas_immediately(monkeypatch):

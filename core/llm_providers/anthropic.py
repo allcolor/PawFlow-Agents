@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from core.cache_diagnostics import CacheBreakDetector
+from core.llm_http_headers import llm_api_headers
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,8 @@ class LLMAnthropicMixin:
             self._active_http_conn = conn
             json_body = json.dumps(body).encode("utf-8")
             headers = {
+                **llm_api_headers(
+                    _base, conversation_id=call_conversation_id),
                 "x-api-key": self.bearer_credential(),
                 "anthropic-version": "2023-06-01",
                 "Content-Type": "application/json",

@@ -676,6 +676,8 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
 
     def _http_post(self, path: str, body: dict, headers: dict, *, base_url: str = "") -> dict:
         """Send POST and return parsed JSON."""
+        from core.llm_http_headers import pawflow_user_agent
+
         base_url = base_url or self.base_url
         parsed = urlparse(base_url or "https://api.openai.com")
         host = parsed.hostname
@@ -693,7 +695,11 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
             raw_json = json.dumps(body)
             # Strip control characters that some LLM APIs can't parse
             json_body = self._clean_control_chars(raw_json).encode("utf-8")
-            headers["Content-Length"] = str(len(json_body))
+            headers = {
+                **headers,
+                "User-Agent": pawflow_user_agent(),
+                "Content-Length": str(len(json_body)),
+            }
             full_path = request_path(
                 base_url, ("/" + path.lstrip("/")) if path else "")
             conn.request("POST", full_path, body=json_body, headers=headers)

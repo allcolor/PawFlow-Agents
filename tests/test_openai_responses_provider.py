@@ -175,6 +175,7 @@ class _FakeResponse:
 
 class _FakeConn:
     last_body = None
+    last_headers = None
 
     def __init__(self, response):
         self._response = response
@@ -182,6 +183,7 @@ class _FakeConn:
     def request(self, method, path, body=None, headers=None):
         _FakeConn.last_body = json.loads(body.decode("utf-8"))
         _FakeConn.last_path = path
+        _FakeConn.last_headers = dict(headers or {})
 
     def getresponse(self):
         return self._response
@@ -246,6 +248,9 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(body["max_output_tokens"], 100)
         self.assertNotIn("max_tokens", body)
         self.assertEqual(_FakeConn.last_path, "/v1/responses")
+        self.assertTrue(_FakeConn.last_headers["User-Agent"].startswith("PawFlow/"))
+        self.assertNotIn("x-opencode-session", _FakeConn.last_headers)
+        self.assertNotIn("anthropic-version", _FakeConn.last_headers)
 
     def test_tools_are_declared_flat(self):
         class _T:

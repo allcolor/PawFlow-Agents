@@ -207,6 +207,7 @@ class ClaudeCodeSessionMixin:
         import http.client
         import ssl
         import time
+        from core.llm_http_headers import pawflow_user_agent
 
         body = json.dumps({
             "grant_type": "refresh_token",
@@ -221,6 +222,7 @@ class ClaudeCodeSessionMixin:
             conn.request("POST", "/v1/oauth/token", body=body, headers={
                 "Content-Type": "application/json",
                 "Content-Length": str(len(body)),
+                "User-Agent": pawflow_user_agent(),
             })
             resp = conn.getresponse()
             resp_body = resp.read().decode("utf-8")

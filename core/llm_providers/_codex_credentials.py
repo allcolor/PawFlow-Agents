@@ -66,6 +66,7 @@ def refresh_oauth_token(refresh_token: str) -> dict:
     """
     import http.client
     import ssl
+    from core.llm_http_headers import pawflow_user_agent
 
     body = json.dumps({
         "grant_type": "refresh_token",
@@ -79,6 +80,7 @@ def refresh_oauth_token(refresh_token: str) -> dict:
         conn.request("POST", _CODEX_TOKEN_ENDPOINT_PATH, body=body, headers={
             "Content-Type": "application/json",
             "Content-Length": str(len(body)),
+            "User-Agent": pawflow_user_agent(),
         })
         resp = conn.getresponse()
         resp_body = resp.read().decode("utf-8")

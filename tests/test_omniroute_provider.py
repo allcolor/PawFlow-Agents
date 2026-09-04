@@ -172,6 +172,8 @@ def test_non_streaming_request_preserves_tools_and_reports_gateway_metadata(gate
     method, path, headers, payload = requests[-1]
     assert (method, path) == ("POST", "/v1/chat/completions")
     assert headers["Authorization"] == "Bearer gateway-key"
+    assert headers["User-Agent"].startswith("PawFlow/")
+    assert "x-opencode-session" not in headers
     assert headers["X-OmniRoute-Mode"] == "balanced"
     assert payload["model"] == "auto"
     assert payload["tools"][0]["function"]["name"] == "lookup"
@@ -212,6 +214,8 @@ def test_model_discovery_uses_same_auth_and_never_changes_default(gateway):
     ]
     assert requests[-1][0:2] == ("GET", "/v1/models")
     assert requests[-1][2]["Authorization"] == "Bearer gateway-key"
+    assert requests[-1][2]["User-Agent"].startswith("PawFlow/")
+    assert "x-opencode-session" not in requests[-1][2]
     assert service.default_model == "auto"
 
 
@@ -225,9 +229,11 @@ def test_service_rejects_ambiguous_or_missing_required_config(config, message):
         LLMConnectionService(config).connect()
 
 
-def test_plain_openai_request_headers_remain_byte_compatible():
+def test_plain_openai_request_headers_contain_only_shared_identity():
     client = LLMClient(provider="openai", config={"api_key": "k"})
     assert client._openai_auth_headers() == {"Authorization": "Bearer k"}
-    assert client._openai_provider_headers() == {}
+    headers = client._openai_provider_headers()
+    assert set(headers) == {"User-Agent"}
+    assert headers["User-Agent"].startswith("PawFlow/")
     assert client._openai_provider_metadata(
         [("X-OmniRoute-Provider", "ignored")]) == {}

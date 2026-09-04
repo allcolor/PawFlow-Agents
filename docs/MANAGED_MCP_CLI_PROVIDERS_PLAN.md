@@ -1,7 +1,7 @@
 # Managed MCP CLI Providers — Complete Implementation Plan
 
-Status: **implemented; WP0 completed for Agy 1.1.25 after the shipped
-`StopHookArgs.finalModelOutput` protobuf field was verified**
+Status: **implemented; Agy 1.1.26 availability follows Google's documented
+Stop-hook contract and transcript path, not protobuf-only evidence**
 Scope: add `cc_mcp`, `codex_mcp`, and `agy_mcp` as managed `llmConnection` providers
 Primary outcome: let PawFlow run the three official interactive CLIs exactly as it
 does today while replacing provider-traffic observation with native lifecycle
@@ -35,9 +35,13 @@ The process lifecycle does not change:
    the minimal extension in this plan, final text to PawFlow.
 7. PawFlow returns a normal `LLMResponse` through the existing agent loop.
 
-CCI, Codex and Agy now have managed hook paths. Agy's native
-`StopHookArgs.finalModelOutput` is normalized onto the common final-only event
-contract; its pool supplies proxy-independent container+tmux liveness.
+CCI, Codex and Agy now have managed hook paths. Agy's documented `Stop` payload
+names the persistent transcript through `transcriptPath`; the shared hook reads
+the final answer there. `finalModelOutput` is used only when present, since it is
+not a documented hook field. Its pool supplies proxy-independent container+tmux
+liveness. The recorded evidence is documented, not an authenticated observation;
+see [Google's hook contract](https://antigravity.google/docs/hooks) and the probe
+record in `tests/fixtures/agy_managed_hook_probe.json`.
 
 The only intended provider-path substitution is:
 

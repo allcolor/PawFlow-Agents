@@ -17,19 +17,23 @@ The current core value is twofold:
    delegation, streaming.
 2. **Pipeline engine**: DAG execution over FlowFiles, task catalog, triggers, backpressure, checkpoints, crash recovery, provenance, and IO/data/control integrations.
 
-## beta.266 implementation highlights
+## Unreleased implementation highlights
 
-- Standardized PawFlow's versioned User-Agent across direct LLM HTTP traffic and
-  added conversation-bound `x-opencode-session` headers exclusively for OpenCode
-  Go requests, with provider wire dialects kept isolated.
-- Unified every WebChat button with the prompt-bar surface contract: transparent
-  at rest, accent border plus accessible tooltip on hover or focus, and the
-  established 1.4x dock or 1.08x ordinary-button zoom preserved.
-- Made the desktop sidebar an interruptible sliding rail whose content and grip
-  stay mounted, and restored disclosure-owned inline styles so bounded Resources
-  sections remain scrollable after animation.
-- Added visible focused-tile treatment and title-bar drag reordering to tiled
-  WebChat workspaces, with DOM order and slot assignments restored across loads.
+- Provider headers are configurable through `extra_headers` and request-scoped
+  expressions. Background calls receive a stable service session ID, configured
+  User-Agent values survive the HTTP transport, and OpenAI-compatible gateways
+  can send null optional response fields without aborting a turn.
+- ACP registry imports confine executable and version paths, verify cached
+  digests, and stream archive downloads to disk.
+- WebChat task blocks and terminal output have explicit projection identities,
+  so these rows no longer interrupt message reconciliation.
+- Project graph v2 preserves source-scoped identities and resolves imports after
+  merging incremental changes. Deletion, restoration and ambiguous homonyms are
+  covered; generated bundles and external references no longer dominate hub
+  rankings.
+- Agy managed hooks follow Google's published `Stop` contract and read final
+  answers through its transcript path. The probe distinguishes documented and
+  observed evidence from protobuf-only declarations.
 
 ## What lives in the repository
 

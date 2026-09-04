@@ -279,7 +279,7 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 | **Gemini CLI** | CLI subprocess/container | Secondary Gemini CLI path for Pro/CLI-specific workflows |
 | **Claude Code MCP hooks** (`cc_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Claude interactive pool and PawFlow MCP bridge; final-only output from the native Stop hook without vendor-traffic interception |
 | **Codex MCP hooks** (`codex_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Codex interactive pool; native rollout usage/context, while Codex built-in tools are not observable |
-| **Antigravity MCP hooks** (`agy_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Antigravity pool; final-only output comes from the native `StopHookArgs.finalModelOutput` field, while Agy built-in tools are not observable |
+| **Antigravity MCP hooks** (`agy_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Antigravity pool; the documented `Stop` hook ends the turn and the final text is read from the transcript it names, while Agy built-in tools are not observable |
 | **ACP agent** (`acp`) | Outbound Agent Client Protocol v1 process | Launches an explicitly configured agent command without a shell, with negotiated sessions and opt-in PawFlow MCP/client filesystem capabilities |
 | **Anthropic API** | Direct HTTP | Streaming, tool use, vision, extended thinking |
 | **OpenAI API** | Direct HTTP | Streaming, tool use, vision, JSON mode |
@@ -293,8 +293,8 @@ Switch providers per agent, per conversation, or globally. API keys normally use
 direct `openai`/`anthropic` services; subscription logins use the matching
 interactive or managed native-hook provider. `cc_mcp`, `codex_mcp`, and
 `agy_mcp` reuse the same OAuth pools as their interactive siblings and are all
-selectable; Agy final-only output comes from its native
-`StopHookArgs.finalModelOutput` field. `claude-code` (`cc -p`) and
+selectable; Agy final-only output is read from the transcript named by its
+documented `Stop` hook payload. `claude-code` (`cc -p`) and
 `codex-app-server` are legacy agent transports kept for existing configurations;
 do not select them for new agent services. Self-hosted and third-party LLMs can
 use the OpenAI-compatible endpoint (`base_url` override). See

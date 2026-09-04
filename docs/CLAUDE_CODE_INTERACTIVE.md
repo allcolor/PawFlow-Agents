@@ -868,7 +868,7 @@ from the CLI's native lifecycle hooks.
 |---|---|---|---|---|
 | `cc_mcp` | `claude` | `InteractiveClaudeCodePool` | `claude-code` | available |
 | `codex_mcp` | `codex` | `CodexInteractivePool` | `codex-app-server` | available |
-| `agy_mcp` | `agy` | `AntigravityObserverPool` | `gemini` | available |
+| `agy_mcp` | `agy` | `AntigravityObserverPool` | `gemini` | available (documented Stop hook; final answer from the transcript) |
 
 The executable contract is one table, `core/managed_mcp_spec.py`
 (`MANAGED_MCP_PROVIDERS`). Every capability claim below is read from it; the
@@ -925,11 +925,12 @@ Delivery stays fire-and-forget with one bounded retry (`_DELIVERY_RETRIES`,
 0.4 s) inside the five-second hook timeout. The hook mints no consumer epoch,
 no turn receipt and no event id: those stay server-owned.
 
-For `agy` the hook is client-aware: `hookEventName`/`transcriptPath`/
-`sessionId` are mapped to the Claude field names, native
-`finalModelOutput` becomes `last_assistant_message`, `terminationReason`
-becomes `reason`, and `PreInvocation` becomes a `UserPromptSubmit` whose prompt
-is the transcript's last user message. The hook prints `{}` on stdout as
+For `agy` the hook is client-aware: each configured handler passes its event
+through `--event`, since the documented payload has no event-name field.
+`transcriptPath` becomes `transcript_path`, `terminationReason` becomes `reason`,
+and `finalModelOutput` is used as `last_assistant_message` only when present.
+`PreInvocation` becomes a `UserPromptSubmit` whose prompt is the transcript's
+last user message. The hook prints `{}` on stdout as
 Antigravity expects. Version 1 injects no context through hooks; cold and delta
 context stay in the pasted prompt.
 
@@ -1003,33 +1004,61 @@ the same terminal action as their twins.
 
 ### `agy_mcp` probe record (WP0)
 
-Recorded on 2026-09-03 against `pawflow-claude-code:latest` (image
-`ea219112b1269e6d84e23692236b46605d7cddddde5a1e3ffc559a76043b8378`,
-`agy` 1.1.25); evidence is in
+Last recorded on 2026-09-04 against `pawflow-claude-code:latest` (image
+`6dcf397da84c4aaa5b8a1373082aa58a4c2f032698c1cfd17508ef8695958d1b`,
+`agy` 1.1.26); evidence is in
 `tests/fixtures/agy_managed_hook_probe.json`, and the deterministic verdict is
 in `core/llm_providers/_managed_mcp_agy_probe.py`.
 
-- The generated protobuf contract in the shipped binary exposes
-  `StopHookArgs.finalModelOutput` (`final_model_output`, field 5), alongside
-  `terminationReason` and `fullyIdle`. This is a dedicated native final-answer
-  source, not terminal output or intercepted vendor traffic.
-- The Agy changelog states that configured `Stop` hooks run before built-in
-  termination; `hooks.json` lives under `~/.gemini/config`, shared by the TUI
-  and backend.
-- `UserPromptSubmit` is absent, so `PreInvocation` remains the prompt-submission
-  event and reads the submitted user text from the local transcript.
-- The unauthenticated print probe cannot record a live payload because Agy
-  authenticates before running hooks. The availability decision is therefore
-  based on the shipped native protobuf contract and documented Stop behavior;
-  it does not claim an authenticated payload capture.
+- Google's published hook contract
+  ([antigravity.google/docs/hooks](https://antigravity.google/docs/hooks),
+  accessed 2026-09-04) is the evidence the provider is enabled on. Hooks are
+  command handlers in `hooks.json` under `.agents/` or `~/.gemini/config/`;
+  they receive camelCase JSON on stdin and answer JSON on stdout. `Stop`
+  fires when the execution loop terminates with `executionNum`,
+  `terminationReason`, `error`, `fullyIdle` plus the common fields
+  `conversationId`, `workspacePaths`, `transcriptPath`,
+  `artifactDirectoryPath` and `modelName`. `transcriptPath` is the absolute
+  path of the persistent `transcript.jsonl`
+  (`~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/`).
+- The documented Stop payload carries no final-text field. The binary's
+  protobuf declares `StopHookArgs.finalModelOutput`, and
+  `tools/cc_interactive_hook.py` uses it when present, but the contract's
+  final-answer route is the transcript: the hook reads the last assistant
+  message from `transcriptPath` and reports `final_source="transcript"`.
+- `PreInvocation` carries `invocationNum` and `initialNumSteps`, not the
+  prompt; the hook reads the submitted user text from the same transcript.
+  `UserPromptSubmit` does not exist for Agy. `PreInvocation` fires before
+  every model call, so the coordinator treats repeated prompt events in one
+  turn as idempotent.
+- No documented payload names its own event. `_write_agy_managed_hooks`
+  therefore writes the documented `hooks.json` shape (`{"pawflow-managed":
+  {"PreInvocation": [handler], "Stop": [handler]}}`, handlers listed
+  directly, no tool-event wrapper) with `--event <Event>` on each command
+  line; that argument is the only event source, because `PreInvocation` and
+  `PostInvocation` payloads are indistinguishable. `MANAGED_MCP_LAUNCH_REVISION`
+  was bumped so live sessions written with the old hook shape are recreated.
+- The `transcript.jsonl` line format is not documented. The hook accepts
+  `{role|type: assistant|model, content}` rows and the same shape nested under
+  `message`/`payload`; an unmatched format yields an empty final and the turn
+  fails explicitly (`final_source_validated=false` until a real transcript has
+  been matched).
+- The unauthenticated print probe records no payload (every hook runs behind
+  Google authentication), and the 2026-09-04 authenticated attempt could not
+  run on the reference server (no `gemini` OAuth pool). A recorded
+  `hook_payloads.Stop` upgrades `evidence_kind` from `documented` to
+  `observed` without changing the verdict.
 
-Verdict: `evaluate_probe` passes, the spec table sets `available=True`, and
-`agy_mcp` is selectable. `AntigravityObserverPool` supplies the same managed
-turn contract as the Claude/Codex pools (`begin_turn`/`end_turn`, token lookup,
-targeted kill and container+tmux liveness). The event service routes manual
-capture to that pool, while `_write_agy_managed_hooks` installs
-`PreInvocation`, `Stop` and `SessionEnd`. No failure path falls back to the
-observer proxy or tmux scraping.
+Verdict: `evaluate_probe` reports `evidence_kind="documented"` and
+`final_source="transcript"`, the spec table sets `available=True`, and
+`agy_mcp` is selectable. Schema or changelog evidence alone
+(`evidence_kind="schema_only"`) never enables the provider.
+`AntigravityObserverPool` supplies the same managed turn contract as the
+Claude/Codex pools (`begin_turn`/`end_turn`, token lookup, targeted kill and
+container+tmux liveness). The event service routes manual capture to that
+pool, while `_write_agy_managed_hooks` installs `PreInvocation` and `Stop`.
+No failure path falls back to the observer proxy or tmux
+scraping.
 
 ### Troubleshooting
 

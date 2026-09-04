@@ -22,7 +22,7 @@ For new CLI-backed agent services, use `claude-code-interactive` for Claude Code
 | `external_agui` | Remote agent runtime | An agent exposed through an AG-UI POST/SSE endpoint | Set `runtime_kind=external_agui` on the conversation member, leave `llm_service` empty, and configure `agui_service` or a direct `agui_url`. This is not an `llmConnection` provider and never falls back to one. |
 | `cc_mcp` | Managed Claude Code CLI with native hooks | Claude subscription sessions without vendor-traffic interception | Reuses the Claude interactive pool and PawFlow MCP tools; final text comes from the official Stop hook. |
 | `codex_mcp` | Managed Codex CLI with native hooks | Codex subscription sessions without vendor-traffic interception | Reuses the Codex interactive pool and native rollout context counters; built-in Codex tools are not observable. |
-| `agy_mcp` | Managed Antigravity CLI with native hooks | Agy subscription sessions without vendor-traffic interception | Reuses the Antigravity pool; final text comes from the native `StopHookArgs.finalModelOutput` field. |
+| `agy_mcp` | Managed Antigravity CLI with native hooks | Agy subscription sessions without vendor-traffic interception | Reuses the Antigravity pool; the documented `Stop` hook ends the turn and the final text is read from the transcript named by its `transcriptPath`. |
 | `claude-code-interactive` | Interactive CLI container with observed provider stream | **Preferred** Claude subscription and Claude Code agent sessions | Uses the Claude Code OAuth pool by default. API-key mode can also set `api_key` and `base_url` for Anthropic-compatible endpoints. |
 | `antigravity-interactive` | Interactive `agy` CLI in tmux with observed provider stream | Default Gemini subscription provider | Uses the Gemini OAuth credential pool, starts the real `agy` CLI, and routes tools through PawFlow MCP. |
 | `codex-interactive` | Interactive Codex TUI in tmux with observed provider stream | **Preferred** Codex subscription and coding-agent sessions | Reuses the `codex-app-server` OAuth pool. The turn is read from a local MITM of the Responses stream. See [Codex Interactive](#codex-interactive). |
@@ -45,13 +45,34 @@ their own wire dialect: for example, Anthropic authentication/version headers
 are never added to OpenAI-compatible requests, and OmniRoute controls are never
 added to another gateway.
 
-OpenCode Go is configured through the generic `openai` provider with a base URL
-under `https://opencode.ai/zen/go/`. In addition to the versioned User-Agent,
-PawFlow sends `x-opencode-session` with the exact PawFlow conversation ID on
-those inference requests, matching OpenCode's prompt-cache session contract.
-The header is never sent to another host or another path on `opencode.ai`, and
-an OpenCode Go call without a conversation ID fails instead of generating an
-anonymous or unstable session value.
+Gateway-specific headers are operator configuration, never provider code. The
+`extra_headers` field of an `llmConnection` service is a JSON object of header
+name to value; values go through the expression language with a `request.*`
+scope before each direct API request (`openai`, `openai-responses`,
+`azure-openai`, `copilot`, `omniroute`, `anthropic`):
+
+| Key | Value |
+|---|---|
+| `${request.session_id}` | the conversation id, or a stable id generated once per service for calls made outside a conversation (background jobs, curation, wiki) |
+| `${request.conversation_id}` | the conversation id, empty outside one |
+| `${request.user_id}` / `${request.agent_name}` | call identity, may be empty |
+| `${request.request_id}` | unique per HTTP request |
+| `${pawflow.version}` | the running version |
+
+The cascade continues to conversation, user and global parameters and secrets,
+so `${my_gateway_token}` works as a value too. A template that does not
+resolve is dropped with a warning rather than sent raw; `Authorization`,
+`x-api-key`, `Content-Type` and transport headers cannot be overridden, while
+the PawFlow `User-Agent` can be replaced when a gateway wants another identity.
+
+OpenCode Go (generic `openai` provider, base URL under
+`https://opencode.ai/zen/go/`) requires a per-conversation session header for
+prompt-cache affinity, exactly as the OpenCode client sends it. Configure the
+service with:
+
+```json
+{"x-opencode-session": "${request.session_id}"}
+```
 
 `llmRouter` is a composite service, not a provider. It selects among direct
 `llmConnection` services once per logical turn, keeps the chosen child through
@@ -131,6 +152,12 @@ directories, and lifecycle: [Antigravity ACP](ANTIGRAVITY_ACP.md). The
 (`https://agentclientprotocol.com/registry`). It turns a listed agent into the
 configuration of an `acp` service so that no `acp_command`/`acp_args` has to be
 written by hand:
+
+Registry binary imports treat every catalogue field as untrusted. Versions and
+command paths are confined to the per-agent directory before any write, cached
+digests must still match the current catalogue, and archive downloads are
+streamed to the staging file while SHA-256 is computed so large binaries do not
+need archive-sized memory buffers.
 
 - The index, the quarantine list and the protocol matrix are fetched over HTTPS
   only and cached for 24 h under `data/runtime/acp_registry/`. When a fetch
@@ -248,7 +275,7 @@ rather than estimated.
 |---|---|---|---|
 | `cc_mcp` | Available | Claude Code Stop hook | Native usage, context occupancy, thinking, and live preemption are unavailable. Claude's built-in tools are denied, so PawFlow MCP remains the visible tool path. |
 | `codex_mcp` | Available | Codex Stop hook plus local rollout token counts | Codex built-in shell/file tools remain available but are not observable through PawFlow; thinking and live preemption are unavailable. |
-| `agy_mcp` | Available | Agy Stop hook `finalModelOutput` field | Usage, context occupancy, thinking, and live preemption are unavailable; Agy built-in tools are not observable through PawFlow. |
+| `agy_mcp` | Available | Documented Agy `Stop` hook (camelCase payload with `transcriptPath`); final text from the transcript | Usage, context occupancy, thinking, and live preemption are unavailable; Agy built-in tools are not observable through PawFlow. `finalModelOutput` is not part of the documented payload and is only used when present. |
 
 The managed variants reuse the canonical OAuth pools: `cc_mcp` uses
 `claude-code`, `codex_mcp` uses `codex-app-server`, and

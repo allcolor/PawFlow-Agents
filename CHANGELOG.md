@@ -6,6 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Provider-specific HTTP headers are no longer hard-coded. `llmConnection`
+  services gained `extra_headers`, a JSON object rendered through the
+  expression language with a `request.*` scope (`${request.session_id}`,
+  `${request.conversation_id}`, `${request.user_id}`, `${request.agent_name}`,
+  `${request.request_id}`, `${pawflow.version}`, plus parameters and secrets).
+  OpenCode Go's `x-opencode-session` is now
+  `{"x-opencode-session": "${request.session_id}"}` on the service; the
+  session id is the conversation id inside a conversation and a stable
+  per-service id outside one, so background calls no longer fail for lack of
+  a conversation. `Authorization`, `x-api-key`, `Content-Type` and transport
+  headers cannot be overridden; the PawFlow `User-Agent` can.
+- `agy_mcp` is now enabled on Google's published hook contract
+  (antigravity.google/docs/hooks) instead of a protobuf identifier: `Stop`
+  fires when the execution loop terminates with a camelCase payload that
+  names the persistent transcript, and the final answer is read from that
+  transcript. `finalModelOutput` is not part of the documented payload and is
+  only used when present. `evaluate_probe` reports `evidence_kind`
+  (`observed` / `documented` / `schema_only` / `none`) and `final_source`;
+  schema or changelog evidence alone never enables the provider. The fixture
+  is re-recorded against `agy` 1.1.26 with the documented field lists.
+
+### Fixed
+
+- ACP registry binary imports confine raw command paths before writing, reject
+  unsafe version paths, recheck cached archive digests, and stream downloads to
+  disk instead of holding large archives in memory.
+- WebChat task blocks and terminal output carry explicit projection identities,
+  including task iterations, so adding or updating these rows no longer stops
+  message reconciliation.
+- Project graph format v2 scopes node IDs by source path, tracks nanosecond/size
+  fingerprints, and excludes generated/vendor bundles from discovery and ranking.
+  Cross-file imports resolve after incremental graph merging; missing or
+  ambiguous targets remain separate external references.
+  External references are excluded from report and digest hub rankings so
+  heavily imported third-party symbols do not displace application hubs.
+- The shared non-streaming HTTP transport preserves a configured `User-Agent`
+  regardless of header-name casing and adds PawFlow's identity only when absent.
+- The `openai` provider no longer kills a turn with
+  `TypeError: 'NoneType' object is not iterable` when a gateway sends explicit
+  JSON `null` for `delta`, `tool_calls`, `function`, `arguments`, `message` or
+  `usage` (observed on OpenCode Go serving `glm-5.3-flash`). Nulls now read as
+  absent fields on both the streaming and non-streaming paths.
+- `agy_mcp` managed hooks now follow the documented `hooks.json` shape
+  (`PreInvocation`/`Stop` handlers listed directly under the event, no
+  tool-event wrapper, no undocumented `SessionEnd`) and pass `--event` on each
+  handler command line, because Antigravity payloads never name their event.
+  Without this the lifecycle hook could not classify a single Agy event.
+  `MANAGED_MCP_LAUNCH_REVISION` is bumped so existing managed Agy sessions are
+  recreated with the new hook files.
+
 ## [1.0.0-beta.266] — 2026-09-04
 
 ### Added

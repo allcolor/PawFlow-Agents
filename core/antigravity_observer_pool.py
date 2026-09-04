@@ -430,34 +430,42 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         state.session_token = session_token
         return state
 
-    # Hook events the supported agy build exposes (binary identifiers
-    # PreInvocation, PostInvocation, SessionStart, SessionEnd, PreToolUse,
-    # PostToolUse; hooks.json under ~/.gemini/config). ``Stop`` is documented
-    # in the agy changelog as running once hooks precede the built-in
-    # termination checks. Its StopHookArgs protobuf exposes finalModelOutput,
-    # which the shared lifecycle hook normalizes into the common final field.
-    _AGY_MANAGED_HOOK_EVENTS = ("PreInvocation", "Stop", "SessionEnd")
+    # Documented Antigravity hook events (https://antigravity.google/docs/hooks):
+    # PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop. The managed
+    # turn needs the prompt boundary (PreInvocation, before every model call)
+    # and the end of the execution loop (Stop, whose payload names the
+    # persistent transcript the final answer is read from).
+    _AGY_MANAGED_HOOK_EVENTS = ("PreInvocation", "Stop")
+    _AGY_HOOKS_JSON_NAME = "pawflow-managed"
 
     @classmethod
     def _write_agy_managed_hooks(cls, workdir: str) -> dict:
         """Write the managed lifecycle hooks into the isolated agy home.
 
-        Written to the shared ``.gemini/config/hooks.json`` (the location agy
-        1.0.15+ synchronizes between TUI and backend) and mirrored into the
-        CLI settings, the same pair the published installer uses.
+        Shape per https://antigravity.google/docs/hooks: ``hooks.json`` maps a
+        hook name to its events; ``PreInvocation``/``PostInvocation``/``Stop``
+        list their command handlers directly under the event key (only the
+        tool events use the ``{"matcher", "hooks": [...]}`` wrapper). The
+        documented payload carries no event name, so each handler passes its
+        event on the command line (``--event Stop``). Written to the shared
+        ``.gemini/config/hooks.json`` (the location agy 1.0.15+ synchronizes
+        between TUI and backend) and mirrored into the CLI settings.
         """
-        handler = {
-            "type": "command",
-            "command": "python3 /opt/pawflow/cc_interactive_hook.py",
-            "timeout": 5,
+        hooks = {
+            event: [{
+                "type": "command",
+                "command": ("python3 /opt/pawflow/cc_interactive_hook.py "
+                            f"--event {event}"),
+                "timeout": 5,
+            }]
+            for event in cls._AGY_MANAGED_HOOK_EVENTS
         }
-        hooks = {event: [{"hooks": [dict(handler)]}]
-                 for event in cls._AGY_MANAGED_HOOK_EVENTS}
         gemini_home = Path(workdir) / ".gemini"
         config_dir = gemini_home / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "hooks.json").write_text(
-            json.dumps({"hooks": hooks}, indent=2) + "\n", encoding="utf-8")
+            json.dumps({cls._AGY_HOOKS_JSON_NAME: hooks}, indent=2) + "\n",
+            encoding="utf-8")
         for settings_path in (gemini_home / "antigravity-cli" / "settings.json",
                               gemini_home / "settings.json"):
             settings_path.parent.mkdir(parents=True, exist_ok=True)

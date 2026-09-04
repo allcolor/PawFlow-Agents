@@ -83,26 +83,45 @@ def parse_identifier_counts(text: str) -> dict[str, int]:
 def evaluate_probe(evidence: dict) -> dict:
     """Turn collected evidence into the gate verdict.
 
-    ``evidence`` carries ``identifier_counts`` (from the binary), optional
-    observed hook payloads (``hook_payloads``), the protobuf-derived
-    ``stop_hook_schema_fields``, whether the CLI documents that Stop hooks run,
-    the native ``final_field``, and ``proxy_independent_liveness``.
+    ``evidence`` carries ``identifier_counts`` (from the binary), observed hook
+    payloads (``hook_payloads``: event name -> list of field names recorded
+    from an authenticated run), ``documentation`` (the vendor's published hook
+    contract: ``url`` and ``stop_input_fields``), the protobuf-derived
+    ``stop_hook_schema_fields`` (context only), the native ``final_field``,
+    ``transcript_final`` and ``proxy_independent_liveness``.
+
+    The verdict flips to available from an observed payload or from the
+    published contract (``evidence_kind`` ``observed`` / ``documented``). A
+    protobuf identifier or a changelog line alone is ``schema_only`` and never
+    suffices: it says what the binary can carry, not what a hook receives.
+    The final source is ``hook_field`` when the contract carries
+    ``final_field``, else ``transcript`` when it carries ``transcriptPath``.
     """
     counts = dict(evidence.get("identifier_counts") or {})
     payloads = dict(evidence.get("hook_payloads") or {})
     hooks_in_binary = sorted(
         name for name in HOOK_IDENTIFIERS
         if counts.get(name, 0) > 0 and name[0].isupper() and "." not in name)
+    # Only a payload recorded from a real (authenticated) run proves that
+    # the Stop hook fires and which keys it carries. The protobuf schema and
+    # the changelog describe what the binary *can* send; they are recorded as
+    # context, never counted as an observation.
     observed_stop_fields = list(payloads.get("Stop") or [])
     schema_stop_fields = list(evidence.get("stop_hook_schema_fields") or [])
-    stop_fields = observed_stop_fields or schema_stop_fields
-    stop_hook_fired = bool(
-        observed_stop_fields
-        or (evidence.get("stop_hook_runs") and schema_stop_fields))
+    # The vendor's published hook contract is authoritative evidence as well:
+    # it names the event, the payload keys and the transcript location.
+    documentation = dict(evidence.get("documentation") or {})
+    documented_stop_fields = (list(documentation.get("stop_input_fields") or [])
+                              if documentation.get("url") else [])
+    contract_fields = observed_stop_fields or documented_stop_fields
+    stop_hook_fired = bool(contract_fields)
     final_field = str(evidence.get("final_field") or "")
     transcript_final = bool(evidence.get("transcript_final"))
+    transcript_documented = "transcriptPath" in contract_fields
     final_source_proven = bool(
-        stop_hook_fired and (final_field in stop_fields or transcript_final))
+        stop_hook_fired
+        and ((final_field and final_field in contract_fields)
+             or transcript_final or transcript_documented))
     liveness = bool(evidence.get("proxy_independent_liveness"))
     checks = {
         "stop_hook_fired": stop_hook_fired,
@@ -110,7 +129,32 @@ def evaluate_probe(evidence: dict) -> dict:
         "proxy_independent_liveness": liveness,
     }
     missing = [name for name in REQUIRED_FINAL_EVIDENCE if not checks[name]]
+    if observed_stop_fields:
+        evidence_kind = "observed"
+    elif documented_stop_fields:
+        evidence_kind = "documented"
+    elif schema_stop_fields or evidence.get("stop_hook_runs"):
+        evidence_kind = "schema_only"
+    else:
+        evidence_kind = "none"
+    if final_field and final_field in contract_fields:
+        final_source = "hook_field"
+    elif transcript_final or transcript_documented:
+        final_source = "transcript"
+    else:
+        final_source = ""
     return {
+        "evidence_kind": evidence_kind,
+        "final_source": final_source,
+        # True only when the final text was actually matched on a real run
+        # (observed hook field, or a transcript whose last assistant message
+        # equalled the visible answer). The documented transcriptPath proves
+        # the route exists, not that the transcript line format was parsed.
+        "final_source_validated": bool(
+            transcript_final
+            or (final_field and final_field in observed_stop_fields)),
+        "schema_declares_final_field": bool(
+            final_field and final_field in schema_stop_fields),
         "hooks_in_binary": hooks_in_binary,
         "has_user_prompt_submit": counts.get("UserPromptSubmit", 0) > 0,
         "has_inject_steps": counts.get("injectSteps", 0) > 0,

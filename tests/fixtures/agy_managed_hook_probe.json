@@ -1,30 +1,45 @@
 {
-  "recorded_at": "2026-09-03T22:50:00Z",
+  "recorded_at": "2026-09-04T21:30:00Z",
   "image": "pawflow-claude-code:latest",
-  "image_id": "ea219112b1269e6d84e23692236b46605d7cddddde5a1e3ffc559a76043b8378",
-  "agy_version": "1.1.25",
+  "image_id": "6dcf397da84c4aaa5b8a1373082aa58a4c2f032698c1cfd17508ef8695958d1b",
+  "agy_version": "1.1.26",
+  "documentation": {
+    "url": "https://antigravity.google/docs/hooks",
+    "accessed": "2026-09-04",
+    "summary": "Hooks are configured in hooks.json under .agents/ or ~/.gemini/config/. Events: PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop. Hooks receive JSON on stdin and answer JSON on stdout; field names are camelCase. Stop fires when the execution loop terminates. Every payload carries transcriptPath, the absolute path of the persistent transcript.jsonl (<app_data_dir>/brain/<conversationId>/.system_generated/logs/transcript.jsonl, app_data_dir = ~/.gemini/antigravity-cli for the CLI).",
+    "common_input_fields": ["conversationId", "workspacePaths", "transcriptPath", "artifactDirectoryPath", "modelName"],
+    "stop_input_fields": ["executionNum", "terminationReason", "error", "fullyIdle", "conversationId", "workspacePaths", "transcriptPath", "artifactDirectoryPath", "modelName"],
+    "stop_output_fields": ["decision", "reason"],
+    "pre_invocation_input_fields": ["invocationNum", "initialNumSteps", "conversationId", "workspacePaths", "transcriptPath", "artifactDirectoryPath", "modelName"],
+    "documented_final_text_field": "",
+    "note": "finalModelOutput is declared in the binary's StopHookArgs protobuf but is NOT part of the documented Stop payload; the documented final-answer route is the transcript named by transcriptPath."
+  },
   "commands": {
     "version": "docker run --rm --entrypoint agy pawflow-claude-code:latest --version",
     "help": "docker run --rm --entrypoint agy pawflow-claude-code:latest --help",
-    "identifiers": "docker run --rm --entrypoint bash pawflow-claude-code:latest -lc \"grep -a -o -E 'PreInvocation|PostInvocation|UserPromptSubmit|SessionStart|SessionEnd|PreToolUse|PostToolUse|injectSteps|transcriptPath|hookEventName|hookSpecificOutput|lastAssistantMessage|last_assistant_message|additionalContext|stopReason|hooks\\.json' /usr/local/bin/agy | sort | uniq -c | sort -rn\"",
+    "identifiers": "docker run --rm --entrypoint bash pawflow-claude-code:latest -lc \"grep -a -o -E 'PreInvocation|PostInvocation|UserPromptSubmit|SessionStart|SessionEnd|PreToolUse|PostToolUse|injectSteps|transcriptPath|hookEventName|hookSpecificOutput|lastAssistantMessage|last_assistant_message|finalModelOutput|additionalContext|stopReason|hooks\\.json' /usr/local/bin/agy | sort | uniq -c | sort -rn\"",
     "changelog_hooks": "docker run --rm --entrypoint agy pawflow-claude-code:latest changelog | grep -n -i hook",
     "hooks_listing": "docker run --rm -e HOME=/tmp/agyhome --entrypoint agy pawflow-claude-code:latest -p /hooks --output-format json",
     "instrumented_turn": "hooks.json with SessionStart/PreInvocation/PostInvocation/Stop/PreToolUse/PostToolUse/SessionEnd/UserPromptSubmit handlers dumping stdin to /tmp/agyhome/out, then: agy --dangerously-skip-permissions -p 'reply with the single word pong' --print-timeout 60s"
   },
   "observations": {
-    "help_subcommands": ["agent", "agents", "changelog", "help", "install", "mcp", "mic-serve", "models", "plugin", "plugins", "update"],
+    "help_subcommands": ["agent", "agents", "changelog", "help", "install", "mcp", "mic-serve", "models", "plugin", "plugins", "remote-control", "update"],
     "help_has_hooks_subcommand": false,
-    "identifier_counts_raw": "98 PostInvocation / 97 PreInvocation / 70 SessionStart / 22 hooks.json / 21 stopReason / 14 injectSteps / 9 PostToolUse / 7 PreToolUse / 4 transcriptPath / 3 SessionEnd / StopHookArgs.finalModelOutput present in the protobuf schema",
+    "identifier_counts_raw": "98 PostInvocation / 97 PreInvocation / 70 SessionStart / 22 hooks.json / 21 stopReason / 14 injectSteps / 9 PostToolUse / 7 PreToolUse / 4 transcriptPath / 3 SessionEnd / 2 finalModelOutput (agy 1.1.26, 2026-09-04)",
     "changelog_hook_lines": [
       "Improved hook ordering so hooks defined in hooks.json run before the built-in termination checks, which lets PostInvocation hooks observe the final invocation of a turn and lets Stop hooks run at all instead of sitting unreachable behind the built-ins.",
       "Fixed the /hooks command wrote configurations to ~/.gemini/antigravity-cli/hooks.json instead of the shared ~/.gemini/config/hooks.json, ensuring hooks remain synchronized between the TUI and the backend.",
       "Fixed stop hooks that always block hanging the agent forever; after a configurable number of consecutive continuations, the hook can no longer block and the turn ends normally.",
       "Fixed PostToolUse hooks firing on non-tool steps such as user input and model responses, which also caused them to ignore their configured matchers.",
-      "Fixed workspace-local hooks defined in <workspace>/.agents/hooks.json not loading after trusting a folder by reloading hooks whenever workspaces change."
+      "Fixed workspace-local hooks defined in <workspace>/.agents/hooks.json not loading after trusting a folder by reloading hooks whenever workspaces change.",
+      "Fixed CLI crashes caused by prompt hooks by catching hook panics and rejecting nil completion configurations in model requests."
     ],
     "hooks_listing_result": "{\"conversation_id\":\"\",\"status\":\"ERROR\",\"response\":\"\",\"error\":\"authentication failed or timed out\",\"duration_seconds\":0,\"num_turns\":0}",
     "instrumented_turn_result": "Authentication required. Please visit the URL to log in ... Error: authentication timed out. No hook handler was invoked: /tmp/agyhome/out stayed empty.",
-    "hooks_json_location": "~/.gemini/config/hooks.json (shared TUI/backend since agy 1.0.15), mirrored by the published installer into antigravity-cli/settings.json and settings.json"
+    "authenticated_probe_attempt": "2026-09-04: the PawFlow server holds no gemini OAuth credential pool and no Antigravity ACP token, so an authenticated instrumented turn could not be run here. The published hook contract above stands in for the observation until a login is available.",
+    "hooks_json_location": "~/.gemini/config/hooks.json (shared TUI/backend since agy 1.0.15), mirrored by the published installer into antigravity-cli/settings.json and settings.json",
+    "hooks_json_shape": "{\"<hook name>\": {\"PreInvocation\": [handler], \"Stop\": [handler]}} with handler = {type: command, command, timeout}; only PreToolUse/PostToolUse use the {matcher, hooks: [...]} wrapper. No payload names its event, so PawFlow passes --event <Event> on each handler command line; that argument is the only event source (PreInvocation and PostInvocation payloads are indistinguishable).",
+    "transcript_line_format": "Not documented by Google. tools/cc_interactive_hook.py accepts {role|type: assistant|model, content: str|[{type: text, text}]} and the same shape nested under message/payload; an unmatched format yields an empty final and the managed turn fails explicitly instead of reporting a wrong answer. Validation against a real transcript is pending (final_source_validated=false)."
   },
   "identifier_counts": {
     "PostInvocation": 98,
@@ -43,7 +58,7 @@
     "lastAssistantMessage": 0,
     "last_assistant_message": 0,
     "additionalContext": 0,
-    "finalModelOutput": 1
+    "finalModelOutput": 2
   },
   "hook_payloads": {},
   "stop_hook_schema_fields": [
@@ -55,8 +70,8 @@
     "transcriptPath"
   ],
   "stop_hook_runs": true,
-  "final_field": "finalModelOutput",
+  "final_field": "",
   "transcript_final": false,
   "proxy_independent_liveness": true,
-  "conclusion": "The pinned agy 1.1.25 binary carries PreInvocation/PostInvocation/SessionStart/SessionEnd/PreToolUse/PostToolUse hook identifiers, injectSteps, transcriptPath and a shared hooks.json. Its changelog documents Stop hooks running before built-in termination, and its generated StopHookArgs protobuf exposes finalModelOutput as a dedicated native final-answer field. The unauthenticated print probe still cannot record a live payload, so the availability decision is based on the native protobuf contract rather than a fabricated transcript or tmux fallback."
+  "conclusion": "Google's published hook contract (antigravity.google/docs/hooks) documents the Stop event and its camelCase stdin payload, including transcriptPath to the persistent transcript.jsonl; that is the evidence agy_mcp is enabled on. The documented Stop payload carries no final-text field: finalModelOutput exists only in the binary's protobuf and stays an opportunistic shortcut in the hook, never the contract. The final answer therefore comes from the transcript's last assistant message, read by tools/cc_interactive_hook.py. No authenticated payload has been recorded on this server (no gemini pool); a recorded hook_payloads.Stop would upgrade evidence_kind from documented to observed."
 }

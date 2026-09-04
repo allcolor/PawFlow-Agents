@@ -67,7 +67,7 @@ class TestSpecTable:
         assert managed_mcp_observation_mode("") == MITM_OBSERVATION_MODE
         assert is_managed_mcp_provider("external_mcp") is False
 
-    def test_agy_is_available_from_native_stop_final(self):
+    def test_agy_is_available_from_the_documented_stop_contract(self):
         spec = managed_mcp_spec("agy_mcp")
         assert spec.available is True
         assert spec.unavailable_reason == ""
@@ -442,13 +442,20 @@ class TestAntigravityPool:
     def test_managed_hooks_are_written_to_shared_config(self, tmp_path):
         from core.antigravity_observer_pool import AntigravityObserverPool
         hooks = AntigravityObserverPool._write_agy_managed_hooks(str(tmp_path))
-        assert set(hooks) == {"PreInvocation", "Stop", "SessionEnd"}
+        # Documented events only (antigravity.google/docs/hooks): no SessionEnd.
+        assert set(hooks) == {"PreInvocation", "Stop"}
         shared = json.loads((tmp_path / ".gemini" / "config" / "hooks.json").read_text())
-        assert shared["hooks"] == hooks
+        # hooks.json maps a hook NAME to its events; PreInvocation/Stop list
+        # their command handlers directly (no {"hooks": [...]} wrapper).
+        assert shared == {"pawflow-managed": hooks}
         cli = json.loads((tmp_path / ".gemini" / "antigravity-cli" / "settings.json").read_text())
         assert cli["hooks"] == hooks
-        assert hooks["Stop"][0]["hooks"][0]["command"] == (
-            "python3 /opt/pawflow/cc_interactive_hook.py")
+        for event, handlers in hooks.items():
+            assert handlers == [{
+                "type": "command",
+                "command": f"python3 /opt/pawflow/cc_interactive_hook.py --event {event}",
+                "timeout": 5,
+            }]
 
     def test_managed_agy_container_mounts_hook_not_proxy(self, monkeypatch):
         from core.antigravity_observer_pool import AntigravityObserverPool

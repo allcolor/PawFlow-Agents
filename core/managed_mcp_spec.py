@@ -26,7 +26,7 @@ FINAL_SOURCE_STOP_HOOK = "stop_hook"
 #: Bump when the managed launch/config shape changes in a way that makes a live
 #: session incompatible with a new turn (hook set, MCP config, env contract).
 #: Stored on the session and compared on reuse so a mismatch recreates it.
-MANAGED_MCP_LAUNCH_REVISION = "2"
+MANAGED_MCP_LAUNCH_REVISION = "3"
 
 
 @dataclass(frozen=True)
@@ -114,9 +114,13 @@ MANAGED_MCP_PROVIDERS: dict[str, ManagedMcpProviderSpec] = {
         builtin_tools_visible=False,
         usage_source=TELEMETRY_UNAVAILABLE,
         context_source=TELEMETRY_UNAVAILABLE,
-        # The native StopHookArgs protobuf exposes ``finalModelOutput``. The
-        # shared hook normalizes that field without reading tmux or vendor
-        # traffic; see the recorded binary evidence and regression fixture.
+        # Available on the official hook contract (https://antigravity.google/
+        # docs/hooks): ``Stop`` fires when the execution loop terminates with a
+        # camelCase payload carrying ``transcriptPath``; the shared hook reads
+        # the final answer from that transcript. ``finalModelOutput`` exists in
+        # the binary's protobuf but is not part of the documented payload, so
+        # it is only an opportunistic shortcut, never the contract. Evidence:
+        # tests/fixtures/agy_managed_hook_probe.json.
         available=True,
     ),
 }

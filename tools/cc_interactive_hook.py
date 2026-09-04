@@ -233,21 +233,27 @@ def _last_transcript_message(path: str, role: str) -> str:
     return ""
 
 
-def _normalize_client_input(raw: dict, client: str) -> dict:
+def _normalize_client_input(raw: dict, client: str, event: str = "") -> dict:
     """Map a client's native hook payload onto the Claude Code field names.
 
     Claude Code and Codex already speak the ``hook_event_name`` shape.
-    Antigravity uses camelCase (``hookEventName``, ``transcriptPath``) and
-    fires ``PreInvocation`` before a model call instead of a prompt hook; the
-    submitted prompt is then only in its transcript. Nothing here is trusted
-    for identity: the server binds the event to the registered session.
+    Antigravity uses camelCase (``transcriptPath``) and never names its event
+    in the payload (https://antigravity.google/docs/hooks): ``event`` is the
+    ``--event`` argument PawFlow writes into each ``hooks.json`` handler, the
+    only source, since PreInvocation and PostInvocation payloads are
+    indistinguishable. Antigravity fires ``PreInvocation`` before every model
+    call instead of a prompt hook; the submitted prompt is then only in its
+    transcript. Nothing here is trusted for identity: the server binds the
+    event to the registered session.
     """
     if not isinstance(raw, dict):
         return {}
     if client != "agy":
         return raw
     out = dict(raw)
-    if "hook_event_name" not in out and out.get("hookEventName"):
+    if event:
+        out["hook_event_name"] = event
+    elif "hook_event_name" not in out and out.get("hookEventName"):
         out["hook_event_name"] = out.get("hookEventName")
     if "transcript_path" not in out and out.get("transcriptPath"):
         out["transcript_path"] = out.get("transcriptPath")
@@ -393,6 +399,17 @@ def _client_output(client: str) -> str:
     return "{}" if client == "agy" else ""
 
 
+def _event_argument(argv) -> str:
+    """``--event NAME`` from ``hooks.json``; Antigravity payloads omit it."""
+    args = list(argv or [])
+    for index, arg in enumerate(args):
+        if arg == "--event" and index + 1 < len(args):
+            return str(args[index + 1]).strip()
+        if arg.startswith("--event="):
+            return arg[len("--event="):].strip()
+    return ""
+
+
 def main() -> int:
     session_token = os.environ.get("PAWFLOW_CCI_SESSION_TOKEN", "")
     url = os.environ.get("PAWFLOW_CCI_EVENT_URL", "")
@@ -405,7 +422,7 @@ def main() -> int:
         return 0
     try:
         raw = json.loads(sys.stdin.read() or "{}")
-        raw = _normalize_client_input(raw, client)
+        raw = _normalize_client_input(raw, client, _event_argument(sys.argv[1:]))
         event = {
             "type": "hook",
             "hook_event_name": raw.get("hook_event_name", ""),

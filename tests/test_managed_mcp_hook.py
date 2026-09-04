@@ -213,6 +213,45 @@ class TestAntigravityClient:
         assert stop["final_source"] == "hook_field"
         assert stop["reason"] == "STOP"
 
+    def test_documented_agy_payloads_carry_no_event_name(self, hook, tmp_path):
+        """antigravity.google/docs/hooks: Stop = executionNum/terminationReason/
+        fullyIdle + common fields, PreInvocation = invocationNum/initialNumSteps.
+        Neither names its event and neither carries a final-text field."""
+        transcript = tmp_path / "transcript.jsonl"
+        _claude_transcript(transcript, [
+            {"role": "user", "content": "typed in agy"},
+            {"role": "model", "content": [{"type": "text", "text": "agy said"}]},
+        ])
+        common = {
+            "conversationId": "ec33ebf9", "workspacePaths": ["/w"],
+            "transcriptPath": str(transcript), "artifactDirectoryPath": "/a",
+            "modelName": "gemini-3.6-flash-medium",
+        }
+        # --event from hooks.json wins.
+        stop = hook._compact_input(hook._normalize_client_input({
+            **common, "executionNum": 1, "terminationReason": "model_stop",
+            "error": "", "fullyIdle": True,
+        }, "agy", "Stop"))
+        assert stop["hook_event_name"] == "Stop"
+        assert stop["last_assistant_message"] == "agy said"
+        assert stop["final_source"] == "transcript"
+        assert stop["reason"] == "model_stop"
+        # No --event, no name in the payload: the event stays unclassified.
+        # PreInvocation and PostInvocation payloads are identical, so PawFlow
+        # never guesses from fields; the --event argument is the only source.
+        unnamed = hook._normalize_client_input({
+            **common, "executionNum": 2, "terminationReason": "error",
+            "error": "boom", "fullyIdle": False}, "agy")
+        assert unnamed.get("hook_event_name", "") == ""
+        pre = hook._normalize_client_input({
+            **common, "invocationNum": 0, "initialNumSteps": 0}, "agy",
+            "PreInvocation")
+        assert pre["hook_event_name"] == "UserPromptSubmit"
+        assert pre["prompt"] == "typed in agy"
+        assert hook._event_argument(["--event", "Stop"]) == "Stop"
+        assert hook._event_argument(["--event=PreInvocation"]) == "PreInvocation"
+        assert hook._event_argument([]) == ""
+
     def test_non_agy_clients_are_untouched(self, hook):
         raw = {"hook_event_name": "Stop", "hookEventName": "ignored"}
         assert hook._normalize_client_input(raw, "cc") is raw

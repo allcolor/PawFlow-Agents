@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Completed `agy_mcp` as a selectable managed native-hook provider. The Agy
+  hook bridge now normalizes the CLI's native `StopHookArgs.finalModelOutput`,
+  the provider and manual-capture paths resolve `AntigravityObserverPool`, and
+  the pool implements the shared managed-turn lifecycle without falling back to
+  tmux scraping or vendor-traffic interception.
+- `read_history(action="search")` no longer JSON-decodes every earlier segment
+  to calculate absolute result indices, and a server image without ripgrep no
+  longer falls back to decoding the full transcript. Segment indexes now retain
+  exact display-row counts, old indexes upgrade with a lightweight bounded
+  scan, and search uses ripgrep, standard grep, or a dependency-free candidate
+  scan before decoding only matching segment neighborhoods.
 - In a tiled multi-conversation workspace, background Active Agents polls and
   late CLI terminal-inventory results can no longer repaint the focused
   conversation's shared controls. Grab now invalidates its live-session cache on

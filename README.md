@@ -274,7 +274,7 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 | **Gemini CLI** | CLI subprocess/container | Secondary Gemini CLI path for Pro/CLI-specific workflows |
 | **Claude Code MCP hooks** (`cc_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Claude interactive pool and PawFlow MCP bridge; final-only output from the native Stop hook without vendor-traffic interception |
 | **Codex MCP hooks** (`codex_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Codex interactive pool; native rollout usage/context, while Codex built-in tools are not observable |
-| **Antigravity MCP hooks** (`agy_mcp`) | Registered, probe-gated provider | Not currently selectable: the supported Agy CLI has not proven a trustworthy native final-answer source |
+| **Antigravity MCP hooks** (`agy_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Antigravity pool; final-only output comes from the native `StopHookArgs.finalModelOutput` field, while Agy built-in tools are not observable |
 | **ACP agent** (`acp`) | Outbound Agent Client Protocol v1 process | Launches an explicitly configured agent command without a shell, with negotiated sessions and opt-in PawFlow MCP/client filesystem capabilities |
 | **Anthropic API** | Direct HTTP | Streaming, tool use, vision, extended thinking |
 | **OpenAI API** | Direct HTTP | Streaming, tool use, vision, JSON mode |
@@ -286,31 +286,29 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 
 Switch providers per agent, per conversation, or globally. API keys normally use
 direct `openai`/`anthropic` services; subscription logins use the matching
-interactive or managed native-hook provider. `cc_mcp` and `codex_mcp` reuse the
-same OAuth pools as their interactive siblings. `agy_mcp` is visible as a
-reserved, unavailable capability until its native probe passes. `claude-code`
-(`cc -p`) and `codex-app-server` are legacy agent transports kept for existing
-configurations; do not select them for new agent services. Self-hosted and
-third-party LLMs can use the OpenAI-compatible endpoint (`base_url` override).
-See [LLM Providers](docs/llm_providers.md).
+interactive or managed native-hook provider. `cc_mcp`, `codex_mcp`, and
+`agy_mcp` reuse the same OAuth pools as their interactive siblings and are all
+selectable; Agy final-only output comes from its native
+`StopHookArgs.finalModelOutput` field. `claude-code` (`cc -p`) and
+`codex-app-server` are legacy agent transports kept for existing configurations;
+do not select them for new agent services. Self-hosted and third-party LLMs can
+use the OpenAI-compatible endpoint (`base_url` override). See
+[LLM Providers](docs/llm_providers.md).
 
-### beta.263 highlights
+### beta.264 highlights
 
-- **Native-hook CLI providers**: `cc_mcp` and `codex_mcp` run the official
-  interactive CLIs in the existing managed pools, but collect final answers
-  from native lifecycle hooks instead of observing vendor traffic.
-- **Outbound ACP agents**: `acp` adds warm, session-aware Agent Client Protocol
-  v1 processes with explicit command, directory, authentication, MCP, filesystem,
-  cancellation, and permission boundaries.
-- **Durable agent operations**: delegate status/results now survive restarts,
-  queued human turns cannot be starved by delegate replies, terminal provider
-  failures remain visible, and a force stop fences late preempt-rescue work.
-- **Recoverable workspaces and faster history**: an over-quota ScratchDir can be
-  inspected and emptied, relay runtime manifests keep filesystem modules
-  complete, and large plaintext history searches avoid reparsing unrelated
-  transcript segments.
+- **Native Agy finals**: `agy_mcp` is selectable and reuses the managed
+  Antigravity pool while taking final-only answers from Agy's native
+  `StopHookArgs.finalModelOutput`, without vendor-traffic interception.
+- **Exact fast history**: segment indexes retain exact display-row counts, so
+  `read_history(search)` does not decode every earlier segment merely to compute
+  result indices; ripgrep, standard grep, and a dependency-free candidate scan
+  all preserve the same bounded decode path.
+- **Conversation-local Grab state**: tiled conversations reject stale Active
+  Agents and terminal-inventory results, so one conversation cannot repaint
+  another conversation's Grab control.
 
-See the [beta.263 changelog](CHANGELOG.md#100-beta263--2026-09-03) for the full
+See the [beta.264 changelog](CHANGELOG.md#100-beta264--2026-09-04) for the full
 implementation record.
 
 ### Multi-LLM Advisor Aggregation

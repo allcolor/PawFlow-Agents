@@ -275,10 +275,10 @@ def test_site_soundtrack_autoplays_with_a_user_control() -> None:
 def test_release_fallback_matches_current_release() -> None:
     script = (SITE / "site.js").read_text(encoding="utf-8")
 
-    assert "version: '1.0.0-beta.263'" in script
+    assert "version: '1.0.0-beta.264'" in script
 
 
-def test_beta_263_provider_and_reliability_story_is_public() -> None:
+def test_beta_264_provider_and_history_story_is_public() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     providers = (ROOT / "docs" / "llm_providers.md").read_text(encoding="utf-8")
     homepage = (SITE / "index.html").read_text(encoding="utf-8")
@@ -298,7 +298,9 @@ def test_beta_263_provider_and_reliability_story_is_public() -> None:
         assert provider in providers
         assert provider in faq
 
-    assert "beta.263:" in homepage
-    assert "restart-durable delegation" in features
+    assert "beta.264:" in homepage
+    assert "exact display-row indices" in features
     assert "MCP, ACP, A2A, and AG-UI" in integrations
-    assert "registered but unavailable" in faq
+    assert "registered but unavailable" not in faq
+    assert "StopHookArgs.finalModelOutput" in faq
+    assert "| `agy_mcp` | Available" in providers

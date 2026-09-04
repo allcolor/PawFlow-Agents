@@ -824,7 +824,7 @@ sessions, and reset action.
 Use the already reviewed docs/MANAGED_MCP_CLI_PROVIDERS_PLAN.md file boundary:
 
 - managed hook extension;
-- cc_mcp, codex_mcp, and probe-gated agy_mcp;
+- `cc_mcp`, `codex_mcp`, and the now-available `agy_mcp` native-hook provider;
 - their pool/provider/registry/service/UI/test/docs wiring.
 
 Before parallel implementation begins, compare both file lists. Shared hot

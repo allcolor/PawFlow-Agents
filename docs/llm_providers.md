@@ -17,7 +17,7 @@ For new CLI-backed agent services, use `claude-code-interactive` for Claude Code
 | `acp` | Outbound ACP agent process | Any configured ACP v1 agent command | PawFlow launches the command without a shell, negotiates the official ACP protocol, and exposes only explicitly enabled PawFlow MCP and client filesystem capabilities. |
 | `cc_mcp` | Managed Claude Code CLI with native hooks | Claude subscription sessions without vendor-traffic interception | Reuses the Claude interactive pool and PawFlow MCP tools; final text comes from the official Stop hook. |
 | `codex_mcp` | Managed Codex CLI with native hooks | Codex subscription sessions without vendor-traffic interception | Reuses the Codex interactive pool and native rollout context counters; built-in Codex tools are not observable. |
-| `agy_mcp` | Managed Antigravity CLI with native hooks | Reserved provider value | Currently unavailable: the supported `agy` build has not proven a native final-answer hook or transcript source. |
+| `agy_mcp` | Managed Antigravity CLI with native hooks | Agy subscription sessions without vendor-traffic interception | Reuses the Antigravity pool; final text comes from the native `StopHookArgs.finalModelOutput` field. |
 | `claude-code-interactive` | Interactive CLI container with observed provider stream | **Preferred** Claude subscription and Claude Code agent sessions | Uses the Claude Code OAuth pool by default. API-key mode can also set `api_key` and `base_url` for Anthropic-compatible endpoints. |
 | `antigravity-interactive` | Interactive `agy` CLI in tmux with observed provider stream | Default Gemini subscription provider | Uses the Gemini OAuth credential pool, starts the real `agy` CLI, and routes tools through PawFlow MCP. |
 | `codex-interactive` | Interactive Codex TUI in tmux with observed provider stream | **Preferred** Codex subscription and coding-agent sessions | Reuses the `codex-app-server` OAuth pool. The turn is read from a local MITM of the Responses stream. See [Codex Interactive](#codex-interactive). |
@@ -100,11 +100,11 @@ rather than estimated.
 |---|---|---|---|
 | `cc_mcp` | Available | Claude Code Stop hook | Native usage, context occupancy, thinking, and live preemption are unavailable. Claude's built-in tools are denied, so PawFlow MCP remains the visible tool path. |
 | `codex_mcp` | Available | Codex Stop hook plus local rollout token counts | Codex built-in shell/file tools remain available but are not observable through PawFlow; thinking and live preemption are unavailable. |
-| `agy_mcp` | Registered but unavailable | Probe has not found a trustworthy native final-answer hook field or transcript | Configuration fails closed until the supported Agy CLI passes the capability probe. Use `antigravity-interactive` for Gemini subscription sessions. |
+| `agy_mcp` | Available | Agy Stop hook `finalModelOutput` field | Usage, context occupancy, thinking, and live preemption are unavailable; Agy built-in tools are not observable through PawFlow. |
 
 The managed variants reuse the canonical OAuth pools: `cc_mcp` uses
-`claude-code`, `codex_mcp` uses `codex-app-server`, and the reserved
-`agy_mcp` value uses `gemini`. Native Codex and Claude plugin settings remain
+`claude-code`, `codex_mcp` uses `codex-app-server`, and
+`agy_mcp` uses `gemini`. Native Codex and Claude plugin settings remain
 available on their matching managed provider. See the
 [managed provider how-to](https://pawflow.allcolor.org/howtos.html#managed-mcp-providers).
 

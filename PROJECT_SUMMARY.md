@@ -22,9 +22,10 @@ The current core value is twofold:
 - Added the outbound `acp` provider for explicitly configured Agent Client
   Protocol v1 processes, including warm-session reuse, cancellation, policy
   checks, and opt-in PawFlow MCP/client filesystem capabilities.
-- Added managed native-hook CLI providers `cc_mcp` and `codex_mcp`.
-  `agy_mcp` is registered but remains unavailable until the supported Agy CLI
-  proves a trustworthy native final-answer source.
+- Added managed native-hook CLI providers `cc_mcp` and `codex_mcp`, then after
+  beta.263 completed `agy_mcp` using Agy's native
+  `StopHookArgs.finalModelOutput` field and the existing Antigravity managed
+  pool; it is now selectable without vendor-traffic interception.
 - Made delegate observability restart-durable, fixed delegate-reply routing and
   late preempt work after force stop, and kept terminal provider failures visible
   in webchat.
@@ -42,8 +43,8 @@ The current core value is twofold:
     OpenAI-compatible endpoints, OmniRoute, Gemini CLI, outbound ACP v1 agents,
     the CLI-backed subscription providers `claude-code-interactive`,
     `codex-interactive`, and `antigravity-interactive`, and the managed
-    native-hook variants `cc_mcp` and `codex_mcp`; `agy_mcp` is registered
-    but probe-gated, while legacy `claude-code` (`cc -p`) and
+    native-hook variants `cc_mcp`, `codex_mcp`, and `agy_mcp`, while legacy
+    `claude-code` (`cc -p`) and
     `codex-app-server` remain only for existing configurations;
   - memory, knowledge graph, diary, project graph/wiki, todo, and scratchpad;
   - conversation, plan, token, file, relay, and tool-handler management;

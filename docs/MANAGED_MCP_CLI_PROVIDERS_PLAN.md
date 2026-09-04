@@ -1,8 +1,7 @@
 # Managed MCP CLI Providers — Complete Implementation Plan
 
-Status: **revised after live-source cross-review; implementation-ready after a
-user-approved baseline commit freezes the existing `allow_refresh` patch and
-subject to the WP0 AGY hook probe**
+Status: **implemented; WP0 completed for Agy 1.1.25 after the shipped
+`StopHookArgs.finalModelOutput` protobuf field was verified**
 Scope: add `cc_mcp`, `codex_mcp`, and `agy_mcp` as managed `llmConnection` providers
 Primary outcome: let PawFlow run the three official interactive CLIs exactly as it
 does today while replacing provider-traffic observation with native lifecycle
@@ -16,7 +15,7 @@ PawFlow must add three real LLM provider values:
 |---|---|---|---|
 | `cc_mcp` | Claude Code (`claude`) | Claude Code interactive pool and tmux path | `claude-code` |
 | `codex_mcp` | Codex (`codex`) | Codex interactive pool and tmux path | `codex-app-server` |
-| `agy_mcp` | Antigravity/Gemini CLI (`agy`) | Antigravity pool and tmux path, after hook/liveness gaps are closed | `gemini` |
+| `agy_mcp` | Antigravity/Gemini CLI (`agy`) | Antigravity pool and tmux path | `gemini` |
 
 These providers are normal `runtime_kind=llm` providers. They are not
 `runtime_kind=external_mcp` agents, are not terminals launched by an external
@@ -36,9 +35,9 @@ The process lifecycle does not change:
    the minimal extension in this plan, final text to PawFlow.
 7. PawFlow returns a normal `LLMResponse` through the existing agent loop.
 
-CCI and Codex already have a managed hook path. AGY does not; `agy_mcp` remains
-probe-gated until the installed official CLI proves the required hook payloads
-and a final-answer source.
+CCI, Codex and Agy now have managed hook paths. Agy's native
+`StopHookArgs.finalModelOutput` is normalized onto the common final-only event
+contract; its pool supplies proxy-independent container+tmux liveness.
 
 The only intended provider-path substitution is:
 
@@ -157,10 +156,11 @@ small `tools/*_common.py` helper in the runtime-file copy list, rather than
 putting managed runtime code in the separately delivered `pawflow_relay`
 package.
 
-AGY is a real implementation gap. `AntigravityObserverPool` currently mounts the
-observer proxy and semantics only; it writes no lifecycle hooks. Managed mode
-must mount the managed hook, generate AGY-native hook settings, normalize
-`transcriptPath`, and return AGY's `injectSteps` shape where required. WP0 must
+When this plan was written, AGY was the remaining implementation gap:
+`AntigravityObserverPool` mounted the observer proxy and semantics only and
+wrote no lifecycle hooks. The completed managed mode mounts the managed hook,
+generates AGY-native hook settings, normalizes `transcriptPath`, and returns
+AGY's `injectSteps` shape where required. WP0 must
 first prove which hook carries final text, or prove the local transcript
 fallback, against the supported official AGY version.
 
@@ -325,10 +325,10 @@ hook-visible consumer epochs, or hook-visible turn receipts. The current hook is
 fire-and-forget with a five-second command timeout, and the managed coordinator
 timeout is the failure boundary.
 
-AGY must reuse this managed transport only after a client-aware adapter handles
-its input and output shapes. The development probe must record the exact
-supported hook names, payload fields, transcript location, and final-answer
-source. If no reliable final answer exists, `agy_mcp` is not enabled.
+AGY reuses this managed transport through a client-aware adapter for its input
+and output shapes. The completed development probe records the exact supported
+hook names, payload fields, transcript location, and native final-answer source;
+`agy_mcp` is enabled from that evidence.
 
 ## 8. Prompt and context flow
 
@@ -808,7 +808,7 @@ Exit gate:
   hook event service, hook final, and
   `LLMResponse`;
 - no design path enters the external published-agent router;
-- `agy_mcp` has a proven final source or remains unavailable.
+- `agy_mcp` has a proven native final source and is available.
 
 ### WP1 — Extend the existing managed hook
 
@@ -818,8 +818,8 @@ Deliver:
 - supported local transcript fallback;
 - one short bounded delivery retry;
 - unchanged current registration and `hook` event envelope;
-- client-aware AGY input/output handling and image mount, only after WP0 proves
-  the contract.
+- client-aware AGY input/output handling and image mount, backed by the completed
+  WP0 contract.
 
 Exit gate:
 
@@ -880,7 +880,7 @@ Exit gate:
 - each provider completes cold and reused turns with a fake official CLI harness;
 - tools execute once inside the CLI loop;
 - the normal agent loop persists exactly one final answer;
-- `agy_mcp` registration is enabled only after the WP0 probe and its tests pass.
+- `agy_mcp` registration is enabled because the WP0 probe and its tests pass.
 
 ### WP5 — Operability and UI
 
@@ -1020,8 +1020,8 @@ integration gate.
 3. Enable `cc_mcp` first and exercise cold/reuse/manual/preempt/stop paths.
 4. Enable `codex_mcp` after its `.codex/hooks.json` and transcript fixtures pass.
 5. Run the explicit development/CI probe against the supported official AGY
-   build. Enable `agy_mcp` only after hook final, `injectSteps`, liveness, and
-   refresh-policy tests pass.
+   build (completed for Agy 1.1.25). Hook final, `injectSteps`, liveness, and
+   refresh-policy tests pass before `agy_mcp` is enabled.
 6. Keep existing interactive providers as explicit alternatives during
    evaluation.
 7. Remove neither path without a separate user-approved migration decision.
@@ -1033,9 +1033,8 @@ live session and creates a fresh correctly wired CLI on the next turn.
 
 The feature is complete only when all of the following are true:
 
-- `cc_mcp` and `codex_mcp` are configurable as `llmConnection` services, and
-  `agy_mcp` is configurable only after its required official-CLI hook probe
-  passes;
+- `cc_mcp`, `codex_mcp`, and `agy_mcp` are configurable as `llmConnection`
+  services; Agy's required official-CLI hook probe has passed;
 - PawFlow launches and supervises the official CLI using the existing pool
   lifecycle;
 - prompts are submitted by the existing tmux paste path;

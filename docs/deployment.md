@@ -53,9 +53,12 @@ conversation; a request handler is not one of them. Conversations reach
 hundreds of thousands of messages and `read_history` is called in chains, so a
 reader whose cost tracks the conversation instead of the answer will take the
 server down under a handful of calls -- which is exactly what it did.
-Plaintext searches use ripgrep only to select candidate segment files before
-the normal decoder and trace composer run; encrypted logs and prefilter errors
-fall back to the exact windowed scan.
+Plaintext searches use ripgrep, standard grep, or a dependency-free bounded
+scanner to select candidate segment files before the normal decoder and trace
+composer run. Segment index version 2 stores exact display-row counts, so
+absolute result indices do not require decoding skipped prefixes; version-1
+indexes are upgraded once with a lightweight row-prefix scan. Encrypted logs
+fall back to the exact windowed scan and never persist plaintext search data.
 
 ## Updating
 

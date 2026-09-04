@@ -336,11 +336,14 @@ Four properties worth knowing before relying on it:
 time — it never loads a transcript whole, which is what a conversation of a
 few hundred thousand messages makes fatal.
 
-For `search`, plaintext segmented logs are first filtered by ripgrep at the
-file-name level. Only candidate segments are decoded and composed; preceding
-segments are counted only when needed to preserve absolute `[#index]` labels.
-Encrypted transcripts and any missing, timed-out, or failing ripgrep use the
-same exact bounded streaming scan as before.
+For `search`, plaintext segmented logs are filtered at the file-name level by
+ripgrep, standard grep, or a bounded in-process scan when neither executable is
+available. Only candidate segments and their immediate trace-anchor neighbours
+are decoded and composed. Exact display-row counts live in each segment's
+derived index metadata, so skipped prefixes preserve absolute `[#index]` labels
+without being decoded; version-1 indexes are upgraded once by scanning ordinary
+row prefixes and decoding only ambiguous rows. Encrypted transcripts retain the
+exact bounded streaming scan because plaintext search metadata is forbidden.
 
 Ownership is therefore checked once, up front, in `_owns_conversation`
 (`core/handlers/history.py`): `recent` pages through `load_page`, which is

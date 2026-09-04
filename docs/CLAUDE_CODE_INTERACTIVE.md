@@ -868,7 +868,7 @@ from the CLI's native lifecycle hooks.
 |---|---|---|---|---|
 | `cc_mcp` | `claude` | `InteractiveClaudeCodePool` | `claude-code` | available |
 | `codex_mcp` | `codex` | `CodexInteractivePool` | `codex-app-server` | available |
-| `agy_mcp` | `agy` | `AntigravityObserverPool` | `gemini` | probe-gated, unavailable |
+| `agy_mcp` | `agy` | `AntigravityObserverPool` | `gemini` | available |
 
 The executable contract is one table, `core/managed_mcp_spec.py`
 (`MANAGED_MCP_PROVIDERS`). Every capability claim below is read from it; the
@@ -926,10 +926,12 @@ Delivery stays fire-and-forget with one bounded retry (`_DELIVERY_RETRIES`,
 no turn receipt and no event id: those stay server-owned.
 
 For `agy` the hook is client-aware: `hookEventName`/`transcriptPath`/
-`sessionId` are mapped to the Claude field names, `PreInvocation` becomes a
-`UserPromptSubmit` whose prompt is the transcript's last user message, and
-the hook prints `{}` on stdout as Antigravity expects. Version 1 injects no
-context through hooks; cold and delta context stay in the pasted prompt.
+`sessionId` are mapped to the Claude field names, native
+`finalModelOutput` becomes `last_assistant_message`, `terminationReason`
+becomes `reason`, and `PreInvocation` becomes a `UserPromptSubmit` whose prompt
+is the transcript's last user message. The hook prints `{}` on stdout as
+Antigravity expects. Version 1 injects no context through hooks; cold and delta
+context stay in the pasted prompt.
 
 ### The managed turn coordinator
 
@@ -969,8 +971,9 @@ A managed session is `connected` from registration (no proxy will ever
 connect; the pool is the liveness evidence) and a hook registration records
 the container id for the capture liveness probe. `_pool_family`,
 `_tmux_input_tag` and `_pool_for` resolve the interactive pool behind a
-concrete provider, so a manual tmux prompt on `cc_mcp` is persisted once with
-`source.input = "cc_mcp_tmux"` and `channel = "tmux"`, and
+concrete provider, including `AntigravityObserverPool` for `agy_mcp`, so a
+manual tmux prompt is persisted once with the provider-specific
+`source.input` and `channel = "tmux"`, and
 `_run_manual_capture` waits on the managed coordinator without importing the
 two MITM coordinators. The undelivered-events rule, orphan adoption and the
 capture claim are unchanged: `UserPromptSubmit` is the managed turn trigger.
@@ -1001,36 +1004,32 @@ the same terminal action as their twins.
 ### `agy_mcp` probe record (WP0)
 
 Recorded on 2026-09-03 against `pawflow-claude-code:latest` (image
-`f960169f0778`, `agy` 1.1.25); commands and raw output are in
-`tests/fixtures/agy_managed_hook_probe.json`, the verdict function in
-`core/llm_providers/_managed_mcp_agy_probe.py`.
+`ea219112b1269e6d84e23692236b46605d7cddddde5a1e3ffc559a76043b8378`,
+`agy` 1.1.25); evidence is in
+`tests/fixtures/agy_managed_hook_probe.json`, and the deterministic verdict is
+in `core/llm_providers/_managed_mcp_agy_probe.py`.
 
-- `agy --help` lists no `hooks` subcommand; `/hooks` exists only as a slash
-  command.
-- Binary identifiers: `PostInvocation` (98), `PreInvocation` (97),
-  `SessionStart` (70), `hooks.json` (22), `stopReason` (21), `injectSteps`
-  (14), `PostToolUse` (9), `PreToolUse` (7), `transcriptPath` (4),
-  `SessionEnd` (3). Absent: `UserPromptSubmit`, `hookEventName`,
-  `hookSpecificOutput`, `lastAssistantMessage`, `last_assistant_message`,
-  `additionalContext`.
-- Changelog: hooks in `hooks.json` run before the built-in termination checks
-  so `PostInvocation` observes the final invocation and `Stop` hooks run;
-  `/hooks` writes `~/.gemini/config/hooks.json`, shared by TUI and backend.
-- `agy -p /hooks --output-format json` and an instrumented print turn with
-  `SessionStart`/`PreInvocation`/`PostInvocation`/`Stop`/`PreToolUse`/
-  `PostToolUse`/`SessionEnd` handlers both stopped at Google authentication;
-  no handler was invoked, so no payload field could be recorded.
+- The generated protobuf contract in the shipped binary exposes
+  `StopHookArgs.finalModelOutput` (`final_model_output`, field 5), alongside
+  `terminationReason` and `fullyIdle`. This is a dedicated native final-answer
+  source, not terminal output or intercepted vendor traffic.
+- The Agy changelog states that configured `Stop` hooks run before built-in
+  termination; `hooks.json` lives under `~/.gemini/config`, shared by the TUI
+  and backend.
+- `UserPromptSubmit` is absent, so `PreInvocation` remains the prompt-submission
+  event and reads the submitted user text from the local transcript.
+- The unauthenticated print probe cannot record a live payload because Agy
+  authenticates before running hooks. The availability decision is therefore
+  based on the shipped native protobuf contract and documented Stop behavior;
+  it does not claim an authenticated payload capture.
 
-Verdict: the final-answer source is unproven. `agy_mcp` is registered in the
-spec table with `available=False` and every turn is refused with a typed
-error. The Antigravity pool nevertheless supports managed mode for the day the
-probe passes: `_is_usable` checks container + `pawflow-agy` tmux instead of
-`_proxy_log_ready`, `_write_agy_managed_hooks` writes `PreInvocation`, `Stop`
-and `SessionEnd` into the shared `config/hooks.json` and both settings files,
-and the container mounts the client-aware hook instead of the observer proxy.
-Enabling it requires an authenticated CI probe whose `Stop` payload either
-carries a final-text field or points at a transcript whose last assistant
-message equals the visible answer (`evaluate_probe`).
+Verdict: `evaluate_probe` passes, the spec table sets `available=True`, and
+`agy_mcp` is selectable. `AntigravityObserverPool` supplies the same managed
+turn contract as the Claude/Codex pools (`begin_turn`/`end_turn`, token lookup,
+targeted kill and container+tmux liveness). The event service routes manual
+capture to that pool, while `_write_agy_managed_hooks` installs
+`PreInvocation`, `Stop` and `SessionEnd`. No failure path falls back to the
+observer proxy or tmux scraping.
 
 ### Troubleshooting
 

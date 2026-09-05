@@ -17,23 +17,23 @@ The current core value is twofold:
    delegation, streaming.
 2. **Pipeline engine**: DAG execution over FlowFiles, task catalog, triggers, backpressure, checkpoints, crash recovery, provenance, and IO/data/control integrations.
 
-## Beta.267 implementation highlights
+## Unreleased implementation highlights
 
-- Provider headers are configurable through `extra_headers` and request-scoped
-  expressions. Background calls receive a stable service session ID, configured
-  User-Agent values survive the HTTP transport, and OpenAI-compatible gateways
-  can send null optional response fields without aborting a turn.
-- ACP registry imports confine executable and version paths, verify cached
-  digests, and stream archive downloads to disk.
-- WebChat task blocks and terminal output have explicit projection identities,
-  so these rows no longer interrupt message reconciliation.
-- Project graph v2 preserves source-scoped identities and resolves imports after
-  merging incremental changes. Deletion, restoration and ambiguous homonyms are
-  covered; generated bundles and external references no longer dominate hub
-  rankings.
-- Agy managed hooks follow Google's published `Stop` contract and read final
-  answers through its transcript path. The probe distinguishes documented and
-  observed evidence from protobuf-only declarations.
+- Cursor and Grok Build use native ACP connectors with managed containers,
+  persistent authentication scoped to each user and service, exact workspace
+  mounts, session reuse, cancellation and PawFlow MCP access.
+- OpenCode uses its SDK v2 server HTTP/SSE protocol for isolated sessions,
+  streamed output and usage, native questions and permission requests.
+- Native questions preserve explicit answers and cancellation across ACP,
+  Claude Code control messages and hooks, Codex app-server and OpenCode.
+  Serialized Claude stdin writes prevent concurrent messages from interleaving;
+  terminal errors remain failures and stateful sessions are not replayed.
+- The tools image installs and inventories Cursor, Grok Build and OpenCode;
+  their service actions provide native login, credential-presence checks,
+  version checks and managed updates.
+- Offline installed-CLI checks cover initialization, questions and local
+  transports. Authenticated model calls and interactive native login UI checks
+  remain unverified, as documented in the provider guides.
 
 ## What lives in the repository
 
@@ -43,11 +43,11 @@ The current core value is twofold:
   - agent execution and tool-use loops;
   - LLM providers: Anthropic API, OpenAI Chat Completions and Responses,
     OpenAI-compatible endpoints, OmniRoute, Gemini CLI, outbound ACP v1 agents,
+    native Cursor ACP and Grok Build ACP, the OpenCode SDK v2 server,
     the CLI-backed subscription providers `claude-code-interactive`,
     `codex-interactive`, and `antigravity-interactive`, and the managed
-    native-hook variants `cc_mcp`, `codex_mcp`, and `agy_mcp`, while legacy
-    `claude-code` (`cc -p`) and
-    `codex-app-server` remain only for existing configurations;
+    native-hook variants `cc_mcp`, `codex_mcp`, and `agy_mcp`, plus the supported
+    `claude-code` (`cc -p`) and `codex-app-server` native integrations;
   - memory, knowledge graph, diary, project graph/wiki, todo, and scratchpad;
   - conversation, plan, token, file, relay, and tool-handler management;
   - storage backends and security/context helpers.

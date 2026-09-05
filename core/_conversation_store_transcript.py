@@ -691,35 +691,103 @@ class _CsTranscriptMixin:
             return {"messages": [], "total_count": 0, "offset": 0,
                     "limit": limit, "has_more": False}
         try:
-            resolved_offset = offset
             if before_msg_id:
-                cursor_offset = self._offset_after_msg_id(log, before_msg_id)
-                if cursor_offset is not None:
-                    resolved_offset = cursor_offset
-            result = self._read_tail(log, total, limit, resolved_offset)
-            if resolved_offset == 0 and total > 0 and not result.get("messages"):
+                # One reverse pass resolves the cursor AND collects its page.
+                # Resolving first with _offset_after_msg_id and then reading
+                # the tail again decoded every row newer than the cursor
+                # twice; at 10,000 messages of depth that doubled the work.
+                result = self._read_tail_before_msg_id(
+                    log, total, limit, before_msg_id)
+                if result is not None:
+                    return result
+                # Unknown cursor: fall back to the numeric offset, as before.
+            result = self._read_tail(log, total, limit, offset)
+            if offset == 0 and total > 0 and not result.get("messages"):
                 cached = self._reload_cache(cid)
                 corrected_total = int(cached.get("msg_count") or 0)
                 if corrected_total != total:
                     self._persist_recomputed_hot_metadata(cid, cached)
-                    result = self._read_tail(log, corrected_total, limit, resolved_offset)
+                    result = self._read_tail(log, corrected_total, limit, offset)
             return result
         except Exception as e:
             logger.error("[convstore] load_page failed %s: %s", cid, e)
             return {"messages": [], "total_count": total, "offset": offset,
                     "limit": limit, "has_more": False}
 
-    @staticmethod
-    def _offset_after_msg_id(log: SegmentedJsonl, msg_id: str) -> Optional[int]:
-        """Return the number of message rows at or after the requested message."""
-        offset = 0
+    def _read_tail_before_msg_id(self, log: SegmentedJsonl, total_msgs: int,
+                                 limit: int, msg_id: str) -> Optional[Dict]:
+        """Read the ``limit`` display rows immediately before ``msg_id``.
+
+        Single reverse pass: rows at or after the cursor are only counted
+        (that count is the resolved offset), rows before it are collected
+        exactly as ``_read_tail`` collects a tail. Returns ``None`` when the
+        cursor is not in the transcript so the caller can fall back to the
+        numeric offset.
+
+        Trace alignment: ``trace_update`` rows are append-only and therefore
+        newer than their anchor. Updates met before the cursor is found may
+        belong to an anchor inside the page, so they are kept until their
+        anchor is seen. An anchor met before the cursor is itself outside
+        the page, so its pending updates are dropped and can never keep the
+        scan open.
+        """
+        need = limit + 20  # extra margin for detail-row alignment
+        skipped = 0
+        found = False
+        newer_updates: Dict[str, List[Dict[str, Any]]] = {}
+        raw_lines: List[Dict[str, Any]] = []
+        display_seen = 0
+        pending_trace_ids = set()
         for line in log.iter_rows_reverse():
-            if not line.get("role"):
+            is_update = self._is_trace_update_row(line)
+            if not found:
+                if is_update:
+                    trace_id = line.get("trace_id") or ""
+                    if trace_id:
+                        newer_updates.setdefault(trace_id, []).append(line)
+                    continue
+                if not line.get("role"):
+                    continue
+                skipped += 1
+                if line.get("role") == "sub_agent_trace":
+                    newer_updates.pop(line.get("trace_id") or "", None)
+                if line.get("msg_id") == msg_id:
+                    found = True
+                    for trace_id, updates in newer_updates.items():
+                        raw_lines.extend(updates)
+                        pending_trace_ids.add(trace_id)
+                    newer_updates = {}
                 continue
-            offset += 1
-            if line.get("msg_id") == msg_id:
-                return offset
-        return None
+            if is_update:
+                raw_lines.append(line)
+                trace_id = line.get("trace_id") or ""
+                if trace_id:
+                    pending_trace_ids.add(trace_id)
+                continue
+            if line.get("role"):
+                raw_lines.append(line)
+                display_seen += 1
+                if line.get("role") == "sub_agent_trace":
+                    pending_trace_ids.discard(line.get("trace_id") or "")
+                if display_seen >= need and not pending_trace_ids:
+                    break
+        if not found:
+            return None
+        raw_lines.reverse()
+
+        msgs = self._compose_display_traces([dict(line) for line in raw_lines])
+
+        # msgs is chronological and ends right before the cursor row.
+        end = len(msgs)
+        start = max(0, end - limit)
+        # Don't split technical child rows from their assistant anchor.
+        while start > 0 and msgs[start].get("role") in ("thinking", "tool_call", "tool"):
+            start -= 1
+        page = msgs[start:end] if end > 0 else []
+        has_more = (total_msgs - skipped - len(page)) > 0
+
+        return {"messages": page, "total_count": total_msgs,
+                "offset": skipped, "limit": limit, "has_more": has_more}
 
     def _read_tail(self, log: SegmentedJsonl, total_msgs: int, limit: int, offset: int) -> Dict:
         """Read the last (offset + limit) display rows from a logical JSONL."""

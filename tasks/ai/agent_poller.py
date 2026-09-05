@@ -5,6 +5,7 @@ All methods access self (AgentLoopTask instance).
 """
 import logging
 import os
+import re
 import threading
 import time
 from typing import Dict, List
@@ -16,6 +17,15 @@ logger = logging.getLogger(__name__)
 
 _WATCHDOG_INTERVAL_SECONDS = int(
     os.getenv("PAWFLOW_AGENT_WATCHDOG_INTERVAL_SECONDS", "300") or "300")
+
+# A deferred retry is re-keyed as ``<cid>::pending::<sha1[:8]>``. That suffix
+# may be a reason digest; a registered agent can have the same name shape.
+_PENDING_DIGEST_RE = re.compile(r"^[0-9a-f]{8}$")
+# Wake reasons that name their agent without a ``[scheduled:<agent>]`` tag.
+_TARGETED_WAKE_REASON_RES = (
+    re.compile(r"^\[pending\] wake ([\w.-]+)$"),
+    re.compile(r"^\[delegate_reply\] queued result for ([\w.-]+)$"),
+)
 
 
 def _poll_generation_key(conversation_id: str, agent_name: str) -> str:
@@ -114,6 +124,65 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                 "[poller] %s wake for %s/%s has no reachable runtime; "
                 "prompt remains persisted", _kind, conversation_id[:8], agent)
         return True
+
+
+    def _scheduled_entry_target(self, conversation_id: str,
+                                entry: dict) -> str:
+        """Return the agent a due entry is addressed to ("" when generic).
+
+        The target comes from a tagged reason, from the reason forms the
+        ``wake_agent`` callers use, or from the stable ``::pending::<agent>``
+        key. A digest suffix left by an earlier deferral is not an agent.
+        """
+        reason = entry.get("reason", "") or ""
+        key = entry.get("key", "") or ""
+        agent = self._extract_agent_from_reasons([reason]) or ""
+        if not agent:
+            for pattern in _TARGETED_WAKE_REASON_RES:
+                match = pattern.match(reason)
+                if match:
+                    agent = match.group(1)
+                    break
+            # wake_agent labels an empty agent name "default".
+            if agent == "default":
+                agent = ""
+        pending_prefix = f"{conversation_id}::pending::"
+        key_only_digest = False
+        if not agent and key.startswith(pending_prefix):
+            suffix = key[len(pending_prefix):]
+            if suffix:
+                agent = suffix
+                key_only_digest = bool(_PENDING_DIGEST_RE.match(suffix))
+        if not agent:
+            return ""
+        # Pending keys carry the lowercased name; active-turn keys and agent
+        # configs use the roster's canonical spelling.
+        try:
+            from core.conv_agent_config import resolve_agent_config_entry
+            _src, canonical, _cfg = resolve_agent_config_entry(
+                conversation_id, agent)
+            if canonical:
+                return canonical
+        except Exception:
+            logger.debug("poller target canonicalization failed", exc_info=True)
+        # A known roster member wins over the historical digest convention.
+        return "" if key_only_digest else agent
+
+    def _agent_turn_active(self, conversation_id: str, agent: str) -> bool:
+        """True while `agent` owns a turn or context in this conversation."""
+        key = f"{conversation_id}:{agent}"
+        needle = key.lower()
+        with self._active_contexts_lock:
+            if key in self._active_turns or key in self._active_contexts:
+                return True
+            return (any(k.lower() == needle for k in self._active_turns)
+                    or any(k.lower() == needle for k in self._active_contexts))
+
+    def _tag_reason_for_agent(self, agent: str, reason: str) -> str:
+        """Make the wake's target explicit for the poll context builder."""
+        if not agent or self._extract_agent_from_reasons([reason]):
+            return reason
+        return f"[scheduled:{agent}] {reason}"
 
 
     def _poll_conversations(self, interval: int) -> None:
@@ -293,50 +362,59 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             # Pending/preempt rescue wakes can become due while the current turn is
             # still cleaning up. Dropping generic reasons here loses the user
             # message until another event happens.
+            entries = scheduled_entries.get(conversation_id, [])
+            # Targets are resolved before taking the lock: this may read the
+            # conversation store.
+            entry_targets = [
+                self._scheduled_entry_target(conversation_id, entry)
+                for entry in entries
+            ]
             with self._active_lock:
-                if conversation_id in self._active_conversations:
-                    entries = scheduled_entries.get(conversation_id, [])
-                    deferred_reasons = []
-                    runnable_continuations = []
-                    for entry in entries:
-                        entry_key = entry.get("key", "") or ""
-                        reason = entry.get("reason", "") or ""
-                        if ("::continuation::" in entry_key
-                                or "[continuation]" in reason):
-                            target_agent = self._extract_agent_from_reasons([reason])
-                            target_key = (
-                                f"{conversation_id}:{target_agent}"
-                                if target_agent else conversation_id
-                            )
-                            with self._active_contexts_lock:
-                                target_is_active = (
-                                    target_key in self._active_turns
-                                    or target_key in self._active_contexts
-                                )
-                            if target_agent and not target_is_active:
-                                runnable_continuations.append(entry)
-                                continue
-                            # schedule_continuation is a one-shot handoff after
-                            # the current response. If its target agent is still
-                            # active when it fires, that turn is the resumed work.
-                            # Re-keying it as ::pending:: created an immortal
-                            # 10-second loop and duplicated two log lines on every
-                            # poll pass. An active different agent does not satisfy
-                            # this handoff and must not consume it.
-                            logger.info(
-                                "[poller] Continuation already satisfied by "
-                                "active agent %s/%s; acknowledging %s",
-                                conversation_id[:8], target_agent or "default",
-                                entry_key)
-                            continue
-                        deferred_reasons.append(reason or "[pending] active retry")
-                    if not entries:
-                        deferred_reasons = (
+                conversation_active = conversation_id in self._active_conversations
+                deferred_entries = []  # (target_agent, entry)
+                runnable = []  # (target_agent, entry)
+                for entry, target_agent in zip(entries, entry_targets):
+                    entry_key = entry.get("key", "") or ""
+                    reason = entry.get("reason", "") or ""
+                    target_is_active = bool(target_agent) and (
+                        self._agent_turn_active(conversation_id, target_agent))
+                    if ((target_agent and not target_is_active)
+                            or (not target_agent and not conversation_active)):
+                        # Targeted work follows its agent's activity, even
+                        # when the entire conversation is idle. Untargeted
+                        # work still waits for the conversation to be idle.
+                        runnable.append((target_agent, entry))
+                        continue
+                    if ("::continuation::" in entry_key
+                            or "[continuation]" in reason):
+                        # schedule_continuation is a one-shot handoff after
+                        # the current response. If its target agent is still
+                        # active when it fires, that turn is the resumed work.
+                        # Re-keying it as ::pending:: created an immortal
+                        # 10-second loop and duplicated two log lines on every
+                        # poll pass. An active different agent does not satisfy
+                        # this handoff and must not consume it.
+                        logger.info(
+                            "[poller] Continuation already satisfied by "
+                            "active agent %s/%s; acknowledging %s",
+                            conversation_id[:8], target_agent or "default",
+                            entry_key)
+                        continue
+                    deferred_entries.append((target_agent, entry))
+                if not entries and conversation_active:
+                    deferred_entries = [
+                        ("", {"reason": r}) for r in (
                             scheduled_reasons.get(conversation_id, [])
-                            or ["[pending] active retry"])
-                    for r in deferred_reasons:
-                        import re as _re_resched
-                        _tid_m = _re_resched.search(r'\[agent_task:(t_\w+)\]', r)
+                            or ["[pending] active retry"])]
+                for target_agent, entry in deferred_entries:
+                    r = entry.get("reason", "") or "[pending] active retry"
+                    entry_key = entry.get("key", "") or ""
+                    if target_agent and entry_key:
+                        # The target is still busy: keep the entry's own
+                        # key so the retry stays addressed to that agent.
+                        key = entry_key
+                    else:
+                        _tid_m = re.search(r'\[agent_task:(t_\w+)\]', r)
                         if _tid_m:
                             key = f"{conversation_id}::task::{_tid_m.group(1)}"
                         else:
@@ -346,15 +424,34 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                                 usedforsecurity=False,
                             ).hexdigest()[:8]
                             key = f"{conversation_id}::pending::{digest}"
-                        scheduler.schedule_delay(
-                            conversation_id, 10, key=key, reason=r)
-                    if not runnable_continuations:
-                        continue
-                    scheduled_entries[conversation_id] = runnable_continuations
-                    scheduled_reasons[conversation_id] = [
-                        entry.get("reason", "scheduled recheck")
-                        for entry in runnable_continuations
-                    ]
+                    scheduler.schedule_delay(
+                        conversation_id, 10, key=key, reason=r,
+                        user_id=entry.get("user_id", "") or "")
+                if not runnable:
+                    continue
+                # One poll wake runs one agent. Other targets due in the
+                # same pass are held for the next pass instead of being
+                # folded into the first agent's wake and lost.
+                wake_agent = runnable[0][0]
+                run_entries = [e for t, e in runnable if t == wake_agent]
+                held = [(t, e) for t, e in runnable if t != wake_agent]
+                for target_agent, entry in held:
+                    scheduler.schedule_delay(
+                        conversation_id, 0, key=entry.get("key", ""),
+                        reason=entry.get("reason", "") or "",
+                        user_id=entry.get("user_id", "") or "")
+                    logger.info(
+                        "[poller] Holding wake for %s/%s until the next "
+                        "pass (%s starts first)", conversation_id[:8],
+                        target_agent, wake_agent)
+                if held and getattr(self, "_poller_wake", None) is not None:
+                    self._poller_wake.set()
+                scheduled_entries[conversation_id] = run_entries
+                scheduled_reasons[conversation_id] = [
+                    self._tag_reason_for_agent(
+                        wake_agent, entry.get("reason", "scheduled recheck"))
+                    for entry in run_entries
+                ]
 
             # Load conversation history
             messages_data = store.load(conversation_id)

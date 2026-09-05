@@ -22,6 +22,20 @@ _IDLE_TIMEOUT = 300  # 5 minutes idle → writer thread exits
 _WRITER_BATCH_MAX = 64
 _WRITER_FIRST_DRAIN_DELAY_SECONDS = float(
     os.getenv("PAWFLOW_WRITER_FIRST_DRAIN_DELAY_MS", "10") or "10") / 1000.0
+# Backlog instrumentation. The queue stays unbounded on purpose: durable
+# messages are never dropped and HTTP workers are never blocked on it. These
+# thresholds only decide when the writer WARNS that persistence is lagging, so
+# an overloaded instance is visible in the log before it is visible to users.
+_WRITER_BACKLOG_WARN_ITEMS = int(
+    os.getenv("PAWFLOW_WRITER_BACKLOG_WARN_ITEMS", "256") or "256")
+_WRITER_BACKLOG_WARN_SECONDS = float(
+    os.getenv("PAWFLOW_WRITER_BACKLOG_WARN_SECONDS", "5") or "5")
+_WRITER_BACKLOG_WARN_INTERVAL = 10.0
+
+
+def _new_writer_stats() -> Dict[str, float]:
+    return {"persisted": 0, "batches": 0, "last_batch_latency_ms": 0.0,
+            "max_latency_ms": 0.0, "last_batch_at": 0.0}
 
 
 def _require_ts_seq(m: Dict) -> None:
@@ -110,7 +124,7 @@ class ConversationWriter:
         if not self._can_accept_writes():
             return self._queue.empty()
         evt = threading.Event()
-        self._queue.put({"_flush": True, "_done_event": evt})
+        self._put({"_flush": True, "_done_event": evt})
         return evt.wait(timeout=wait_timeout)
 
     def __init__(self, cid: str):
@@ -120,10 +134,94 @@ class ConversationWriter:
         self._alive = True
         self._prewarmed_agents = set()
         self._first_drain_delay_applied = False
+        self._stats = _new_writer_stats()
+        self._last_backlog_warning = 0.0
+        self._inflight = 0
+        self._inflight_oldest: Optional[float] = None
         self._thread = threading.Thread(
             target=self._writer_loop, daemon=True,
             name=f"conv-writer-{cid[:8]}")
         self._thread.start()
+
+    def _put(self, item: Dict[str, Any]) -> None:
+        """Enqueue one item, stamped for enqueue-to-persist latency."""
+        item["_enqueued_at"] = time.monotonic()
+        self._queue.put(item)
+        depth = self._queue.qsize()
+        if depth >= _WRITER_BACKLOG_WARN_ITEMS:
+            self._warn_backlog("queued=%d item(s) >= %d" % (
+                depth, _WRITER_BACKLOG_WARN_ITEMS))
+
+    def _warn_backlog(self, detail: str) -> None:
+        now = time.monotonic()
+        last = getattr(self, "_last_backlog_warning", 0.0)
+        if now - last < _WRITER_BACKLOG_WARN_INTERVAL:
+            return
+        self._last_backlog_warning = now
+        logger.warning("[conv-writer:%s] persistence backlog: %s",
+                       self._cid[:8], detail)
+
+    def _record_batch(self, batch: List[Dict[str, Any]], written: int) -> float:
+        """Update latency stats after one batch; returns the batch max latency (ms)."""
+        now = time.monotonic()
+        stats = getattr(self, "_stats", None)
+        if stats is None:
+            stats = self._stats = _new_writer_stats()
+        latency_ms = 0.0
+        for item in batch:
+            enqueued = item.get("_enqueued_at")
+            if enqueued is not None:
+                latency_ms = max(latency_ms, (now - enqueued) * 1000.0)
+        stats["persisted"] += written
+        stats["batches"] += 1
+        stats["last_batch_latency_ms"] = latency_ms
+        stats["max_latency_ms"] = max(stats["max_latency_ms"], latency_ms)
+        stats["last_batch_at"] = now
+        if latency_ms >= _WRITER_BACKLOG_WARN_SECONDS * 1000.0:
+            self._warn_backlog("enqueue-to-persist latency %.0f ms >= %.0f ms" % (
+                latency_ms, _WRITER_BACKLOG_WARN_SECONDS * 1000.0))
+        self._inflight = 0
+        self._inflight_oldest = None
+        return latency_ms
+
+    def _mark_inflight(self, batch: List[Dict[str, Any]]) -> None:
+        """Expose the batch being written: it left the queue but is not durable."""
+        stamps = [item.get("_enqueued_at") for item in batch
+                  if item.get("_enqueued_at") is not None]
+        self._inflight = len(batch)
+        self._inflight_oldest = min(stamps) if stamps else None
+
+    def backlog_state(self) -> Dict[str, Any]:
+        """Queue depth, in-flight batch, oldest pending age and latency stats.
+
+        ``queued`` items wait in the FIFO; ``in_flight`` items were dequeued
+        into the batch being persisted. ``oldest_age_s`` spans both.
+        """
+        with self._queue.mutex:
+            depth = len(self._queue.queue)
+            oldest = (self._queue.queue[0].get("_enqueued_at")
+                      if depth else None)
+        inflight_oldest = getattr(self, "_inflight_oldest", None)
+        candidates = [t for t in (oldest, inflight_oldest) if t is not None]
+        age = (time.monotonic() - min(candidates)) if candidates else 0.0
+        stats = getattr(self, "_stats", None) or _new_writer_stats()
+        return {"conversation_id": self._cid, "queued": depth,
+                "in_flight": int(getattr(self, "_inflight", 0) or 0),
+                "oldest_age_s": round(age, 3),
+                "alive": self._can_accept_writes(), **stats}
+
+    @classmethod
+    def backlog_snapshot(cls) -> Dict[str, Any]:
+        """Backlog of every live writer, for capacity measurement.
+
+        ``queued_total`` counts queued and in-flight items together.
+        """
+        with cls._global_lock:
+            writers = list(cls._instances.values())
+        states = [w.backlog_state() for w in writers]
+        return {"writers": states,
+                "queued_total": sum(s["queued"] + s["in_flight"] for s in states),
+                "oldest_age_s": max([s["oldest_age_s"] for s in states] or [0.0])}
 
     def _can_accept_writes(self) -> bool:
         return self._alive and self._thread.is_alive() and not self._stop
@@ -156,7 +254,7 @@ class ConversationWriter:
         _require_ts_seq(msg)
         self._ensure_can_accept_writes()
         evt = threading.Event() if wait else None
-        self._queue.put({
+        self._put({
             "op": "append_message",
             "msg": msg,
             "agent_name": agent_name,
@@ -190,7 +288,7 @@ class ConversationWriter:
             "sse_events": sse_events,
             "_done_event": evt,
         }
-        self._queue.put(item)
+        self._put(item)
         if not evt.wait(timeout=30):
             raise TimeoutError("idempotent conversation write timed out")
         if item.get("_error") is not None:
@@ -217,7 +315,7 @@ class ConversationWriter:
             "items": items,
             "_done_event": evt,
         }
-        self._queue.put(queued)
+        self._put(queued)
         if not evt.wait(timeout=30):
             raise TimeoutError("idempotent conversation batch write timed out")
         if queued.get("_error") is not None:
@@ -244,7 +342,7 @@ class ConversationWriter:
         """
         self._ensure_can_accept_writes()
         evt = threading.Event() if wait else None
-        self._queue.put({
+        self._put({
             "op": "publish_events",
             "sse_events": sse_events or [],
             "_done_event": evt,
@@ -260,7 +358,7 @@ class ConversationWriter:
             raise ValueError("msg_id and patch fields are required")
         self._ensure_can_accept_writes()
         evt = threading.Event() if wait else None
-        self._queue.put({
+        self._put({
             "op": "patch_message",
             "msg_id": msg_id,
             "fields": dict(fields),
@@ -396,6 +494,7 @@ class ConversationWriter:
                 if next_item.get("sse_events"):
                     break
 
+            self._mark_inflight(batch)
             _batch_started = time.monotonic()
             written = []
             _prewarm_ms = 0.0
@@ -526,12 +625,14 @@ class ConversationWriter:
                 _publish_ms += ((time.monotonic() - _publish_started)
                                 * 1000.0)
 
+            _latency_ms = self._record_batch(batch, len(written))
             logger.info(
                 "[conv-writer:%s] batch size=%d written=%d queued=%d "
-                "prewarm_ms=%.1f write_ms=%.1f publish_ms=%.1f total_ms=%.1f",
+                "prewarm_ms=%.1f write_ms=%.1f publish_ms=%.1f total_ms=%.1f "
+                "latency_ms=%.1f",
                 self._cid[:8], len(batch), len(written), self._queue.qsize(),
                 _prewarm_ms, _write_ms, _publish_ms,
-                (time.monotonic() - _batch_started) * 1000.0)
+                (time.monotonic() - _batch_started) * 1000.0, _latency_ms)
 
             for write_item in batch:
                 evt = write_item.get("_done_event")

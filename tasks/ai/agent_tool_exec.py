@@ -5,6 +5,7 @@ All methods access self (AgentLoopTask instance).
 """
 import json
 import logging
+import os
 import threading
 import time
 
@@ -14,6 +15,35 @@ from core.llm_client import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Ceiling on worker threads started for ONE tool-call batch. The pool used to
+# be sized to the whole batch, so a model emitting forty calls at once started
+# forty relay/LLM/browser workers on top of every other live turn. Calls past
+# the ceiling queue inside the pool and start as workers free up; result
+# ordering, cancellation and backgrounding are unchanged.
+_TOOL_BATCH_MAX_WORKERS_ENV = "PAWFLOW_TOOL_BATCH_MAX_WORKERS"
+_TOOL_BATCH_MAX_WORKERS_DEFAULT = 8
+
+
+def tool_batch_max_workers(batch_size: int) -> int:
+    """Worker count for one tool-call batch: ``min(batch, ceiling)``, >= 1.
+
+    The ceiling is ``PAWFLOW_TOOL_BATCH_MAX_WORKERS`` when set (a positive
+    integer; anything else is a configuration error) and 8 otherwise.
+    """
+    ceiling = _TOOL_BATCH_MAX_WORKERS_DEFAULT
+    raw = (os.getenv(_TOOL_BATCH_MAX_WORKERS_ENV) or "").strip()
+    if raw:
+        try:
+            ceiling = int(raw)
+        except ValueError:
+            ceiling = 0
+        if ceiling <= 0:
+            raise ValueError(
+                f"{_TOOL_BATCH_MAX_WORKERS_ENV} must be a positive integer, "
+                f"got {raw!r}")
+    return max(1, min(int(batch_size or 0), ceiling))
 
 
 
@@ -497,8 +527,15 @@ class AgentToolExecMixin:
         import core.background_tool as _bg
         import time as _time_mod
 
-        # Always use thread pool (even for single tool) so user can background it
-        pool = ThreadPoolExecutor(max_workers=max(len(tool_calls), 1))
+        # Always use thread pool (even for single tool) so user can background
+        # it. Workers are capped per batch; excess calls queue in the pool.
+        workers = tool_batch_max_workers(len(tool_calls))
+        if workers < len(tool_calls):
+            logger.info(
+                "[agent-tool] batch of %d tool call(s) admitted through %d "
+                "worker(s) (%s) conv=%s", len(tool_calls), workers,
+                _TOOL_BATCH_MAX_WORKERS_ENV, (conversation_id or "")[:8])
+        pool = ThreadPoolExecutor(max_workers=workers)
         for tc in tool_calls:
             _bg.reserve_owner(tc.id, conversation_id)
 
@@ -545,7 +582,11 @@ class AgentToolExecMixin:
                     _cancelled = True
                     # Cancel all remaining futures
                     for f in list(pending):
-                        f.cancel()
+                        if f.cancel():
+                            # Never started: the worker's `finally` that
+                            # releases the ownership reservation never
+                            # runs, so release it here.
+                            _bg.release_owner(futures[f].id)
                         tc = futures[f]
                         results_map[tc.id] = (tc, "[Cancelled — agent was interrupted]")
                     pending.clear()

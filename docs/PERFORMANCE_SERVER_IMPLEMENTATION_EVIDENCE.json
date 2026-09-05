@@ -1,0 +1,45 @@
+{
+  "description": "Isolated benchmarks for docs/PERFORMANCE_SERVER_IMPLEMENTATION.md; current code vs inline copy of the former algorithm on the same fixture. Not end-to-end latency.",
+  "baseline_commit": "b6229fe687b1507effb2f72b968b31e4682ed624",
+  "how_to_run": "cd /workspace && PYTHONPATH=/workspace python3 bench.py (script below)",
+  "results": {
+    "python": "3.12.3",
+    "history": {
+      "fixture": {
+        "rows": 12000,
+        "cursor_depth": 10000,
+        "limit": 50
+      },
+      "former_two_pass_ms": 164.809,
+      "current_single_pass_ms": 75.633,
+      "rows_decoded_former": 20070,
+      "rows_decoded_current": 10070,
+      "latest_page_ms": 1.167
+    },
+    "bus": {
+      "fixture": {
+        "buffered_conversations": 5000,
+        "publishes": 200
+      },
+      "former_sweep_every_publish_ms": 102.214,
+      "current_amortized_ms": 0.953,
+      "resident_after": {
+        "conversations": 5001,
+        "events": 5200,
+        "last_sweep_age_s": 0.02107548713684082
+      }
+    },
+    "index": {
+      "fixture": {
+        "conversations": 200,
+        "rows": 20000
+      },
+      "former_unchanged_title_update_ms": 10.539,
+      "current_skipped_ms": 0.0,
+      "query_plan": [
+        "SCAN messages VIRTUAL TABLE INDEX 0:"
+      ]
+    }
+  },
+  "script": "\"\"\"Isolated benchmarks for the server-side performance changes.\n\nRun from /workspace with PYTHONPATH=/workspace. Prints one JSON object.\nEach comparison runs the CURRENT code against an inline copy of the FORMER\nalgorithm on the same fixture, so the numbers are like-for-like.\n\"\"\"\nimport json\nimport os\nimport statistics\nimport sys\nimport tempfile\nimport time\nimport uuid\n\nsys.path.insert(0, \"/workspace\")\n\nREPS = 5\n\n\ndef median_ms(fn, reps=REPS):\n    samples = []\n    for _ in range(reps):\n        t0 = time.perf_counter()\n        fn()\n        samples.append((time.perf_counter() - t0) * 1000.0)\n    return round(statistics.median(samples), 3)\n\n\n# --------------------------------------------------------------------- history\n\ndef bench_history(total_rows=12000, depth=10000, limit=50):\n    from core.conversation_store import ConversationStore\n    ConversationStore.reset()\n    tmp = tempfile.mkdtemp(prefix=\"perf-history-\")\n    store = ConversationStore(store_dir=os.path.join(tmp, \"conversations\"))\n    cid = store.generate_id()\n    store.save(cid, [], user_id=\"bench\")\n    rows = []\n    for i in range(total_rows):\n        rows.append(store._stamp_line(cid, {\n            \"role\": \"user\" if i % 2 else \"assistant\",\n            \"content\": f\"message {i} \" + (\"x\" * 120),\n            \"msg_id\": uuid.uuid4().hex[:12], \"ts\": time.time()}))\n    store._transcript_log(cid).replace_dicts(rows)\n    with store._cache_lock:\n        store._cache.pop(cid, None)\n    cached = store._reload_cache(cid)\n    store._persist_recomputed_hot_metadata(cid, cached)\n    cursor = rows[total_rows - depth][\"msg_id\"]\n    log = store._transcript_log(cid)\n    total = store.message_count(cid)\n\n    def legacy_offset(msg_id):\n        offset = 0\n        for line in log.iter_rows_reverse():\n            if not line.get(\"role\"):\n                continue\n            offset += 1\n            if line.get(\"msg_id\") == msg_id:\n                return offset\n        return None\n\n    def former():\n        return store._read_tail(log, total, limit, legacy_offset(cursor))\n\n    def current():\n        return store.load_page(cid, limit=limit, before_msg_id=cursor)\n\n    assert former()[\"messages\"] == current()[\"messages\"]\n    decoded = {\"former\": 0, \"current\": 0}\n    original = type(log).iter_rows_reverse\n\n    def counting_factory(key):\n        def counting(self_log):\n            for line in original(self_log):\n                decoded[key] += 1\n                yield line\n        return counting\n\n    type(log).iter_rows_reverse = counting_factory(\"former\")\n    former()\n    type(log).iter_rows_reverse = counting_factory(\"current\")\n    current()\n    type(log).iter_rows_reverse = original\n    result = {\n        \"fixture\": {\"rows\": total_rows, \"cursor_depth\": depth, \"limit\": limit},\n        \"former_two_pass_ms\": median_ms(former),\n        \"current_single_pass_ms\": median_ms(current),\n        \"rows_decoded_former\": decoded[\"former\"],\n        \"rows_decoded_current\": decoded[\"current\"],\n        \"latest_page_ms\": median_ms(lambda: store.load_page(cid, limit=limit)),\n    }\n    ConversationStore.reset()\n    return result\n\n\n# ------------------------------------------------------------------------- bus\n\ndef bench_bus(buffered_conversations=5000, publishes=200):\n    import core.conversation_event_bus as bus_mod\n    from core.conversation_event_bus import ConversationEventBus\n\n    def run(interval):\n        ConversationEventBus.reset()\n        bus_mod._BUFFER_SWEEP_INTERVAL = interval\n        bus = ConversationEventBus.instance()\n        for i in range(buffered_conversations):\n            bus.publish_event(f\"idle-{i}\", \"new_message\", {\"msg_id\": str(i)})\n\n        def publish_burst():\n            for i in range(publishes):\n                bus.publish_event(\"hot\", \"token\", {\"msg_id\": \"m\", \"delta\": \"x\"})\n        ms = median_ms(publish_burst)\n        stats = bus.buffer_stats()\n        ConversationEventBus.reset()\n        return ms, stats\n\n    former_ms, _ = run(0.0)      # sweep on every buffered publish (former)\n    current_ms, stats = run(1.0)  # sweep at most once per second (current)\n    bus_mod._BUFFER_SWEEP_INTERVAL = 1.0\n    return {\n        \"fixture\": {\"buffered_conversations\": buffered_conversations,\n                    \"publishes\": publishes},\n        \"former_sweep_every_publish_ms\": former_ms,\n        \"current_amortized_ms\": current_ms,\n        \"resident_after\": stats,\n    }\n\n\n# ----------------------------------------------------------------------- index\n\ndef bench_index(conversations=200, rows_per_conversation=100):\n    import core.paths as _paths\n    from core.conversation_index import ConversationIndex\n    tmp = tempfile.mkdtemp(prefix=\"perf-index-\")\n    _paths.CONVERSATION_INDEX_DIR = tmp\n    ConversationIndex.reset()\n    index = ConversationIndex.for_user(\"bench\")\n    conn = index._conn\n    for c in range(conversations):\n        cid = f\"conv-{c:04d}\"\n        conn.executemany(\n            \"INSERT INTO messages (content, conversation_id, title, agent, role, \"\n            \"msg_id, ts) VALUES (?, ?, ?, ?, ?, ?, ?)\",\n            [(f\"row {r} of {cid} \" + (\"lorem ipsum \" * 20), cid, f\"Title {c}\",\n              \"bot\", \"assistant\", f\"{cid}-{r}\", float(r))\n             for r in range(rows_per_conversation)])\n    conn.commit()\n    target = \"conv-0100\"\n\n    def unchanged_title_update():\n        conn.execute(\"UPDATE messages SET title = ? WHERE conversation_id = ? \"\n                     \"AND title != ?\", (\"Title 100\", target, \"Title 100\"))\n        conn.commit()\n\n    plan = conn.execute(\n        \"EXPLAIN QUERY PLAN UPDATE messages SET title = ? WHERE conversation_id = ? \"\n        \"AND title != ?\", (\"t\", target, \"t\")).fetchall()\n    result = {\n        \"fixture\": {\"conversations\": conversations,\n                    \"rows\": conversations * rows_per_conversation},\n        \"former_unchanged_title_update_ms\": median_ms(unchanged_title_update),\n        \"current_skipped_ms\": 0.0,\n        \"query_plan\": [str(row[-1]) for row in plan],\n    }\n    ConversationIndex.reset()\n    return result\n\n\nif __name__ == \"__main__\":\n    out = {\n        \"python\": sys.version.split()[0],\n        \"history\": bench_history(),\n        \"bus\": bench_bus(),\n        \"index\": bench_index(),\n    }\n    print(json.dumps(out, indent=2))\n"
+}

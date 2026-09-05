@@ -1290,6 +1290,25 @@ concurrently. Other due work remains deferred normally. This keeps a continuatio
 from recreating itself every ten seconds while preserving the safety net for
 queued user messages, tasks, plans, thoughts, and external wake-ups.
 
+The same per-agent availability applies to queued-delivery wakes: the stable
+`<cid>::pending::<agent>` key written by `wake_agent`, and the
+`[pending] wake <agent>` / `[delegate_reply] queued result for <agent>` reasons
+that survive a digest re-key. While agent A holds the conversation active, a
+wake addressed to idle agent B starts B instead of being deferred every ten
+seconds behind A; B's own queued messages and delegate results are no longer
+starved by A's long turn. A wake whose target is itself still active keeps its
+own key and reason and retries later, so no duplicate turn starts. A wake with
+no resolvable target (a plain `/schedule` recheck, or a digest-keyed retry
+whose reason names no agent) is still deferred until the conversation is idle.
+When wakes for several idle agents fall due in the same pass, one agent starts
+and the others are re-queued for the next pass rather than being folded into
+the first agent's wake. The poller prefixes an untagged reason with
+`[scheduled:<agent>]` when it starts the wake, so the poll context and the
+external-agent redirect resolve the intended agent instead of the
+conversation's default one. This routing also applies when the conversation
+is completely idle. A roster member whose name is eight hexadecimal characters
+remains a valid target; an unregistered digest suffix stays a generic retry.
+
 Scheduled wakes use the same agent-qualified generation key as user turns and
 active runtime markers (`conversation_id:agent_name`). The poller allocates that
 generation only after resolving the target agent. A user message arriving while

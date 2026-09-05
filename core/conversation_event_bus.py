@@ -26,6 +26,13 @@ logger = logging.getLogger(__name__)
 _MAX_BUFFER = 200
 # How long to keep buffered events (seconds)
 _BUFFER_TTL = 60
+# Minimum spacing between global replay-buffer expiry sweeps. The sweep walks
+# every buffered conversation under the bus lock; running it on every buffered
+# publish made publish cost grow with the number of idle buffered conversations.
+# Delivery-time TTL enforcement (_fresh_buffered) does not depend on the sweep.
+# The cadence is measured on the monotonic clock so a wall-clock correction can
+# neither suppress nor multiply sweeps; event ages keep using wall time.
+_BUFFER_SWEEP_INTERVAL = 1.0
 # Max pending listener events buffered per conversation before the oldest are
 # dropped. Guards memory when a sink (e.g. the Telegram bridge) hangs and its
 # lane backs up faster than it drains.
@@ -159,6 +166,7 @@ class ConversationEventBus:
         self._buffer: Dict[str, List[Tuple[float, SSEEvent]]] = {}
         self._listeners: Set[Callable[[str, str, object], None]] = set()
         self._lock = threading.Lock()
+        self._last_buffer_sweep = 0.0  # time.monotonic() of the last sweep
         # Listeners run off the publishing thread so a slow sink (Telegram)
         # can't stall SSE delivery. See _ListenerDispatcher.
         self._listener_dispatcher = _ListenerDispatcher(
@@ -265,10 +273,11 @@ class ConversationEventBus:
             if conversation_id not in self._buffer:
                 self._buffer[conversation_id] = []
             buf = self._buffer[conversation_id]
-            buf.append((time.time(), event))
+            now = time.time()
+            buf.append((now, event))
             if len(buf) > _MAX_BUFFER:
                 buf[:] = buf[-_MAX_BUFFER:]
-            self._cleanup_expired_buffers()
+            self._maybe_cleanup_expired_buffers(now)
 
         with self._lock:
             subs = self._subscribers.get(conversation_id)
@@ -447,13 +456,48 @@ class ConversationEventBus:
                 self._buffer.pop(conversation_id, None)
         return fresh
 
-    def _cleanup_expired_buffers(self):
-        """Remove buffered events older than _BUFFER_TTL (called under lock)."""
-        now = time.time()
+    def _maybe_cleanup_expired_buffers(self, now: float) -> bool:
+        """Run the global expiry sweep at most once per sweep interval.
+
+        Called under lock; ``now`` is the wall-clock time of the event being
+        buffered and is only used for TTL arithmetic. The per-conversation
+        cap (_MAX_BUFFER) already bounds the buffer being appended to; the
+        sweep only reclaims conversations nobody publishes to any more, so a
+        bounded delay of one interval costs memory for at most that long and
+        never delivers a stale event: _fresh_buffered filters by age on every
+        subscribe.
+        """
+        if time.monotonic() - self._last_buffer_sweep < _BUFFER_SWEEP_INTERVAL:
+            return False
+        self._cleanup_expired_buffers(now)
+        return True
+
+    def _cleanup_expired_buffers(self, now: float = 0.0):
+        """Remove buffers whose newest event is older than _BUFFER_TTL.
+
+        Called under lock. Records the monotonic sweep time so the amortized
+        caller can space sweeps out.
+        """
+        now = now or time.time()
+        self._last_buffer_sweep = time.monotonic()
         expired = [cid for cid, buf in self._buffer.items()
                    if not buf or buf[-1][0] < now - _BUFFER_TTL]
         for cid in expired:
             del self._buffer[cid]
+
+    def buffer_stats(self) -> Dict[str, float]:
+        """Resident replay-buffer size, for capacity measurement.
+
+        ``conversations`` counts buffered conversations, ``events`` the
+        buffered events across them, ``last_sweep_age_s`` how long ago the
+        global expiry sweep last ran (0 when it never ran).
+        """
+        with self._lock:
+            events = sum(len(buf) for buf in self._buffer.values())
+            age = (time.monotonic() - self._last_buffer_sweep
+                   if self._last_buffer_sweep else 0.0)
+            return {"conversations": len(self._buffer), "events": events,
+                    "last_sweep_age_s": age}
 
     def _cleanup_all(self):
         """Close all writers and clear buffers."""

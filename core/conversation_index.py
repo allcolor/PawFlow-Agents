@@ -30,7 +30,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import core.paths as _paths
 from core.sqlite_store_guard import (
@@ -237,7 +237,8 @@ class ConversationIndex:
                 store, cid, title, row["rows_indexed"] if row else 0,
                 updated_at, generation,
                 stale=row is not None and generation != row["source_generation"],
-                incremental=row is not None)
+                incremental=row is not None,
+                stored_title=row["title"] if row is not None else None)
             if added:
                 stats["indexed"] += 1
                 stats["messages"] += added
@@ -297,8 +298,10 @@ class ConversationIndex:
                             watermark: int, source_updated_at: float = 0.0,
                             source_generation: int = 0,
                             stale: bool = False,
-                            incremental: bool = False) -> int:
+                            incremental: bool = False,
+                            stored_title: Optional[str] = None) -> int:
         incremental = incremental and not stale
+        purged = False
         try:
             if incremental:
                 with store._get_conv_lock(cid):
@@ -345,6 +348,7 @@ class ConversationIndex:
             # longer addresses the same rows.
             self.purge(cid)
             watermark = 0
+            purged = True
         if not incremental:
             fresh = messages[watermark:]
         rows = []
@@ -370,9 +374,15 @@ class ConversationIndex:
             ))
 
         with self._guard.runtime(self._path), self._db_lock:
-            if title:
+            if (title and stored_title is not None
+                    and title != stored_title and not purged):
                 # A renamed conversation must stop reporting its old title,
                 # on the rows already indexed as much as on the new ones.
+                # `messages` is an FTS5 table whose conversation_id column is
+                # UNINDEXED, so this statement scans the whole table: it runs
+                # only when the stored title actually differs. Rows written
+                # by this refresh already carry the current title, and a
+                # purged conversation has no old rows left to rename.
                 self._conn.execute(
                     "UPDATE messages SET title = ? WHERE conversation_id = ? "
                     "AND title != ?", (title, cid, title))

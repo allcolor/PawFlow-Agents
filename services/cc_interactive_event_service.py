@@ -103,6 +103,7 @@ class CCInteractiveSessionEvents:
     # evidence and the Stop hook is the sole answer source.
     observation_mode: str = MITM_OBSERVATION_MODE
     connected: bool = False
+    closed: bool = False
     unreliable: bool = False
     error: str = ""
     manual_capture_active: bool = False
@@ -345,8 +346,19 @@ class CCInteractiveEventService(BaseService):
         with self._sessions_lock:
             state = self._sessions.pop(session_token, None)
             if state is not None:
+                with state.stream_condition:
+                    state.closed = True
+                    state.connected = False
+                    state.manual_capture_pending = 0
+                    state.consumer_epoch += 1
+                    state.active_request_consumer_epoch = 0
+                    state.stream_condition.notify_all()
                 for cancel in state.native_input_cancels:
                     cancel.set()
+        if state is not None:
+            # Teardown owns this release even if a capture has not reached
+            # its finally block. The owner token protects replacement turns.
+            self._publish_capture_active(state, active=False)
 
     def mark_code_mode(self, session_token: str) -> None:
         """Record that this session runs its tools from inside a code body."""
@@ -536,8 +548,12 @@ class CCInteractiveEventService(BaseService):
         call ``wait_event`` for an arbitrary interval. Returns the granted
         epoch, or 0 when the claim is refused.
         """
-        state = self.register_session(session_token)
         with self._sessions_lock:
+            state = self._sessions.get(session_token)
+            if state is None:
+                if kind != "request":
+                    return 0
+                state = self.register_session(session_token)
             if kind != "request" and state.active_request_consumer_epoch:
                 return 0
             with state.stream_condition:
@@ -576,6 +592,8 @@ class CCInteractiveEventService(BaseService):
                    epoch: int = 0) -> dict:
         state = self.session_state(session_token)
         if state is None:
+            if epoch:
+                raise CCIConsumerEvicted("CC interactive session closed")
             raise RuntimeError("Unknown CC interactive session")
         deadline = (None if timeout is None else
                     time.monotonic() + max(0.0, timeout))
@@ -595,6 +613,8 @@ class CCInteractiveEventService(BaseService):
                     "CC interactive session taken over by a newer consumer")
             state.last_wait_at = time.time()
             while True:
+                if state.closed:
+                    raise CCIConsumerEvicted("CC interactive session closed")
                 if epoch and epoch != state.consumer_epoch:
                     raise CCIConsumerEvicted(
                         "CC interactive session taken over by a newer consumer")
@@ -1255,6 +1275,8 @@ class CCInteractiveEventService(BaseService):
 
     def _start_manual_capture(self, state: CCInteractiveSessionEvents) -> None:
         with self._sessions_lock:
+            if state.closed or self._sessions.get(state.session_token) is not state:
+                return
             if state.manual_capture_active:
                 state.manual_capture_pending += 1
                 return
@@ -1292,6 +1314,8 @@ class CCInteractiveEventService(BaseService):
                    if state.agent_name else state.conversation_id)
             with inst._active_contexts_lock:
                 if register:
+                    if state.closed:
+                        return False
                     owner_id = state.active_turn_owner_id or uuid.uuid4().hex
                     current = inst._active_turns.get(key)
                     current_owner = (
@@ -1735,11 +1759,12 @@ class CCInteractiveEventService(BaseService):
         except Exception:
             logger.warning("CC interactive manual response capture failed", exc_info=True)
         finally:
-            state = self.session_state(session_token)
             if state:
                 restart = False
                 with self._sessions_lock:
-                    if state.manual_capture_pending > 0:
+                    if (not state.closed
+                            and self._sessions.get(session_token) is state
+                            and state.manual_capture_pending > 0):
                         state.manual_capture_pending -= 1
                         restart = True
                     else:
@@ -1753,7 +1778,8 @@ class CCInteractiveEventService(BaseService):
                     # the stream never claimed to be running, so releasing
                     # would publish an end for a turn it never began.
                     self._publish_capture_active(state, active=False)
-                    self._drain_pending_after_capture(state)
+                    if not state.closed:
+                        self._drain_pending_after_capture(state)
                 if restart:
                     thread = threading.Thread(
                         target=self._run_manual_capture,

@@ -1219,6 +1219,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             logger.info("[cci-live] kill_by_conv %s (%s)",
                         self._fmt_key(key), reason)
             self._recover_container_tokens(state)
+            self._unregister_event_session(state)
             self._kill_container(state.name)
         return len(victims)
 
@@ -1234,6 +1235,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             logger.info("[cci-live] kill_by_conv_agent %s (%s)",
                         self._fmt_key(key), reason)
             self._recover_container_tokens(state)
+            self._unregister_event_session(state)
             self._kill_container(state.name)
         return len(victims)
 

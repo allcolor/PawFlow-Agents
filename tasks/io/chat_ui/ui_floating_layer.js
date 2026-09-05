@@ -407,7 +407,13 @@
       _listen(record, root, 'resize', function() {
         closeWith('resize', false);
       });
-      _listen(record, root, 'scroll', function() {
+      _listen(record, root, 'scroll', function(event) {
+        const target = event && event.target;
+        // Transcript auto-scroll must not dismiss a sidebar menu. Scrolling
+        // inside a long menu also leaves its position and ownership intact.
+        if (_contains(element, target)) return;
+        if (target && target !== root && target !== doc
+            && !_contains(target, record.trigger)) return;
         closeWith('scroll', false);
       }, true);
       _listen(record, root, 'blur', function() {

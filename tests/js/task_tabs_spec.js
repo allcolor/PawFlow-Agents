@@ -262,6 +262,31 @@ test('a hidden projection disconnects before doing clone work', () => {
   assert(!observer.connected, 'hidden projection observer stayed connected');
 });
 
+test('flash task inspection preserves the conversation agent and composer target', () => {
+  const e = env();
+  const selected = [];
+  e.ctx.cmdAgentSelect = name => { selected.push(name); return Promise.resolve(true); };
+  const flash = 'assistant::flash::native_acp_runtime';
+  append(e.source, 'div', 'msg', 'finished task output',
+    {agentName: flash, taskId: 'de3c3638'});
+  const tabId = e.ctx.openAgentView(flash, 'de3c3638');
+  e.ctx.activateFilteredView(tabId);
+  eq(selected.length, 0, 'a temporary flash agent was selected as a conversation member');
+  eq(e.ctx.selectedAgent, 'assistant');
+  eq(e.ctx.activeFilteredViewTargetAgent(), '', 'composer targets a finished flash agent');
+  assert(e.ctx.filteredViewRoute(tabId).body.textContent.includes('finished task output'));
+});
+
+test('a permanent agent filter still selects and targets its conversation agent', () => {
+  const e = env();
+  const selected = [];
+  e.ctx.cmdAgentSelect = name => { selected.push(name); return Promise.resolve(true); };
+  const tabId = e.ctx.openAgentView('claude', '');
+  e.ctx.activateFilteredView(tabId);
+  eq(selected.join(','), 'claude');
+  eq(e.ctx.activeFilteredViewTargetAgent(), 'claude');
+});
+
 if (failures.length) {
   console.error('\n' + failures.length + ' failing, ' + passed + ' passing');
   for (const failure of failures) console.error('  - ' + failure);

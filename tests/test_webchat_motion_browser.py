@@ -920,6 +920,84 @@ def test_workspace_selected_header_and_title_drag_persist_in_real_chromium(
         context.close()
 
 
+def test_sidebar_context_menu_survives_incoming_message_scroll(chromium_browser):
+    context = chromium_browser.new_context(
+        viewport={"width": 1280, "height": 800}, reduced_motion="reduce",
+    )
+    page = context.new_page()
+    try:
+        page.set_content(_shell_html(), wait_until="domcontentloaded")
+        for script in ("ui_motion.js", "ui_floating_layer.js"):
+            page.add_script_tag(path=str(CHAT_UI / script))
+        page.evaluate(
+            """
+            () => {
+              window.__PF_FLOATING_DIAGNOSTICS__ = true;
+              const sidebar = document.createElement('div');
+              sidebar.id = 'sidebarMenuFixture';
+              sidebar.style.cssText = 'position:fixed;left:20px;top:120px;width:180px;height:120px;overflow:auto;z-index:9999';
+              sidebar.innerHTML = '<button id="sidebarMenuTrigger">Conversation</button><div style="height:600px"></div>';
+              document.body.appendChild(sidebar);
+              const transcript = document.createElement('div');
+              transcript.id = 'incomingTranscriptFixture';
+              transcript.style.cssText = 'position:fixed;left:500px;top:120px;width:200px;height:120px;overflow:auto';
+              transcript.innerHTML = '<div style="height:600px">Earlier messages</div>';
+              document.body.appendChild(transcript);
+              document.getElementById('sidebarMenuTrigger').addEventListener('contextmenu', event => {
+                event.preventDefault();
+                const menu = document.createElement('div');
+                menu.id = 'incomingMessageMenu';
+                menu.style.cssText = 'width:150px;height:80px;overflow:auto;z-index:10000';
+                menu.innerHTML = '<button class="ctx-menu-item">Inspect</button><div style="height:400px"></div>';
+                _positionMenu(menu, event);
+              });
+            }
+            """
+        )
+        page.locator("#sidebarMenuTrigger").click(button="right")
+        page.wait_for_function(
+            "pfFloatingLayer.diagnostics().activeLayers === 1")
+        page.evaluate(
+            """
+            () => new Promise(resolve => {
+              const transcript = document.getElementById('incomingTranscriptFixture');
+              const message = document.createElement('div');
+              message.textContent = 'New agent message';
+              transcript.appendChild(message);
+              transcript.addEventListener('scroll', resolve, {once: true});
+              transcript.scrollTop = transcript.scrollHeight;
+            })
+            """
+        )
+        menu = page.locator("#incomingMessageMenu")
+        assert menu.count() == 1, "Incoming-message auto-scroll dismissed the menu"
+        assert menu.get_attribute("aria-hidden") == "false"
+        page.evaluate(
+            """
+            () => new Promise(resolve => {
+              const menu = document.getElementById('incomingMessageMenu');
+              menu.addEventListener('scroll', resolve, {once: true});
+              menu.scrollTop = 50;
+            })
+            """
+        )
+        assert menu.get_attribute("aria-hidden") == "false"
+        page.evaluate(
+            """
+            () => new Promise(resolve => {
+              const sidebar = document.getElementById('sidebarMenuFixture');
+              sidebar.addEventListener('scroll', resolve, {once: true});
+              sidebar.scrollTop = 50;
+            })
+            """
+        )
+        page.wait_for_function(
+            "pfFloatingLayer.diagnostics().activeLayers === 0")
+        assert page.evaluate("pfFloatingLayer.diagnostics().listeners") == 0
+    finally:
+        context.close()
+
+
 def test_all_buttons_share_prompt_bar_surface_zoom_and_tooltip_in_chromium(
         chromium_browser):
     context = chromium_browser.new_context(

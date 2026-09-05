@@ -75,6 +75,112 @@ def test_capture_cannot_replace_or_release_a_streaming_worker(live_task):
     assert live_task._active_turns[key]["owner_id"] == "worker-owner"
 
 
+def test_unregister_releases_capture_and_prevents_late_marker(live_task, monkeypatch):
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    state = _state(svc)
+    state.connected = True
+    state.manual_capture_pending = 1
+    assert svc._active_turn_marker(state, register=True)
+    live_task._active_turns["80c37670:other"] = {"owner_id": "other-worker"}
+    monkeypatch.setattr(svc, "_drain_pending_after_capture", lambda _state: pytest.fail(
+        "session teardown must not restart queued work"))
+
+    svc.unregister_session("sess")
+
+    assert svc.session_state("sess") is None
+    assert not state.connected
+    assert state.manual_capture_pending == 0
+    assert live_task._active_turns == {"80c37670:other": {"owner_id": "other-worker"}}
+    assert svc._active_turn_marker(state, register=True) is False
+
+
+def test_unregister_does_not_release_replacement_worker(live_task):
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    state = _state(svc)
+    assert svc._active_turn_marker(state, register=True)
+    replacement = {"owner_id": "replacement-worker", "owner_type": "streaming_worker"}
+    live_task._active_turns["80c37670:claude"] = replacement
+
+    svc.unregister_session("sess")
+
+    assert live_task._active_turns["80c37670:claude"] is replacement
+
+
+def test_closed_session_cannot_restart_capture(live_task, monkeypatch):
+    import threading
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    state = _state(svc)
+    svc.unregister_session("sess")
+    monkeypatch.setattr(threading, "Thread", lambda **_kwargs: pytest.fail(
+        "a closed event session must not start a capture thread"))
+
+    svc._start_manual_capture(state)
+    assert svc.claim_consumer("sess", kind="capture") == 0
+    assert svc.session_state("sess") is None
+
+
+def test_unregister_wakes_blocked_capture_reader(live_task):
+    import threading
+    from services.cc_interactive_event_service import CCIConsumerEvicted
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    state = _state(svc)
+    waiting = threading.Event()
+    errors = []
+
+    class ObservedCondition(threading.Condition):
+        def wait(self, timeout=None):
+            waiting.set()
+            return super().wait(timeout)
+
+    state.stream_condition = ObservedCondition()
+    epoch = svc.claim_consumer("sess", kind="capture")
+
+    def read_event():
+        try:
+            svc.wait_event("sess", epoch=epoch)
+        except Exception as exc:
+            errors.append(exc)
+
+    reader = threading.Thread(target=read_event, daemon=True)
+    reader.start()
+    try:
+        assert waiting.wait(1), "reader did not reach its event wait"
+    finally:
+        svc.unregister_session("sess")
+        reader.join(1)
+
+    assert not reader.is_alive(), "session teardown left an event reader blocked"
+    assert len(errors) == 1 and isinstance(errors[0], CCIConsumerEvicted)
+
+
+@pytest.mark.parametrize("method", ["kill_and_evict_by_conv", "kill_and_evict_by_conv_agent"])
+def test_explicit_pool_release_unregisters_only_victim_event_session(monkeypatch, method):
+    import threading
+    from types import SimpleNamespace
+    from core.codex_interactive_pool import CodexInteractivePool
+
+    pool = object.__new__(CodexInteractivePool)
+    pool._lock = threading.RLock()
+    victim = SimpleNamespace(name="finished-container", session_token="finished-token")
+    other = SimpleNamespace(name="other-container", session_token="other-token")
+    key = ("user", "conv::task::done", "assistant::flash::worker", "svc")
+    other_key = ("user", "other-conv", "assistant", "svc")
+    pool._sessions = {key: victim, other_key: other}
+    events = []
+    monkeypatch.setattr(pool, "_recover_container_tokens", lambda _state: None)
+    monkeypatch.setattr(pool, "_unregister_event_session", lambda state: events.append(
+        ("unregister", state.session_token)))
+    monkeypatch.setattr(pool, "_kill_container", lambda name: events.append(("kill", name)))
+    args = (key[1],) if method == "kill_and_evict_by_conv" else (key[1], key[2])
+
+    assert getattr(pool, method)(*args, reason="subagent_run_finished") == 1
+
+    assert events == [("unregister", "finished-token"), ("kill", "finished-container")]
+    assert pool._sessions == {other_key: other}
+
+
 def test_capture_release_does_not_remove_replacement_worker(live_task):
     key = "80c37670:claude"
     svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})

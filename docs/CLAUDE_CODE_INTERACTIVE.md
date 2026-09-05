@@ -272,6 +272,13 @@ A capture claims before it announces itself. Discovering the refusal inside the
 coordinator meant the active-agent marker had already been raised and was blinked
 straight back off; a capture that yields the stream now says nothing at all.
 
+Explicit conversation and agent shutdown unregister the event session before
+removing its container. This also applies to completed flash delegates. Session
+closure wakes and evicts stream readers, removes only the capture-owned active
+marker, and prevents delayed events or a queued capture from recreating it.
+Closing a session never restarts queued conversation work. This prevents a
+finished delegate's unread event tail from appearing as hours of active work.
+
 A `cci-pending-sweep` thread re-asks every `_PENDING_SWEEP_SECONDS`. Checking
 on publish alone would miss the case the rule cares about most: a turn that
 streams in five seconds and then goes quiet has every one of its events

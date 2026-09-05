@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Interactive session shutdown now closes event readers and releases capture-owned
+  activity markers, preventing completed flash delegates from remaining active or
+  restarting captures after their containers have been removed.
+- Inspecting a flash delegate preserves the selected conversation agent and the
+  composer target instead of attempting to select an agent outside the roster.
+- Sidebar context menus remain open when incoming messages auto-scroll the chat;
+  internal menu scrolling also preserves the popup, while scrolling its source
+  panel or the page still dismisses it.
+
+### Changed
+
+- Complete the README provider table with Antigravity / Agy ACP, Cursor ACP,
+  Grok Build ACP, and OpenCode, linking their existing configuration guides.
+
 ## [1.0.0-beta.268] — 2026-09-05
 
 ### Added

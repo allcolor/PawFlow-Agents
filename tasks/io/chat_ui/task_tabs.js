@@ -422,14 +422,17 @@ function activeFilteredViewRoute() {
 
 function activeFilteredViewTargetAgent() {
   const route = activeFilteredViewRoute();
-  return route && route.agentName ? route.agentName : '';
+  // Flash identities belong to a delegated task, not the conversation roster.
+  return route && route.agentName && !route.agentName.includes('::flash::')
+    ? route.agentName : '';
 }
 
 function activateFilteredView(tabId) {
   const route = filteredViewRoute(tabId);
   if (!route) return Promise.resolve(false);
   _activeTaskTabId = tabId;
-  if (!route.agentName || typeof cmdAgentSelect !== 'function') {
+  if (!route.agentName || route.agentName.includes('::flash::')
+      || typeof cmdAgentSelect !== 'function') {
     return Promise.resolve(false);
   }
   const current = typeof selectedAgent !== 'undefined' ? selectedAgent : '';

@@ -206,7 +206,7 @@ Responsibilities:
 - one scheduled geometry-read phase followed by one placement-write phase;
 - viewport clamping and computed transform origin;
 - open/close through `transform` and `opacity`;
-- cancellation on pointer cancellation, blur, scroll, resize, Escape, and owner teardown;
+- cancellation on pointer cancellation, blur, viewport or trigger-ancestor scroll, resize, Escape, and owner teardown; unrelated transcript auto-scroll and scrolling inside the floating surface preserve the open menu;
 - outside-click handling without delayed duplicate document listeners;
 - focus entry and restoration appropriate to the surface;
 - tooltip grouping so movement between adjacent controls does not restart the full delay.

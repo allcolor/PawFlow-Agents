@@ -306,6 +306,51 @@ test('outside interaction and pointer cancellation close the owned layer', async
   eq(second.parentNode, null, 'pointercancel did not close the menu');
 });
 
+test('transcript scrolling preserves a sidebar menu until its own panel scrolls', async () => {
+  const e = env();
+  const sidebar = e.body.appendChild(new FakeElement());
+  const transcript = e.body.appendChild(new FakeElement());
+  const trigger = sidebar.appendChild(new FakeElement());
+  const menu = new FakeElement({width: 80, height: 60});
+  e.ctx._positionMenu(menu, {clientX: 20, clientY: 30, currentTarget: trigger});
+  await settle();
+
+  e.ctx.dispatch('scroll', {target: transcript});
+  await settle();
+  assert(menu.parentNode === e.body, 'incoming-message auto-scroll dismissed the menu');
+  eq(menu.getAttribute('aria-hidden'), 'false');
+  eq(trigger.getAttribute('aria-expanded'), 'true');
+  eq(trigger.focusCount, 0, 'unrelated scrolling moved focus');
+  eq(e.ctx.pfFloatingLayer.diagnostics().activeLayers, 1);
+
+  e.ctx.dispatch('scroll', {target: sidebar});
+  await settle();
+  eq(menu.parentNode, null, 'scrolling the trigger panel left a stale menu');
+  eq(trigger.focusCount, 0, 'panel scrolling stole focus');
+  eq(e.ctx.pfFloatingLayer.diagnostics().listeners, 0);
+});
+
+test('a long menu can scroll internally and still closes on page scroll', async () => {
+  const e = env();
+  const trigger = e.body.appendChild(new FakeElement());
+  const menu = new FakeElement({width: 80, height: 60});
+  const menuBody = menu.appendChild(new FakeElement());
+  e.ctx._positionMenu(menu, {clientX: 20, clientY: 30, currentTarget: trigger});
+  await settle();
+
+  for (const target of [menu, menuBody]) {
+    e.ctx.dispatch('scroll', {target});
+    await settle();
+    eq(menu.getAttribute('aria-hidden'), 'false', 'menu scrolling dismissed itself');
+    eq(e.ctx.pfFloatingLayer.diagnostics().activeLayers, 1);
+  }
+
+  e.ctx.dispatch('scroll', {target: e.document});
+  await settle();
+  eq(menu.parentNode, null);
+  eq(e.ctx.pfFloatingLayer.diagnostics().listeners, 0);
+});
+
 test('one hundred cycles return listeners and portal nodes to baseline', async () => {
   const e = env();
   const trigger = new FakeElement();

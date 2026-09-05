@@ -1,7 +1,7 @@
 # PawFlow Project Summary — Current State
 
-**Last updated**: 2026-09-04
-**Package version**: `1.0.0b267` (beta.267)
+**Last updated**: 2026-09-05
+**Package version**: `1.0.0b268` (beta.268)
 
 **Status**: functional beta, remaining API changes before 1.0.0 expected to be minor
 
@@ -17,7 +17,7 @@ The current core value is twofold:
    delegation, streaming.
 2. **Pipeline engine**: DAG execution over FlowFiles, task catalog, triggers, backpressure, checkpoints, crash recovery, provenance, and IO/data/control integrations.
 
-## Unreleased implementation highlights
+## Beta.268 implementation highlights
 
 - Cursor and Grok Build use native ACP connectors with managed containers,
   persistent authentication scoped to each user and service, exact workspace

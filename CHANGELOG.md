@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.268] — 2026-09-05
+
 ### Added
 
 - Native Cursor ACP and Grok Build ACP connectors, with managed containers,

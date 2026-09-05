@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Active-agent header panels stay inside desktop and mobile viewports, close
+  correctly, and no longer intercept clicks in the surrounding chat. Their
+  placement controller is ready before the first startup click.
+- The file explorer resolves conversation-only relays using the conversation
+  captured by its tile. Relay operations and uploads check conversation access
+  before resolving services; upload, delete and paste batches retain their
+  original scope across focus changes and stop after the originating tile closes.
+- Queued messages and delegate replies wake an idle agent even while another
+  agent is active in the same conversation, without starting duplicate turns.
+- Assets extracted with epoch timestamps receive content hashes correctly.
+  Replacing a static file while preserving its size and modification time
+  refreshes the served bytes.
+- Maximizing a workspace tile brings that exact tile into view and preserves
+  its slot on restore. The composer grip remains clickable above the dock.
+
+### Changed
+
+- Deep history cursor pages use one reverse transcript pass. Replay-buffer
+  expiry sweeps are amortized, unchanged conversation titles avoid redundant
+  search-index updates, and wiki backlog processing avoids unnecessary scans.
+- Tool batches use at most eight workers by default, configurable through
+  `PAWFLOW_TOOL_BATCH_MAX_WORKERS`. Writer backlog and persistence latency
+  are measured without blocking message enqueueing.
+- Chat assets use individual content hashes; RxJS and highlight.js are bundled
+  locally with their licenses and load with deferred scripts.
+- Initial HTML embeds English and the selected locale. Additional translations
+  and the usage dashboard load on demand with request deduplication and retry.
+- Streaming coalesces Markdown, detail and scroll rendering while flushing
+  pending text at message and terminal boundaries. Live-window trimming counts
+  nested identities while preserving active groups and user selections.
+- OpenSpace suspends animation and flow polling when outside the viewport or
+  in a hidden browser tab, then resumes when visible.
+- Distribution archives include the required chat assets and vendor licenses
+  while excluding generated graph output.
+
 ## [1.0.0-beta.269] — 2026-09-05
 
 ### Fixed

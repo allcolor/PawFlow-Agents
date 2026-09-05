@@ -106,6 +106,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "build",
+    "setuptools>=68.0",
+    "wheel",
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.21.0",

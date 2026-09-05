@@ -10,6 +10,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The conversation-controls heading sits on the top border, keeping its panel
+  the same height as the action dock.
+- Shell image updates stop the existing named server before the port diagnostic
+  and replacement startup, and restart it if the update fails.
+- Claude native permission consent cannot override conversation read-only mode,
+  including when the mode changes while its prompt is pending.
+- Simultaneously active conversation tiles no longer rewrite transcript identities
+  for scroll events or force scroll layout on every background SSE callback.
+  Suspended-tab scroll work is bounded per transcript, manual reading positions
+  are preserved, and closed conversations release their UI timers and listeners.
+- New workspace tiles use the first free row-ordered slot; only explicit targeting
+  shifts existing tiles, and layout changes preserve mounted iframe sessions.
+- Dock hover zoom paints above its compact background without clipping icon borders
+  or disabling horizontal scrolling.
+- Reload restores open conversation tiles and their layout from browser-tab session
+  storage; separate native tabs keep independent layouts, and connection-dependent
+  surfaces are not automatically reopened.
+- Desktop, service-login, and installer VNC viewers use an origin-rooted
+  WebSocket path, preventing a duplicated session directory and HTTP 400
+  handshake failures with relative-URL noVNC clients.
 - Interactive session shutdown now closes event readers and releases capture-owned
   activity markers, preventing completed flash delegates from remaining active or
   restarting captures after their containers have been removed.

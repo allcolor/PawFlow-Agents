@@ -439,12 +439,14 @@ _msgObserver.observe(document.getElementById('messages'), { childList: true });
 document.getElementById('input').focus();
 updateActiveAgentBadge();
 
-// Load conversations and auto-resume the first one
+// Load conversations and auto-resume the first one only without saved open tiles.
 action$('list_conversations', {}).subscribe(data => {
   window._ownConvs = data.conversations || [];
   const convs = window._ownConvs;
   renderConvList(convs);
   const requestedCid = new URLSearchParams(window.location.search).get('conversation_id') || '';
+  if (!conversationId && typeof restoreWorkspaceConversations === 'function'
+      && restoreWorkspaceConversations(requestedCid)) return;
   if (requestedCid && !conversationId) {
     resumeConv(requestedCid);
   } else if (convs.length && !conversationId) {

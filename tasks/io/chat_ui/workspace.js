@@ -11,11 +11,11 @@ var _workspaceResizeObserver = null;
 var _workspaceLayoutTransition = Promise.resolve({status: 'idle'});
 var _workspaceRestoreLayout = 0;
 var _workspaceStorageKey = 'pawflow.workspace.state.v2';
-var _workspaceLegacyStorageKey = 'pawflow.workspace.layout.v1';
 var _workspaceRestoredOrder = [];
 var _workspaceRestoredSelection = '';
 var _workspaceRestoredSurfaces = {};
 var _workspaceHydrating = false;
+var _workspaceRestorePending = false;
 var _workspaceMaxStoredSurfaces = 64;
 var _workspaceDraggedTab = '';
 
@@ -49,11 +49,9 @@ function workspaceSelectedTab() {
 }
 
 function _workspaceSurfaceOrder() {
-  const board = document.getElementById('workspaceBoard');
-  if (!board) return Object.keys(_workspaceSurfaces);
-  return Array.from(board.children || []).map(function(panel) {
-    return panel && panel.dataset ? panel.dataset.tab : '';
-  }).filter(function(tabId) { return !!_workspaceSurfaces[tabId]; });
+  return Object.keys(_workspaceSurfaces).sort(function(a, b) {
+    return _workspaceSurfaces[a].slot - _workspaceSurfaces[b].slot;
+  });
 }
 
 function _workspaceSlotNumber(value) {
@@ -91,6 +89,7 @@ function _workspaceRenderSlots() {
     if (!entry || !entry.panel) return;
     entry.slot = _workspaceClaimSlot(tabId, entry.slot);
     entry.panel.dataset.workspaceSlot = String(entry.slot);
+    entry.panel.style.order = String(entry.slot);
     occupied.set(entry.slot, entry.panel);
   });
   Array.from(board.children).forEach(function(node) {
@@ -106,9 +105,10 @@ function _workspaceRenderSlots() {
       node = document.createElement('div');
       node.className = 'workspace-drop-slot';
       node.dataset.workspaceSlot = String(slot);
+      node.style.order = String(slot);
       node.setAttribute('aria-label', _workspaceLabel('workspaceEmptySlot', 'Empty tile'));
     }
-    if (node) board.appendChild(node);
+    if (node && node.parentNode !== board) board.appendChild(node);
   }
 }
 
@@ -122,7 +122,6 @@ function _workspaceMoveSurface(panel, target) {
   if (!source || sourceSlot < 0 || targetSlot < 0) return false;
   if (destination) destination.slot = sourceSlot;
   source.slot = targetSlot;
-  board.insertBefore(panel, target);
   _workspaceRenderSlots();
   _workspaceResize();
   _workspaceSaveState();
@@ -130,7 +129,7 @@ function _workspaceMoveSurface(panel, target) {
 }
 
 function _workspaceSaveState() {
-  if (_workspaceHydrating) return;
+  if (_workspaceHydrating || _workspaceRestorePending) return;
   const surfaces = _workspaceSurfaceOrder().slice(0, _workspaceMaxStoredSurfaces)
     .map(function(tabId, index) {
       const entry = _workspaceSurfaces[tabId] || {};
@@ -149,13 +148,13 @@ function _workspaceSaveState() {
     selectedSurfaceId: _workspaceSelectedTab,
     surfaces: surfaces,
   };
-  try { localStorage.setItem(_workspaceStorageKey, JSON.stringify(state)); }
+  try { sessionStorage.setItem(_workspaceStorageKey, JSON.stringify(state)); }
   catch (_error) {}
 }
 
 function _workspaceLoadState() {
   let state = null;
-  try { state = JSON.parse(localStorage.getItem(_workspaceStorageKey) || 'null'); }
+  try { state = JSON.parse(sessionStorage.getItem(_workspaceStorageKey) || 'null'); }
   catch (_error) {}
   if (state && state.version === 2 && Array.isArray(state.surfaces)) {
     _workspaceRestoredOrder = [];
@@ -166,6 +165,9 @@ function _workspaceLoadState() {
       if (!surfaceId) return;
       _workspaceRestoredOrder.push(surfaceId);
       _workspaceRestoredSurfaces[surfaceId] = {
+        type: typeof surface.type === 'string' ? surface.type : '',
+        conversationId: typeof surface.conversationId === 'string'
+          && surface.conversationId.length <= 256 ? surface.conversationId : '',
         title: typeof surface.title === 'string' && surface.title.length <= 512
           ? surface.title : '',
         conversationTitle: typeof surface.conversationTitle === 'string'
@@ -175,49 +177,18 @@ function _workspaceLoadState() {
     });
     _workspaceRestoredSelection = typeof state.selectedSurfaceId === 'string'
       && state.selectedSurfaceId.length <= 256 ? state.selectedSurfaceId : '';
+    _workspaceRestorePending = Object.values(_workspaceRestoredSurfaces).some(function(surface) {
+      return surface.type === 'webchat' && !!surface.conversationId;
+    });
     const layout = parseInt(state.layout, 10);
     return Number.isFinite(layout) && layout >= 1 && layout <= 6 ? layout : 1;
   }
-  let legacyLayout = 1;
-  try { legacyLayout = parseInt(localStorage.getItem(_workspaceLegacyStorageKey) || '1', 10); }
-  catch (_error) {}
-  return Number.isFinite(legacyLayout) && legacyLayout >= 1 && legacyLayout <= 6
-    ? legacyLayout : 1;
+  return 1;
 }
 
 function workspaceRestoredSurfaceTitle(tabId) {
   const restored = _workspaceRestoredSurfaces[String(tabId || '')];
   return restored ? restored.title : '';
-}
-
-function _workspaceInsertAfter(board, panel, anchor) {
-  if (!board || !panel) return;
-  const siblings = Array.from(board.children || []).filter(function(candidate) {
-    return candidate !== panel;
-  });
-  const anchorIndex = siblings.indexOf(anchor);
-  const reference = anchorIndex === -1 ? null : (siblings[anchorIndex + 1] || null);
-  board.insertBefore(panel, reference);
-}
-
-function _workspaceRestoreSurfacePosition(board, panel, tabId) {
-  const restoredIndex = _workspaceRestoredOrder.indexOf(tabId);
-  if (restoredIndex === -1) return false;
-  for (let index = restoredIndex + 1; index < _workspaceRestoredOrder.length; index++) {
-    const next = _workspaceSurfaces[_workspaceRestoredOrder[index]];
-    if (next && next.panel !== panel && next.panel.parentNode === board) {
-      board.insertBefore(panel, next.panel);
-      return true;
-    }
-  }
-  for (let index = restoredIndex - 1; index >= 0; index--) {
-    const previous = _workspaceSurfaces[_workspaceRestoredOrder[index]];
-    if (previous && previous.panel !== panel && previous.panel.parentNode === board) {
-      _workspaceInsertAfter(board, panel, previous.panel);
-      return true;
-    }
-  }
-  return false;
 }
 
 function _workspaceSurfaceBody(panel) {
@@ -365,19 +336,18 @@ function workspaceRegisterSurface(panel, options) {
     }
   }
 
-  _workspaceRenderSlots();
-
-  if (firstRegistration) {
-    const restored = _workspaceRestoreSurfacePosition(board, panel, tabId);
-    if (!restored) {
-      const anchorTab = _workspaceTargetTab || _workspaceSelectedTab;
-      const anchor = anchorTab !== tabId ? _workspacePanel(anchorTab) : null;
-      if (anchor && anchor.parentNode === board) _workspaceInsertAfter(board, panel, anchor);
-      else if (panel.parentNode !== board) board.appendChild(panel);
-    }
-  } else if (panel.parentNode !== board) {
-    board.appendChild(panel);
+  const target = firstRegistration && !_workspaceHydrating
+    && _workspaceTargetTab !== tabId && _workspaceSurfaces[_workspaceTargetTab];
+  if (target) {
+    const targetSlot = target.slot;
+    Object.keys(_workspaceSurfaces).forEach(function(id) {
+      if (id !== tabId && _workspaceSurfaces[id].slot >= targetSlot) {
+        _workspaceSurfaces[id].slot += 1;
+      }
+    });
+    _workspaceSurfaces[tabId].slot = targetSlot;
   }
+  _workspaceRenderSlots();
 
   if (firstRegistration && _workspaceTargetTab && _workspaceTargetTab !== tabId) {
     workspaceClearTarget();
@@ -689,7 +659,10 @@ function _workspaceResize() {
   const gap = 8;
   const width = Math.max(240, (scroller.clientWidth - gap * (columns - 1)) / columns);
   const height = Math.max(180, (scroller.clientHeight - gap * (rows - 1)) / rows);
-  const overflowing = Object.keys(_workspaceSurfaces).length > columns * rows;
+  const capacity = columns * rows;
+  const overflowing = Object.keys(_workspaceSurfaces).some(function(tabId) {
+    return _workspaceSurfaces[tabId].slot >= capacity;
+  });
   if (scroller.classList) {
     scroller.classList.toggle('workspace-overflowing', overflowing);
   }
@@ -698,6 +671,14 @@ function _workspaceResize() {
   board.style.setProperty('--workspace-rows', String(rows));
   board.style.setProperty('--workspace-tile-width', width + 'px');
   board.style.setProperty('--workspace-tile-height', height + 'px');
+  Array.from(board.children || []).forEach(function(panel) {
+    const slot = _workspaceSlotNumber(panel.dataset && panel.dataset.workspaceSlot);
+    if (slot < 0) return;
+    const page = Math.floor(slot / capacity);
+    const position = slot % capacity;
+    panel.style.gridColumn = String(page * columns + position % columns + 1);
+    panel.style.gridRow = String(Math.floor(position / columns) + 1);
+  });
   Object.keys(_workspaceSurfaces).forEach(function(tabId) {
     _workspaceFitSurface(_workspaceSurfaces[tabId].panel);
   });

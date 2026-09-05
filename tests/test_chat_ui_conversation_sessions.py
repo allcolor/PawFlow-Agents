@@ -347,8 +347,8 @@ a.messagesRoot.scrollTop = 999;
 const onA = context._wrapConversationSessionCallback(a, () => {
   const messages = context.document.getElementById('messages');
   if (messages !== a.messagesRoot) throw new Error('A did not own canonical messages');
-  if (messages.scrollTop !== 111) {
-    throw new Error('A scroll position was not restored before its callback');
+  if (messages.scrollTop !== 999) {
+    throw new Error('background callback changed the mounted transcript position');
   }
   messages.items.push('event-a');
   context.selectedAgent = 'agent-a-updated';

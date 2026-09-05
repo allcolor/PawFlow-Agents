@@ -40,8 +40,8 @@ def test_workspace_partial_owns_the_stage_and_composer_stays_outside():
 def test_workspace_layouts_persist_and_extend_horizontally():
     for layout in ("2: [2, 1]", "3: [3, 1]", "4: [2, 2]", "5: [3, 2]", "6: [3, 2]"):
         assert layout in WORKSPACE_JS
-    assert "localStorage.setItem(_workspaceStorageKey, JSON.stringify(state))" in WORKSPACE_JS
-    assert "JSON.parse(localStorage.getItem(_workspaceStorageKey)" in WORKSPACE_JS
+    assert "sessionStorage.setItem(_workspaceStorageKey, JSON.stringify(state))" in WORKSPACE_JS
+    assert "JSON.parse(sessionStorage.getItem(_workspaceStorageKey)" in WORKSPACE_JS
     assert ".workspace-tiled .workspace-scroller" in WORKSPACE_CSS
     assert ".workspace-scroller.workspace-overflowing" in WORKSPACE_CSS
     assert "width: max-content" in WORKSPACE_CSS
@@ -56,7 +56,7 @@ const vm = require('vm');
 let stored = null;
 const context = {
   console,
-  localStorage: {
+  sessionStorage: {
     setItem: (key, value) => {
       if (key === 'pawflow.workspace.state.v2') stored = value;
     },
@@ -141,7 +141,7 @@ const byId = {
 };
 const context = {
   console,
-  localStorage: { setItem: () => {}, getItem: () => null },
+  sessionStorage: { setItem: () => {}, getItem: () => null },
   document: {
     readyState: 'loading',
     addEventListener: () => {},
@@ -154,9 +154,9 @@ context.window = context;
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 context._workspaceSurfaces = {
-  a: { panel: panel('a') },
-  b: { panel: panel('b') },
-  c: { panel: panel('c') },
+  a: { panel: panel('a'), slot: 0 },
+  b: { panel: panel('b'), slot: 1 },
+  c: { panel: panel('c'), slot: 2 },
 };
 context._workspaceLayout = 3;
 context._workspaceResize();
@@ -166,7 +166,7 @@ if (scroller.classList.contains('workspace-overflowing')) {
 if (scroller.scrollLeft !== 0) {
   throw new Error('non-overflowing board retained a stale horizontal offset');
 }
-context._workspaceSurfaces.d = { panel: panel('d') };
+context._workspaceSurfaces.d = { panel: panel('d'), slot: 3 };
 context._workspaceResize();
 if (!scroller.classList.contains('workspace-overflowing')) {
   throw new Error('fourth tile did not enable overflow past capacity three');
@@ -207,6 +207,7 @@ function classes() {
 }
 function panel(tabId, left) {
   return {
+    style: {},
     dataset: { tab: tabId },
     classList: classes(),
     offsetLeft: left,
@@ -250,7 +251,7 @@ const byId = {
 };
 const context = {
   console,
-  localStorage: { setItem: () => {}, getItem: () => null },
+  sessionStorage: { setItem: () => {}, getItem: () => null },
   document: {
     readyState: 'loading',
     addEventListener: () => {},
@@ -264,11 +265,7 @@ context.window = context;
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 
-context._workspaceInsertAfter(board, c, a);
-if (board.children.map(node => node.dataset.tab).join(',') !== 'a,c,b') {
-  throw new Error('new surface was not inserted after the selected surface');
-}
-context._workspaceSurfaces = { a: { panel: a }, b: { panel: b }, c: { panel: c } };
+context._workspaceSurfaces = { a: { panel: a, slot: 0 }, b: { panel: b, slot: 2 }, c: { panel: c, slot: 1 } };
 context._workspaceSelectedTab = 'c';
 context.workspaceSetLayout(1);
 if (!shell.classList.contains('workspace-tiled')) {
@@ -295,7 +292,7 @@ if (context.workspaceSelectedTab() !== 'b') {
 def test_surfaces_stay_mounted_and_support_targeted_insertion():
     assert "panel.classList.toggle('active', selected)" in WORKSPACE_JS
     assert "display: flex !important" in WORKSPACE_CSS
-    assert "_workspaceInsertAfter(board, panel, anchor)" in WORKSPACE_JS
+    assert "_workspaceSurfaces[tabId].slot = targetSlot" in WORKSPACE_JS
     assert "replaceChild" not in WORKSPACE_JS
     assert "workspaceArmTarget" in WORKSPACE_JS
     assert "workspaceClearTarget" in WORKSPACE_JS
@@ -320,7 +317,8 @@ def test_selected_tile_header_is_distinct_and_owns_persistent_reordering():
     assert "function _workspaceMoveSurface" in WORKSPACE_JS
     move = WORKSPACE_JS[WORKSPACE_JS.index("function _workspaceMoveSurface"):]
     move = move[:move.index("\n}") + 2]
-    assert "board.insertBefore" in move
+    assert "source.slot = targetSlot" in move
+    assert "board.insertBefore" not in move
     assert "_workspaceSaveState()" in move
 
 
@@ -342,7 +340,7 @@ const toolPanel = {
 };
 const context = {
   console,
-  localStorage: { setItem: () => {}, getItem: () => null },
+  sessionStorage: { setItem: () => {}, getItem: () => null },
   document: {
     readyState: 'loading',
     addEventListener: () => {},
@@ -468,7 +466,7 @@ const panel = {
 let selected = '';
 const context = {
   console,
-  localStorage: { setItem: () => {}, getItem: () => null },
+  sessionStorage: { setItem: () => {}, getItem: () => null },
   document: {
     readyState: 'loading',
     addEventListener: () => {},

@@ -15,10 +15,17 @@
 .action-menu-item .ami-label { font-weight: 500; }
 .action-menu-item .ami-desc { font-size: 11px; color: #6c6c8a; }
 .action-menu-sep { border-top: 1px solid #0f3460; margin: 4px 0; }
-.action-dock { position: relative; z-index: 200; min-width: 0; }
+.action-dock { position: relative; z-index: 200; min-width: 0;
+               border: 1px solid var(--pf-border); border-radius: 8px; }
 .action-dock-menu { display: flex; position: static; flex-direction: row; gap: 3px; min-width: 0;
-                    width: auto; max-width: 100%; max-height: none; margin: 0; padding: 4px 8px;
-                    overflow-x: auto; overflow-y: visible; border-radius: 8px; scrollbar-width: none; }
+                    width: auto; max-width: 100%; max-height: none; margin: -20px 0 -12px; padding: 24px 8px 16px;
+                    overflow-x: auto; overflow-y: hidden; border: 0; border-radius: 0; scrollbar-width: none; }
+/* A horizontal scrollport clips both axes. Its transparent vertical gutter
+   contains the full hover zoom, while the compact dock shell paints behind it. */
+.action-dock .action-dock-menu {
+  background: transparent !important; box-shadow: none !important;
+  -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+}
 .action-dock-menu::-webkit-scrollbar { width: 0; height: 0; display: none; }
 .action-dock-menu > .action-menu-item,
 .header-dock-item {

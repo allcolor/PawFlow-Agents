@@ -180,7 +180,7 @@ function _setConversationSessionDomActive(session, active) {
   });
 }
 
-function _saveConversationSessionState(session) {
+function _saveConversationSessionState(session, captureScroll) {
   if (!session) return;
   session.eventSource = eventSource;
   session.sending = sending;
@@ -230,11 +230,13 @@ function _saveConversationSessionState(session) {
   var status = document.getElementById('status');
   if (status) session.statusText = status.textContent || '';
   session.autoScroll = _autoScroll;
-  if (session.messagesRoot) session.scrollTop = session.messagesRoot.scrollTop;
+  if (session.messagesRoot && captureScroll !== false) {
+    session.scrollTop = session.messagesRoot.scrollTop;
+  }
   session.suppressTopLoadUntil = _suppressTopLoadUntil;
 }
 
-function _applyConversationSessionState(session) {
+function _applyConversationSessionState(session, restoreScroll) {
   if (!session) return;
   conversationId = session.conversationId;
   eventSource = session.eventSource;
@@ -285,7 +287,7 @@ function _applyConversationSessionState(session) {
   var status = document.getElementById('status');
   if (status) status.textContent = session.statusText || '';
   _autoScroll = session.autoScroll;
-  if (session.messagesRoot) {
+  if (session.messagesRoot && restoreScroll !== false) {
     // A stored absolute coordinate is only meaningful after explicit user
     // navigation. While following the live tail, DOM growth makes yesterday's
     // bottom an arbitrary point higher in the transcript.
@@ -331,16 +333,18 @@ function withConversationSession(sessionOrId, callback) {
     try { return callback(); }
     finally {
       if (_conversationActiveSession === session) {
-        _saveConversationSessionState(session);
+        _saveConversationSessionState(session, false);
       }
     }
   }
   if (previous) {
-    _saveConversationSessionState(previous);
+    _saveConversationSessionState(previous, false);
     _setConversationSessionDomActive(previous, false);
   }
   _conversationActiveSession = session;
-  _applyConversationSessionState(session);
+  // Mounted transcripts retain their own scroll position. Reading/writing it
+  // on every background event forces layout after both DOM identity swaps.
+  _applyConversationSessionState(session, false);
   _setConversationSessionDomActive(session, true);
   try {
     return callback();
@@ -350,11 +354,11 @@ function withConversationSession(sessionOrId, callback) {
     // the new one; restoring `previous` here would undo the user's action and
     // copy the new globals into the old session.
     if (_conversationActiveSession === session) {
-      _saveConversationSessionState(session);
+      _saveConversationSessionState(session, false);
       _setConversationSessionDomActive(session, false);
       _conversationActiveSession = previous;
       if (previous) {
-        _applyConversationSessionState(previous);
+        _applyConversationSessionState(previous, false);
         _setConversationSessionDomActive(previous, true);
       }
     }
@@ -638,6 +642,39 @@ function openWorkspaceConversation(conversationId, options) {
   return session;
 }
 
+function restoreWorkspaceConversations(requestedConversationId) {
+  if (typeof _workspaceRestoredSurfaces === 'undefined') return false;
+  const restored = [];
+  const seen = new Set();
+  for (const tabId of _workspaceRestoredOrder) {
+    const descriptor = _workspaceRestoredSurfaces[tabId];
+    if (!descriptor || descriptor.type !== 'webchat' || !descriptor.conversationId
+        || seen.has(descriptor.conversationId)) continue;
+    seen.add(descriptor.conversationId);
+    restored.push(ensureConversationSession(descriptor.conversationId, {
+      title: descriptor.conversationTitle || descriptor.title,
+    }));
+  }
+  if (!restored.length) {
+    _workspaceRestorePending = false;
+    return false;
+  }
+  const selected = _workspaceRestoredSurfaces[_workspaceRestoredSelection];
+  const target = requestedConversationId
+    ? ensureConversationSession(requestedConversationId)
+    : (selected && getConversationSession(selected.conversationId)) || restored[0];
+  if (!restored.includes(target)) restored.push(target);
+  workspaceFocusSurface(target.surfaceId, {noConversationFocus: true});
+  focusConversationSession(target);
+  for (const session of restored) {
+    if (!session.loaded && !session.loading
+        && typeof loadConversationSession === 'function') loadConversationSession(session, false);
+  }
+  _workspaceRestorePending = false;
+  _workspaceSaveState();
+  return true;
+}
+
 function releaseConversationSessionIfUnused(conversationId) {
   var session = getConversationSession(conversationId);
   if (!session) return false;
@@ -651,8 +688,13 @@ function releaseConversationSessionIfUnused(conversationId) {
     if (eventSource) { try { eventSource.close(); } catch (_error) {} eventSource = null; }
     if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
     if (sseHealthTimer) { clearInterval(sseHealthTimer); sseHealthTimer = null; }
+    if (resourcesTimer) { clearInterval(resourcesTimer); resourcesTimer = null; }
     if (typingInterval) { clearInterval(typingInterval); typingInterval = null; }
+    if (typeof turnViewReset === 'function') turnViewReset();
   });
+  if (session.messagesRoot && session.messagesRoot._pfScrollCleanup) {
+    session.messagesRoot._pfScrollCleanup();
+  }
   var wasFocused = session === _conversationFocusedSession;
   if (typeof workspaceUnregisterSurface === 'function') {
     workspaceUnregisterSurface(session.surfaceId);

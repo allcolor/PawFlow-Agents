@@ -47,7 +47,7 @@ def test_background_translucency_reaches_messages_and_composer_only_when_active(
         encoding="utf-8"
     )
 
-    for selector in (".msg.user", ".msg.btw", ".msg.tool", ".composer-shell", ".action-dock-menu"):
+    for selector in (".msg.user", ".msg.btw", ".msg.tool", ".composer-shell", ".action-dock"):
         assert f'html[data-pf-atmosphere="on"] {selector}' in css
     assert "var(--pf-atmosphere-panel-opacity)" in css
     assert "backdrop-filter: blur" in css

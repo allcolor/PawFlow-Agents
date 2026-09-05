@@ -159,8 +159,9 @@ controls:
   dialog renders each provider and identity beside its bounded unlink action, and
   starts the existing OAuth link flow for an additional identity. Linked identities
   are not duplicated at the bottom of the Resources tree. The dock reserves horizontal
-  edge padding for hover zoom and hides its native scrollbar, so zooming the last
-  icon cannot flash a scrollbar while touch/trackpad horizontal scrolling remains.
+  edge padding for hover zoom and hides its native scrollbar. Transparent vertical
+  gutters extend the scrollport beyond the compact painted dock, so enlarged icon
+  borders remain visible above it while touch/trackpad horizontal scrolling remains.
   The extension-provided header/action slots remain inside it. The administration
   panel opens above the dock as a sibling of its scroll container.
   A shared CSS-styled tooltip is rendered outside that scroll container, keeping
@@ -177,7 +178,9 @@ controls:
 - View mode, TTS, realtime voice, conversation refresh and tool permission mode
   occupy the left of that row, while active agents occupy the right. The two side
   tracks remain equal, so the action dock stays centered on the conversation even
-  when either side panel is hidden. The row below is one unified composer shell:
+  when either side panel is hidden. The conversation-controls title straddles the
+  panel's top border like the selected-agent badge, so the panel matches the dock's
+  height without reserving a separate title row. The row below is one unified composer shell:
   attachment, conversation search, slash command, agent mention, prompt textarea,
   speech-to-text, terminal grab and Send all live in the same responsive component.
   Pasted files render as stacked thumbnails inside that shell; the first three stay

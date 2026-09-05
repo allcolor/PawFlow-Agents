@@ -337,7 +337,23 @@ function toggleTrace(headerEl) {
 // it off; DOM growth/reflow must not be interpreted as the user scrolling up.
 let _autoScroll = true;
 let _suppressTopLoadUntil = 0;
+const _messagesScrollFrames = new WeakMap();
 function isNearBottom() { return _autoScroll; }
+
+function _setMessagesFollowState(session, following) {
+  if (session) session.autoScroll = following;
+  if (!session || (typeof captureConversationSession === 'function'
+      && captureConversationSession() === session)) _autoScroll = following;
+}
+
+function _updateMessagesScrollNav(m) {
+  const nav = m.parentNode && m.parentNode.querySelector
+    ? m.parentNode.querySelector('.scroll-nav') : null;
+  if (!nav) return;
+  const hasScroll = m.scrollHeight > m.clientHeight + 100;
+  const atBottom = m.scrollHeight - m.scrollTop - m.clientHeight < 150;
+  nav.classList.toggle('visible', hasScroll && !atBottom);
+}
 
 function installMessagesRootHandlers(m, session) {
   if (!m) return;
@@ -366,39 +382,55 @@ function installMessagesRootHandlers(m, session) {
     return e.clientX >= rect.right - scrollbarWidth - 2;
   }
 
-  m.addEventListener('wheel', bind(markUserScrollIntent), { passive: true });
-  m.addEventListener('touchstart', bind(markUserScrollIntent), { passive: true });
-  m.addEventListener('pointerdown', bind((e) => {
+  // Scroll and pointer events already own their transcript. Activating the
+  // legacy global DOM here rewrites both conversations and can scroll this
+  // root before its user's position has even been read.
+  const listeners = [];
+  const listen = (target, name, callback, options) => {
+    target.addEventListener(name, callback, options);
+    listeners.push(() => target.removeEventListener(name, callback, options));
+  };
+  listen(m, 'wheel', markUserScrollIntent, { passive: true });
+  listen(m, 'touchstart', markUserScrollIntent, { passive: true });
+  listen(m, 'pointerdown', (e) => {
     if (isScrollbarPointerEvent(e)) {
       scrollbarDragActive = true;
       markUserScrollIntent();
     }
-  }));
-  window.addEventListener('pointerup', bind(() => {
+  });
+  listen(window, 'pointerup', () => {
     if (scrollbarDragActive) markUserScrollIntent();
     scrollbarDragActive = false;
-  }));
-  m.addEventListener('keydown', bind((e) => {
+  });
+  listen(m, 'keydown', (e) => {
     if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', 'Space'].includes(e.key)) {
       markUserScrollIntent();
     }
-  }));
+  });
 
-  m.addEventListener('scroll', bind(() => {
+  listen(m, 'scroll', () => {
     if (session) session.scrollTop = m.scrollTop;
     if (atBottom()) {
-      _autoScroll = true;
+      _setMessagesFollowState(session, true);
     } else if (hasUserScrollIntent()) {
-      _autoScroll = false;
+      _setMessagesFollowState(session, false);
     }
-  }));
-  m.addEventListener('scroll', bind(updateScrollNav));
-  m.addEventListener('scroll', bind(function() {
-    if (m.scrollTop === 0 && Date.now() > _suppressTopLoadUntil
-        && hasMoreMessages && !loadingMore) {
-      loadMoreMessages();
+    _updateMessagesScrollNav(m);
+    const suppressUntil = session ? session.suppressTopLoadUntil : _suppressTopLoadUntil;
+    const hasMore = session ? session.hasMoreMessages : hasMoreMessages;
+    const loading = session ? session.loadingMore : loadingMore;
+    if (m.scrollTop === 0 && Date.now() > suppressUntil && hasMore && !loading) {
+      bind(loadMoreMessages)();
     }
-  }));
+  });
+  m._pfScrollCleanup = () => {
+    listeners.forEach(remove => remove());
+    const pending = _messagesScrollFrames.get(m);
+    if (pending) window.cancelAnimationFrame(pending.id);
+    _messagesScrollFrames.delete(m);
+    delete m.dataset.pawflowScrollHandlers;
+    delete m._pfScrollCleanup;
+  };
 }
 
 function setMessagesScrollTop(value) {
@@ -416,26 +448,30 @@ function refreshMessagesScrollMetrics(forceBottom) {
   const session = typeof captureConversationSession === 'function'
     ? captureConversationSession() : null;
   if (forceBottom) {
-    _autoScroll = true;
-    if (session) session.autoScroll = true;
+    _setMessagesFollowState(session, true);
   }
-  const settleCurrentSession = () => {
+  if (_messagesScrollFrames.has(m)) return;
+  const pending = {id: 0, remaining: 2};
+  _messagesScrollFrames.set(m, pending);
+  const settle = () => {
+    if (m.isConnected === false) {
+      _messagesScrollFrames.delete(m);
+      return;
+    }
     // Re-check the live intent on every frame. A wheel/touch/key/scrollbar
     // gesture between frames wins immediately, including after a forced jump.
-    if (_autoScroll) setMessagesScrollTop(m.scrollHeight);
-    updateScrollNav();
+    const following = session ? session.autoScroll : _autoScroll;
+    if (following) m.scrollTop = m.scrollHeight;
+    if (session) session.scrollTop = m.scrollTop;
+    _updateMessagesScrollNav(m);
+    pending.remaining -= 1;
+    if (pending.remaining) pending.id = window.requestAnimationFrame(settle);
+    else _messagesScrollFrames.delete(m);
   };
-  // requestAnimationFrame callbacks run after withConversationSession() has
-  // restored the focused tile. Bind every delayed settle to the transcript
-  // that created it so two open conversations can never scroll each other.
-  const settle = session && typeof _wrapConversationSessionCallback === 'function'
-    ? _wrapConversationSessionCallback(session, settleCurrentSession)
-    : settleCurrentSession;
-  settle();
-  window.requestAnimationFrame(() => {
-    settle();
-    window.requestAnimationFrame(settle);
-  });
+  // At most one queued frame per transcript, including while the browser
+  // suspends animation frames in a background tab. Never switch global DOM
+  // ownership for a layout-only update.
+  pending.id = window.requestAnimationFrame(settle);
 }
 
 function scrollMessagesTop() {
@@ -450,11 +486,6 @@ function scrollBottom(force) {
 }
 
 function updateScrollNav() {
-  const nav = document.getElementById('scrollNav');
-  if (!nav) return;
   const m = document.getElementById('messages');
-  const hasScroll = m.scrollHeight > m.clientHeight + 100;
-  const atBottom = m.scrollHeight - m.scrollTop - m.clientHeight < 150;
-  // Show buttons when there's scrollable content and user is not at the bottom
-  nav.classList.toggle('visible', hasScroll && !atBottom);
+  if (m) _updateMessagesScrollNav(m);
 }

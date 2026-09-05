@@ -384,6 +384,76 @@ def test_disclosure_geometry_accessibility_and_first_paint(
         context.close()
 
 
+@pytest.mark.parametrize("targeted", [False, True])
+def test_workspace_new_tiles_preserve_positions_unless_explicitly_targeted(
+        chromium_browser, targeted):
+    context = chromium_browser.new_context(viewport={"width": 1280, "height": 800})
+    page = context.new_page()
+    try:
+        page.set_content(_shell_html(), wait_until="domcontentloaded")
+        page.add_script_tag(path=str(CHAT_UI / "workspace.js"))
+        page.evaluate("""async () => {
+          window.tileRect = id => {
+            const rect = _workspaceSurfaces[id].panel.getBoundingClientRect();
+            return {x: rect.x, y: rect.y, width: rect.width, height: rect.height};
+          };
+          window.addTile = id => {
+            const panel = document.createElement('div');
+            panel.id = 'tabContent_' + id;
+            panel.className = 'tab-content';
+            workspaceRegisterSurface(panel, {tabId: id, title: id, type: 'desktop'});
+            return panel;
+          };
+          await workspaceSetLayout(4);
+          const second = addTile('second');
+          workspaceFocusSurface('chat', {noScroll: true});
+          const iframe = document.createElement('iframe');
+          const loaded = new Promise(resolve => { iframe.onload = resolve; });
+          iframe.srcdoc = '<p>Persistent desktop</p>';
+          second.querySelector('.workspace-surface-body').appendChild(iframe);
+          await loaded;
+          iframe.contentWindow.sessionMarker = 'still-connected';
+          window.oldFrame = iframe;
+          window.beforeTiles = {chat: tileRect('chat'), second: tileRect('second')};
+        }""")
+        if targeted:
+            page.locator("#tabContentChat .workspace-target-btn").click()
+        page.evaluate("addTile('third')")
+        result = page.evaluate("""() => ({
+          before: beforeTiles,
+          after: {chat: tileRect('chat'), second: tileRect('second'), third: tileRect('third')},
+          order: _workspaceSurfaceOrder(),
+          slots: Object.fromEntries(Object.entries(_workspaceSurfaces).map(([id, entry]) => [id, entry.slot])),
+          target: _workspaceTargetTab,
+          framePreserved: oldFrame.contentWindow.sessionMarker === 'still-connected',
+        })""")
+        assert result["target"] == ""
+        assert result["framePreserved"]
+        before, after = result["before"], result["after"]
+        if targeted:
+            assert result["order"] == ["third", "chat", "second"]
+            assert after["third"] == before["chat"]
+            assert after["chat"] == before["second"]
+            assert after["second"]["x"] == before["chat"]["x"]
+            assert after["second"]["y"] > before["chat"]["y"]
+            assert result["slots"] == {"chat": 1, "second": 2, "third": 0}
+        else:
+            assert after["chat"] == before["chat"]
+            assert after["second"] == before["second"]
+            assert after["third"]["x"] == before["chat"]["x"]
+            assert after["third"]["y"] > before["chat"]["y"]
+            assert result["slots"] == {"chat": 0, "second": 1, "third": 2}
+        page.evaluate("addTile('fourth')")
+        assert page.evaluate("_workspaceSurfaces.fourth.slot") == 3
+        assert page.evaluate("tileRect('third')") == after["third"]
+        assert page.evaluate("tileRect('second')") == after["second"]
+        page.evaluate("workspaceCloseSurface('second'); addTile('replacement')")
+        assert page.evaluate("_workspaceSurfaces.replacement.slot") == result["slots"]["second"]
+        assert page.evaluate("tileRect('third')") == after["third"]
+    finally:
+        context.close()
+
+
 def test_sidebar_accordion_and_workspace_layout_morph_in_real_chromium(
         chromium_browser):
     context = chromium_browser.new_context(
@@ -862,7 +932,7 @@ def test_workspace_selected_header_and_title_drag_persist_in_real_chromium(
             """
             () => {
               const values = new Map();
-              Object.defineProperty(window, 'localStorage', {
+              Object.defineProperty(window, 'sessionStorage', {
                 configurable: true,
                 value: {
                   getItem: key => values.has(key) ? values.get(key) : null,
@@ -901,10 +971,12 @@ def test_workspace_selected_header_and_title_drag_persist_in_real_chromium(
             """
             () => {
               const order = Array.from(document.getElementById('workspaceBoard').children)
+                .filter(panel => panel.dataset.tab)
+                .sort((a, b) => a.getBoundingClientRect().x - b.getBoundingClientRect().x)
                 .map(panel => panel.dataset.tab)
                 .filter(Boolean);
               const state = JSON.parse(
-                localStorage.getItem('pawflow.workspace.state.v2') || 'null');
+                sessionStorage.getItem('pawflow.workspace.state.v2') || 'null');
               return {
                 order,
                 stored: state.surfaces.map(surface => surface.surfaceId),

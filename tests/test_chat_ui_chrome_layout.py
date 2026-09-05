@@ -382,8 +382,8 @@ def test_control_docks_use_an_external_css_tooltip_without_horizontal_scroll():
     assert '.pf-css-tooltip {' in TEMPLATE_HTML
     # The dock stays scrollable when narrow, but its scrollbar is hidden and
     # end padding absorbs the 1.4x hover growth of the first/last icon.
-    assert 'overflow-x: auto; overflow-y: visible;' in TEMPLATE_HTML
-    assert 'padding: 4px 8px;' in TEMPLATE_HTML
+    assert 'overflow-x: auto; overflow-y: hidden;' in TEMPLATE_HTML
+    assert 'padding: 24px 8px 16px;' in TEMPLATE_HTML
     assert 'scrollbar-width: none;' in TEMPLATE_HTML
     assert '.action-dock-menu::-webkit-scrollbar' in TEMPLATE_HTML
     assert 'height: 0;' in TEMPLATE_HTML
@@ -400,7 +400,7 @@ def test_control_docks_use_an_external_css_tooltip_without_horizontal_scroll():
 def test_conversation_control_buttons_are_thin_and_share_dock_motion():
     css = Path("tasks/io/chat_ui/css/50_composer.css").read_text(encoding="utf-8")
 
-    assert "padding: 2px 4px 3px" in css
+    assert "padding: 3px 4px" in css
     assert ".conversation-control-button { width: 30px !important; min-width: 30px; height: 30px;" in css
     assert ".conversation-control-button {" in css
     assert ".conversation-quick-theme" not in css

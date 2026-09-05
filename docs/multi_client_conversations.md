@@ -88,6 +88,26 @@ tile owns a `ConversationSession`: selected agent, active interactions, streams,
 timers, transcript DOM, context gauges, attachments, view mode, and scroll state
 are saved and restored together when focus moves.
 
+Scroll and pointer handlers operate directly on their owning transcript, without
+switching global DOM identities. Background SSE callbacks exchange conversation
+state without reading or restoring scroll geometry; actual focus changes still
+restore the reader's position. Live-tail settling is coalesced to one pending
+animation frame per transcript, including while a browser tab is suspended, and
+rechecks user scroll intent before each settle. Releasing the last surface also
+removes its scroll listeners, pending frames, resource poll, and turn animations.
+
+New surfaces claim the first free slot, ordered left-to-right and then by row.
+Selecting a surface does not change the insertion position. The explicit target
+button inserts once at that slot and shifts its occupant and following surfaces;
+later additions return to the first free slot. Slot coordinates control layout
+without detaching existing panels, preserving iframe and desktop connections.
+
+Workspace persistence uses browser-tab session storage. Reloading the same tab
+restores its layout (including four tiles per page), open conversation tiles,
+slot positions, and focused conversation. Another native browser tab keeps its
+own workspace. Only conversation transcripts reopen: terminal, Desktop, audio,
+and other connection-dependent surfaces require an explicit new connection.
+
 Some controls are intentionally global because there is only one composer and
 one shared dock. Active Agents, the selected-agent badge, permission and usage
 badges, confirmations, and Grab may project only the focused session. A poll or

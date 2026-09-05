@@ -38,8 +38,8 @@ html[data-pf-atmosphere="on"] .dialog,
 html[data-pf-atmosphere="on"] .exec-dialog,
 html[data-pf-atmosphere="on"] .active-panel,
 html[data-pf-atmosphere="on"] .prompt-controls-panel,
-html[data-pf-atmosphere="on"] .action-menu,
-html[data-pf-atmosphere="on"] .action-dock-menu,
+html[data-pf-atmosphere="on"] .action-menu:not(.action-dock-menu),
+html[data-pf-atmosphere="on"] .action-dock,
 html[data-pf-atmosphere="on"] .ctx-menu {
   background: color-mix(in srgb, var(--pf-panel) var(--pf-atmosphere-panel-opacity), transparent) !important;
   -webkit-backdrop-filter: blur(14px) saturate(120%);

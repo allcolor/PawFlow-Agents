@@ -343,14 +343,14 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
     assert "function setMessagesScrollTop(value)" in MESSAGES_JS
     assert "function scrollMessagesTop()" in MESSAGES_JS
     assert "_autoScroll = false" in MESSAGES_JS
-    assert "Date.now() > _suppressTopLoadUntil" in MESSAGES_JS
+    assert "Date.now() > suppressUntil" in MESSAGES_JS
     assert "scrollMessagesTop();document.getElementById('input').focus()" in TEMPLATE_HTML
     assert "function installMessagesRootHandlers(m, session)" in MESSAGES_JS
-    assert "m.addEventListener('wheel', bind(markUserScrollIntent)" in MESSAGES_JS
-    assert "m.addEventListener('pointerdown', bind(" in MESSAGES_JS
+    assert "listen(m, 'wheel', markUserScrollIntent" in MESSAGES_JS
+    assert "listen(m, 'pointerdown'," in MESSAGES_JS
     assert "isScrollbarPointerEvent(e)" in MESSAGES_JS
-    assert "m.addEventListener('touchstart', bind(markUserScrollIntent)" in MESSAGES_JS
-    assert "m.addEventListener('keydown', bind(" in MESSAGES_JS
+    assert "listen(m, 'touchstart', markUserScrollIntent" in MESSAGES_JS
+    assert "listen(m, 'keydown'," in MESSAGES_JS
     assert "hasUserScrollIntent()" in MESSAGES_JS
     assert "m.scrollTop < _lastScrollTop" not in MESSAGES_JS
     assert "container.scrollTop = container.scrollHeight - prevHeight" not in CONVERSATIONS_JS
@@ -359,12 +359,11 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
 def test_action_dock_is_horizontal_and_scrollable():
     # Regression: the former + dropdown could extend beyond a short viewport.
     # The composer dock keeps the same actions in a bounded horizontal strip.
-    # overflow-y stays visible (computed `auto`) so the hover zoom can grow
-    # upward; a transform never triggers a scrollbar, so the horizontal
-    # bounding is unaffected.
+    # Transparent vertical gutters contain the hover zoom outside the compact
+    # painted dock without sacrificing horizontal scrolling.
     assert ".action-dock-menu { display: flex; position: static;" in TEMPLATE_HTML
     assert "flex-direction: row;" in TEMPLATE_HTML
-    assert "overflow-x: auto; overflow-y: visible;" in TEMPLATE_HTML
+    assert "overflow-x: auto; overflow-y: hidden;" in TEMPLATE_HTML
 
 
 def test_mobile_breakpoints_scroll_header_and_overlay_sidebar():
@@ -424,7 +423,7 @@ def test_chat_scroll_container_has_stable_flex_height_and_post_render_refresh():
     assert ".messages { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; overflow-y: auto;" in TEMPLATE_HTML
     assert "overscroll-behavior: contain" in TEMPLATE_HTML
     assert "function refreshMessagesScrollMetrics(forceBottom)" in MESSAGES_JS
-    assert "window.requestAnimationFrame(() =>" in MESSAGES_JS
+    assert "if (_messagesScrollFrames.has(m)) return" in MESSAGES_JS
     assert "window.requestAnimationFrame(settle)" in MESSAGES_JS
     assert "refreshMessagesScrollMetrics(!!force)" in MESSAGES_JS
     assert "const themeLoad = typeof loadThemeSelector === 'function' ? loadThemeSelector() : null" in CONVERSATIONS_JS

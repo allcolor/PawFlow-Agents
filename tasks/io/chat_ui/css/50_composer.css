@@ -10,12 +10,15 @@
                         align-items: end; gap: 10px; min-width: 0; }
 .prompt-controls-panel { justify-self: start; }
 .composer-action-mount { min-width: 0; justify-self: center; }
-.prompt-controls-panel { display: none; background: color-mix(in srgb, var(--pf-panel) 90%, transparent);
+.prompt-controls-panel { position: relative; display: none; background: color-mix(in srgb, var(--pf-panel) 90%, transparent);
                          border: 1px solid var(--pf-border); border-radius: 7px;
-                         padding: 2px 4px 3px; font-size: 10px; color: var(--pf-muted);
+                         padding: 3px 4px; font-size: 10px; color: var(--pf-muted);
                          flex: 0 0 auto; max-width: 100%; }
 .prompt-controls-panel.visible { display: block; }
-.prompt-controls-panel > .active-panel-title { margin-bottom: 1px; font-size: 9px; line-height: 1; }
+.prompt-controls-panel > .active-panel-title { position: absolute; top: 0; left: 4px;
+  transform: translateY(-50%); margin: 0; font-size: 9px; line-height: 1;
+  max-width: calc(100% - 8px); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; pointer-events: none; }
 .prompt-controls-row { display: flex; align-items: center; gap: 3px; }
 .conversation-control-button { width: 30px !important; min-width: 30px; height: 30px; padding: 0 !important;
                                border: 1px solid var(--pf-accent) !important; border-radius: 5px;

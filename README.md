@@ -281,6 +281,10 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 | **Codex MCP hooks** (`codex_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Codex interactive pool; native rollout usage/context, while Codex built-in tools are not observable |
 | **Antigravity MCP hooks** (`agy_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Antigravity pool; the documented `Stop` hook ends the turn and the final text is read from the transcript it names, while Agy built-in tools are not observable |
 | **ACP agent** (`acp`) | Outbound Agent Client Protocol v1 process | Launches an explicitly configured agent command without a shell, with negotiated sessions and opt-in PawFlow MCP/client filesystem capabilities |
+| **[Antigravity / Agy ACP](docs/ANTIGRAVITY_ACP.md)** (`antigravity-acp`) | Official Antigravity ACP server in a managed container | Google's `agy_acp_server`, session reuse, PawFlow MCP tools, and browser login or API-key authentication |
+| **[Cursor ACP](docs/NATIVE_ACP_PROVIDERS.md)** (`cursor-acp`) | Native Cursor CLI through ACP in a managed container | `cursor-agent acp`, persistent CLI authentication, scoped PawFlow MCP tools, permissions, and cancellation |
+| **[Grok Build ACP](docs/NATIVE_ACP_PROVIDERS.md)** (`grok-build-acp`) | Native Grok Build CLI through ACP in a managed container | `grok agent stdio`, native authentication, questions, plan confirmation, and scoped PawFlow MCP tools |
+| **[OpenCode](docs/llm_providers.md)** (`opencode`) | Managed OpenCode server, SDK v2 HTTP/SSE protocol | Stateful sessions, native provider authentication, and scoped PawFlow MCP tools |
 | **Anthropic API** | Direct HTTP | Streaming, tool use, vision, extended thinking |
 | **OpenAI API** | Direct HTTP | Streaming, tool use, vision, JSON mode |
 | **OpenAI Responses** (`openai-responses`) | Direct HTTP Responses API | Typed events, reasoning-item continuity, function calling, and server-side built-in tools |

@@ -1020,14 +1020,6 @@ if [[ -z "$RELAY_DEV_IMAGE" ]]; then
   RELAY_DEV_IMAGE="$RELAY_DEV_IMAGE_REPO:$_relay_tag"
 fi
 
-if [[ "$RUN_DOCTOR" == "1" ]]; then
-  if [[ "$INSTALL_SOURCE" == "source" ]]; then
-    bash "$REPO_DIR/scripts/doctor-pawflow.sh" --port "$PORT" --source
-  else
-    bash "$REPO_DIR/scripts/doctor-pawflow.sh" --port "$PORT"
-  fi
-fi
-
 echo "PawFlow install artifacts: $REPO_DIR ($INSTALL_SOURCE)"
 echo "Effective runtime image mode: $RUNTIME_IMAGE_MODE"
 echo "Relay image version: $_relay_tag"
@@ -1045,6 +1037,35 @@ ensure_runtime_image "full server relay" "$RELAY_DEV_IMAGE" build_full_relay_ima
 # probes the host for them and confines pool/relay containers when present.
 install_apparmor_profiles
 
+STOPPED_SERVER=""
+restore_server_after_install_failure() {
+  local rc="$?"
+  if [[ "$rc" -ne 0 && -n "$STOPPED_SERVER" ]]; then
+    echo "Installation failed; restarting existing server '$STOPPED_SERVER'." >&2
+    if ! docker start "$STOPPED_SERVER" >/dev/null; then
+      echo "ERROR could not restart '$STOPPED_SERVER'; check docker logs." >&2
+    fi
+  fi
+  exit "$rc"
+}
+
+if [[ "$RUN_DOCTOR" == "1" ]]; then
+  # Prepare every image first, then release the existing server's listener
+  # before the doctor probes it. The launcher keeps its replacement rollback.
+  if [[ "$START_SERVER" == "1" && "$START_TARGET" == "container" ]] \
+      && [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || true)" == "true" ]]; then
+    echo "Stopping existing server '$CONTAINER' before checking port $PORT."
+    STOPPED_SERVER="$CONTAINER"
+    trap restore_server_after_install_failure EXIT
+    docker stop "$CONTAINER" >/dev/null
+  fi
+  if [[ "$INSTALL_SOURCE" == "source" ]]; then
+    bash "$REPO_DIR/scripts/doctor-pawflow.sh" --port "$PORT" --source
+  else
+    bash "$REPO_DIR/scripts/doctor-pawflow.sh" --port "$PORT"
+  fi
+fi
+
 if [[ "$START_SERVER" != "1" ]]; then
   cleanup_old_pawflow_images
   cleanup_retagged_pawflow_images
@@ -1058,6 +1079,7 @@ if [[ "$START_TARGET" == "native" ]]; then
   run_native_server
 elif [[ "$START_TARGET" == "container" ]]; then
   PAWFLOW_IMAGE="$IMAGE" PAWFLOW_CONTAINER="$CONTAINER" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_NETWORK_MODE="$NETWORK_MODE" PAWFLOW_HOME="$PAWFLOW_HOME" PAWFLOW_SERVER_RELAY_IMAGE="$RELAY_DEV_IMAGE" PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE" bash "$REPO_DIR/scripts/run-pawflow-docker.sh"
+  STOPPED_SERVER=""
   cleanup_old_pawflow_images
   cleanup_retagged_pawflow_images
 else

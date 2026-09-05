@@ -88,6 +88,13 @@ repository/config defaults from the image into the persistent bind mounts before
 the server starts, so an empty `~/pawflow/data` directory still contains the
 installer flow templates after startup.
 
+When updating through the shell installer, including `--pull-images`, images are
+prepared before the existing named server is stopped. The port diagnostic then
+runs with that listener released, followed by the replacement startup. If the
+diagnostic or startup fails, the existing server is restarted; the launcher's
+container rollback remains in place. Only the configured `PAWFLOW_CONTAINER`
+is stopped, persistent data is retained, and `--no-start` never stops it.
+
 To keep the PawFlow server native instead of running it inside the server
 container, use:
 

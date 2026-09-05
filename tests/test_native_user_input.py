@@ -153,6 +153,33 @@ def test_claude_hook_rejects_malformed_multiselect_before_publishing(monkeypatch
     collect_mock.assert_not_called()
 
 
+@pytest.mark.parametrize("provider", ["claude-code", "claude-code-interactive"])
+@pytest.mark.parametrize("tool,mode,after,behavior,prompts", [
+    ("Write", "read_only", "read_only", "deny", 0),
+    ("Bash", "read_only", "read_only", "deny", 0),
+    ("UnknownTool", "read_only", "read_only", "deny", 0),
+    ("Read", "read_only", "read_only", "allow", 1),
+    ("Write", "default", "default", "allow", 1),
+    ("Write", "default", "read_only", "deny", 1),
+])
+def test_native_permission_consent_respects_read_only(
+        monkeypatch, provider, tool, mode, after, behavior, prompts):
+    current = {"mode": mode}
+    monkeypatch.setattr("core.tool_approval.ToolApprovalGate.get_mode",
+                        lambda cid: current["mode"])
+    def consent(*args, **kwargs):
+        current["mode"] = after
+        return {"permission": "allow"}
+    collect_mock = Mock(side_effect=consent)
+    monkeypatch.setattr("core.native_hook_input.collect_native_questions", collect_mock)
+    result = answer_claude_hook(
+        {"hook_event_name": "PermissionRequest", "tool_name": tool, "tool_input": {}},
+        provider=provider, user_id="u", conversation_id="c",
+        agent_name="a", cancel_event=threading.Event())["hookSpecificOutput"]
+    assert result["decision"]["behavior"] == behavior
+    assert collect_mock.call_count == prompts
+
+
 def test_cancelled_workers_still_count_until_they_exit():
     manager = NativeInputRequests()
     release = threading.Event()

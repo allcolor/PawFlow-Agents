@@ -95,6 +95,17 @@ Login executes with numeric `PAWFLOW_RUN_UID/GID` (default `1000:1000`).
 
 ## Validation and limits
 
+Claude native permission hooks honor the conversation's `read_only` allowlist
+before presenting a prompt and again before returning consent. A native allow
+answer cannot override that mode, including when the mode changes while the
+prompt is pending. Native questions remain available.
+
+Cursor bundles and Grok binaries currently use versioned HTTPS downloads without
+an independently verified checksum or signature. Version pinning does not verify
+artifact integrity. Adding trusted vendor digest/signature verification remains
+separate supply-chain hardening work. Login VNC retains `x11vnc -nopw`, as accepted
+by the deployment operator.
+
 Focused tests cover release parsing/failure, build parity, version stamping,
 Cursor ordering, isolated homes, credential preservation and permissions,
 login commands, session ownership, action guards and runtime-image version

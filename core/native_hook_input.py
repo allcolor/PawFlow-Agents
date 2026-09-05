@@ -7,6 +7,12 @@ import threading
 import uuid
 
 from core.native_user_input import collect_native_questions
+from core.tool_approval import ToolApprovalGate
+
+
+def _read_only_denies(conversation_id: str, tool: str, inputs: dict) -> bool:
+    return (ToolApprovalGate.get_mode(conversation_id) == "read_only"
+            and not ToolApprovalGate.is_read_only_allowed(tool.lower(), inputs))
 
 
 def answer_claude_hook(raw: dict, *, provider: str, user_id: str,
@@ -63,12 +69,19 @@ def answer_claude_hook(raw: dict, *, provider: str, user_id: str,
             output.pop("permissionDecisionReason")
         return {"hookSpecificOutput": output}
     if event == "PermissionRequest":
+        blocked = {"hookSpecificOutput": {"hookEventName": event, "decision": {
+            "behavior": "deny", "message": "Tool is blocked by PawFlow read_only mode."}}}
+        if _read_only_denies(conversation_id, tool, inputs):
+            return blocked
         answers = collect_native_questions(
             [{"id": "permission", "question": f"Allow {tool}?\n{json.dumps(inputs, ensure_ascii=False)[:12000]}",
               "options": [{"value": "allow", "label": "Allow once"},
                           {"value": "deny", "label": "Deny"}]}],
             provider=provider, user_id=user_id, conversation_id=conversation_id,
             agent_name=agent_name, cancel_event=cancel_event, request_id=request_id)
+        # The conversation policy can change while a native prompt is pending.
+        if _read_only_denies(conversation_id, tool, inputs):
+            return blocked
         decision = {"behavior": "allow" if answers and answers["permission"] == "allow" else "deny"}
         if decision["behavior"] == "deny":
             decision["message"] = "Permission was denied or cancelled in PawFlow."

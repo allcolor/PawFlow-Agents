@@ -194,7 +194,10 @@ def test_filestore_list_hides_transient_stt_and_tts(tmp_path):
     assert [row["file_id"] for row in rows] == [visible_id]
 
 
-def test_fs_read_file_resolves_filesystem_service(monkeypatch):
+def test_fs_read_file_resolves_filesystem_service(tmp_path, monkeypatch):
+    store = ConversationStore(store_dir=str(tmp_path / "conversations"))
+    store.save("conv1", [], user_id="alice")
+
     class DummyFs:
         def stat(self, path):
             assert path == "image.png"
@@ -208,21 +211,25 @@ def test_fs_read_file_resolves_filesystem_service(monkeypatch):
 
     monkeypatch.setattr(
         fs_base, "find_fs_service",
-        lambda user_id, service: DummyFs() if (user_id, service) == ("alice", "relay") else None,
+        lambda user_id, service, conv_id: DummyFs()
+        if (user_id, service, conv_id) == ("alice", "relay", "conv1") else None,
     )
 
     ff = FlowFile(content=b"")
 
     result = _handle_files_fs(
         None, "fs_read_file",
-        {"service": "relay", "path": "image.png"},
-        None, "alice", ff)
+        {"conversation_id": "conv1", "service": "relay", "path": "image.png"},
+        store, "alice", ff)
 
     assert result == [ff]
     assert _payload(ff) == {"content": "png-bytes", "encoding": "utf-8", "size": 9}
 
 
-def test_fs_list_services_returns_only_conversation_linked_relays(monkeypatch):
+def test_fs_list_services_returns_only_conversation_linked_relays(tmp_path, monkeypatch):
+    store = ConversationStore(store_dir=str(tmp_path / "conversations"))
+    store.save("conv1", [], user_id="alice")
+
     class ServiceDef:
         def __init__(self, service_id, service_type="relay", scope="user"):
             self.service_id = service_id
@@ -251,7 +258,7 @@ def test_fs_list_services_returns_only_conversation_linked_relays(monkeypatch):
     result = _handle_files_fs(
         None, "fs_list_services",
         {"conversation_id": "conv1"},
-        None, "alice", ff)
+        store, "alice", ff)
 
     assert result == [ff]
     assert _payload(ff) == {"services": [{"id": "linked-relay", "type": "relay", "scope": "user"}]}

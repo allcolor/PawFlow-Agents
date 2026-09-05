@@ -45,7 +45,8 @@ function env() {
     querySelector() { return { textContent: '' }; },
   };
   const ctx = {
-    _fe: { preview: null, svc: 'relay one', path: 'media folder' },
+    _fe: { preview: null, svc: 'relay one', path: 'media folder', surface: { dataset: { conversationId: 'law' } } },
+    conversationId: 'other',
     _fePath: name => 'media folder/' + name,
     _feEsc: value => String(value),
     _feFmtSz: value => String(value),
@@ -177,6 +178,7 @@ for (const filename of ['clip.mp4', 'document.pdf', 'notes.txt', 'archive.bin'])
     assert(e.calls.length === 1, 'filesystem was not read exactly once');
     assert(e.calls[0].action === 'fs_read_file', 'wrong action: ' + e.calls[0].action);
     assert(e.calls[0].payload.service === 'relay one', 'wrong relay service');
+    assert(e.calls[0].payload.conversation_id === 'law', 'preview lost its tile conversation');
     assert(e.calls[0].payload.path === 'media folder/' + filename, 'wrong file path');
     assert(e.opened.length === 1, 'viewer was not opened');
     assert(e.opened[0].url === 'blob:relay-preview', 'wrong viewer URL');
@@ -232,6 +234,62 @@ test('file explorer uses one closable workspace tile and can reopen after close'
   e.ctx.openExplorer();
   assert(e.registered.length === 2, 'file explorer could not reopen after close');
   assert(e.loads === 2, 'reopened file explorer did not reload its services');
+});
+
+test('explorer service selection and navigation send the same conversation scope', () => {
+  const rxbus = fs.readFileSync(path.join(
+    __dirname, '..', '..', 'tasks', 'io', 'chat_ui', 'rxbus.js'), 'utf8');
+  const actionSource = rxbus.slice(
+    rxbus.indexOf('function action$('), rxbus.indexOf('\n/**', rxbus.indexOf('function action$(')));
+  const navigationSource = source.slice(
+    source.indexOf('function _feLoadSvcs()'), source.indexOf('\nfunction _feRender()'));
+  const requests = [];
+  const elements = { feSvcSel: {}, feTbody: {} };
+  let response;
+  let renders = 0;
+  const ctx = {
+    conversationId: 'other',
+    API: '/api/agent',
+    _fe: { svc: '', svcs: [], entries: [], sel: new Set(), surface: { dataset: { conversationId: 'law' } } },
+    document: { getElementById(id) { return elements[id]; } },
+    t: key => key,
+    _feRender() { renders++; },
+    _feBc() {},
+    getAuthHeaders: () => ({}),
+    _ensureUIActionSSE() {},
+    _uiActionConversationId: () => 'ui-tab',
+    _trackPendingAction() {},
+    _untrackPendingAction() {},
+    // Execute the real request builder; only the observable transport is stubbed.
+    defer(factory) { return { subscribe(callback) { factory().subscribe(callback); } }; },
+    filter() {}, first() {}, map() {}, catchError() {}, finalize() {},
+    _commandResult$: {
+      pipe() {
+        const result = response;
+        return { subscribe(callback) { callback(result); } };
+      },
+    },
+    fetch(url, options) {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      response = body.action === 'fs_list_services'
+        ? { services: [{ id: 'permisWS', type: 'relay', scope: 'conv' }] }
+        : { entries: [{ name: 'plans', kind: 'directory' }] };
+      return { then() { return { catch() {} }; } };
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(actionSource + '\n' + navigationSource, ctx);
+  ctx._feLoadSvcs();
+  assert(requests.length === 2, 'selecting a service did not list its root');
+  assert(requests[0].action === 'fs_list_services', 'service picker request missing');
+  assert(requests[1].action === 'fs_list_dir', 'directory request missing');
+  assert(requests.every(request => request.conversation_id === 'law'),
+    'filesystem requests lost the selected conversation');
+  assert(requests[1].service === 'permisWS', 'directory request lost the selected relay');
+  assert(requests[1].path === '.', 'directory request lost the root path');
+  assert(ctx._fe.entries[0].name === 'plans' && renders === 1,
+    'directory result did not populate the explorer');
 });
 
 test('relay blob preview bypasses the CSP-blocked fetch path', () => {

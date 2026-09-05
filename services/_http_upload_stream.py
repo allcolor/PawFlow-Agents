@@ -126,6 +126,17 @@ def handle_upload_stream(handler, content_length, session, query):
         elif service_name or relay_path:
             if not service_name or not relay_path:
                 raise ValueError("service and path are both required")
+            if not conversation_id:
+                handler.close_connection = True
+                raise ValueError("conversation_id is required")
+            from core.conversation_access import ConversationAccessError, require_write
+            try:
+                require_write(conversation_id, user_id)
+            except ConversationAccessError:
+                # The unread request body must not become another HTTP request.
+                handler.close_connection = True
+                _send_json(handler, 404, {"ok": False, "error": "Conversation not found"})
+                return
             written = _stream_to_relay(
                 user_id, conversation_id, service_name, relay_path,
                 chunks, content_length)

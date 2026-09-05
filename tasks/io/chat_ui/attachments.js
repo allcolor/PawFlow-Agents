@@ -111,8 +111,8 @@ async function uploadFileToStore(file, onProgress) {
   return _uploadRawFile(file, params, onProgress);
 }
 
-function uploadFileToRelay(file, service, path, onProgress) {
-  return _uploadRawFile(file, { service, path }, onProgress);
+function uploadFileToRelay(file, service, path, onProgress, conversationId) {
+  return _uploadRawFile(file, { service, path, conversation_id: conversationId }, onProgress);
 }
 
 function handleFiles(fileList) {

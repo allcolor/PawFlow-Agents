@@ -75,9 +75,13 @@ def test_file_explorer_is_valid_javascript():
 
 @pytest.mark.skipif(shutil.which("node") is None,
                     reason="node is not available to run the JS suite")
-def test_file_explorer_preview_behaviour():
+@pytest.mark.parametrize("spec", [
+    SPEC, ROOT / "tests" / "js" / "file_explorer_upload_scope_spec.js",
+    ROOT / "tests" / "js" / "file_explorer_mutation_scope_spec.js",
+])
+def test_file_explorer_preview_behaviour(spec):
     proc = subprocess.run(
-        ["node", str(SPEC)],
+        ["node", str(spec)],
         capture_output=True, text=True, cwd=str(ROOT), timeout=60)
     assert proc.returncode == 0, (
         "JS suite failed:\n" + proc.stdout + proc.stderr)

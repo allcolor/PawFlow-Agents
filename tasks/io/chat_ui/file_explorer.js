@@ -13,6 +13,7 @@ function openExplorer(){
   surface.className='tab-content fe-surface';
   surface.id='tabContent_'+_FE_TAB_ID;
   surface.dataset.tab=_FE_TAB_ID;
+  surface.dataset.conversationId=typeof conversationId==='undefined'?'':conversationId;
   surface.innerHTML=`<div class="fe-panel"><div class="fe-toolbar"><select id="feSvcSel" onchange="_feSelSvc(this.value)"></select><div class="fe-bc" id="feBc"></div><input class="fe-search" placeholder="${t('searchPlaceholder')}" onkeydown="if(event.key==='Enter')_feSearch(this.value)"><button class="btn" onclick="_feRefresh()" title="${t('refresh')}">&#x21bb;</button><button class="btn" onclick="_feNewFile()" title="${t('newFile')}">&#128196;</button><button class="btn" onclick="_feNewDir()" title="${t('newFolder')}">&#128193;+</button><button class="btn" onclick="_feUpload()">&#x2B06; ${t('upload')}</button></div><div class="fe-content"><table class="fe-table"><thead><tr><th></th><th onclick="_feSortBy('name')">${t('fileName')}</th><th onclick="_feSortBy('size')">${t('fileSize')}</th><th onclick="_feSortBy('modified')">${t('modified')}</th></tr></thead><tbody id="feTbody"></tbody></table></div><div class="fe-status"><span id="feCount"></span><span id="feClip" class="fe-clip"></span></div></div>`;
   _fe.surface=surface;
 
@@ -46,6 +47,7 @@ function closeExplorer(){
   const surface=_fe.surface;
   const wasSelected=typeof workspaceSelectedTab==='function'&&workspaceSelectedTab()===_FE_TAB_ID;
   _fe.surface=null;
+  _fe.clip=null;
   if(_fe.ctx){_fe.ctx.remove();_fe.ctx=null;}
   if(_fe.preview){_fe.preview.remove();_fe.preview=null;}
   document.removeEventListener('keydown',_feKeys);
@@ -60,7 +62,7 @@ function closeExplorer(){
 }
 
 function _feLoadSvcs(){
-  action$('fs_list_services',{conversation_id:conversationId}).subscribe(d => {
+  action$('fs_list_services',{conversation_id:_fe.surface.dataset.conversationId}).subscribe(d => {
     _fe.svcs=d.services||[];
     const sel=document.getElementById('feSvcSel');if(!sel)return;
     sel.innerHTML=_fe.svcs.map(s=>`<option value="${s.id}">${s.id} (${s.type})</option>`).join('');
@@ -75,7 +77,7 @@ function _feNav(path){
   _fe.path=path;_fe.sel.clear();
   const tb=document.getElementById('feTbody');
   tb.innerHTML='<tr><td colspan=4 class="fe-loading">' + t('loading') + '</td></tr>';
-  action$('fs_list_dir',{service:_fe.svc,path}).subscribe(d => {
+  action$('fs_list_dir',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path}).subscribe(d => {
     if(d.error){tb.innerHTML=`<tr><td colspan=4 class="fe-empty">Error: ${d.error}</td></tr>`;_feBc();return;}
     _fe.entries=d.entries||[];_feRender();_feBc();
   });
@@ -215,24 +217,30 @@ function _feCut(name){_fe.sel.clear();_fe.sel.add(name);_feCutSelected();}
 
 function _fePaste(){
   if(!_fe.clip||!_fe.clip.items.length)return;
+  const surface=_fe.surface,convId=surface.dataset.conversationId;
+  const clip=_fe.clip,service=_fe.svc,basePath=_fe.path;
   let idx = 0;
   const pasteNext = () => {
-    if (idx >= _fe.clip.items.length) {
-      if(_fe.clip.action==='cut')_fe.clip=null;
-      _feNav(_fe.path);
+    if(_fe.surface!==surface)return;
+    if (idx >= clip.items.length) {
+      if(clip.action==='cut'&&_fe.clip===clip)_fe.clip=null;
+      if(_fe.svc===service&&_fe.path===basePath)_feNav(basePath);
       return;
     }
-    const item = _fe.clip.items[idx];
+    const item = clip.items[idx];
     let destName=item.name;
-    if(_fe.clip.service===_fe.svc&&_fe.clip.basePath===_fe.path&&_fe.clip.action==='copy'){
+    if(clip.service===service&&clip.basePath===basePath&&clip.action==='copy'){
       const dot=destName.lastIndexOf('.');
       destName=dot>0?destName.slice(0,dot)+' (copy)'+destName.slice(dot):destName+' (copy)';
     }
-    const dest=_fePath(destName);
-    action$('fs_copy',{source_service:_fe.clip.service,source_path:item.path,dest_service:_fe.svc,dest_path:dest}).subscribe(d => {
+    const dest=basePath==='.'?destName:basePath+'/'+destName;
+    action$('fs_copy',{conversation_id:convId,source_service:clip.service,source_path:item.path,dest_service:service,dest_path:dest}).subscribe(d => {
+      if(_fe.surface!==surface)return;
       if(d.error){addMsg('error', t('pasteFailed', { error: d.error }));return;}
-      if(_fe.clip.action==='cut'){
-        action$('fs_delete',{service:_fe.clip.service,path:item.path}).subscribe(() => {
+      if(clip.action==='cut'){
+        action$('fs_delete',{conversation_id:convId,service:clip.service,path:item.path}).subscribe(d => {
+          if(_fe.surface!==surface)return;
+          if(d.error){addMsg('error', t('pasteFailed', { error: d.error }));return;}
           idx++;
           pasteNext();
         });
@@ -256,7 +264,7 @@ function _feDel(name){
   const msg=_feIsDir(name)?t('deleteDirConfirm',{name:name})
     :t('deleteFileConfirm',{name:name});
   if(!confirm(msg))return;
-  action$('fs_delete',{service:_fe.svc,path:_fePath(name)}).subscribe(() => {
+  action$('fs_delete',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:_fePath(name)}).subscribe(() => {
     _feNav(_fe.path);
   });
 }
@@ -268,10 +276,18 @@ function _feDelSelected(){
   const msg=names.some(_feIsDir)?t('deleteItemsDirConfirm',{label:label})
     :t('deleteItemsConfirm',{label:label});
   if(!confirm(msg))return;
+  const surface=_fe.surface,convId=surface.dataset.conversationId;
+  const service=_fe.svc,basePath=_fe.path,paths=names.map(_fePath);
   let idx = 0;
   const delNext = () => {
-    if (idx >= names.length) { _feNav(_fe.path); return; }
-    action$('fs_delete',{service:_fe.svc,path:_fePath(names[idx])}).subscribe(() => {
+    if(_fe.surface!==surface)return;
+    if (idx >= paths.length) {
+      if(_fe.svc===service&&_fe.path===basePath)_feNav(basePath);
+      return;
+    }
+    action$('fs_delete',{conversation_id:convId,service,path:paths[idx]}).subscribe(d => {
+      if(_fe.surface!==surface)return;
+      if(d.error){addMsg('error', t('errorMessage', { error: d.error }));return;}
       idx++;
       delNext();
     });
@@ -288,7 +304,7 @@ function _feRenameStart(name){
     const nv=inp.value.trim();
     if(nv&&nv!==name){
       const oldP=_fePath(name),newP=_fePath(nv);
-      action$('fs_rename',{service:_fe.svc,old_path:oldP,new_path:newP}).subscribe(() => {
+      action$('fs_rename',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,old_path:oldP,new_path:newP}).subscribe(() => {
         _feNav(_fe.path);
       });
     } else {
@@ -300,20 +316,20 @@ function _feRenameStart(name){
 
 function _feNewFile(){
   const name=prompt(t('newFilePrompt'));if(!name)return;
-  action$('fs_write_file',{service:_fe.svc,path:_fePath(name),content:'',encoding:'utf-8'}).subscribe(() => {
+  action$('fs_write_file',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:_fePath(name),content:'',encoding:'utf-8'}).subscribe(() => {
     _feNav(_fe.path);
   });
 }
 
 function _feNewDir(){
   const name=prompt(t('newFolderPrompt'));if(!name)return;
-  action$('fs_mkdir',{service:_fe.svc,path:_fePath(name)}).subscribe(() => {
+  action$('fs_mkdir',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:_fePath(name)}).subscribe(() => {
     _feNav(_fe.path);
   });
 }
 
 function _feDl(name){
-  action$('fs_read_file',{service:_fe.svc,path:_fePath(name)}).subscribe(d => {
+  action$('fs_read_file',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:_fePath(name)}).subscribe(d => {
     if(d.error){alert(t('errorMessage', { error: d.error }));return;}
     let blob;
     if(d.encoding==='base64'){
@@ -332,16 +348,22 @@ function _feUpload(){
 
 async function _feUploadFiles(files){
   const count=files.length;
+  const surface=_fe.surface,convId=surface.dataset.conversationId;
+  const service=_fe.svc,basePath=_fe.path;
   for(let idx=0;idx<count;idx++){
     const f=files[idx];
     _fe.upload={active:true,error:false,text:t('uploadingFile',{file:f.name})+' 0%'};
     _feStatus();
     try{
-      await uploadFileToRelay(f,_fe.svc,_fePath(f.name),percent=>{
+      const path=basePath==='.'?f.name:basePath+'/'+f.name;
+      await uploadFileToRelay(f,service,path,percent=>{
+        if(_fe.surface!==surface)return;
         _fe.upload.text=t('uploadingFile',{file:f.name})+' '+percent+'% ('+(idx+1)+'/'+count+')';
         _feStatus();
-      });
+      },convId);
+      if(_fe.surface!==surface)return;
     }catch(error){
+      if(_fe.surface!==surface)return;
       _fe.upload={active:false,error:true,text:t('uploadFailedFor',{file:f.name,error:error.message})};
       _feStatus();
       addMsg('error',_fe.upload.text);
@@ -354,7 +376,7 @@ async function _feUploadFiles(files){
 }
 
 function _feCopyToStore(name){
-  action$('fs_copy_to_store',{service:_fe.svc,path:_fePath(name)}).subscribe(d => {
+  action$('fs_copy_to_store',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:_fePath(name)}).subscribe(d => {
     if(d.error){alert(t('errorMessage', { error: d.error }));return;}
     alert(t('storedAs', { filename: d.filename, url: d.url }));
   });
@@ -364,7 +386,7 @@ function _feZipDir(name){
   const dirPath=_fePath(name);
   const btn=event&&event.target;
   if(btn)btn.textContent=t('zipping');
-  action$('fs_zip_dir',{service:_fe.svc,path:dirPath}).subscribe(d => {
+  action$('fs_zip_dir',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:dirPath}).subscribe(d => {
     if(btn)btn.textContent='\u{1F4E6} ' + t('downloadZip');
     if(d.error){alert(t('zipError', { error: d.error }));return;}
     const a=document.createElement('a');
@@ -377,7 +399,7 @@ function _feZipDir(name){
 }
 
 function _fePreview(name){
-  action$('fs_read_file',{service:_fe.svc,path:_fePath(name)}).subscribe(d => {
+  action$('fs_read_file',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:_fePath(name)}).subscribe(d => {
     if(d.error){alert(t('errorMessage', { error: d.error }));return;}
     let blob;
     if(d.encoding==='base64'){
@@ -392,7 +414,7 @@ function _feSearch(q){
   if(!q){_feNav(_fe.path);return;}
   const tb=document.getElementById('feTbody');
   tb.innerHTML='<tr><td colspan=4 class="fe-loading">' + t('searching') + '</td></tr>';
-  action$('fs_search',{service:_fe.svc,path:_fe.path,pattern:'*'+q+'*'}).subscribe(d => {
+  action$('fs_search',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:_fe.path,pattern:'*'+q+'*'}).subscribe(d => {
     if(d.error){tb.innerHTML=`<tr><td colspan=4 class="fe-empty">Error: ${d.error}</td></tr>`;return;}
     const results=(d.results||[]).slice(0,100);
     if(results.length===0){tb.innerHTML='<tr><td colspan=4 class="fe-empty">' + t('noMatches') + '</td></tr>';return;}

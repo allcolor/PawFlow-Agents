@@ -22,9 +22,37 @@ from tasks.ai.actions._files_fs_graph import (
 
 logger = logging.getLogger(__name__)
 
+_FS_ACTION_ROLES = {
+    "fs_list_services": "read",
+    # Accessing live relay files drives the conversation, like call_tool("read").
+    "fs_list_dir": "write",
+    "fs_read_file": "write",
+    "fs_search": "write",
+    "fs_write_file": "write",
+    "fs_delete": "write",
+    "fs_mkdir": "write",
+    "fs_rename": "write",
+    "fs_copy": "write",
+    "fs_copy_to_store": "write",
+    "fs_exec": "write",
+    "fs_zip_dir": "write",
+}
+
 
 def _handle_files_fs(self, action, body, store, user_id, flowfile):
     """Handle files fs actions. Returns [flowfile] or None."""
+
+    if action in _FS_ACTION_ROLES:
+        from tasks.ai.actions._conv_base import _gate_conversation_action
+        conv_id = str(body.get("conversation_id", "") or "").strip()
+        if not conv_id and action != "fs_list_services":
+            flowfile.set_content(json.dumps({"error": "conversation_id is required"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        denied = _gate_conversation_action(
+            _FS_ACTION_ROLES, action, body, store, user_id, flowfile)
+        if denied is not None:
+            return denied
 
 
     if action == "list_conv_files":
@@ -580,7 +608,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
     if action == "fs_list_dir":
         from core.handlers._fs_base import find_fs_service as _find_svc
-        _fs_svc = _find_svc(user_id,body.get("service", ""))
+        _fs_svc = _find_svc(user_id, body.get("service", ""), conv_id)
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -595,7 +623,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
     if action == "fs_read_file":
         import base64 as _b64r
-        _fs_svc = _find_svc(user_id, body.get("service", ""))
+        _fs_svc = _find_svc(user_id, body.get("service", ""), conv_id)
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -620,7 +648,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
     if action == "fs_write_file":
         import base64 as _b64w
-        _fs_svc = _find_svc(user_id, body.get("service", ""))
+        _fs_svc = _find_svc(user_id, body.get("service", ""), conv_id)
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -640,7 +668,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
     if action == "fs_delete":
         from core.handlers._fs_base import find_fs_service as _find_svc
-        _fs_svc = _find_svc(user_id,body.get("service", ""))
+        _fs_svc = _find_svc(user_id, body.get("service", ""), conv_id)
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -654,7 +682,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
     if action == "fs_mkdir":
         from core.handlers._fs_base import find_fs_service as _find_svc
-        _fs_svc = _find_svc(user_id,body.get("service", ""))
+        _fs_svc = _find_svc(user_id, body.get("service", ""), conv_id)
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -668,7 +696,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
     if action == "fs_rename":
         from core.handlers._fs_base import find_fs_service as _find_svc
-        _fs_svc = _find_svc(user_id,body.get("service", ""))
+        _fs_svc = _find_svc(user_id, body.get("service", ""), conv_id)
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -689,7 +717,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
     if action == "fs_search":
         from core.handlers._fs_base import find_fs_service as _find_svc
-        _fs_svc = _find_svc(user_id,body.get("service", ""))
+        _fs_svc = _find_svc(user_id, body.get("service", ""), conv_id)
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -703,8 +731,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
     if action == "fs_copy":
         from core.handlers._fs_base import find_fs_service as _find_svc
-        src_svc = _find_svc(user_id,body.get("source_service", ""))
-        dst_svc = _find_svc(user_id,body.get("dest_service", ""))
+        src_svc = _find_svc(user_id, body.get("source_service", ""), conv_id)
+        dst_svc = _find_svc(user_id, body.get("dest_service", ""), conv_id)
         if not src_svc or not dst_svc:
             flowfile.set_content(json.dumps({"error": "Source or dest service not found"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -743,7 +771,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "conversation_id is required"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        _fs_svc = _find_svc(user_id, body.get("service", ""))
+        _fs_svc = _find_svc(user_id, body.get("service", ""), conv_id)
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -769,7 +797,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
     if action == "fs_exec":
         from core.handlers._fs_base import find_fs_service as _find_svc
-        _fs_svc = _find_svc(user_id,body.get("service", ""))
+        _fs_svc = _find_svc(user_id, body.get("service", ""), conv_id)
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -789,7 +817,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "conversation_id is required"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        _fs_svc = _find_svc(user_id, body.get("service", ""))
+        _fs_svc = _find_svc(user_id, body.get("service", ""), conv_id)
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
             flowfile.set_attribute("http.response.status", "400")

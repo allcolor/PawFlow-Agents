@@ -194,6 +194,11 @@ the host address already advertised by `PAWFLOW_HOST_HELPER`; containerized
 desktops continue to use the worker's loopback interface.
 The proxy checks session auth before either transport is opened.
 
+Desktop, service-login, and installer viewers pass an origin-rooted noVNC
+`path` setting (`/vnc/{session_id}/{token}/websockify`). noVNC resolves that
+setting against the viewer page URL; omitting the leading slash repeats the
+session directory and sends the WebSocket handshake to an invalid route.
+
 The proxied noVNC page also injects a small PawFlow bridge for native desktop ergonomics. Browser clipboard reads and writes are connected to noVNC clipboard events so ordinary OS copy/paste shortcuts work in the remote desktop without a separate PawFlow clipboard panel. Docker virtual desktops start `autocutsel` when available to keep X11 `CLIPBOARD` and `PRIMARY` selections synchronized with desktop applications. The same bridge handles repeated keydown events for repeatable keys such as Backspace so holding the key behaves like a local desktop session. Chromium's benign ResizeObserver loop notifications are intercepted before noVNC's fatal error handler, preventing a permanent red status overlay while the live desktop continues normally.
 
 Related implementation:

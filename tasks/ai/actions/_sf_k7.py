@@ -190,7 +190,7 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         flowfile.set_content(json.dumps({
                             "ok": True, "already_running": True, "local_screen": True,
                             "relay_id": relay_id,
-                            "url": f"/vnc/{_sid}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/{_vtok}/websockify",
+                            "url": f"/vnc/{_sid}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=/vnc/{_sid}/{_vtok}/websockify",
                             "audio_session": _sid if _audio_token else "",
                             "audio_token": _audio_token,
                         }).encode())
@@ -248,7 +248,7 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         flowfile.set_content(json.dumps({
                             "ok": True, "already_running": True,
                             "relay_id": relay_id,
-                            "url": f"/vnc/{_sid}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/{_vtok}/websockify",
+                            "url": f"/vnc/{_sid}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=/vnc/{_sid}/{_vtok}/websockify",
                             "audio_session": _sid if _audio_token else "",
                             "audio_token": _audio_token,
                         }).encode())
@@ -349,7 +349,7 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
 
             flowfile.set_content(json.dumps({
                 "ok": True, "relay_id": relay_id, "local_screen": local_screen,
-                "url": f"/vnc/{session_id}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=vnc/{session_id}/{_vtok}/websockify",
+                "url": f"/vnc/{session_id}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=/vnc/{session_id}/{_vtok}/websockify",
                 "audio_session": session_id if _audio_token else "",
                 "audio_token": _audio_token,
             }).encode())

@@ -133,7 +133,7 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli, scope
   header.innerHTML = '<span style="color:var(--pf-muted);font-size:13px;">' + _title + '</span>'
     + '<button id="vnc-dialog-close" style="background:none;border:none;color:var(--pf-danger);font-size:18px;cursor:pointer;">&times;</button>';
   const vncUrl = '/vnc/' + sessionId + '/' + token + '/vnc.html?autoconnect=true&resize=scale'
-    + '&path=vnc/' + sessionId + '/' + token + '/websockify';
+    + '&path=/vnc/' + sessionId + '/' + token + '/websockify';
   const iframe = document.createElement('iframe');
   iframe.src = vncUrl;
   iframe.style.cssText = 'flex:1;border:none;background:var(--pf-code-bg);';

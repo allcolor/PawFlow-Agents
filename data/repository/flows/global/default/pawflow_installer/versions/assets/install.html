@@ -832,7 +832,7 @@ function buildVncUrl(vncUrl) {
   if (vncIndex === -1 || parts.length < vncIndex + 4 || parts[vncIndex + 3] !== 'vnc.html') return vncUrl;
   const sessionId = parts[vncIndex + 1];
   const token = parts[vncIndex + 2];
-  return vncUrl + '?autoconnect=true&resize=scale&path=vnc/' + encodeURIComponent(sessionId) + '/' + encodeURIComponent(token) + '/websockify';
+  return vncUrl + '?autoconnect=true&resize=scale&path=/vnc/' + encodeURIComponent(sessionId) + '/' + encodeURIComponent(token) + '/websockify';
 }
 function showVncDialog(vncUrl) {
   if (!vncUrl) return;

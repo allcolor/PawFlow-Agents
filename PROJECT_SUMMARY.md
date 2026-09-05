@@ -1,7 +1,7 @@
 # PawFlow Project Summary — Current State
 
 **Last updated**: 2026-09-05
-**Package version**: `1.0.0b268` (beta.268)
+**Package version**: `1.0.0b269` (beta.269)
 
 **Status**: functional beta, remaining API changes before 1.0.0 expected to be minor
 
@@ -17,23 +17,19 @@ The current core value is twofold:
    delegation, streaming.
 2. **Pipeline engine**: DAG execution over FlowFiles, task catalog, triggers, backpressure, checkpoints, crash recovery, provenance, and IO/data/control integrations.
 
-## Beta.268 implementation highlights
+## Beta.269 implementation highlights
 
-- Cursor and Grok Build use native ACP connectors with managed containers,
-  persistent authentication scoped to each user and service, exact workspace
-  mounts, session reuse, cancellation and PawFlow MCP access.
-- OpenCode uses its SDK v2 server HTTP/SSE protocol for isolated sessions,
-  streamed output and usage, native questions and permission requests.
-- Native questions preserve explicit answers and cancellation across ACP,
-  Claude Code control messages and hooks, Codex app-server and OpenCode.
-  Serialized Claude stdin writes prevent concurrent messages from interleaving;
-  terminal errors remain failures and stateful sessions are not replayed.
-- The tools image installs and inventories Cursor, Grok Build and OpenCode;
-  their service actions provide native login, credential-presence checks,
-  version checks and managed updates.
-- Offline installed-CLI checks cover initialization, questions and local
-  transports. Authenticated model calls and interactive native login UI checks
-  remain unverified, as documented in the provider guides.
+- Interactive session shutdown closes event readers and releases capture-owned
+  activity markers, so completed flash delegates no longer remain active or
+  restart captures after their containers have been removed.
+- Flash delegate inspection preserves the selected conversation agent and
+  composer target.
+- Sidebar context menus survive incoming-message auto-scroll and scrolling
+  inside the menu; scrolling the source panel or page still dismisses them.
+- The README provider table presents native ACP and OpenCode connectors,
+  external MCP and AG-UI agents, remote A2A targets, ACP registry imports,
+  Azure OpenAI and GitHub Copilot alongside the other supported providers.
+  Configuration guides remain linked from each connector.
 
 ## What lives in the repository
 

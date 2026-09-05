@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import unquote
@@ -31,14 +32,22 @@ logger = logging.getLogger(__name__)
 _CHAT_UI_DIR = Path(__file__).parent / "chat_ui"
 _TEMPLATES_DIR = _CHAT_UI_DIR / "templates"
 _CSS_DIR = _CHAT_UI_DIR / "css"
+_VENDOR_ASSETS = (
+    "vendor/rxjs-7.8.2.umd.min.js", "vendor/highlight-11.9.0.min.js",
+    "vendor/github-dark.min.css",
+)
+_LAZY_JS_MODULES = {"usage_dashboard.js"}
 
 # JS modules in load order (each file must be standalone)
 # ext_runtime.js must load early so other modules can fire hooks safely.
 _JS_MODULES = [
-    "i18n.js", "state.js", "rxbus.js", "semantic_runtime.js", "ext_runtime.js",
-    # Shared native motion/disclosure/projection primitives load before every
-    # surface that consumes them. They are classic scripts like the rest.
-    "ui_motion.js", "ui_disclosure.js", "ui_projection.js", "ui_floating_layer.js",
+    "i18n.js", "startup_optional.js",
+    # Header handlers become callable when state.js executes. Their standalone
+    # floating-layer controller must exist first; motion is optional at call time.
+    "ui_floating_layer.js", "state.js", "rxbus.js", "semantic_runtime.js", "ext_runtime.js",
+    # Shared native motion/disclosure/projection primitives load before their
+    # remaining consumers. They are classic scripts like the rest.
+    "ui_motion.js", "ui_disclosure.js", "ui_projection.js",
     "tooltips.js",
     "themes.js", "appearance.js", "search.js",
     # conversations.js = list/state/render/history core (loads early);
@@ -160,8 +169,11 @@ _env = Environment(
 
 _preload_started = False
 _preload_lock = threading.Lock()
-_i18n_block_cache: Tuple[tuple, str] = ((), "")
+_i18n_block_cache: Dict[str, Tuple[tuple, str]] = {}
 _i18n_block_lock = threading.Lock()
+_asset_manifest_lock = threading.Lock()
+_asset_manifest_cache = None
+_asset_digest_cache: Dict[str, tuple] = {}
 # Server-rendered PFP template fragments, keyed by (package, sha256): the
 # file is read and digest-checked once per installed version.
 _fragment_cache: Dict[Tuple[str, str], str] = {}
@@ -198,32 +210,69 @@ def _stat_items(base: Path, pattern: str, prefix: str) -> list:
         if not p.is_file():
             continue
         st = p.stat()
-        items.append((prefix + p.relative_to(base).as_posix(), st.st_mtime_ns, st.st_size))
+        items.append((prefix + p.relative_to(base).as_posix(), st.st_mtime_ns,
+                      st.st_size, st.st_ctime_ns, st.st_ino))
     return items
 
 
 def _asset_signature():
     """mtime/size of everything that shapes the served page.
 
-    Templates and CSS modules are included so that editing any partial or
-    stylesheet changes the ``?v=`` asset version (browser cache busting); the
-    Jinja environment re-reads changed templates on its own.
+    The aggregate version remains the SSE hotpatch/reload signal. Individual
+    asset URLs use content hashes so unrelated files retain their cache keys.
     """
     items = _stat_items(_TEMPLATES_DIR, "**/*.html", "templates/")
     items += _stat_items(_CSS_DIR, "*.css", "css/")
-    for mod in _JS_MODULES:
+    for mod in [*_JS_MODULES, *_VENDOR_ASSETS]:
         p = _CHAT_UI_DIR / mod
         try:
             st = p.stat()
-            items.append((mod, st.st_mtime_ns, st.st_size))
+            items.append((mod, st.st_mtime_ns, st.st_size, st.st_ctime_ns, st.st_ino))
         except FileNotFoundError:
-            items.append((mod, 0, 0))
+            items.append((mod, None, 0))
     items += _i18n_signature()
     return tuple(items)
 
 
 def _i18n_signature() -> list:
     return _stat_items(_CHAT_UI_DIR / "i18n", "*.json", "i18n/")
+
+
+def _invalidate_asset_cache() -> None:
+    """Force the next render to rebuild versions after a deliberate hotpatch."""
+    global _asset_manifest_cache
+    with _asset_manifest_lock:
+        _asset_manifest_cache = None
+        _asset_digest_cache.clear()
+
+
+def _asset_manifest() -> tuple:
+    """Share one stat snapshot for one second; hash only changed file bytes.
+
+    Automatic refresh preserves development/hotpatch discovery. An explicit
+    invalidation forces immediate byte verification, even for preserved stats.
+    """
+    global _asset_manifest_cache
+    with _asset_manifest_lock:
+        now = time.monotonic()
+        if _asset_manifest_cache and now < _asset_manifest_cache[0]:
+            return _asset_manifest_cache[1:]
+        sig = _asset_signature()
+        versions = {}
+        for item in sig:
+            name = item[0]
+            # Epoch timestamps are valid for assets extracted from reproducible archives.
+            if name.startswith("templates/") or item[1] is None:
+                continue
+            key = str(_CHAT_UI_DIR / name)
+            cached = _asset_digest_cache.get(key)
+            if cached is None or cached[0] != item[1:]:
+                digest = hashlib.sha256((_CHAT_UI_DIR / name).read_bytes()).hexdigest()[:16]
+                cached = (item[1:], digest)
+                _asset_digest_cache[key] = cached
+            versions[name] = cached[1]
+        _asset_manifest_cache = (now + 1.0, sig, versions)
+        return sig, versions
 
 
 def _cookie_value(cookie_header: str, name: str) -> str:
@@ -265,18 +314,9 @@ def _initial_theme_block(flowfile: FlowFile) -> str:
     )
 
 
-def _initial_i18n_block() -> str:
-    """Embed boot i18n catalogs so the UI does not depend on nested JSON assets.
-
-    Serialising the three catalogs is the only costly part of a render; the
-    block is cached per i18n file signature.
-    """
-    global _i18n_block_cache
-    sig = tuple(_i18n_signature())
-    with _i18n_block_lock:
-        cached_sig, cached_html = _i18n_block_cache
-        if cached_html and cached_sig == sig:
-            return cached_html
+def _initial_i18n_block(language: str = "en", sig=None) -> str:
+    """Embed the selected catalog and English fallback; fetch others on demand."""
+    sig = tuple(_i18n_signature()) if sig is None else sig
     i18n_dir = _CHAT_UI_DIR / "i18n"
     languages = []
     catalogs = {}
@@ -284,20 +324,38 @@ def _initial_i18n_block() -> str:
         languages = json.loads((i18n_dir / "languages.json").read_text(encoding="utf-8"))
     except Exception:
         languages = [{"code": "en", "label": "English", "native_label": "English"}]
-    for code in ("en", "fr", "es"):
+    supported = {item["code"] for item in languages
+                 if re.fullmatch(r"[a-z]+", item.get("code", ""))}
+    preferences = []
+    for entry in language.split(","):
+        tag, _, params = entry.strip().partition(";")
+        try:
+            quality = float(params.strip().removeprefix("q=")) if params else 1.0
+        except ValueError:
+            continue
+        code = tag.lower().replace("_", "-").split("-")[0]
+        if code in supported and 0 < quality <= 1:
+            preferences.append((quality, code))
+    selected = max(preferences, key=lambda item: item[0])[1] if preferences else "en"
+    with _i18n_block_lock:
+        cached_sig, cached_html = _i18n_block_cache.get(selected, ((), ""))
+        if cached_html and cached_sig == sig:
+            return cached_html
+    for code in dict.fromkeys(("en", selected)):
         try:
             catalogs[code] = json.loads((i18n_dir / f"{code}.json").read_text(encoding="utf-8"))
         except Exception:
             catalogs[code] = {}
     html = (
         "<script>window.PAWFLOW_I18N_LANGUAGES="
-        + json.dumps(languages, ensure_ascii=False)
+        + json.dumps(languages, ensure_ascii=False).replace("<", "\\u003c")
+        + ";window.PAWFLOW_I18N_LANGUAGE=" + json.dumps(selected)
         + ";window.PAWFLOW_I18N_CATALOGS="
-        + json.dumps(catalogs, ensure_ascii=False)
+        + json.dumps(catalogs, ensure_ascii=False).replace("<", "\\u003c")
         + ";</script>\n"
     )
     with _i18n_block_lock:
-        _i18n_block_cache = (sig, html)
+        _i18n_block_cache[selected] = (sig, html)
     return html
 
 
@@ -521,7 +579,7 @@ def render_chat_page(*, agent_path: str = "/api/agent",
                      sse_path: str = "/api/agent/events", login_url: str = "",
                      theme_block: str = "", extensions_block: Optional[str] = None,
                      template_slots: Optional[Dict[str, List[str]]] = None,
-                     custom_css: str = "") -> str:
+                     custom_css: str = "", language: str = "en") -> str:
     """Render ``templates/chat.html`` for one request.
 
     ``theme_block``, ``extensions_block`` (the empty boot manifest when
@@ -532,18 +590,24 @@ def render_chat_page(*, agent_path: str = "/api/agent",
     every other value is autoescaped by the template (paths go through
     ``tojson`` in scripts).
     """
-    sig = _asset_signature()
+    sig, asset_versions = _asset_manifest()
     if extensions_block is None:
         extensions_block = _initial_extensions_block(records=[])
     return _env.get_template("chat.html").render(
         asset_version=_compute_js_version(sig),
+        asset_versions=asset_versions,
+        lazy_urls={name: f"/chat/js/{name}?v={asset_versions[name]}"
+                   for name in sorted(_LAZY_JS_MODULES)},
+        i18n_urls={name[5:-5]: f"/chat/js/{name}?v={version}"
+                   for name, version in asset_versions.items()
+                   if name.startswith("i18n/") and name.endswith(".json")},
         js_modules=[
             mod for mod in _JS_MODULES
-            if (_CHAT_UI_DIR / mod).exists()
-            and mod != "plans_panel.js"
+            if mod in asset_versions and mod != "plans_panel.js"
+            and mod not in _LAZY_JS_MODULES
         ],
         css_modules=list(_CSS_MODULES),
-        i18n_block=_initial_i18n_block(),
+        i18n_block=_initial_i18n_block(language, tuple(i for i in sig if i[0].startswith("i18n/"))),
         theme_block=theme_block or "",
         extensions_block=extensions_block,
         template_slots=template_slots or {},
@@ -565,6 +629,7 @@ def _start_preload_once() -> None:
     def _preload() -> None:
         try:
             _env.get_template("chat.html")
+            _asset_manifest()
             _initial_i18n_block()
         except Exception:
             logger.debug("Chat UI preload failed", exc_info=True)
@@ -647,6 +712,8 @@ class ServeChatUITask(BaseTask):
             extensions_block=_initial_extensions_block(user_id, conversation_id, records=records),
             template_slots=_template_fragments(records),
             custom_css=custom_css,
+            language=(_cookie_value(flowfile.get_attribute("http.header.cookie") or "", "pawflow_language")
+                      or flowfile.get_attribute("http.header.accept-language") or "en"),
         )
 
         flowfile.set_content(html.encode("utf-8"))

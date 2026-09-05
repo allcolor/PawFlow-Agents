@@ -36,17 +36,18 @@ def test_rendered_page_keeps_the_dom_contract_of_the_monolithic_template():
     assert _i18n_keys(html) == SNAPSHOT["i18n_keys"]
 
 
-def test_boot_scripts_follow_js_modules_order_with_one_asset_version():
-    from tasks.io.serve_chat_ui import _JS_MODULES
+def test_boot_scripts_follow_js_modules_order_with_per_file_versions():
+    from tasks.io.serve_chat_ui import _JS_MODULES, _LAZY_JS_MODULES, _VENDOR_ASSETS
     html = rendered_chat_html()
     tags = re.findall(
-        r'<script defer src="/chat/js/([^"?]+)\?v=([0-9a-f]{8})"'
+        r'<script defer src="/chat/js/([^"?]+)\?v=([0-9a-f]{16})"'
         r' onerror="window.__pawflowAssetLoadFailed\(\)"></script>', html)
-    assert [mod for mod, _ in tags] == [
+    assert [mod for mod, _ in tags] == list(_VENDOR_ASSETS[:2]) + [
         m for m in _JS_MODULES
-        if (CHAT_UI_DIR / m).exists() and m != "plans_panel.js"
+        if (CHAT_UI_DIR / m).exists() and m != "plans_panel.js" and m not in _LAZY_JS_MODULES
     ]
-    assert len({version for _, version in tags}) == 1
+    for mod, version in tags:
+        assert version == hashlib.sha256((CHAT_UI_DIR / mod).read_bytes()).hexdigest()[:16]
     assert "window.PAWFLOW_ASSET_VERSION=" in html
     assert "window.PAWFLOW_I18N_CATALOGS=" in html
     assert "window.PAWFLOW_EXTENSIONS=" in html
@@ -88,9 +89,10 @@ def test_server_values_are_json_encoded_and_blocks_land_where_they_did():
 def test_css_modules_are_linked_in_cascade_order_then_custom_css_then_theme():
     from tasks.io.serve_chat_ui import _CSS_MODULES
     html = rendered_chat_html(inline_css=False, theme_block='<style id="custom-theme">a{}</style>')
-    links = re.findall(r'<link rel="stylesheet" href="/chat/js/css/([^"?]+)\?v=([0-9a-f]{8})">', html)
+    links = re.findall(r'<link rel="stylesheet" href="/chat/js/css/([^"?]+)\?v=([0-9a-f]{16})">', html)
     assert [name for name, _ in links] == list(_CSS_MODULES)
-    assert len({version for _, version in links}) == 1
+    for name, version in links:
+        assert version == hashlib.sha256((CSS_DIR / name).read_bytes()).hexdigest()[:16]
     assert _CSS_MODULES[-1] == "99_theme_bridge.css" and "30_mobile.css" in _CSS_MODULES
     # Served page carries no inline stylesheet of its own any more; the
     # highlight.js theme and the custom theme come after the modules.

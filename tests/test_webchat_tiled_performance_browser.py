@@ -1,6 +1,71 @@
 """Regression gates for simultaneous tiled conversation scroll work."""
 
+import pytest
+
 from test_webchat_motion_browser import CHAT_UI, _shell_html, chromium_browser  # noqa: F401
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+@pytest.mark.parametrize("atmosphere", [False, True])
+def test_composer_grip_hit_area_stays_above_dock_gutter(
+        chromium_browser, width, atmosphere):
+    context = chromium_browser.new_context(
+        viewport={"width": width, "height": 800}, reduced_motion="reduce",
+    )
+    page = context.new_page()
+    try:
+        page.set_content(_shell_html(), wait_until="domcontentloaded")
+        page.evaluate("""atmosphere => {
+          const values = new Map([['pawflow.composerDrawerOpen', '1']]);
+          Object.defineProperty(window, 'localStorage', {
+            configurable: true,
+            value: {
+              getItem: key => values.get(key) || null,
+              setItem: (key, value) => values.set(key, String(value)),
+            },
+          });
+          window.LOGIN_URL = '';
+          if (atmosphere) document.documentElement.dataset.pfAtmosphere = 'on';
+        }""", atmosphere)
+        for source in ("ui_motion.js", "state.js"):
+            page.add_script_tag(path=str(CHAT_UI / source))
+        page.evaluate("""async () => {
+          mountComposerChrome();
+          document.getElementById('actionMenuWrap').style.display = 'block';
+          document.getElementById('promptControlsPanel').classList.add('visible');
+          await _applyComposerDrawer(false);
+        }""")
+        for y_fraction in (0.8, 0.2, 0.8):
+            hits = page.evaluate("""() => {
+              const handle = document.getElementById('composerDrawerHandle');
+              const rect = handle.getBoundingClientRect();
+              const missed = [];
+              for (const x of [0.2, 0.5, 0.8]) {
+                for (const y of [0.2, 0.5, 0.8]) {
+                  const hit = document.elementFromPoint(rect.x + x * rect.width, rect.y + y * rect.height);
+                  if (!handle.contains(hit)) missed.push({x, y, blocker: hit && (hit.id || hit.className)});
+                }
+              }
+              return {missed, width: rect.width, height: rect.height};
+            }""")
+            assert hits["missed"] == [], hits
+            assert hits["width"] >= 36 and hits["height"] >= 15, hits
+            handle = page.locator('#composerDrawerHandle')
+            was_open = handle.get_attribute('aria-expanded') == 'true'
+            rect = handle.bounding_box()
+            page.mouse.click(rect['x'] + rect['width'] / 2,
+                             rect['y'] + rect['height'] * y_fraction)
+            page.wait_for_function("""wasOpen => {
+              const handle = document.getElementById('composerDrawerHandle');
+              const area = document.querySelector('.input-area');
+              return handle.getAttribute('aria-expanded') === String(!wasOpen)
+                && area.classList.contains('composer-drawer-collapsed') === wasOpen
+                && !area.querySelector('.composer-context-row').getAnimations().length;
+            }""", arg=was_open)
+            page.mouse.move(0, 0)
+    finally:
+        context.close()
+
 
 def test_closed_tile_releases_scroll_listeners_and_resource_timer(chromium_browser):
     context, page = _two_conversations(chromium_browser)
@@ -43,6 +108,78 @@ def test_closed_tile_releases_scroll_listeners_and_resource_timer(chromium_brows
     finally:
         context.close()
 
+
+@pytest.mark.parametrize("focused", ["A", "B"])
+@pytest.mark.parametrize("surface", ["desktop", "conversation"])
+@pytest.mark.parametrize("reduced", [False, True])
+def test_maximize_clicked_tile_remains_visible_and_mounted(
+        chromium_browser, focused, surface, reduced):
+    context, page = _two_conversations(chromium_browser)
+    try:
+        page.emulate_media(reduced_motion="reduce" if reduced else "no-preference")
+        for source in ("ui_motion.js", "tabs.js"):
+            page.add_script_tag(path=str(CHAT_UI / source))
+        target = page.evaluate("""({focused, surface}) => {
+          _workspaceSurfaces[b.surfaceId].slot = 2;
+          const panel = document.createElement('section');
+          panel.id = 'tabContent_desktop-test';
+          panel.className = 'tab-content';
+          const iframe = document.createElement('iframe');
+          iframe.srcdoc = '<p>Persistent desktop</p>';
+          panel.appendChild(iframe);
+          workspaceRegisterSurface(panel, {
+            tabId: 'desktop-test', type: 'desktop', title: 'Desktop',
+            conversationId: 'B',
+          });
+          _workspaceSurfaces['desktop-test'].slot = 3;
+          _workspaceRenderSlots();
+          _workspaceResize();
+          window.desktopFrame = iframe;
+          window.desktopWindow = iframe.contentWindow;
+          switchTab(focused === 'A' ? a.surfaceId : b.surfaceId);
+          return surface === 'desktop' ? 'desktop-test' : b.surfaceId;
+        }""", {"focused": focused, "surface": surface})
+        button = page.locator(
+            f'[data-tab="{target}"] > .workspace-surface-header .workspace-maximize-btn'
+        )
+        button.click()
+        result = page.evaluate("""async target => {
+          await _workspaceLayoutTransition;
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const panel = _workspaceSurfaces[target].panel;
+          const tile = panel.getBoundingClientRect();
+          const viewport = document.getElementById('workspaceScroller').getBoundingClientRect();
+          return {
+            selected: workspaceSelectedTab(), layout: workspaceLayout(),
+            focused: focusedConversationId(),
+            visible: tile.left >= viewport.left - 1 && tile.right <= viewport.right + 1,
+            fullWidth: Math.abs(tile.width - viewport.width) <= 2,
+            mounted: desktopFrame.isConnected && desktopFrame.contentWindow === desktopWindow,
+          };
+        }""", target)
+        assert result == {
+            "selected": target, "layout": 1, "focused": "B",
+            "visible": True, "fullWidth": True, "mounted": True,
+        }, result
+        button.click()
+        restored = page.evaluate("""async target => {
+          await _workspaceLayoutTransition;
+          const tile = _workspaceSurfaces[target].panel.getBoundingClientRect();
+          const viewport = document.getElementById('workspaceScroller').getBoundingClientRect();
+          return {
+            layout: workspaceLayout(), selected: workspaceSelectedTab(),
+            visible: tile.left >= viewport.left - 1 && tile.right <= viewport.right + 1,
+            mounted: desktopFrame.isConnected && desktopFrame.contentWindow === desktopWindow,
+            slots: [a.surfaceId, b.surfaceId, 'desktop-test'].map(id => _workspaceSurfaces[id].slot),
+          };
+        }""", target)
+        assert restored == {
+            "layout": 4, "selected": target, "visible": True, "mounted": True,
+            "slots": [0, 2, 3],
+        }, restored
+    finally:
+        context.close()
+
 def test_dock_hover_paints_above_its_background(chromium_browser):
     context = chromium_browser.new_context(viewport={"width": 1280, "height": 800})
     page = context.new_page()
@@ -73,6 +210,11 @@ def _two_conversations(browser):
     context = browser.new_context(viewport={"width": 1280, "height": 800})
     page = context.new_page()
     page.set_content(_shell_html(), wait_until="domcontentloaded")
+    state = (CHAT_UI / "state.js").read_text(encoding="utf-8")
+    page.add_script_tag(content=state[
+        state.index("// Per-agent streaming state"):
+        state.index("let permissionMode =")
+    ])
     for source in ("workspace.js", "messages_markdown.js", "conversation_sessions.js"):
         page.add_script_tag(path=str(CHAT_UI / source))
     page.evaluate("""async () => {

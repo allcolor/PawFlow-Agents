@@ -78,14 +78,20 @@
 .hdr-count { position: absolute; top: -5px; right: -5px; min-width: 14px; height: 14px;
              border-radius: 7px; background: var(--pf-accent); color: #fff; font-size: 9px;
              font-weight: 700; line-height: 14px; padding: 0 3px; text-align: center; }
-.hdr-pop { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 5000;
+.hdr-pop { display: none; position: fixed; top: 0; left: 0; right: auto; z-index: 600;
            pointer-events: auto;
            background: var(--pf-panel); border: 1px solid var(--pf-border); border-radius: 8px;
            padding: 8px 10px; box-shadow: 0 4px 14px rgba(0,0,0,0.4);
-           min-width: 230px; max-width: min(480px, 92vw); }
+           box-sizing: border-box; width: max-content; min-width: min(230px, calc(100vw - 16px));
+           max-width: min(480px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; }
 .hdr-pop.open { display: block; }
+/* Live rows may grow after opening; keep their viewport-clamped width stable. */
+#activeAgentsPop { width: min(480px, calc(100vw - 16px)); }
 /* Inside its popover the active-agents box is always laid out; the popover
    itself is the only show/hide switch the reader interacts with. */
-.hdr-pop .active-panel { display: block; position: static; max-width: 440px;
+.hdr-pop .active-panel { display: block; position: static; max-width: none;
                          max-height: 300px; overflow-y: auto; backdrop-filter: none; }
+.hdr-pop .active-row { flex-wrap: wrap; }
+.hdr-pop .active-row .a-name, .hdr-pop .active-row .a-status { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.hdr-pop .active-row .a-actions { flex: 0 0 auto; }
 .hdr-pop .active-row .a-actions button { pointer-events: auto; }

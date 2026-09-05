@@ -104,8 +104,7 @@ function openspaceShowFlow(instanceId, name) {
     });
     wrap.appendChild(btn);
   }
-  _osFlowPoll();
-  _osFlow.timer = setInterval(_osFlowPoll, OSV_FLOW_POLL_MS);
+  _osSyncActivity();
 }
 
 function openspaceCloseFlow() {
@@ -130,7 +129,7 @@ function openspaceCloseFlow() {
 }
 
 function _osFlowPoll() {
-  if (!_osFlow || _osFlowPollBusy || typeof action$ !== 'function') return;
+  if (!_osCanRender() || !_osFlow || _osFlowPollBusy || typeof action$ !== 'function') return;
   _osFlowPollBusy = true;
   const id = _osFlow.id;
   const level = _osFlow.stack[_osFlow.stack.length - 1];

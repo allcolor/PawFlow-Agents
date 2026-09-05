@@ -319,9 +319,13 @@ The top header and bottom composer grips animate their panel height and opacity 
 
 The independent desktop tab rail at the right edge uses the same balanced 500 ms path. Its buttons live in one counter-transformed content wrapper: the rail shell slides while the content keeps its final screen position, fades throughout both directions, remains visible until closing settles, and becomes non-interactive only in the terminal hidden state. This does not change the 300 ms workspace-tile motion or the mobile rail/sidebar coupling.
 
+The composer grip keeps its full visible hit area above the action dock's transparent hover gutter. The dock's enlarged icons retain their existing hover trajectory, while the grip remains clickable across its top, center, and bottom in both drawer states, on desktop and mobile, with or without atmosphere styling.
+
 ### Workspace layouts
 
 Changing between a tiled layout and a full tile captures every mounted surface, commits the target grid once, and applies one replaceable group FLIP using translation and scale. Maximize and Restore therefore follow the same 300 ms path in both directions, rapid reversals begin from the current visual geometry, and reduced motion commits the identical final layout without temporal work.
+
+The layout commit repositions the workspace viewport using the selected tile's new grid offset and cancels scrolling started in the old grid. Clicking Maximize always brings that exact tile into full view regardless of the previously focused conversation or the tile's owner. Restore retains its slot and brings it back into view in the previous grid. Desktop iframes and other live surfaces remain mounted throughout both transitions.
 
 ### Transcript projections
 

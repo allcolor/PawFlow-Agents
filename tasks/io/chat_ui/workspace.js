@@ -705,6 +705,15 @@ function workspaceSetLayout(value) {
     _workspaceApplySelection();
     _workspaceUpdateMaximizeState();
     _workspaceResize();
+    // Tile offsets change with the grid. Keep the selected surface in view
+    // using its new position, and cancel any scroll started in the old layout.
+    const selected = _workspaceSurfaces[_workspaceSelectedTab];
+    const scroller = document.getElementById('workspaceScroller');
+    if (selected && scroller) {
+      const left = Math.max(0, selected.panel.offsetLeft);
+      if (typeof scroller.scrollTo === 'function') scroller.scrollTo({left: left, behavior: 'instant'});
+      else scroller.scrollLeft = left;
+    }
     _workspaceSaveState();
     return true;
   };

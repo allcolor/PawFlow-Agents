@@ -52,7 +52,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     _chat_js_cache_lock = threading.RLock()
-    _chat_js_cache: Dict[str, Tuple[int, int, bytes]] = {}
+    _chat_js_cache: Dict[str, Tuple[Tuple[int, int, int, int], bytes]] = {}
 
     # Silence default log output
     def log_message(self, format, *args):
@@ -157,14 +157,15 @@ class _RequestHandler(BaseHTTPRequestHandler):
 
         stat = target.stat()
         cache_key = str(target)
-        cache_sig = (stat.st_mtime_ns, stat.st_size)
+        # Match the asset manifest: copies may preserve both mtime and size.
+        cache_sig = (stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, stat.st_ino)
         with self._chat_js_cache_lock:
             cached = self._chat_js_cache.get(cache_key)
-            if cached and cached[:2] == cache_sig:
-                body = cached[2]
+            if cached and cached[0] == cache_sig:
+                body = cached[1]
             else:
                 body = target.read_bytes()
-                self._chat_js_cache[cache_key] = (*cache_sig, body)
+                self._chat_js_cache[cache_key] = (cache_sig, body)
 
         mime_type, _ = mimetypes.guess_type(str(target))
         self.send_response(200)

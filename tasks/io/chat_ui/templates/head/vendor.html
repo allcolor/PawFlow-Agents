@@ -1,11 +1,12 @@
-<script src="https://cdn.jsdelivr.net/npm/rxjs@7/dist/bundles/rxjs.umd.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>window.__pawflowAssetReloadScheduled=false;window.__pawflowAssetLoadFailed=function(){if(window.__pawflowAssetReloadScheduled)return;window.__pawflowAssetReloadScheduled=true;setTimeout(function(){window.location.reload();},1500);};</script>
+<script defer src="/chat/js/vendor/rxjs-7.8.2.umd.min.js?v={{ asset_versions['vendor/rxjs-7.8.2.umd.min.js'] }}" onerror="window.__pawflowAssetLoadFailed()"></script>
+<link rel="stylesheet" href="/chat/js/vendor/github-dark.min.css?v={{ asset_versions['vendor/github-dark.min.css'] }}">
+<script defer src="/chat/js/vendor/highlight-11.9.0.min.js?v={{ asset_versions['vendor/highlight-11.9.0.min.js'] }}" onerror="window.__pawflowAssetLoadFailed()"></script>
 <script>
-if (typeof hljs !== 'undefined') {
-  hljs.configure({ ignoreUnescapedHTML: true });
-  document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function() {
+  if (typeof hljs !== 'undefined') {
+    hljs.configure({ ignoreUnescapedHTML: true });
     document.querySelectorAll('pre code').forEach(function(b) { hljs.highlightElement(b); });
-  });
-}
+  }
+});
 </script>

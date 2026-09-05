@@ -1,5 +1,5 @@
 {% for css in css_modules %}
-<link rel="stylesheet" href="/chat/js/css/{{ css }}?v={{ asset_version }}">
+<link rel="stylesheet" href="/chat/js/css/{{ css }}?v={{ asset_versions['css/' + css] }}">
 {% endfor %}
 {% if custom_css %}
 <style id="custom-css">

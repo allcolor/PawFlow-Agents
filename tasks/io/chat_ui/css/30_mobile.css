@@ -15,9 +15,8 @@
   .header::-webkit-scrollbar { width: 0; height: 0; display: none; }
   .header > * { flex: 0 0 auto; }
   .header .actions { margin-left: auto; }
-  /* The popovers escape the header scrollbox (overflow-x would clip them):
-     fixed under the header, full width. */
-  .hdr-pop { position: fixed; top: 52px; left: 8px; right: 8px; max-width: none; }
+  /* Body-mounted popovers use the shared viewport placement controller. */
+  .hdr-pop { position: fixed; width: calc(100vw - 16px); min-width: 0; }
   .input-area .composer-context-row { grid-template-columns: minmax(0, 1fr); }
   .composer-context-row > .prompt-controls-panel,
   .composer-context-row > .composer-action-mount { justify-self: stretch; }

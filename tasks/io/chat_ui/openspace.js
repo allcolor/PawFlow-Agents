@@ -53,6 +53,8 @@ const OSV_TOOL_EMOJI = [
 ];
 
 let _osActive = false;
+let _osSurfaceVisible = false;
+let _osVisibilityObserver = null;
 let _osThree = null;          // three.js module namespace (lazy import)
 let _osThreeLoading = null;   // in-flight import promise
 let _osEnvironmentLoading = null; // hotpatch-safe optional module loader
@@ -137,6 +139,38 @@ let _osWebchatTransitionRaf = 0;
 
 function openspaceIsActive() { return _osActive; }
 
+function _osCanRender() {
+  return _osActive && _osSurfaceVisible && !document.hidden;
+}
+
+function _osSyncActivity() {
+  if (_osCanRender()) {
+    _osStartLoop();
+    if (_osFlow && !_osFlow.timer) {
+      _osFlowPoll();
+      _osFlow.timer = setInterval(_osFlowPoll, OSV_FLOW_POLL_MS);
+    }
+  } else {
+    _osStopLoop();
+    if (_osFlow && _osFlow.timer) {
+      clearInterval(_osFlow.timer);
+      _osFlow.timer = null;
+    }
+  }
+}
+
+function _osObserveVisibility(wrap) {
+  if (_osVisibilityObserver) _osVisibilityObserver.disconnect();
+  _osSurfaceVisible = false;
+  _osVisibilityObserver = new IntersectionObserver(entries => {
+    const entry = entries[entries.length - 1];
+    _osSurfaceVisible = !!entry && entry.isIntersecting
+      && entry.intersectionRect.width > 0 && entry.intersectionRect.height > 0;
+    _osSyncActivity();
+  });
+  _osVisibilityObserver.observe(wrap);
+}
+
 function _osKey(name) { return String(name || '').toLowerCase(); }
 
 function _osEventAgent(data) {
@@ -191,7 +225,8 @@ function openspaceSetActive(on) {
       // close-up or manually moved camera left behind before Webchat.
       _osSetCameraView('home');
       _osSeedAgents();
-      _osStartLoop();
+      _osObserveVisibility(wrap);
+      _osSyncActivity();
     }).catch((e) => {
       console.error('openspace: initialization failed', e);
       const err = document.createElement('div');
@@ -200,6 +235,9 @@ function openspaceSetActive(on) {
       wrap.appendChild(err);
     });
   } else {
+    if (_osVisibilityObserver) _osVisibilityObserver.disconnect();
+    _osVisibilityObserver = null;
+    _osSurfaceVisible = false;
     if (_osWebchatTransitionRaf) cancelAnimationFrame(_osWebchatTransitionRaf);
     _osWebchatTransitionRaf = 0;
     wrap.classList.remove('osv-webchat-transition');
@@ -556,6 +594,5 @@ function _osResize() {
 }
 
 function _osVisibility() {
-  if (document.hidden) _osStopLoop();
-  else if (_osActive) _osStartLoop();
+  _osSyncActivity();
 }

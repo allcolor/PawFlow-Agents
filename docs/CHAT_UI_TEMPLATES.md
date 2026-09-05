@@ -20,13 +20,17 @@ html = render_chat_page(agent_path="/api/agent", sse_path="/api/agent/events",
   partial is re-read on the next request (hotpatch workflow).
 - The page is rendered **per request**; the context differs per request
   (theme cookie, installed extensions). The i18n boot block — the only costly
-  piece — is cached per i18n file signature.
+  piece — is cached per selected language and i18n file signature. Initial
+  HTML embeds English plus the selected language; additional catalogs load
+  asynchronously (see `PERFORMANCE_STARTUP_IMPLEMENTATION.md`).
 - Context passed to `chat.html`:
 
   | Key | Type | Meaning |
   | --- | ---- | ------- |
-  | `asset_version` | str | 8-char hash of the asset signature (templates, CSS modules, JS modules, i18n); used as `?v=` on every `<script defer>` / `<link>` |
-  | `js_modules` | list | `_JS_MODULES` entries that exist on disk, in load order |
+  | `asset_version` | str | 8-char aggregate asset signature retained for the SSE hotpatch/reload signal |
+  | `asset_versions` | dict | Per-file SHA256 content hashes (16 hex characters), used as `?v=` on scripts, stylesheets and locale URLs |
+  | `lazy_urls`, `i18n_urls` | dict | Versioned URLs for optional modules and asynchronous locale requests |
+  | `js_modules` | list | Eager `_JS_MODULES` entries that exist on disk, in load order; excludes `_LAZY_JS_MODULES` and `plans_panel.js` |
   | `css_modules` | list | `_CSS_MODULES` entries, in cascade order |
   | `i18n_block` | str, `|safe` | `<script>` with `PAWFLOW_I18N_LANGUAGES` / `PAWFLOW_I18N_CATALOGS` |
   | `theme_block` | str, `|safe` | `<style id="custom-theme">` + `PAWFLOW_INITIAL_THEME_REF`, or empty |
@@ -39,10 +43,33 @@ html = render_chat_page(agent_path="/api/agent", sse_path="/api/agent/events",
   skeleton; every other value is autoescaped. `StrictUndefined` turns a
   missing key into an error instead of an empty string.
 - The asset signature (`_asset_signature()`) covers `templates/**/*.html`,
-  `css/*.css`, `_JS_MODULES` and `i18n/*.json`: editing any of them changes
-  `asset_version`, so browsers fetch fresh modules.
+  `css/*.css`, `_JS_MODULES`, pinned vendor assets and `i18n/*.json`. It is
+  shared for one second; changed file metadata triggers rehashing. Editing a
+  template changes the aggregate reload signal while unchanged assets retain
+  their individual cache keys. Explicit invalidation forces a fresh manifest.
+- RxJS and highlight.js load from local files with `defer` before their
+  consumers. The usage dashboard loads on first opening. Vendor license text
+  files ship in the wheel and source distribution; generated `graphify-out`
+  caches are excluded from package discovery and from every package's data.
+  `MANIFEST.in` also prunes them from source distributions, including entries
+  retained by an older `SOURCES.txt`. When changing package selection, build
+  from a fresh `build/lib` directory to avoid carrying old wheel contents.
+- Renderer, templates and startup assets must activate together through a
+  coordinated restart: the new templates require the new Python context keys.
 
 ## Layout
+
+Header status popovers retain their original IDs and controls but move to
+`document.body` when opened. `pfFloatingLayer` owns their viewport placement,
+outside-pointer and Escape dismissal, and resize/scroll cleanup. Its standalone
+controller loads before `state.js`, so header handlers always have it available
+as soon as they become callable, including during delayed startup requests.
+Closing the header also closes its popover. The active-agent rows wrap long names and tool
+labels; narrow screens use the viewport width with an 8 px margin. Popovers sit
+above the workspace and below modal dialogs without raising the entire `.main`
+stacking context, which would intercept sidebar and task-rail clicks when an
+atmosphere background is enabled. Browser coverage lives in
+`tests/test_header_popover_browser.py`.
 
 ```text
 tasks/io/chat_ui/templates/
@@ -65,7 +92,7 @@ tasks/io/chat_ui/templates/
   ext/hosts.html                    # #pf-ext-modal-host, CSS tooltip portal, #pf-ext-panel-host
   boot/config.html                  # AGENT_PATH / API / SSE_URL / LOGIN_URL constants (tojson)
   boot/scripts.html                 # asset-version guard, i18n block, extensions block, <script defer> loop
-tasks/io/chat_ui/css/               # CSS modules, served by serveAssets at /chat/js/css/<file>?v=<asset_version>
+tasks/io/chat_ui/css/               # CSS modules at /chat/js/css/<file>?v=<per-file-content-hash>
   00_base.css                       # reset, :root, app layout, sidebar, sharing
   05_motion.css                     # shared motion tokens, disclosure containment, reduced-motion policy
   10_chrome.css                     # collapsible grips, header status widgets

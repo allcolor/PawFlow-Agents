@@ -16,7 +16,7 @@
 {% include "head/styles.html" %}
 {% include "head/vendor.html" %}
 {{ theme_block|safe }}
-<link id="component-contract-css" rel="stylesheet" href="/chat/js/css/100_component_contract.css?v={{ asset_version }}">
+<link id="component-contract-css" rel="stylesheet" href="/chat/js/css/100_component_contract.css?v={{ asset_versions['css/100_component_contract.css'] }}">
 {{ ext_fragments('head')|safe }}</head>
 <body id="pawflowChat">
 {% include "dialogs/appearance.html" %}

@@ -17,7 +17,6 @@ html[data-pf-atmosphere-kind="video"] #pfAtmosphereVideo { display: block; }
 html[data-pf-atmosphere="on"] body > .sidebar,
 html[data-pf-atmosphere="on"] body > .main { position: relative; z-index: 1; }
 html[data-pf-atmosphere="on"] body > .tab-bar { z-index: 190; }
-html[data-pf-atmosphere="on"] body:has(.hdr-pop.open) > .main { z-index: 200; }
 
 /* These selectors intentionally outrank theme selectors while atmosphere is
    active. Without the data attribute every existing theme keeps its exact

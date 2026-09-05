@@ -17,6 +17,10 @@
 packages/pawflow.avatar-runtime.pfpdir/content/ui/avatar-vendor.js whitespace=-trailing-space
 scripts/avatar_vendor/*.patch whitespace=-trailing-space
 
+# Preserve the reviewed RxJS bundle and license bytes.
+tasks/io/chat_ui/vendor/rxjs-7.8.2.umd.min.js whitespace=-trailing-space
+tasks/io/chat_ui/vendor/rxjs-LICENSE.txt whitespace=-trailing-space
+
 # Binary files
 *.png binary
 *.mp4 binary

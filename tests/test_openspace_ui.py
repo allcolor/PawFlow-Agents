@@ -110,7 +110,7 @@ def test_reentering_openspace_always_resets_to_the_home_camera():
         openspace.index("function openspaceSetActive(on)"):
         openspace.index("function _osEnsureThree()")]
     assert activation.index("_osBuildScene(wrap);") < activation.index(
-        "_osSetCameraView('home');") < activation.index("_osStartLoop();")
+        "_osSetCameraView('home');") < activation.index("_osObserveVisibility(wrap);")
 
 
 def test_visitor_stays_off_screen_axis_and_screen_blocks_floor_navigation():

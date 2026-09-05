@@ -690,6 +690,7 @@ function releaseConversationSessionIfUnused(conversationId) {
     if (sseHealthTimer) { clearInterval(sseHealthTimer); sseHealthTimer = null; }
     if (resourcesTimer) { clearInterval(resourcesTimer); resourcesTimer = null; }
     if (typingInterval) { clearInterval(typingInterval); typingInterval = null; }
+    Object.values(streams).forEach(_cancelStreamRender);
     if (typeof turnViewReset === 'function') turnViewReset();
   });
   if (session.messagesRoot && session.messagesRoot._pfScrollCleanup) {

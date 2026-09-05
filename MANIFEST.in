@@ -1,0 +1,2 @@
+# Generated graph caches must never enter source distributions, including stale manifests.
+prune **/graphify-out

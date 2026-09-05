@@ -60,8 +60,8 @@ def test_atmosphere_keeps_desktop_tab_bar_fixed_as_an_overlay():
 
     assert 'body > .tab-bar { position: relative' not in css
     assert 'body > .tab-bar { z-index: 190; }' in css
-    assert 'body:has(.hdr-pop.open) > .main' in css
-    assert 'z-index: 200' in css
+    # Popovers mount at body level; lifting the entire chat covers side controls.
+    assert 'body:has(.hdr-pop.open) > .main' not in css
 
 
 def test_appearance_preferences_are_user_scoped_and_motion_aware():

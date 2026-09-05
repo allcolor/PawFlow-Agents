@@ -309,6 +309,9 @@ Object.assign(context, {
   _sseCreatedAt: 0,
 });
 vm.createContext(context);
+const streamState = fs.readFileSync('tasks/io/chat_ui/state.js', 'utf8');
+vm.runInContext(streamState.slice(streamState.indexOf('// Ingest every token immediately'),
+  streamState.indexOf('let permissionMode =')), context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), context);
 

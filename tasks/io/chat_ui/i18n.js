@@ -5,6 +5,8 @@ let _i18nLanguages = [];
 let _i18nFallback = {};
 let _i18nCurrent = {};
 let _currentLanguage = 'en';
+let _i18nChangeId = 0;
+const _i18nPending = new Map();
 
 function _embeddedJson(url) {
   const name = String(url || '').split('/').pop() || '';
@@ -16,17 +18,6 @@ function _embeddedJson(url) {
     return window.PAWFLOW_I18N_CATALOGS[match[1]];
   }
   return null;
-}
-
-function _readJsonSync(url) {
-  const embedded = _embeddedJson(url);
-  if (embedded !== null) return embedded;
-  const xhr = new XMLHttpRequest();
-  const version = window.PAWFLOW_ASSET_VERSION ? '?v=' + encodeURIComponent(window.PAWFLOW_ASSET_VERSION) : '';
-  xhr.open('GET', url + version, false);
-  xhr.send(null);
-  if (xhr.status < 200 || xhr.status >= 300) throw new Error('Failed to load ' + url);
-  return JSON.parse(xhr.responseText || '{}');
 }
 
 function _normalizeLanguage(lang) {
@@ -62,16 +53,21 @@ function _storedLanguage() {
 
 function _loadLanguageCatalog(lang) {
   const code = _isSupportedLanguage(lang) || 'en';
-  return _readJsonSync(I18N_BASE_PATH + code + '.json');
-}
-
-function _safeLoadLanguageCatalog(lang) {
-  try {
-    return _loadLanguageCatalog(lang);
-  } catch (err) {
-    console.warn('[i18n] Failed to load catalog', lang, err);
-    return {};
-  }
+  const embedded = _embeddedJson(I18N_BASE_PATH + code + '.json');
+  if (embedded !== null) return Promise.resolve(embedded);
+  if (_i18nPending.has(code)) return _i18nPending.get(code);
+  const url = window.PAWFLOW_I18N_URLS[code];
+  const pending = fetch(url).then(response => {
+    if (!response.ok) throw new Error('Failed to load ' + url);
+    return response.json();
+  }).then(catalog => {
+    if (!catalog || Array.isArray(catalog) || typeof catalog !== 'object'
+        || !Object.keys(catalog).length) throw new Error('Invalid catalog ' + code);
+    window.PAWFLOW_I18N_CATALOGS[code] = catalog;
+    return catalog;
+  }).finally(() => _i18nPending.delete(code));
+  _i18nPending.set(code, pending);
+  return pending;
 }
 
 function _builtinEnglishCatalog() {
@@ -86,18 +82,37 @@ function _builtinEnglishCatalog() {
 }
 
 function _initI18n() {
-  try {
-    _i18nLanguages = _readJsonSync(I18N_BASE_PATH + 'languages.json');
-  } catch (_err) {
-    _i18nLanguages = [{ code: 'en', label: 'English', native_label: 'English' }];
-  }
+  _i18nLanguages = (_embeddedJson(I18N_BASE_PATH + 'languages.json')
+    || [{ code: 'en', label: 'English', native_label: 'English' }]).slice();
   if (!_isSupportedLanguage('en')) _i18nLanguages.unshift({ code: 'en', label: 'English', native_label: 'English' });
-  _i18nFallback = _safeLoadLanguageCatalog('en');
+  window.PAWFLOW_I18N_CATALOGS = window.PAWFLOW_I18N_CATALOGS || {};
+  _i18nFallback = window.PAWFLOW_I18N_CATALOGS.en || {};
   if (!Object.keys(_i18nFallback).length) _i18nFallback = _builtinEnglishCatalog();
-  _currentLanguage = _storedLanguage() || _browserLanguage();
-  _i18nCurrent = _currentLanguage === 'en' ? _i18nFallback : _safeLoadLanguageCatalog(_currentLanguage);
-  if (!Object.keys(_i18nCurrent).length) _i18nCurrent = _i18nFallback;
+  const desired = _storedLanguage()
+    || _isSupportedLanguage(window.PAWFLOW_I18N_LANGUAGE) || _browserLanguage();
+  _currentLanguage = window.PAWFLOW_I18N_CATALOGS[desired] ? desired : 'en';
+  _i18nCurrent = window.PAWFLOW_I18N_CATALOGS[_currentLanguage] || _i18nFallback;
   document.documentElement.lang = _currentLanguage;
+  _storeLanguageCookie(_currentLanguage);
+  if (desired === _currentLanguage) return Promise.resolve(true);
+  // Old localStorage preferences may differ from the server's cookie/header.
+  // Fetch immediately, but refresh app surfaces only after their scripts ran.
+  const changeId = _i18nChangeId;
+  const catalog = _loadLanguageCatalog(desired).catch(err => {
+    console.warn('[i18n] Failed to load catalog', desired, err);
+    return null;
+  });
+  return new Promise(resolve => {
+    const apply = () => catalog.then(value => resolve(
+      value && changeId === _i18nChangeId ? setLanguage(desired) : false));
+    if (document.readyState === 'complete') apply();
+    else document.addEventListener('DOMContentLoaded', apply, { once: true });
+  });
+}
+
+function _storeLanguageCookie(code) {
+  document.cookie = 'pawflow_language=' + encodeURIComponent(code)
+    + '; Path=/; Max-Age=31536000; SameSite=Lax';
 }
 
 function getLanguage() {
@@ -207,20 +222,37 @@ function applyI18n(root) {
   _setComposerPlaceholder();
 }
 
-function setLanguage(lang) {
+async function setLanguage(lang) {
   const code = _isSupportedLanguage(lang);
-  if (!code || code === _currentLanguage) return;
+  if (!code) return false;
+  const changeId = ++_i18nChangeId;
+  if (code === _currentLanguage) {
+    _storeLanguageCookie(code);
+    try { if (window.localStorage) window.localStorage.setItem(I18N_STORAGE_KEY, code); } catch (_err) {}
+    _renderLanguageSelect();
+    return true;
+  }
+  let catalog;
+  try {
+    catalog = code === 'en' ? _i18nFallback : await _loadLanguageCatalog(code);
+  } catch (err) {
+    console.warn('[i18n] Failed to load catalog', code, err);
+    if (changeId === _i18nChangeId) _renderLanguageSelect();
+    return false;
+  }
+  if (changeId !== _i18nChangeId) return false;
   _currentLanguage = code;
-  _i18nCurrent = code === 'en' ? _i18nFallback : _safeLoadLanguageCatalog(code);
-  if (!Object.keys(_i18nCurrent).length) _i18nCurrent = _i18nFallback;
+  _i18nCurrent = catalog;
+  _storeLanguageCookie(code);
   try { if (window.localStorage) window.localStorage.setItem(I18N_STORAGE_KEY, code); } catch (_err) {}
   applyI18n(document);
   if (typeof updateTechnicalGroupingToggle === 'function') updateTechnicalGroupingToggle(window.PAWFLOW_GROUP_TECHNICAL_MESSAGES);
   if (typeof loadResources === 'function') loadResources();
   window.dispatchEvent(new CustomEvent('pawflow:languagechange', { detail: { language: code } }));
+  return true;
 }
 
-_initI18n();
+window.PAWFLOW_I18N_READY = _initI18n();
 window.addEventListener('resize', _setComposerPlaceholder);
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => applyI18n(document));

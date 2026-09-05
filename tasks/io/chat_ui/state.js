@@ -98,17 +98,52 @@ function getStream(agent) {
 }
 function clearStream(agent) {
   const key = (agent || '').toLowerCase();
+  _flushStreamRender(streams[key]);
   delete streams[key];
 }
 function clearAllStreams() {
   for (const a of Object.keys(streams)) {
     const s = streams[a];
+    _cancelStreamRender(s);
     for (const c of s.chunks) { if (c && c.parentNode) c.remove(); }
   }
   streams = {};
 }
 function clearAllStreamsKeepDOM() {
+  Object.values(streams).forEach(_flushStreamRender);
   streams = {};
+}
+
+// Ingest every token immediately; repaint at most once per frame. The timer
+// still delivers the final partial preview when animation frames are paused.
+function _cancelStreamRender(s) {
+  if (!s) return;
+  if (s.renderFrame != null) cancelAnimationFrame(s.renderFrame);
+  if (s.renderTimer != null) clearTimeout(s.renderTimer);
+  s.renderFrame = null;
+  s.renderTimer = null;
+  s.pendingRender = null;
+  s.pendingRenderText = '';
+}
+
+function _flushStreamRender(s) {
+  if (!s || !s.pendingRender) return;
+  const render = s.pendingRender;
+  if (s.renderFrame != null) cancelAnimationFrame(s.renderFrame);
+  if (s.renderTimer != null) clearTimeout(s.renderTimer);
+  s.renderFrame = null;
+  s.renderTimer = null;
+  s.pendingRender = null;
+  render();
+}
+
+function _scheduleStreamRender(s, render) {
+  const scheduled = !!s.pendingRender;
+  s.pendingRender = render;
+  if (scheduled) return;
+  const flush = captureConversationSessionCallback(() => _flushStreamRender(s));
+  s.renderTimer = setTimeout(flush, 50);
+  s.renderFrame = requestAnimationFrame(flush);
 }
 let permissionMode = 'default';  // current tool permission mode
 const PERMISSION_MODE_UI = {
@@ -544,6 +579,7 @@ function _applyHeaderBar(animate) {
   const shell = bar && bar.closest('.header-shell');
   if (!bar || !shell) return Promise.resolve({status: 'missing'});
   const open = _headerBarOpen();
+  if (!open) _closeHeaderPops();
   const grip = document.getElementById('headerGrip');
   if (grip) grip.setAttribute('aria-expanded', open ? 'true' : 'false');
   return _setChromeExpanderOpen(
@@ -558,22 +594,42 @@ function toggleHeaderBar() {
 document.addEventListener('DOMContentLoaded', _applyHeaderBar);
 window.addEventListener('resize', _applyHeaderBar);
 
-// Header popovers: an icon click shows the widget's full content in a
-// tooltip-like popover; a second click hides it. Opening one closes the
-// others so at most one popover is on screen.
+// Header popovers live at body level so header scrolling, backdrop filters and
+// workspace stacking contexts cannot clip them or cover unrelated controls.
+function _closeHeaderPops() {
+  document.querySelectorAll('.hdr-pop.open').forEach(p => {
+    p.classList.remove('open');
+    const b = document.querySelector('.hdr-icon-btn[aria-controls="' + p.id + '"]');
+    if (b) b.setAttribute('aria-expanded', 'false');
+  });
+  if (window.pfFloatingLayer) {
+    window.pfFloatingLayer.close('header-popover', {restoreFocus: false});
+  }
+}
+
 function toggleHeaderPop(popId, btn) {
   const pop = document.getElementById(popId);
   if (!pop) return;
   const willOpen = !pop.classList.contains('open');
-  document.querySelectorAll('.hdr-pop.open').forEach(p => {
-    p.classList.remove('open');
-    const b = p.parentElement && p.parentElement.querySelector('.hdr-icon-btn');
-    if (b) b.setAttribute('aria-expanded', 'false');
+  _closeHeaderPops();
+  if (!willOpen) return;
+  document.body.appendChild(pop);
+  pop.classList.add('open');
+  btn.setAttribute('aria-expanded', 'true');
+  const headerBottom = document.getElementById('headerBar').getBoundingClientRect().bottom;
+  const gap = Math.max(8, headerBottom - btn.getBoundingClientRect().bottom + 8);
+  pop.style.maxHeight = Math.max(0, window.innerHeight - headerBottom - 16) + 'px';
+  window.pfFloatingLayer.open({
+    channel: 'header-popover', element: pop, trigger: btn,
+    placement: 'bottom', gap: gap, removeOnClose: false,
+    closeOnSelect: false, restoreFocus: false, animate: false,
+    onClose: function(reason) {
+      pop.classList.remove('open');
+      btn.setAttribute('aria-expanded', 'false');
+      // An outside pointer already chose its next focus target.
+      if (reason === 'escape') btn.focus({preventScroll: true});
+    },
   });
-  if (willOpen) {
-    pop.classList.add('open');
-    if (btn) btn.setAttribute('aria-expanded', 'true');
-  }
 }
 
 

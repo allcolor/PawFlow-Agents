@@ -205,7 +205,10 @@ include = [
     "pawflow_relay*", "pawflow_cli*", "pawflow_livekit_worker*",
     "pawflow_installer*",
 ]
-exclude = ["tests*"]
+exclude = ["tests*", "*.graphify-out", "*.graphify-out.*"]
 
 [tool.setuptools.package-data]
-"tasks.io.chat_ui" = ["**/*.html", "**/*.js", "**/*.css", "**/*.json"]
+"tasks.io.chat_ui" = ["**/*.html", "**/*.js", "**/*.css", "**/*.json", "vendor/*LICENSE*.txt"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["graphify-out/**", "**/graphify-out/**"]

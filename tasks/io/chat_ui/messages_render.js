@@ -24,19 +24,30 @@ function trimLiveDisplayWindowIfAutoscrolling(wasAutoscroll) {
   const container = document.getElementById('messages');
   if (!container) return;
   const maxVisible = Math.max(displayWindow || 50, 50) * LIVE_DISPLAY_WINDOW_MULTIPLIER;
+  const newest = Array.from(container.children).filter(el => el.classList && el.classList.contains('msg')).pop();
   const rows = Array.from(container.children).filter(el => {
     if (!el.classList || !el.classList.contains('msg')) return false;
     if (el.dataset && el.dataset.live === '1') return false;
     if (el.querySelector && el.querySelector('[data-live="1"]')) return false;
     return true;
   });
-  let excess = rows.length - maxVisible;
+  // Grouping must not turn hundreds of durable messages into one budget unit.
+  // Count unique identities so the simplified view's detail mirrors are free.
+  const weights = new Map(rows.map(el => {
+    const ids = new Set(Array.from(el.querySelectorAll('[data-msgid]'))
+      .map(node => node.dataset.msgid).filter(Boolean));
+    if (el.dataset.msgid) ids.add(el.dataset.msgid);
+    return [el, Math.max(1, ids.size)];
+  }));
+  let excess = Array.from(weights.values()).reduce((sum, value) => sum + value, 0) - maxVisible;
   if (excess <= 0) return;
   const removed = new Set();
   for (const el of rows) {
     if (excess <= 0) break;
     if (removed.has(el)) continue;
     const group = (typeof turnViewEvictionGroup === 'function') ? turnViewEvictionGroup(el) : [el];
+    // A single large latest answer remains readable even if it exceeds budget.
+    if (group.includes(newest)) continue;
     // `rows` already excludes live nodes, but a turn group is reached through
     // its user anchor -- which is never live even while the block below it
     // still streams. Re-check the whole group or eviction kills a running turn.
@@ -44,10 +55,14 @@ function trimLiveDisplayWindowIfAutoscrolling(wasAutoscroll) {
       || (node.querySelector && node.querySelector('[data-live="1"]')));
     if (groupIsLive) continue;
     const selected = group.some(node => {
-      const nodeId = node.dataset && node.dataset.msgid;
-      return nodeId && typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.has(nodeId);
+      const identities = [node, ...node.querySelectorAll('[data-msgid]')];
+      return identities.some(child => child.dataset && child.dataset.msgid
+        && typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.has(child.dataset.msgid));
     });
     if (selected) continue;
+    const selection = typeof window.getSelection === 'function' ? window.getSelection() : null;
+    if (selection && !selection.isCollapsed
+        && group.some(node => selection.containsNode(node, true))) continue;
     const evicted = [];
     let evictedUnits = 0;
     for (const node of group) {
@@ -74,9 +89,10 @@ function trimLiveDisplayWindowIfAutoscrolling(wasAutoscroll) {
     } else {
       for (const node of group) { removed.add(node); node.remove(); }
     }
-    excess -= group.filter(node => rows.includes(node)).length || 1;
+    excess -= group.reduce((sum, node) => sum + (weights.get(node) || 0), 0) || 1;
     if (typeof _rewindHistoryCursor === 'function') _rewindHistoryCursor(evictedUnits);
   }
+  if (!removed.size) return;
   hasMoreMessages = true;
   if (typeof _updateLoadMoreBanner === 'function') _updateLoadMoreBanner();
 }

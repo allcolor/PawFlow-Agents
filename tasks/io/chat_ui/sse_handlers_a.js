@@ -2,6 +2,16 @@
 // Called by connectSSE() in sse.js after the EventSource is created.
 function _sseWireA() {
 
+  // Flush before any event that can move, reconcile or retire a preview. These
+  // listeners run before the normal handlers, including group B's terminals.
+  ['new_message', 'thinking', 'thinking_delta', 'thinking_content', 'tool_call',
+    'tool_result', 'turn_complete', 'done', 'discard', 'error', 'active_released',
+    'task_stopped', 'task_progress'].forEach(name => {
+    eventSource.addEventListener(name, () => {
+      Object.values(streams).forEach(_flushStreamRender);
+    });
+  });
+
   function _normalizedAssistantPreviewText(value) {
     return String(value || '').replace(/^\[[^\]]+\]:\s*/, '').trim();
   }
@@ -267,6 +277,7 @@ function _sseWireA() {
     // apart on reload -- the live view and the reloaded view disagreeing
     // about the same turn.
     if (s.el && s.msg_id && data.msg_id && data.msg_id !== s.msg_id) {
+      _flushStreamRender(s);
       s.el.classList.remove('streaming');
       s.el.classList.add('finalized');
       s.el = null;
@@ -310,42 +321,49 @@ function _sseWireA() {
       s.el.dataset.streamPreviewAgent = String(agent || '').toLowerCase();
       s.el._streamPreviewText = s.text;
     }
-    // Update content with badge — strip identity prefix if LLM echoed it
-    const badge = sourceBadge(src);
-    const displayText = s.text.replace(/^\[[^\]]+\]:\s*/, '');
-    const shouldScroll = isNearBottom();
-    // Update content area only — preserve action buttons and meta
-    let contentEl = s.el.querySelector('.msg-content');
-    if (!contentEl) {
-      // First update: restructure into content + actions + time + meta
-      const actions = s.el.querySelector('.msg-actions');
-      const timeEl = s.el.querySelector('.msg-time');
-      const meta = s.el.querySelector('.msg-meta');
-      contentEl = document.createElement('span');
-      contentEl.className = 'msg-content';
-      s.el.innerHTML = '';
-      if (timeEl) s.el.appendChild(timeEl);
-      s.el.appendChild(contentEl);
-      if (actions) s.el.appendChild(actions);
-      else s.el.insertAdjacentHTML('beforeend',
-          '<span class="msg-actions">'
-          + '<button onclick="setReplyTo(this)" title="' + escapeHtml(t('reply')) + '">\u21A9</button>'
-          + '<button onclick="speakMsg(this)" title="' + escapeHtml(t('readMessage')) + '">\uD83D\uDD0A</button>'
-          + '<button onclick="copyMsg(this)" title="' + escapeHtml(t('copy')) + '">\uD83D\uDCCB</button>'
-          + '<button onclick="deleteMsg(this)" title="' + escapeHtml(t('delete')) + '">\uD83D\uDDD1</button>'
-          + '</span>');
-      if (meta) s.el.appendChild(meta);
-    }
-    contentEl.innerHTML = badge + renderMarkdown(displayText);
-    if (typeof turnViewIngest === 'function') {
-      turnViewIngest('token', Object.assign({}, data, { content: data.text }), s.el);
-    }
-    if (displayText.trim() && s.el && s.el.dataset) delete s.el.dataset.transientUi;
-    if (displayText.trim() && s.el && !s.el.dataset.technicalGroupsCollapsed) {
-      collapseTechnicalGroups();
-      s.el.dataset.technicalGroupsCollapsed = '1';
-    }
-    scrollBottom(shouldScroll);
+    s.pendingRenderText = (s.pendingRenderText || '') + data.text;
+    const target = s.el;
+    _scheduleStreamRender(s, () => {
+      if (streams[agent.toLowerCase()] !== s || s.el !== target || !target.isConnected) return;
+      const delta = s.pendingRenderText;
+      s.pendingRenderText = '';
+      // Update content with badge — strip identity prefix if LLM echoed it
+      const badge = sourceBadge(src);
+      const displayText = s.text.replace(/^\[[^\]]+\]:\s*/, '');
+      const shouldScroll = isNearBottom();
+      // Update content area only — preserve action buttons and meta
+      let contentEl = s.el.querySelector('.msg-content');
+      if (!contentEl) {
+        // First update: restructure into content + actions + time + meta
+        const actions = s.el.querySelector('.msg-actions');
+        const timeEl = s.el.querySelector('.msg-time');
+        const meta = s.el.querySelector('.msg-meta');
+        contentEl = document.createElement('span');
+        contentEl.className = 'msg-content';
+        s.el.innerHTML = '';
+        if (timeEl) s.el.appendChild(timeEl);
+        s.el.appendChild(contentEl);
+        if (actions) s.el.appendChild(actions);
+        else s.el.insertAdjacentHTML('beforeend',
+            '<span class="msg-actions">'
+            + '<button onclick="setReplyTo(this)" title="' + escapeHtml(t('reply')) + '">\u21A9</button>'
+            + '<button onclick="speakMsg(this)" title="' + escapeHtml(t('readMessage')) + '">\uD83D\uDD0A</button>'
+            + '<button onclick="copyMsg(this)" title="' + escapeHtml(t('copy')) + '">\uD83D\uDCCB</button>'
+            + '<button onclick="deleteMsg(this)" title="' + escapeHtml(t('delete')) + '">\uD83D\uDDD1</button>'
+            + '</span>');
+        if (meta) s.el.appendChild(meta);
+      }
+      contentEl.innerHTML = badge + renderMarkdown(displayText);
+      if (typeof turnViewIngest === 'function') {
+        turnViewIngest('token', Object.assign({}, data, { text: delta, content: delta }), s.el);
+      }
+      if (displayText.trim() && s.el && s.el.dataset) delete s.el.dataset.transientUi;
+      if (displayText.trim() && s.el && !s.el.dataset.technicalGroupsCollapsed) {
+        collapseTechnicalGroups();
+        s.el.dataset.technicalGroupsCollapsed = '1';
+      }
+      scrollBottom(shouldScroll);
+    });
     document.getElementById('status').textContent = t('streaming');
   });
 

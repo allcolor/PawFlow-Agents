@@ -2,9 +2,10 @@
    action dock) folds completely behind a small centered grip. CLOSED by
    default; the choice persists across reloads (localStorage). */
 /* The grip straddles the separation line itself (the input area's top
-   border) instead of stacking above the row, so it adds no height. */
+   border) instead of stacking above the row, so it adds no height.
+   Keep its whole hit area above the dock's transparent hover gutter (z=200). */
 .composer-drawer-handle { position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
-  z-index: 5; width: 36px; height: 15px; border-radius: 8px; }
+  z-index: 201; width: 36px; height: 15px; border-radius: 8px; }
 .input-area.composer-drawer-collapsed .composer-context-row { display: none; }
 .composer-context-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
                         align-items: end; gap: 10px; min-width: 0; }

@@ -233,6 +233,64 @@ def test_http_1_1_framed_response_stays_persistent():
     assert handler.close_connection is False
 
 
+@pytest.mark.parametrize("update_mode", ["rewrite", "replace"])
+def test_chat_asset_cache_refreshes_after_preserved_timestamp_update(
+        tmp_path, monkeypatch, update_mode):
+    import io
+    import os
+    from pathlib import Path
+    from services import _http_request
+
+    asset = tmp_path / "tasks/io/chat_ui/fixture.js"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"window.value = 1;")
+    before = asset.stat()
+    monkeypatch.setattr(_http_request, "__file__", str(tmp_path / "services/_http_request.py"))
+    monkeypatch.setattr(_RequestHandler, "_chat_js_cache", {})
+    reads = []
+    original_read = Path.read_bytes
+
+    def read_bytes(path):
+        if path == asset:
+            reads.append(path)
+        return original_read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+
+    def request(method="GET"):
+        handler = object.__new__(_RequestHandler)
+        handler.command = method
+        handler.wfile = io.BytesIO()
+        statuses, headers = [], {}
+        handler.send_response = statuses.append
+        handler.send_header = headers.__setitem__
+        handler.end_headers = lambda: None
+        assert handler._handle_chat_js_asset("/chat/js/fixture.js")
+        assert statuses == [200]
+        assert headers["Content-Length"] == str(len(b"window.value = 1;"))
+        assert headers["Cache-Control"] == "public, max-age=31536000, immutable"
+        return handler.wfile.getvalue()
+
+    assert request() == request() == b"window.value = 1;"
+    assert len(reads) == 1
+    if update_mode == "replace":
+        replacement = asset.with_suffix(".new")
+        replacement.write_bytes(b"window.value = 2;")
+        os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+        replacement.replace(asset)
+    else:
+        asset.write_bytes(b"window.value = 2;")
+        os.utime(asset, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = asset.stat()
+    assert (after.st_mtime_ns, after.st_size) == (before.st_mtime_ns, before.st_size)
+    assert (after.st_ctime_ns, after.st_ino) != (before.st_ctime_ns, before.st_ino)
+
+    assert request() == b"window.value = 2;"
+    assert request("HEAD") == b""
+    assert request() == b"window.value = 2;"
+    assert len(reads) == 2
+
+
 def test_request_action_label_extracts_api_ui_action_only():
     req = PendingRequest(
         request_id="rid",

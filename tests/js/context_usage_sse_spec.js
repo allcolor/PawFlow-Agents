@@ -23,6 +23,8 @@ global.finalizeThinking = () => {};
 global.trackAgentDone = () => {};
 global.pawflowDebugLog = () => {};
 global.streams = {};
+// Stream rendering is exercised by stream_render_spec.js; this fixture drives lifecycle events.
+global._flushStreamRender = () => {};
 global._CONTEXT_ACKS = new Set();
 global.clearStream = () => {};
 global.scrollBottom = () => {};

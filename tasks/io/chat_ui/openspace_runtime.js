@@ -519,13 +519,13 @@ function _osAnimateRig(rec, ts, walking) {
 }
 
 function _osStartLoop() {
-  if (_osRaf || !_osRenderer) return;
+  if (_osRaf || !_osRenderer || !_osCanRender()) return;
   _osLastFrameTs = 0;
   _osFrameMs = 16.7;
   _osQualityAt = performance.now();
   const step = (ts) => {
     _osRaf = 0;
-    if (!_osActive || document.hidden) return;
+    if (!_osCanRender()) return;
     _osClock = ts;
     _osTick(ts);
     _osAdaptPixelRatio(ts);

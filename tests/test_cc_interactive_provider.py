@@ -1522,7 +1522,7 @@ def test_interactive_pool_writes_lifecycle_hooks(tmp_path):
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert set(settings["hooks"]) == {
         "UserPromptSubmit", "Stop", "StopFailure", "PreCompact",
-        "PostCompact", "SessionEnd"
+        "PostCompact", "SessionEnd", "PreToolUse", "PermissionRequest"
     }
     stop_hook = settings["hooks"]["Stop"][0]["hooks"][0]
     assert stop_hook["command"] == "python3"

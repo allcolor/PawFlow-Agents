@@ -485,6 +485,13 @@ class _InteractiveContainerSpawnMixin:
         }
         for event_name in ("UserPromptSubmit", "Stop", "StopFailure", "PreCompact", "PostCompact", "SessionEnd"):
             hooks[event_name] = [{"hooks": [handler]}]
+        for event_name in ("PreToolUse", "PermissionRequest"):
+            question_handler = {**handler, "timeout": 3600,
+                                "args": [*handler["args"], "--event", event_name]}
+            entry = {"hooks": [question_handler]}
+            if event_name == "PreToolUse":
+                entry["matcher"] = "AskUserQuestion"
+            hooks[event_name] = [entry]
         settings_path = Path(workdir) / ".claude" / "settings.json"
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings = self._read_json(settings_path)
@@ -583,6 +590,8 @@ class _InteractiveContainerSpawnMixin:
         deny = permissions.get("deny")
         if not isinstance(deny, list):
             deny = []
+        # Remove the exact rule PawFlow wrote before native input was supported.
+        deny = [item for item in deny if item != "AskUserQuestion"]
         for tool_name in disallowed:
             if tool_name not in deny:
                 deny.append(tool_name)

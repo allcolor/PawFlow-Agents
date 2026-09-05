@@ -38,7 +38,7 @@ from core._llm_types import ColdStartRequired, LLMClientError
 
 #: Providers that run through ``LLMAcpMixin``. The generic ``acp`` provider
 #: takes its command from the service; specializations fix it themselves.
-ACP_PROVIDERS = frozenset({"acp", "antigravity-acp"})
+ACP_PROVIDERS = frozenset({"acp", "antigravity-acp", "cursor-acp", "grok-build-acp"})
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _MAX_MEDIA_BYTES = 16 * 1024 * 1024
@@ -325,8 +325,15 @@ class LLMAcpMixin:
         conversation_id: str,
         agent_name: str,
     ) -> AcpClientHandlers:
-        if not enabled:
-            return AcpClientHandlers()
+        from core.acp.native_extensions import (
+            NativeAcpExtensions,
+            interaction_permission,
+        )
+
+        native = NativeAcpExtensions(
+            provider=getattr(self, "provider", "acp"), live=live,
+            user_id=user_id, conversation_id=conversation_id, agent_name=agent_name,
+        )
 
         def _registry(session_id: str) -> Any:
             if not live.session_id or session_id != live.session_id:
@@ -408,6 +415,11 @@ class LLMAcpMixin:
             tool_call: Any,
             options: Sequence[Any],
         ) -> Any:
+            if not live.session_id or session_id != live.session_id:
+                raise RequestError.invalid_params({"message": "stale ACP session"})
+            interaction = interaction_permission(tool_call, list(options), native.ask)
+            if interaction is not None:
+                return interaction
             _registry(session_id)
             kind = str(getattr(tool_call, "kind", "") or "other")
             tool_name = _ACP_TOOL_POLICY_NAMES.get(kind, "acp_tool")
@@ -479,8 +491,19 @@ class LLMAcpMixin:
 
         return AcpClientHandlers(
             permission=permission,
-            read_text_file=read_text_file,
-            write_text_file=write_text_file,
+            read_text_file=read_text_file if enabled else None,
+            write_text_file=write_text_file if enabled else None,
+            ext_method=native.request if native.provider in {"cursor-acp", "grok-build-acp"} else None,
+            ext_notification=native.notification if native.provider == "cursor-acp" else None,
+            extension_methods=(
+                ("cursor/ask_question", "cursor/create_plan", "cursor/update_todos")
+                if native.provider == "cursor-acp" else
+                ("x.ai/ask_user_question", "x.ai/exit_plan_mode")
+                if native.provider == "grok-build-acp" else ()
+            ),
+            extension_notifications=(
+                ("cursor/update_todos",) if native.provider == "cursor-acp" else ()
+            ),
         )
 
     def _acp_revoke_internal_token(self, live: _AcpLiveSession) -> None:
@@ -612,6 +635,9 @@ class LLMAcpMixin:
         del config
         return {}
 
+    def _acp_process_class(self) -> type[AcpProcessSession]:
+        return AcpProcessSession
+
     def _acp_open_session(
         self,
         live: _AcpLiveSession,
@@ -627,7 +653,7 @@ class LLMAcpMixin:
         # cwd is the workspace the agent sees. They differ when the command
         # is a container bridge such as ``docker exec``.
         session_cwd = str(config.get("session_cwd") or config["cwd"])
-        process = AcpProcessSession(
+        process = self._acp_process_class()(
             config["command"],
             config["args"],
             handlers=self._acp_client_handlers(

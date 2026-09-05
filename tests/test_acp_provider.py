@@ -134,12 +134,14 @@ def test_acp_is_registered_with_explicit_service_schema_and_none_auth():
         "acp_title_override",
     ):
         assert field in schema
-    rule = next(
-        item for item in service.get_parameter_rules()
-        if item.get("when") == {"provider": ["acp"]}
-    )
-    assert rule["set"]["auth_mode"]["default"] == "none"
-    assert rule["set"]["acp_command"] == {"visible": True, "required": True}
+    settings = {}
+    for rule in service.get_parameter_rules():
+        if "acp" in rule.get("when", {}).get("provider", []):
+            for field, attributes in rule.get("set", {}).items():
+                settings.setdefault(field, {}).update(attributes)
+    assert settings["auth_mode"]["default"] == "none"
+    assert settings["acp_command"]["visible"] is True
+    assert settings["acp_command"]["required"] is True
     service.connect()
     service.disconnect()
 

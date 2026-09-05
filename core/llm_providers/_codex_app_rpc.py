@@ -38,12 +38,13 @@ class _CodexAppRpcMixin:
             self._codex_app_rpc_id = value
             return value
 
-    @staticmethod
-    def _codex_app_send(proc, msg: Dict[str, Any]) -> None:
-        if proc.stdin is None:
-            raise _CodexAppServerProtocolError("codex app-server stdin is closed")
-        proc.stdin.write(json.dumps(msg, ensure_ascii=True) + "\n")
-        proc.stdin.flush()
+    def _codex_app_send(self, proc, msg: Dict[str, Any]) -> None:
+        # Question replies and turn/steer may write from different workers.
+        with self._codex_app_ensure_lock():
+            if proc.stdin is None:
+                raise _CodexAppServerProtocolError("codex app-server stdin is closed")
+            proc.stdin.write(json.dumps(msg, ensure_ascii=True) + "\n")
+            proc.stdin.flush()
 
     def _codex_app_request(self, proc, method: str, params: Optional[dict] = None,
                            stderr_lines: Optional[queue.Queue[str]] = None) -> dict:
@@ -67,6 +68,15 @@ class _CodexAppRpcMixin:
                     detail += f"; stderr:\n{stderr_preview}"
                 raise _CodexAppServerProtocolError(
                     detail)
+            if msg.get("method") == "serverRequest/resolved":
+                manager = getattr(self, "_codex_native_inputs", None)
+                if manager is not None:
+                    manager.cancel((msg.get("params") or {}).get("requestId"))
+                continue
+            if "id" in msg and msg.get("method"):
+                from core.llm_providers._codex_native_input import handle_server_request
+                handle_server_request(self, proc, msg)
+                continue
             if msg.get("id") != req_id:
                 continue
             if msg.get("error"):

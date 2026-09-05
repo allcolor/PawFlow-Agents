@@ -418,8 +418,8 @@ class _CCStreamMixin:
                     "type": "user",
                     "message": {"role": "user", "content": initial_text},
                 })
-            st.proc.stdin.write(msg + "\n")
-            st.proc.stdin.flush()
+            from core.llm_providers._cc_native_input import write_message
+            write_message(st.proc, msg)
         except BrokenPipeError:
             stderr = ""
             try:
@@ -553,6 +553,8 @@ class _CCStreamMixin:
         st._phantom_timestamps: list = []  # monotonic timestamps of phantom detections
 
         st._watchdog_stop = threading.Event()
+        from core.native_user_input import NativeInputRequests
+        st._native_inputs = NativeInputRequests()
 
 
         self._stall_killed = False  # set by watchdog — retry must be unconditional
@@ -728,6 +730,7 @@ class _CCStreamMixin:
             raise
         finally:
             # Stop compact stall watchdog
+            st._native_inputs.close()
             st._watchdog_stop.set()
             # Cancel compact-drain timeout timer if still pending
             # (loop exited cleanly before deadline, or via an exception

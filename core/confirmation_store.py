@@ -172,12 +172,20 @@ def validate_interaction_answer(
     if kind == "choice":
         value = str(answer[0] if isinstance(answer, list) and answer else answer)
         if value not in valid:
+            if schema.get("allow_other") is True and isinstance(answer, str) and answer.strip():
+                return validate_interaction_answer("multiline", answer, schema, label=label)
             raise ValueError(f"Invalid {label} value: {value!r}")
         return value
     if kind == "multi":
         values = [str(value) for value in (
             answer if isinstance(answer, list) else [answer])]
         bad = [value for value in values if value not in valid]
+        if schema.get("allow_other") is True and bad:
+            for value in bad:
+                if not value.strip():
+                    raise ValueError(f"Invalid {label}: empty custom answer")
+                validate_interaction_answer("multiline", value, schema, label=label)
+            bad = []
         if not values or bad:
             raise ValueError(f"Invalid {label} values: {bad or 'empty'}")
         return values
@@ -647,7 +655,15 @@ class UserInteractionStore:
             record["signal_id"],
             {"status": "answered", "answer": record["answer"],
              "answered_by": record["answered_by"]})
-        if record["requester_kind"] == "agent":
+        message_reply = (record["requester_kind"] == "provider"
+                         and record.get("continuation", {}).get("response_mode") == "message")
+        if message_reply:
+            answer_json = json.dumps([
+                {"question": field.get("label", field["name"]),
+                 "answer": record["answer"].get(field["name"])}
+                for field in record["response_schema"].get("fields", [])
+            ], ensure_ascii=False)
+        if record["requester_kind"] == "agent" or message_reply:
             try:
                 from core.poll_scheduler import PollScheduler
                 from tasks.ai.agent_loop import AgentLoopTask

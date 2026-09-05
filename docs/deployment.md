@@ -119,9 +119,10 @@ python cli.py start --host 0.0.0.0 --port PORT
 
 ### Claude Code
 
-Use `claude-code-interactive` for new agent services. The subprocess transport
-(`claude -p --input-format stream-json ...`, also called `cc -p`) is legacy and
-is retained only for existing `claude-code` configurations.
+Both `claude-code-interactive` and `claude-code` are supported providers.
+The latter uses the subprocess transport `claude -p --input-format stream-json`
+(also called `cc -p`). Choose the transport and authentication appropriate to
+the integration; the non-interactive transport is not deprecated.
 
 ### Filesystem relay
 Runs natively -- no container. The relay process runs Python `fs_actions.py` directly.

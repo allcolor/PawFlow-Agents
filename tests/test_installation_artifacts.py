@@ -594,13 +594,17 @@ def test_claude_code_image_pins_latest_cli_versions():
 def _run_cli_image_build_script(tmp_path, buildx_exit):
     docker = tmp_path / "docker"
     calls = tmp_path / "docker.calls"
+    resolver_input = tmp_path / "resolver.input"
     docker.write_text(
         "#!/bin/sh\n"
         "printf '%s\\n' \"$*\" >> \"$PAWFLOW_TEST_DOCKER_CALLS\"\n"
         "if [ \"$1\" = buildx ] && [ \"$2\" = version ]; then\n"
         "  exit \"$PAWFLOW_TEST_BUILDX_EXIT\"\n"
         "fi\n"
-        "if [ \"$1\" = run ]; then printf '9.9.9\\n'; fi\n",
+        "if [ \"$1\" = run ]; then\n"
+        "  case \"$*\" in *' node') cat > \"$PAWFLOW_TEST_RESOLVER_INPUT\"; printf 'CURSOR_VERSION 2026.09.02-abc123\\nGROK_BUILD_VERSION 1.0.13\\n' ;;\n"
+        "  *) printf '9.9.9\\n' ;; esac\n"
+        "fi\n",
         encoding="utf-8",
     )
     docker.chmod(0o755)
@@ -608,6 +612,7 @@ def _run_cli_image_build_script(tmp_path, buildx_exit):
     env.update({
         "PATH": f"{tmp_path}:{env['PATH']}",
         "PAWFLOW_TEST_DOCKER_CALLS": str(calls),
+        "PAWFLOW_TEST_RESOLVER_INPUT": str(resolver_input),
         "PAWFLOW_TEST_BUILDX_EXIT": str(buildx_exit),
         "PAWFLOW_CLI_LLM_IMAGE": "pawflow-cli-test:latest",
     })
@@ -615,6 +620,7 @@ def _run_cli_image_build_script(tmp_path, buildx_exit):
         ["bash", "docker/claude-code/build.sh"],
         capture_output=True, text=True, env=env, timeout=30, check=False,
     )
+    assert resolver_input.read_bytes() == Path("docker/claude-code/resolve_native_versions.cjs").read_bytes()
     return result, calls.read_text(encoding="utf-8").splitlines()
 
 

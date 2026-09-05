@@ -103,6 +103,7 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli, scope
     'gemini': 'gemini_server_login_status',
     'agy':    'agy_server_login_status',
     'rclone': 'rclone_server_login_status',
+    'native': 'native_cli_server_login_status',
   }[cli] || 'claude_code_server_login_status';
   const _cleanupAction = {
     'claude': 'claude_code_server_login_cleanup',
@@ -110,6 +111,7 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli, scope
     'gemini': 'gemini_server_login_cleanup',
     'agy':    'agy_server_login_cleanup',
     'rclone': 'rclone_server_login_cleanup',
+    'native': 'native_cli_server_login_cleanup',
   }[cli] || 'claude_code_server_login_cleanup';
   const _title = {
     'claude': 'Claude Code Login',
@@ -117,6 +119,7 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli, scope
     'gemini': 'Gemini Login',
     'agy':    'Antigravity Login',
     'rclone': 'Rclone Login',
+    'native': 'Native CLI Login',
   }[cli] || t('loginTitle');
 
   window._clsLoginPending = false;
@@ -276,7 +279,13 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction, sc
       payload.config = _collectSchemaValues(JSON.parse(panel.dataset.schema || '{}'));
     } catch (_) {}
   }
-  if (flow === 'acp_registry_import') {
+  if (flow === 'native_cli_update') {
+    try {
+      const resp = await rxjs.firstValueFrom(action$(serverAction, payload));
+      if (resp.error) { addMsg('error', resp.error); return; }
+      if (resp.open_updates) openUpdatesDialog();
+    } catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
+  } else if (flow === 'acp_registry_import') {
     try {
       if (!window.PawFlowAcpRegistry) throw new Error(t('acpRegistryInvalidResponse'));
       await window.PawFlowAcpRegistry.open(btn, payload);
@@ -284,7 +293,7 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction, sc
   } else if (flow === 'credential_table') {
     try { await _renderCredentialPoolTable(serviceId, btn); }
     catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
-  } else if (flow === 'claude_login_server' || flow === 'codex_login_server' || flow === 'gemini_login_server' || flow === 'rclone_login_server') {
+  } else if (flow === 'claude_login_server' || flow === 'codex_login_server' || flow === 'gemini_login_server' || flow === 'rclone_login_server' || flow === 'native_cli_login_server') {
     try {
       if (btn) { btn.disabled = true; btn.textContent = t('starting'); }
       fireAction(serverAction, payload);

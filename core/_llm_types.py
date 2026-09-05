@@ -341,7 +341,9 @@ INTERACTIVE_CLI_PROVIDERS = frozenset({
 
 #: Stateful providers that consume a prompt exactly once. Re-running a turn
 #: would duplicate work or trip the cold/delta context guard.
-NO_REPLAY_PROVIDERS = INTERACTIVE_CLI_PROVIDERS | {"acp", "antigravity-acp"}
+NO_REPLAY_PROVIDERS = INTERACTIVE_CLI_PROVIDERS | {
+    "acp", "antigravity-acp", "cursor-acp", "grok-build-acp", "opencode",
+}
 
 
 class LLMClientError(Exception):

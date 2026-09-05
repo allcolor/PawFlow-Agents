@@ -346,6 +346,10 @@ class _CodexAppStreamMixin:
 
         turn_failed = False
         self._codex_app_compact_hard_killed = False
+        from core.native_user_input import NativeInputRequests
+        self._codex_native_inputs = NativeInputRequests()
+        self._codex_native_context = {
+            "user_id": user_id, "conversation_id": conv_id, "agent_name": agent_name}
 
         try:
             thread_key = f"codex_app_server_thread:{agent_name or 'default'}"
@@ -508,12 +512,19 @@ class _CodexAppStreamMixin:
                     break
                 _now_evt = time.monotonic()
                 if "id" in msg:
+                    if msg.get("method"):
+                        from core.llm_providers._codex_native_input import handle_server_request
+                        handle_server_request(self, proc, msg)
+                        continue
                     # Late response to turn/steer or server request resolution.
                     if msg.get("error"):
                         raise _CodexAppServerProtocolError(str(msg.get("error")))
                     continue
                 method = msg.get("method", "")
                 params = msg.get("params", {}) or {}
+                if method == "serverRequest/resolved":
+                    self._codex_native_inputs.cancel(params.get("requestId"))
+                    continue
                 is_useful_stream_event = (
                     method.startswith("item/")
                     or method in ("turn/completed", "turn/failed")
@@ -559,6 +570,13 @@ class _CodexAppStreamMixin:
 
                 if method == "item/completed":
                     item = params.get("item", {}) or {}
+                    if (item.get("type") == "agentMessage"
+                            and item.get("delivery") == "async" and item.get("questions")):
+                        from core.llm_providers._codex_native_input import publish_async_questions
+                        publish_async_questions(
+                            item, user_id=user_id, conversation_id=conv_id,
+                            agent_name=agent_name, thread_id=thread_id)
+                        continue
                     if (item.get("type") in ("message", "agentMessage")
                             and item.get("role", "assistant") == "assistant"):
                         final_text = self._codex_app_payload_text(item).strip()
@@ -771,6 +789,7 @@ class _CodexAppStreamMixin:
             turn_failed = True
             raise
         finally:
+            self._codex_native_inputs.close()
             if _first_event_done is not None:
                 _first_event_done.set()
             if _first_event_timer is not None:

@@ -176,8 +176,8 @@ class LLMClaudeCodeMixin(
                 "type": "user",
                 "message": {"role": "user", "content": content},
             })
-            proc.stdin.write(msg + "\n")
-            proc.stdin.flush()
+            from core.llm_providers._cc_native_input import write_message
+            write_message(proc, msg)
             self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
             # Remember the EXACT text we sent so the result-time jsonl
             # check can locate it. Skip the multi-agent catchup prefix
@@ -238,8 +238,8 @@ class LLMClaudeCodeMixin(
                     "message": {"role": "user",
                                 "content": SOFT_INTERRUPT_USER_COMMAND},
                 })
-                proc.stdin.write(msg + "\n")
-                proc.stdin.flush()
+                from core.llm_providers._cc_native_input import write_message
+                write_message(proc, msg)
         except (OSError, BrokenPipeError):
             pass
 

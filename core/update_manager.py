@@ -84,7 +84,36 @@ CLI_PACKAGES = (
      "build_arg": "CODEX_VERSION"},
     {"key": "gemini", "label": "Gemini CLI", "package": "@google/gemini-cli",
      "build_arg": "GEMINI_VERSION"},
+    {"key": "opencode", "label": "OpenCode", "package": "opencode-ai",
+     "build_arg": "OPENCODE_VERSION"},
 )
+
+NATIVE_CLIS = (
+    {"key": "cursor", "label": "Cursor", "build_arg": "CURSOR_VERSION"},
+    {"key": "grok", "label": "Grok Build", "build_arg": "GROK_BUILD_VERSION"},
+)
+CURSOR_INSTALL_URL = "https://cursor.com/install"
+GROK_STABLE_URL = "https://x.ai/cli/stable"
+_CURSOR_VERSION_RE = re.compile(r"\d{4}\.\d{2}\.\d{2}-[a-zA-Z0-9]+")
+
+
+def latest_native_version(key: str) -> str:
+    """Resolve official native releases without executing an installer."""
+    url = {"cursor": CURSOR_INSTALL_URL, "grok": GROK_STABLE_URL}[key]
+    try:
+        import requests
+        response = requests.get(url, timeout=HTTP_TIMEOUT)
+        response.raise_for_status()
+        if key == "cursor":
+            match = re.search(
+                r"https://downloads\.cursor\.com/lab/(\d{4}\.\d{2}\.\d{2}-[a-zA-Z0-9]+)/",
+                response.text)
+            return match.group(1) if match else ""
+        version = response.text.strip()
+        return version if re.fullmatch(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9._]+)?", version) else ""
+    except Exception:
+        logger.debug("Native CLI update check failed for %s", key, exc_info=True)
+        return ""
 
 #: Installed from ``antigravity.google/cli/install.sh``, which publishes no
 #: version endpoint. Recorded in the image but never comparable.
@@ -197,6 +226,13 @@ def _component(key: str, label: str, current: str, available: str,
         "available": available,
         "update_available": _is_newer(available, current),
     }
+    if key == "cursor":
+        # Hashes are identities, not ordered revisions. Same-date rebuilds
+        # remain unknown rather than mislabelling a downgrade as an update.
+        entry["update_available"] = bool(
+            _CURSOR_VERSION_RE.fullmatch(available)
+            and _CURSOR_VERSION_RE.fullmatch(current)
+            and available[:10] > current[:10])
     entry.update(extra)
     return entry
 
@@ -217,13 +253,13 @@ def local_image_tags(repository: str) -> List[str]:
             if line.strip() and line.strip() != "<none>"]
 
 
-def installed_cli_versions() -> Dict[str, str]:
+def installed_cli_versions(image: str = "") -> Dict[str, str]:
     """CLI versions recorded inside the tools image at build time.
 
     Empty dict when the image is missing or predates the version stamp — the
     caller reports those components as not installed rather than guessing.
     """
-    image = cli_image_name()
+    image = image or cli_image_name()
     try:
         # Check presence first: `docker run` on a missing local image would try
         # to pull it, and this image is never published to a registry.
@@ -367,6 +403,11 @@ def check_updates() -> Dict[str, Any]:
             cli["key"], cli["label"],
             installed_clis.get(cli["key"], ""), latest_npm_version(cli["package"]),
             group="cli", package=cli["package"]))
+    for cli in NATIVE_CLIS:
+        components.append(_component(
+            cli["key"], cli["label"],
+            installed_clis.get(cli["key"], ""), latest_native_version(cli["key"]),
+            group="cli"))
     components.append(_component(
         UNPINNED_CLI_KEY, "Antigravity",
         installed_clis.get(UNPINNED_CLI_KEY, ""), "",
@@ -393,6 +434,11 @@ def _resolved_build_args() -> List[str]:
     args: List[str] = []
     for cli in CLI_PACKAGES:
         version = latest_npm_version(cli["package"]) or "latest"
+        args.extend(["--build-arg", f"{cli['build_arg']}={version}"])
+    for cli in NATIVE_CLIS:
+        version = latest_native_version(cli["key"])
+        if not version:
+            raise ValueError(f"Could not resolve latest {cli['label']} version; image was not rebuilt")
         args.extend(["--build-arg", f"{cli['build_arg']}={version}"])
     return args
 
@@ -443,7 +489,11 @@ def _rebuild_cli_image(force: bool,
     platform = os.environ.get("PAWFLOW_DOCKER_PLATFORM", "").strip()
     if platform:
         args.extend(["--platform", platform])
-    args.extend(_resolved_build_args())
+    try:
+        args.extend(_resolved_build_args())
+    except ValueError as exc:
+        return {"ok": False, "image": image, "forced": bool(force), "exit_code": -1,
+                "output": str(exc)}
     args.extend(["-t", image, str(CLI_BUILD_CONTEXT)])
 
     exit_code, lines = _stream_command(docker_cmd() + args, on_output)

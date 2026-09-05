@@ -261,10 +261,7 @@ class AcpProcessSession:
             raise AcpSessionClosedError("ACP client adapter is unavailable")
         adapter.bind_session_generation(session_id, generation)
         try:
-            response = await connection.prompt(
-                session_id=session_id,
-                prompt=prompt,
-            )
+            response = await self._prompt_response(connection, session_id, prompt)
         except BaseException as exc:
             with self._lock:
                 closing = generation in self._closing_generations
@@ -286,6 +283,11 @@ class AcpProcessSession:
             return response
         finally:
             adapter.unbind_session_generation(session_id, generation)
+
+    async def _prompt_response(
+        self, connection: Any, session_id: str, prompt: list[Any],
+    ) -> Any:
+        return await connection.prompt(session_id=session_id, prompt=prompt)
 
     def _running_connection(
         self,

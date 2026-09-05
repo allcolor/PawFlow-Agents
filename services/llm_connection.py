@@ -116,6 +116,21 @@ class LLMConnectionService(BaseService):
                 request_headers(self.config)
             except ValueError as exc:
                 raise ServiceError(str(exc)) from exc
+        if self.provider == "opencode":
+            from core.llm_providers.opencode import validate_opencode_config
+            try:
+                validate_opencode_config(self.config)
+            except ValueError as exc:
+                raise ServiceError(str(exc)) from exc
+        if self.provider in ("cursor-acp", "grok-build-acp"):
+            from core.llm_providers.cursor_acp import validate_cursor_acp_config
+            from core.llm_providers.grok_build_acp import validate_grok_build_acp_config
+            validate = (validate_cursor_acp_config if self.provider == "cursor-acp"
+                        else validate_grok_build_acp_config)
+            try:
+                validate(self.config)
+            except ValueError as exc:
+                raise ServiceError(str(exc)) from exc
         if self.provider == "acp":
             from core.llm_auth_modes import NONE, resolve_mode
             from core.llm_providers.acp import validate_acp_config
@@ -173,7 +188,9 @@ class LLMConnectionService(BaseService):
         return {"provider": self.provider, "ready": True}
 
     def _close_connection(self):
-        if self.provider in ("acp", "antigravity-acp"):
+        if self.provider == "opencode":
+            self._client._opencode_close_all()
+        if self.provider in ("acp", "antigravity-acp", "cursor-acp", "grok-build-acp"):
             self._client._acp_close_all()
 
     def _apply_defaults(self, temperature, max_tokens, model):
@@ -794,6 +811,34 @@ class LLMConnectionService(BaseService):
                 "type": "string", "default": "{}", "multiline": True,
                 "description": "JSON object of explicit environment variables",
             },
+            "opencode_mode": {
+                "type": "select", "default": "managed", "options": ["managed"],
+                "description": "Run an isolated OpenCode server managed by PawFlow",
+            },
+            "opencode_env": {
+                "type": "string", "default": "{}", "multiline": True,
+                "description": "JSON object of provider environment variables; values support secret expressions. Runtime and configuration variables are reserved.",
+            },
+            "opencode_agent": {
+                "type": "string", "default": "",
+                "description": "Optional OpenCode agent name",
+            },
+            "opencode_variant": {
+                "type": "string", "default": "",
+                "description": "Optional model variant",
+            },
+            "opencode_load_session": {
+                "type": "boolean", "default": True,
+                "description": "Resume the stored OpenCode session between turns",
+            },
+            "opencode_reuse_process": {
+                "type": "boolean", "default": True,
+                "description": "Keep the isolated OpenCode server running between turns",
+            },
+            "opencode_mcp_mode": {
+                "type": "select", "default": "pawflow", "options": ["pawflow", "none"],
+                "description": "Expose PawFlow's scoped MCP bridge or no MCP server",
+            },
             "acp_auth_method_id": {
                 "type": "string", "default": "",
                 "description": "Exact authentication method id advertised by the ACP agent",
@@ -931,6 +976,7 @@ class LLMConnectionService(BaseService):
                                      "antigravity-interactive", "codex-app-server",
                                      "codex-interactive",
                                      "gemini", "acp", "antigravity-acp",
+                                     "opencode", "cursor-acp", "grok-build-acp",
                                      "cc_mcp", "codex_mcp", "agy_mcp"]},
                 "set": {
                     "azure_deployment":  {"visible": False},
@@ -953,6 +999,13 @@ class LLMConnectionService(BaseService):
                     "acp_title_override": {"visible": False},
                     "acp_registry": {"visible": False},
                     "antigravity_acp_auth_method": {"visible": False},
+                    "opencode_mode": {"visible": False},
+                    "opencode_env": {"visible": False},
+                    "opencode_agent": {"visible": False},
+                    "opencode_variant": {"visible": False},
+                    "opencode_load_session": {"visible": False},
+                    "opencode_reuse_process": {"visible": False},
+                    "opencode_mcp_mode": {"visible": False},
                 }
             },
             {
@@ -1057,7 +1110,43 @@ class LLMConnectionService(BaseService):
                 }
             },
             {
-                "when": {"provider": ["acp"]},
+                "when": {"provider": ["opencode"]},
+                "set": {
+                    "auth_mode": {"visible": True, "default": "none", "options": ["none"]},
+                    "api_key": {"visible": False, "required": False},
+                    "credential_service_id": {"visible": False},
+                    "base_url": {"visible": False},
+                    "relay_local": {"visible": False},
+                    "default_model": {"visible": True, "required": True,
+                                      "description": "OpenCode model in providerID/modelID form"},
+                    "fallback_model": {"visible": False},
+                    "max_retries": {"visible": False},
+                    "timeout": {"default": 0},
+                    "docker_image": {"visible": False},
+                    "docker_cpu_limit": {"visible": False},
+                    "docker_memory_limit": {"visible": False},
+                    "effort": {"visible": False},
+                    "reasoning_effort": {"visible": False},
+                    "codex_plugins": {"visible": False},
+                    "claude_plugins": {"visible": False},
+                    "claude_marketplaces": {"visible": False},
+                    "extra_body": {"visible": False},
+                    "extra_headers": {"visible": False},
+                    "store": {"visible": False},
+                    "cli_environment": {"visible": False},
+                    "codex_config_toml": {"visible": False},
+                    "codex_models_json": {"visible": False},
+                    "opencode_mode": {"visible": True},
+                    "opencode_env": {"visible": True},
+                    "opencode_agent": {"visible": True},
+                    "opencode_variant": {"visible": True},
+                    "opencode_load_session": {"visible": True},
+                    "opencode_reuse_process": {"visible": True},
+                    "opencode_mcp_mode": {"visible": True},
+                }
+            },
+            {
+                "when": {"provider": ["acp", "cursor-acp", "grok-build-acp"]},
                 "set": {
                     "auth_mode": {"visible": True, "default": "none"},
                     "api_key": {"visible": False},
@@ -1097,6 +1186,21 @@ class LLMConnectionService(BaseService):
                     "acp_use_client_io": {"visible": True},
                     "acp_title_override": {"visible": True},
                     "acp_registry": {"visible": True},
+                }
+            },
+            {
+                "when": {"provider": ["cursor-acp", "grok-build-acp"]},
+                "set": {
+                    "auth_mode": {"visible": True, "default": "none", "options": ["none"]},
+                    "api_key": {"visible": False, "required": False},
+                    "default_model": {"visible": True, "required": False},
+                    "acp_command": {"required": False,
+                                    "description": "Optional native CLI override; empty uses the managed CLI"},
+                    "acp_args": {"description": "Optional argv override; empty uses the provider's ACP arguments"},
+                    "acp_env": {"description": "JSON environment; use CURSOR_API_KEY or XAI_API_KEY with secret expressions, or Login via server"},
+                    "acp_auth_method_id": {"description": "Optional exact native method id; empty uses the provider's documented method"},
+                    "acp_registry": {"visible": False},
+                    "timeout": {"default": 0},
                 }
             },
             {
@@ -1379,12 +1483,13 @@ class LLMConnectionService(BaseService):
         ]
 
     def get_service_actions(self) -> list:
-        """CLI providers keep their logins in llmCredentialOAuthProvider.
+        """Expose provider-specific login, version, and discovery actions.
 
         Copilot is the exception, and deliberately so: its device flow ends on
         a plain GitHub token that belongs in ``api_key``, not on a rotating
         credential pool with accounts and refresh tokens. Putting it here keeps
         the result where the user can see and edit it.
+        Cursor, Grok Build, and OpenCode use their own persisted CLI login homes.
         """
         return [
             {
@@ -1394,6 +1499,26 @@ class LLMConnectionService(BaseService):
                 "when": {"provider": ["omniroute"]},
                 "server_action": "omniroute_models_list",
                 "flow": "simple",
+            },
+            {
+                "id": "native_cli_server_login", "label": "Login via server",
+                "when": {"provider": ["cursor-acp", "grok-build-acp", "opencode"]},
+                "server_action": "native_cli_server_login", "flow": "native_cli_login_server",
+            },
+            {
+                "id": "native_cli_status", "label": "Authentication status",
+                "when": {"provider": ["cursor-acp", "grok-build-acp", "opencode"]},
+                "server_action": "native_cli_status", "flow": "simple",
+            },
+            {
+                "id": "native_cli_versions", "label": "Installed/latest CLI versions",
+                "when": {"provider": ["cursor-acp", "grok-build-acp", "opencode"]},
+                "server_action": "native_cli_versions", "flow": "simple",
+            },
+            {
+                "id": "native_cli_update", "label": "Update CLI tools image",
+                "when": {"provider": ["cursor-acp", "grok-build-acp", "opencode"]},
+                "server_action": "native_cli_update", "flow": "native_cli_update",
             },
             {
                 "id": "copilot_device_login",

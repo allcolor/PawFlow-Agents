@@ -851,7 +851,7 @@ class ClaudeCodeSessionMixin:
         "Task,Agent,ToolSearch,ListMcpResourcesTool,ReadMcpResourceTool,"
         "EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,"
         "RemoteTrigger,Skill,TaskOutput,TaskStop,TodoWrite,"
-        "CronCreate,CronDelete,CronList,AskUserQuestion,Monitor,"
+        "CronCreate,CronDelete,CronList,Monitor,"
         "ScheduleWakeup,PushNotification"
     )
 
@@ -877,6 +877,9 @@ class ClaudeCodeSessionMixin:
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--include-partial-messages",
+            # Anthropic SDK _configure_can_use_tool uses this stdio route;
+            # --permission-prompts host selects policy, not the transport.
+            "--permission-prompt-tool", "stdio",
         ])
         model = (model or "").strip()
         if model:

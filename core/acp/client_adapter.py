@@ -8,9 +8,11 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from acp import RequestError
+from acp.router import Route
 from acp.schema import (
     AllowedOutcome,
     ClientCapabilities,
@@ -48,6 +50,8 @@ class AcpClientHandlers:
     complete_elicitation: Handler | None = None
     ext_method: Handler | None = None
     ext_notification: Handler | None = None
+    extension_methods: tuple[str, ...] = ()
+    extension_notifications: tuple[str, ...] = ()
 
 
 def cancelled_permission_response() -> RequestPermissionResponse:
@@ -131,6 +135,18 @@ class AcpClientAdapter:
 
     def on_connect(self, connection: Any) -> None:
         self.connection = connection
+        # SDK 0.12.1 only auto-routes underscore-prefixed extensions. Cursor
+        # and Grok also send documented plain names. Register exact aliases
+        # on this connection's SDK router; never replace global routing.
+        aliases = (
+            (self._handlers.extension_methods, "request", self.ext_method),
+            (self._handlers.extension_notifications, "notification", self.ext_notification),
+        )
+        for methods, kind, handler in aliases:
+            for method in methods:
+                connection._conn._handler.add_route(Route(
+                    method=method, kind=kind, func=partial(handler, method),
+                ))
 
     def bind_session_generation(self, session_id: str, generation: int) -> None:
         with self._lock:

@@ -3,11 +3,18 @@ import json
 from chat_ui_testing import rendered_chat_html
 import re
 import subprocess
+import pytest
 from pathlib import Path
 
 from core import FlowFile, update_manager
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def _native_release_metadata(monkeypatch):
+    monkeypatch.setattr(update_manager, "latest_native_version",
+                        lambda key: "2026.09.02-c22c1a3" if key == "cursor" else "1.0.13")
 
 
 def _admin_flowfile():
@@ -105,7 +112,7 @@ def test_installed_cli_versions_empty_when_stamp_unreadable(monkeypatch):
 def test_check_updates_reports_every_component_and_counts_updates(monkeypatch):
     npm = {"@anthropic-ai/claude-code": "2.1.0",
            "@openai/codex": "1.1.0",
-           "@google/gemini-cli": "3.0.0"}
+           "@google/gemini-cli": "3.0.0", "opencode-ai": "1.18.28"}
     monkeypatch.setattr(update_manager, "server_version", lambda: "1.0.0b35")
     monkeypatch.setattr(update_manager, "latest_server_release", lambda: "1.0.0-beta.36")
     monkeypatch.setattr(update_manager, "local_image_tags", lambda repo: ["2026.07.16"])

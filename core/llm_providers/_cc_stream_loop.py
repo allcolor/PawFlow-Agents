@@ -51,6 +51,10 @@ class _CCStreamLoopMixin:
                 break
 
             etype = event.get("type", "")
+            if etype in {"control_request", "control_cancel_request"}:
+                from core.llm_providers._cc_native_input import handle_control
+                handle_control(st, event)
+                continue
             st._hb_state["last_event_kind"] = etype
             _parent_tc_id = event.get("parent_tool_use_id") or ""
             # Raw event dump at DEBUG. Confirmed CC 1.0+ sends
@@ -676,6 +680,12 @@ class _CCStreamLoopMixin:
     def _ccs_stall_watchdog(self, st):
         pass  # _stall_killed is on self
         while not st._watchdog_stop.is_set():
+            native = getattr(st, "_native_inputs", None)
+            if native is not None and native.pending:
+                st._stall_start_time = time.monotonic()
+                st._last_tool_result_time = 0.0
+                st._watchdog_stop.wait(0.2)
+                continue
             if st._STALL_TIMEOUT > 0 and st._stall_start_time and not st._got_assistant:
                 elapsed = time.monotonic() - st._stall_start_time
                 if elapsed >= st._STALL_TIMEOUT:
@@ -740,14 +750,16 @@ class _CCStreamLoopMixin:
                                 - st._hb_state["last_turn_flush_ts"])
                 if _since_turn >= st._SENTINEL_EOF_INTERVAL:
                     try:
-                        if st.proc.stdin and not st.proc.stdin.closed:
-                            st.proc.stdin.close()
-                            st._hb_state["stdin_closed"] = True
-                            logger.info(
-                                "[claude-code] sentinel '%s' idle "
-                                "%.0fs since last turn — closed "
-                                "stdin (EOF nudge, NOT a kill)",
-                                st.conv_id, _since_turn)
+                        from core.llm_providers._cc_native_input import stdin_lock
+                        with stdin_lock(st.proc):
+                            if st.proc.stdin and not st.proc.stdin.closed:
+                                st.proc.stdin.close()
+                                st._hb_state["stdin_closed"] = True
+                                logger.info(
+                                    "[claude-code] sentinel '%s' idle "
+                                    "%.0fs since last turn — closed "
+                                    "stdin (EOF nudge, NOT a kill)",
+                                    st.conv_id, _since_turn)
                     except (OSError, BrokenPipeError) as _eof_err:
                         logger.debug(
                             "[claude-code] EOF nudge failed: %s",

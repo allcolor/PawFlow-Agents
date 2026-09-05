@@ -18,15 +18,36 @@ class _CCStreamResultMixin:
         from core.llm_client import LLMClientError
         from core.conversation_store import ConversationStore
         self._ccs_flush_turn(st)
-        # Check for API errors (auth failure, rate limit, etc.)
-        if event.get("is_error") or event.get("subtype") == "error_during_execution":
-            _err_text = event.get("result", "")
+        # A success subtype can still carry a failed terminal API outcome.
+        _api_status = event.get("api_error_status")
+        _api_failed = isinstance(_api_status, (int, float)) and _api_status >= 400
+        _term = event.get("terminal_reason", "")
+        _terminal_failed = _term in (
+            "api_error", "malformed_tool_use_exhausted", "budget_exhausted",
+            "structured_output_retry_exhausted", "tool_deferred_unavailable",
+            "turn_setup_failed", "blocking_limit", "rapid_refill_breaker",
+            "prompt_too_long", "image_error", "model_error",
+        )
+        if (event.get("is_error")
+                or event.get("subtype") == "error_during_execution"
+                or _api_failed or _terminal_failed):
+            _err_text = event.get("result") or ""
             _errors = event.get("errors", [])
             if _errors:
                 _err_text = _err_text or "; ".join(
                     e.get("message", str(e)) if isinstance(e, dict) else str(e)
                     for e in _errors)
                 logger.error("[claude-code] errors: %s", _errors)
+            # Keep status/reason before text truncation so the existing
+            # LLMClient retry loop can recognize 429/529/api_error failures.
+            _details = []
+            if _api_failed:
+                _details.append(f"api_error_status={_api_status}")
+            if _terminal_failed:
+                _details.append(f"terminal_reason={_term}")
+            if _err_text.strip():
+                _details.append(_err_text)
+            _err_text = "; ".join(_details) or "result reported failure without error details"
             # Dump the full event body + any stderr lines we've
             # accumulated — useful when the "error" is an opaque
             # "empty or malformed response" (CC's HTTP client
@@ -42,9 +63,7 @@ class _CCStreamResultMixin:
                 # the connection failed fast (DNS/refused),
                 # hundreds of ms means the server answered
                 # (so the bug is upstream of CC's parser).
-                _api_status = event.get("api_error_status")
                 _api_ms = event.get("duration_api_ms")
-                _term = event.get("terminal_reason", "")
                 _stop = event.get("stop_reason", "")
                 _usage = event.get("usage", {}) or {}
                 logger.error(
@@ -144,11 +163,9 @@ class _CCStreamResultMixin:
             if event.get("subtype") == "error_during_execution":
                 # Include the error code/text so LLMClient retry loop can match it
                 raise LLMClientError(f"Claude Code error: {_err_text[:300]}")
-            # is_error without error_during_execution: API error (500, 429, etc.)
-            # Raise so it reaches the retry loop in LLMClient
-            if _err_text:
-                raise LLMClientError(f"Claude Code API error: {_err_text[:300]}")
-            logger.warning("[claude-code] result has is_error=True but no details")
+            # Every failed terminal result must reach LLMClient, even when
+            # Claude Code supplied no error text.
+            raise LLMClientError(f"Claude Code API error: {_err_text[:300]}")
         result_text = event.get("result", "")
         if not st.turn_callback and result_text and not st.content_parts:
             st.content_parts.append(result_text)

@@ -32,6 +32,9 @@ from core.llm_providers import (
     LLMGeminiMixin,
 )
 from core.llm_providers.acp import ACP_PROVIDERS
+from core.llm_providers.cursor_acp import LLMCursorAcpMixin
+from core.llm_providers.grok_build_acp import LLMGrokBuildAcpMixin
+from core.llm_providers.opencode import LLMOpenCodeMixin
 from core._llm_types import (  # noqa: F401 -- re-exported for back-compat (invariant 1)
     AgentSuperseded,
     CCCompactDetected,
@@ -82,7 +85,10 @@ class LLMClient(
     LLMCodexInteractiveMixin,
     LLMManagedMcpMixin,
     LLMAntigravityAcpMixin,
+    LLMCursorAcpMixin,
+    LLMGrokBuildAcpMixin,
     LLMAcpMixin,
+    LLMOpenCodeMixin,
     LLMGeminiMixin,
 ):
     """Standalone LLM HTTP client (no BaseService dependency).
@@ -98,7 +104,7 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "openai-responses", "azure-openai", "copilot", "omniroute", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "acp", "antigravity-acp", "cc_mcp", "codex_mcp", "agy_mcp")
+    PROVIDERS = ("openai", "openai-responses", "azure-openai", "copilot", "omniroute", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini", "acp", "antigravity-acp", "cursor-acp", "grok-build-acp", "opencode", "cc_mcp", "codex_mcp", "agy_mcp")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
@@ -162,6 +168,8 @@ class LLMClient(
         # Abort signal — set from another thread to cancel the current LLM call
         self._abort = threading.Event()
         self._active_http_conn = None
+        self._opencode_live_sessions = {}
+        self._opencode_live_lock = threading.RLock()
         # Session identity for gateways that key prompt-cache affinity on a
         # per-conversation header (OpenCode Go's x-opencode-session). Inside a
         # conversation the conversation id is that key; outside one (background
@@ -236,6 +244,9 @@ class LLMClient(
         if _max_ctx:
             clone._max_context_size = _max_ctx
         clone._session_fallback_id = self._session_fallback_id
+        if self.provider == "opencode":
+            clone._opencode_live_sessions = self._opencode_live_sessions
+            clone._opencode_live_lock = self._opencode_live_lock
         if self.provider in ACP_PROVIDERS:
             sessions, lock = self._acp_shared_state()
             clone._acp_live_sessions = sessions
@@ -753,6 +764,7 @@ class LLMClient(
 _PROVIDERS_WITHOUT_DEFAULT_MODEL = (
     "claude-code", "claude-code-interactive", "antigravity-interactive",
     "codex-app-server", "codex-interactive", "gemini", "acp", "antigravity-acp",
+    "cursor-acp", "grok-build-acp", "opencode",
     "cc_mcp", "codex_mcp", "agy_mcp")
 
 

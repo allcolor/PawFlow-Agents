@@ -35,10 +35,14 @@ def test_llm_service_references_external_credential_provider():
         "codex_mcp": "codex-app-server",
         "agy_mcp": "gemini",
     }
-    # CLI providers own no login action here — they reference a credential
-    # pool. Copilot is not a pool: its device flow just fills api_key.
+    # Credential-pool CLI providers keep login actions on the pool service.
+    # Native CLI services own their login homes; Copilot fills api_key.
     assert [a["id"] for a in LLMConnectionService({}).get_service_actions()] == [
         "omniroute_models_list",
+        "native_cli_server_login",
+        "native_cli_status",
+        "native_cli_versions",
+        "native_cli_update",
         "copilot_device_login",
         "antigravity_acp_server_login",
         "acp_registry_import",

@@ -50,6 +50,45 @@ proxy. The provider does not read Claude Code transcripts or terminal output.
   `customApiKeyResponses.approved`. The full API key remains only in the
   process environment, and a cold session cannot stop on the yes/no prompt.
 
+## Native user input
+
+`AskUserQuestion` remains available in Claude stream-json, interactive, and
+`cc_mcp` sessions. PawFlow displays provider questions in the user interaction
+panel, with the original labels, multiple selections, and free-text answers.
+These forms require an actual user response independently of tool auto-approval.
+Cancellation returns a denial; it never supplies a default answer.
+
+Stream-json uses Anthropic's SDK `can_use_tool` control protocol over the
+`--permission-prompt-tool stdio` route. This option is accepted by Claude Code
+2.1.261 even though its help lists `--permission-prompts host|none` instead;
+the latter controls who may answer prompts. Ordinary permission bypass remains
+enabled. Interactive and `cc_mcp` sessions use a `PreToolUse` hook matching
+`AskUserQuestion`, plus a `PermissionRequest` hook for native permission prompts.
+The hooks return `allow` with the full original input and collected answers, or
+`deny`. Multi-select labels are joined with `, ` in Claude's answer map.
+
+Questions wait on workers while the process and WebSocket readers keep running.
+Stream-json control replies, user messages, and stdin closure share one lock per
+process, including reused sessions, so their JSON frames cannot interleave.
+Control cancellation, hook disconnect, session removal, and service disconnect
+cancel pending waits and suppress stale responses. Interactive sessions allow
+at most 16 simultaneous hook requests, with a one-hour hook deadline. Malformed
+or unsupported requests return an error or a blocking hook decision. Existing
+session settings drop PawFlow's former exact `AskUserQuestion` deny rule when
+the session is provisioned again.
+
+Installed Claude Code 2.1.261 was also checked in a network-disabled container
+against a synthetic local Anthropic endpoint. Control and actual `PreToolUse`
+hook round trips preserved Unicode labels, multiple selections, and multiline
+free text in the next native tool result; both cancellation cases produced a
+denial. In this headless test, the stdio permission route must be enabled even
+for hook mode, otherwise the CLI omits `AskUserQuestion`. These tests do not
+exercise remote model authentication or the interactive terminal UI.
+
+Protocol references: [Claude hook decisions](https://code.claude.com/docs/en/hooks#pretooluse-decision-control),
+[SDK user input](https://platform.claude.com/docs/en/agent-sdk/user-input), and
+[SDK control transport](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/_internal/query.py).
+
 ## TLS Material
 
 PawFlow creates a local CA once under `data/system` and generates a per-session

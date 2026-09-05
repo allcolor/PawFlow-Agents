@@ -323,6 +323,10 @@ def test_the_github_login_button_only_shows_for_copilot():
 
     assert [a["id"] for a in actions] == [
         "omniroute_models_list",
+        "native_cli_server_login",
+        "native_cli_status",
+        "native_cli_versions",
+        "native_cli_update",
         "copilot_device_login",
         "antigravity_acp_server_login",
         "acp_registry_import",

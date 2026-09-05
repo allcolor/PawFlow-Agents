@@ -359,11 +359,14 @@ def test_codex_app_server_registers_live_app_server_session():
     assert "active_turn=True" in src
     assert "active_turn=False" in src
 
-    # The point of this assertion is that CLI OAuth logins live in
-    # llmCredentialOAuthProvider, not here. Copilot's device flow is not one:
-    # it ends on a plain api_key.
+    # Claude/Codex OAuth pools retain their canonical credential-service IDs.
+    # Native Cursor/Grok/OpenCode logins belong to the stored LLM service.
     assert [a["id"] for a in LLMConnectionService({}).get_service_actions()] == [
         "omniroute_models_list",
+        "native_cli_server_login",
+        "native_cli_status",
+        "native_cli_versions",
+        "native_cli_update",
         "copilot_device_login",
         "antigravity_acp_server_login",
         "acp_registry_import",

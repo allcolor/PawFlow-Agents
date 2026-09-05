@@ -29,11 +29,33 @@ RUN curl -fsSL "https://downloads.rclone.org/rclone-${DOWNLOAD_RCLONE_VERSION}-l
 ARG CLAUDE_CODE_VERSION=latest
 ARG CODEX_VERSION=latest
 ARG GEMINI_VERSION=latest
+ARG OPENCODE_VERSION=latest
 RUN npm install -g \
         "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "@openai/codex@${CODEX_VERSION}" \
         "@google/gemini-cli@${GEMINI_VERSION}" \
+        "opencode-ai@${OPENCODE_VERSION}" \
     && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin
+
+# Native release bundles are installed outside any user's auth home. Preserve
+# Cursor's complete bundle and use explicit names: both installers alias `agent`.
+ARG CURSOR_VERSION=2026.09.02-c22c1a3
+ARG GROK_BUILD_VERSION=1.0.13
+RUN set -eu; \
+    case "$(uname -m)" in \
+      x86_64) cursor_arch=x64; grok_arch=x86_64 ;; \
+      aarch64) cursor_arch=arm64; grok_arch=aarch64 ;; \
+      *) exit 1 ;; \
+    esac; \
+    mkdir -p /opt/pawflow/cursor; \
+    curl -fsSL "https://downloads.cursor.com/lab/${CURSOR_VERSION}/linux/${cursor_arch}/agent-cli-package.tar.gz" -o /tmp/cursor.tar.gz; \
+    tar --strip-components=1 -xzf /tmp/cursor.tar.gz -C /opt/pawflow/cursor; \
+    ln -s /opt/pawflow/cursor/cursor-agent /usr/local/bin/cursor-agent; \
+    curl -fsSL "https://x.ai/cli/grok-${GROK_BUILD_VERSION}-linux-${grok_arch}" -o /usr/local/bin/grok; \
+    chmod 0755 /usr/local/bin/grok; \
+    cursor-agent --version; \
+    grok --version; \
+    rm /tmp/cursor.tar.gz
 
 # Google's official Antigravity ACP server (ACP registry entry `antigravity-acp`).
 # It is a self-contained ELF; core/antigravity_acp_pool.py execs
@@ -85,6 +107,7 @@ COPY agy_auth_login.sh /opt/pawflow/agy_auth_login.sh
 COPY agy_acp_auth_login.sh /opt/pawflow/agy_acp_auth_login.sh
 COPY agy_acp_login.py /opt/pawflow/agy_acp_login.py
 COPY rclone_auth_login.sh /opt/pawflow/rclone_auth_login.sh
+COPY native_cli_login.py /opt/pawflow/native_cli_login.py
 RUN chmod +x /opt/pawflow/auth_login.sh /opt/pawflow/codex_auth_login.sh /opt/pawflow/gemini_auth_login.sh /opt/pawflow/agy_auth_login.sh /opt/pawflow/agy_acp_auth_login.sh /opt/pawflow/agy_acp_login.py /opt/pawflow/rclone_auth_login.sh
 
 # Browser wrapper for Claude Code auth login (Chromium with Docker-safe flags)

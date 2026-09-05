@@ -7,7 +7,7 @@ backends on this page are `llmConnection` providers. The deliberate exception is
 but it is listed here because it replaces that member's intelligence backend in
 the same user-facing provider choice.
 
-For new CLI-backed agent services, use `claude-code-interactive` for Claude Code and `codex-interactive` for Codex. The non-interactive `claude-code` transport (`claude -p`, commonly called `cc -p`) and `codex-app-server` are legacy agent providers retained for existing configurations and migration only. Their identifiers still name the shared OAuth credential pools, so credential references do not need to change when an agent service migrates to the interactive provider.
+The interactive providers, non-interactive `claude-code` transport (`claude -p`, commonly called `cc -p`), and `codex-app-server` are supported integration choices. Transport support and subscription authentication are separate: OpenAI explicitly documents ChatGPT login for [Codex app-server](https://developers.openai.com/codex/app-server/). The `claude-code` and `codex-app-server` identifiers also name the shared OAuth credential pools; these pool identifiers remain unchanged.
 
 ## Provider Types
 
@@ -18,6 +18,9 @@ For new CLI-backed agent services, use `claude-code-interactive` for Claude Code
 | `omniroute` | Explicit gateway API | OmniRoute Chat Completions and virtual routes such as `auto` | Requires an explicit `base_url`, `omniroute_auth_mode`, and `default_model`. Supports bounded routing controls, sanitized gateway metadata, and model discovery. |
 | `anthropic` | Direct API | Claude API and Anthropic-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. |
 | `acp` | Outbound ACP agent process | Any configured ACP v1 agent command | PawFlow launches the command without a shell, negotiates the official ACP protocol, and exposes only explicitly enabled PawFlow MCP and client filesystem capabilities. |
+| `cursor-acp` | Cursor CLI through ACP | Cursor sessions with native questions, plans, and todo updates | Uses the shared ACP engine and native CLI authentication. See [Native ACP providers](NATIVE_ACP_PROVIDERS.md). |
+| `grok-build-acp` | Grok Build CLI through ACP | Grok sessions with questions, plan confirmation, and correlated completion | Uses `grok agent stdio` and native CLI authentication. See [Native ACP providers](NATIVE_ACP_PROVIDERS.md). |
+| `opencode` | Managed OpenCode server, SDK v2 HTTP/SSE protocol | Stateful OpenCode agents with scoped PawFlow MCP tools | Requires OpenCode 1.14.19 or later. This is separate from OpenCode Go's generic API endpoint. |
 | `antigravity-acp` | Google's official Antigravity ACP server in the `pawflow-claude-code` image | Antigravity subscription through Google's sanctioned integration surface | PawFlow is a plain ACP client of `agy_acp_server`; no vendor traffic is inspected. Logs in through the server's own OAuth or an API key. See [Antigravity ACP](ANTIGRAVITY_ACP.md). |
 | `external_agui` | Remote agent runtime | An agent exposed through an AG-UI POST/SSE endpoint | Set `runtime_kind=external_agui` on the conversation member, leave `llm_service` empty, and configure `agui_service` or a direct `agui_url`. This is not an `llmConnection` provider and never falls back to one. |
 | `cc_mcp` | Managed Claude Code CLI with native hooks | Claude subscription sessions without vendor-traffic interception | Reuses the Claude interactive pool and PawFlow MCP tools; final text comes from the official Stop hook. |
@@ -27,8 +30,8 @@ For new CLI-backed agent services, use `claude-code-interactive` for Claude Code
 | `antigravity-interactive` | Interactive `agy` CLI in tmux with observed provider stream | Default Gemini subscription provider | Uses the Gemini OAuth credential pool, starts the real `agy` CLI, and routes tools through PawFlow MCP. |
 | `codex-interactive` | Interactive Codex TUI in tmux with observed provider stream | **Preferred** Codex subscription and coding-agent sessions | Reuses the `codex-app-server` OAuth pool. The turn is read from a local MITM of the Responses stream. See [Codex Interactive](#codex-interactive). |
 | `gemini` | Gemini CLI one-shot stream provider | Secondary Gemini CLI path, mainly when a Gemini Pro account/CLI workflow is required | Uses Gemini credentials, stream-json output, and Gemini session files. Prefer `antigravity-interactive` for normal Gemini subscription use. |
-| `claude-code` | Legacy non-interactive CLI container or subprocess (`claude -p`) | Existing agent configurations only | Migrate to `claude-code-interactive`; the legacy transport remains available for compatibility. |
-| `codex-app-server` | Legacy Codex `app-server` transport in a pooled container | Existing agent configurations only | Migrate to `codex-interactive`; the identifier remains canonical for the shared Codex OAuth pool. |
+| `claude-code` | Non-interactive CLI container or subprocess (`claude -p`) | Programmatic Claude Code sessions | Supported transport; choose authentication appropriate to the integration. |
+| `codex-app-server` | Codex `app-server` transport in a pooled container | Native Codex integration | Supports OpenAI API-key and ChatGPT subscription login; the identifier remains canonical for the shared Codex OAuth pool. |
 
 Direct API providers are normal HTTP clients. CLI providers launch a provider
 CLI, keep provider-specific session state, and route tools through PawFlow's
@@ -100,6 +103,88 @@ arbitrary response headers are never copied into `LLMResponse.provider_metadata`
 The **Refresh OmniRoute models** service action reads the bounded public
 `GET /v1/models` shape without changing `default_model` or persisting the key.
 V1 intentionally does not implement OmniRoute's Responses API or admin APIs.
+
+### Native CLI configuration and lifecycle
+
+Select `cursor-acp`, `grok-build-acp`, or `opencode` in an `llmConnection`
+service. All three use `auth_mode=none`: the CLI owns its authentication.
+Use **Login via server** on the saved service, or supply provider keys through
+secret expressions in `acp_env` (Cursor/Grok) or `opencode_env` (OpenCode).
+Generic `api_key` and `credential_service_id` do not configure these providers.
+The existing Claude and Codex OAuth pool identifiers are unchanged.
+
+The saved service also exposes **Authentication status**, **Installed/latest
+CLI versions**, and **Update CLI tools image**. The update action opens the
+existing admin Updates workflow. Authentication material is preserved in the
+user/service home when replacing the managed image. An offline status reports
+stored material, not successful validation of its credentials. See
+[Native CLI lifecycle](NATIVE_CLI_LIFECYCLE.md) for image settings, packaging,
+version discovery, login paths, and update behavior.
+
+### OpenCode server
+
+`opencode` uses the OpenCode SDK v2 server protocol without a server-side npm
+dependency. Set `default_model` to `providerID/modelID`. The runtime requires
+OpenCode **1.14.19 or later** and supports `opencode_mode=managed` only. It
+isolates each user, service, conversation, and agent in a managed runtime;
+HTTP/SSE travels through a private Docker stdio bridge with no published HTTP
+port. Only scoped runtime data and the user/service authentication home are
+mounted. Native credentials live under
+`OpenCodePool.home_dir(user_id, service_id)/.local/share/opencode/auth.json`.
+
+`opencode_mcp_mode=pawflow` exposes PawFlow's scoped MCP tools; `none` disables
+that bridge. Runtime tokens are passed by environment variable name and revoked
+when the runtime closes. Native OpenCode task/subagent delegation is disabled;
+PawFlow MCP delegation remains available. Questions and permission requests
+use PawFlow interactions while SSE continues to be read, and cancellation
+invalidates the pending requests and stops the native work.
+
+`opencode_reuse_process` and `opencode_load_session` default to true. The
+public client shares the live-session registry across call clones, sends only
+new messages to a live session, and does not automatically replay failed native
+turns. Service shutdown closes all of that service's sessions. Tool snapshots
+and deltas are deduplicated, and completion belongs to the current prompt.
+
+The optional `opencode_agent` chooses a native agent and `opencode_variant`
+chooses its model variant. Generic `temperature`, `max_tokens`, and
+`thinking_budget` are not forwarded: the supported prompt schema has no
+equivalent fields. PawFlow's final-output display limit can still apply.
+Attachments support inline base64 content and extracted document text; arbitrary
+remote attachment URLs are unsupported.
+
+The managed image was checked with OpenCode 1.18.29 in a network-disabled
+container: the current bridge passed `/global/health`, received SSE events,
+and created, read, and deleted a session without invoking a model.
+
+### Native questions and confirmations
+
+Native questions are explicit user interactions, independent of automatic tool
+approval. Choice fields have no automatic selection. Antigravity ACP and Cursor
+preserve exact option identifiers; Grok and Claude can explicitly offer a
+free-text answer. Cancellation removes the pending question and prevents a late
+answer from being delivered to a finished turn.
+
+The shared Claude/Codex question manager allows at most 16 active workers,
+including cancelled workers that are still cleaning up. Replies are serialized
+separately from state changes, so a blocked provider pipe cannot block cancellation
+or shutdown. Cancelled requests still queued for a reply are discarded; bytes
+already being written cannot be retracted. Native option labels are preserved
+exactly up to 2000 characters and rejected beyond that limit. Selection flags
+must be booleans; malformed questions never silently become single-choice forms.
+
+Codex app-server supports blocking `item/tool/requestUserInput` requests (and
+`tool/requestUserInput`). Replies preserve the RPC request ID and each question
+ID in `answers: {questionId: {answers: [...]}}`. The reader remains active while
+the user answers. The documented `serverRequest/resolved` notification cancels
+the matching waiter, including when received during a separate RPC response
+wait. Unsupported request methods receive an explicit JSON-RPC error. See the
+[official app-server protocol](https://developers.openai.com/codex/app-server/).
+
+For Codex `agentMessage` items carrying `delivery="async"` and `questions`,
+PawFlow persists a form keyed by agent, thread, and item ID. Repeated item events
+reuse that form. Answering it schedules the requesting agent with the question
+text and user answers as a message, so the answer can arrive after the original
+turn ends. These asynchronous items do not send a blocking RPC response.
 
 ### Generic ACP agent
 
@@ -354,6 +439,18 @@ the exact input side, including cache reads and cache creation, and
 immediately and never estimates missing live output from text length. A terminal
 `result` is used only as a compatibility fallback when no partial usage was
 observed, so a cache-poor result cannot overwrite the richer live measurement.
+
+For this stream-json transport, a terminal `result` fails when it has
+`is_error`, subtype `error_during_execution`, a numeric `api_error_status >= 400`,
+or a failure `terminal_reason`: `api_error`, `malformed_tool_use_exhausted`,
+`budget_exhausted`, `structured_output_retry_exhausted`,
+`tool_deferred_unavailable`, `turn_setup_failed`, `blocking_limit`,
+`rapid_refill_breaker`, `prompt_too_long`, `image_error`, or `model_error`.
+These signals override subtype `success`. Missing error text still raises
+`LLMClientError`; status and reason are retained for the existing retry policy
+(including 529 overload retries). Normal success, graceful interruption, and
+force-stop handling retain their existing behavior. This classification applies
+only to `claude-code` stream-json.
 
 The read call and its result stay in the transcript, but every CLI serializer,
 compaction input, and local gauge drops the pair. Otherwise the next

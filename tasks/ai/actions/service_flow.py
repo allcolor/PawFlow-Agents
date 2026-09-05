@@ -70,6 +70,7 @@ from tasks.ai.actions._sf_k8 import _handle_sf_k8
 from tasks.ai.actions._sf_k9 import _handle_sf_k9
 from tasks.ai.actions._sf_acp_registry import _handle_sf_acp_registry
 from tasks.ai.actions._sf_desktop import _handle_sf_desktop
+from tasks.ai.actions._sf_native_cli import _handle_sf_native_cli
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +310,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         _get_relay_published_port, _server_relay_proxy_target, _private_gateway_for_body)
     for _handler in (_handle_sf_k1, _handle_sf_k2, _handle_sf_k3, _handle_sf_k4,
                      _handle_sf_k5, _handle_sf_k6, _handle_sf_k7, _handle_sf_k8,
-                     _handle_sf_k9, _handle_sf_acp_registry, _handle_sf_desktop):
+                     _handle_sf_k9, _handle_sf_acp_registry, _handle_sf_desktop,
+                     _handle_sf_native_cli):
         _res = _handler(self, action, body, store, user_id, flowfile, _helpers)
         if _res is not _UNHANDLED:
             return _res

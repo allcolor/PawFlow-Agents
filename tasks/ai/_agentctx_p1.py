@@ -451,14 +451,16 @@ class _PACPhase1Mixin:
         st._is_gemini_acp = (st._provider_name == "gemini")
         st._is_codex_app_server = (st._provider_name == "codex-app-server")
         st._is_codex_interactive = (st._provider_name == "codex-interactive")
-        st._is_acp = (st._provider_name in ("acp", "antigravity-acp"))
+        from core.llm_providers.acp import ACP_PROVIDERS
+        st._is_acp = st._provider_name in ACP_PROVIDERS
+        st._is_opencode = st._provider_name == "opencode"
         st._is_managed_mcp = st._provider_name in (
             "cc_mcp", "codex_mcp", "agy_mcp")
         st._is_cli_provider = (
             st._is_claude_code or st._is_claude_code_interactive
             or st._is_antigravity_interactive or st._is_gemini_acp
             or st._is_codex_app_server or st._is_codex_interactive
-            or st._is_acp or st._is_managed_mcp)
+            or st._is_acp or st._is_opencode or st._is_managed_mcp)
 
         # CLI session detection (2 states):
         #   True  -> provider has prior CLI state; resume can send only delta
@@ -534,6 +536,11 @@ class _PACPhase1Mixin:
                         st._cli_has_session = bool(st._state)
                     except Exception:
                         st._cli_has_session = False
+                elif st._is_opencode:
+                    st._cli_has_session = bool(
+                        st.client._opencode_has_live_session(
+                            st._svc_id, st._user_id_for_svc,
+                            st.conversation_id, st._agent_key))
                 elif st._is_acp:
                     st._cli_has_session = bool(
                         st.client._acp_has_live_session(

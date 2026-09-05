@@ -19,6 +19,7 @@ from core._llm_types import (
     LLMCallError,
 )
 from core.llm_client import LLMClient, LLMMessage
+from core.llm_providers.acp import ACP_PROVIDERS
 from core.llm_providers._cci_turn import _CCITurnCoordinator
 
 
@@ -59,7 +60,8 @@ def test_interactive_cli_provider_set_covers_every_tmux_provider():
         "antigravity-interactive",
         # Managed MCP providers reuse the same tmux pools.
         "cc_mcp", "codex_mcp", "agy_mcp"}
-    assert NO_REPLAY_PROVIDERS == INTERACTIVE_CLI_PROVIDERS | {"acp", "antigravity-acp"}
+    assert NO_REPLAY_PROVIDERS == INTERACTIVE_CLI_PROVIDERS | {
+        "acp", "antigravity-acp", "cursor-acp", "grok-build-acp", "opencode"}
 
 
 def _failing_client(monkeypatch, provider, exc, calls):
@@ -69,17 +71,18 @@ def _failing_client(monkeypatch, provider, exc, calls):
         calls.append(provider)
         raise exc
 
-    # The driver dispatches on ``_stream_<provider>``; stub exactly that one
-    # so the count below proves it was entered once and never again.
-    monkeypatch.setattr(client, f"_stream_{provider.replace('-', '_')}",
-                        _boom, raising=False)
+    # ACP providers share one transport; stub the actual dispatch target so
+    # the count below proves it was entered once and never again.
+    stream_name = ("_stream_acp" if provider in ACP_PROVIDERS
+                   else f"_stream_{provider.replace('-', '_')}")
+    monkeypatch.setattr(client, stream_name, _boom)
     # Never sleep in the retry loop even if a regression re-enables it.
     monkeypatch.setattr("core._llm_client_driver.time.sleep", lambda *_: None)
     return client
 
 
-@pytest.mark.parametrize("provider", sorted(INTERACTIVE_CLI_PROVIDERS))
-def test_driver_never_reruns_an_interactive_cli_turn_on_429(monkeypatch, provider):
+@pytest.mark.parametrize("provider", sorted(NO_REPLAY_PROVIDERS))
+def test_driver_never_reruns_a_stateful_provider_turn_on_429(monkeypatch, provider):
     calls = []
     exc = RuntimeError("API Error: Request rejected (429) rate_limit")
     client = _failing_client(monkeypatch, provider, exc, calls)

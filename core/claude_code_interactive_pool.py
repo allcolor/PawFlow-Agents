@@ -45,7 +45,7 @@ _DISALLOWED_BUILTIN_TOOLS = (
     "Task,Agent,ToolSearch,ListMcpResourcesTool,ReadMcpResourceTool,"
     "EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,"
     "RemoteTrigger,Skill,TaskOutput,TaskStop,TodoWrite,"
-    "CronCreate,CronDelete,CronList,AskUserQuestion,Monitor,"
+    "CronCreate,CronDelete,CronList,Monitor,"
     "ScheduleWakeup,PushNotification"
 )
 

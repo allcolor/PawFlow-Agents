@@ -286,8 +286,8 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 | **OpenAI Responses** (`openai-responses`) | Direct HTTP Responses API | Typed events, reasoning-item continuity, function calling, and server-side built-in tools |
 | **OmniRoute** (`omniroute`) | Direct gateway API | Explicit virtual-route selection, bounded routing controls, sanitized gateway metadata, and model discovery |
 | **OpenAI-compatible** | Direct HTTP | Local/self-hosted and third-party compatible endpoints via `base_url` |
-| **Claude Code (`cc -p`) — legacy** | Non-interactive CLI subprocess/container + MCP | Existing configurations only; migrate agent services to Claude Code interactive |
-| **Codex app-server — legacy** | App-server protocol in pooled container | Existing configurations only; migrate agent services to Codex interactive |
+| **Claude Code (`cc -p`)** | Non-interactive CLI subprocess/container + MCP | Supported transport for programmatic Claude Code sessions; choose authentication appropriate to the integration |
+| **Codex app-server** | App-server protocol in pooled container | Supported native integration, with OpenAI API-key or ChatGPT subscription login |
 
 Switch providers per agent, per conversation, or globally. API keys normally use
 direct `openai`/`anthropic` services; subscription logins use the matching

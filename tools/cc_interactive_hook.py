@@ -399,6 +399,52 @@ def _client_output(client: str) -> str:
     return "{}" if client == "agy" else ""
 
 
+def _interaction_denial(event: str) -> dict:
+    """Return a valid blocking decision even when the request cannot be decoded."""
+    fallback = {"hookEventName": event}
+    if event == "PermissionRequest":
+        fallback["decision"] = {"behavior": "deny", "message": "PawFlow interaction unavailable."}
+    else:
+        fallback.update(permissionDecision="deny",
+                        permissionDecisionReason="PawFlow interaction unavailable.")
+    return {"hookSpecificOutput": fallback}
+
+
+def _interaction_output(raw: dict, url: str, token: str, session_token: str) -> dict:
+    """Wait for a real PawFlow answer; transport failure never means consent."""
+    event = raw.get("hook_event_name")
+    if not all((url, token, session_token)):
+        return _interaction_denial(event)
+    sock = None
+    try:
+        sock = _connect(url, token, session_token)
+        sock.settimeout(None)
+        sock.sendall(_masked_frame({"type": "native_input", "input": raw}))
+        result = _recv_json(sock)
+        if result.get("type") == "native_input_result" and isinstance(result.get("output"), dict):
+            output = result["output"]
+            specific = output.get("hookSpecificOutput")
+            if isinstance(specific, dict) and specific.get("hookEventName") == event:
+                if event == "PermissionRequest":
+                    decision = specific.get("decision")
+                    if isinstance(decision, dict) and decision.get("behavior") in {"allow", "deny"}:
+                        return output
+                elif specific.get("permissionDecision") == "deny":
+                    return output
+                elif specific.get("permissionDecision") == "allow":
+                    updated = specific.get("updatedInput")
+                    if (isinstance(updated, dict) and isinstance(updated.get("answers"), dict)
+                            and updated["answers"]
+                            and updated.get("questions") == raw["tool_input"].get("questions")):
+                        return output
+    except Exception:  # noqa: BLE001 - a disconnected interaction must deny.
+        return _interaction_denial(event)
+    finally:
+        if sock is not None:
+            sock.close()
+    return _interaction_denial(event)
+
+
 def _event_argument(argv) -> str:
     """``--event NAME`` from ``hooks.json``; Antigravity payloads omit it."""
     args = list(argv or [])
@@ -416,13 +462,26 @@ def main() -> int:
     token = os.environ.get("PAWFLOW_CCI_EVENT_TOKEN", "")
     client = _hook_client()
     output = _client_output(client)
-    if not session_token or not url or not token:
-        if output:
-            print(output)
-        return 0
+    event_arg = _event_argument(sys.argv[1:])
+    native_event = event_arg if client == "cc" and event_arg in {"PreToolUse", "PermissionRequest"} else ""
     try:
         raw = json.loads(sys.stdin.read() or "{}")
-        raw = _normalize_client_input(raw, client, _event_argument(sys.argv[1:]))
+        if native_event and (not isinstance(raw, dict)
+                             or raw.get("hook_event_name") != native_event):
+            raise ValueError("Native hook event does not match its handler")
+        raw = _normalize_client_input(raw, client, event_arg)
+        if (raw.get("hook_event_name") == "PermissionRequest"
+                or (raw.get("hook_event_name") == "PreToolUse"
+                    and raw.get("tool_name") == "AskUserQuestion")) and client == "cc":
+            native_event = raw["hook_event_name"]
+            print(json.dumps(_interaction_output(raw, url, token, session_token)))
+            return 0
+        if native_event:
+            raise ValueError("Unsupported native hook input")
+        if not session_token or not url or not token:
+            if output:
+                print(output)
+            return 0
         event = {
             "type": "hook",
             "hook_event_name": raw.get("hook_event_name", ""),
@@ -431,8 +490,10 @@ def main() -> int:
             "timestamp": time.time(),
         }
         _deliver(url, token, session_token, event)
-    except Exception:  # noqa: BLE001, S110  # nosec B110 - a hook must never fail the CLI turn
-        pass
+    except Exception:  # noqa: BLE001 - observation is best effort; interactions must deny.
+        if native_event:
+            print(json.dumps(_interaction_denial(native_event)))
+            return 0
     if output:
         print(output)
     return 0

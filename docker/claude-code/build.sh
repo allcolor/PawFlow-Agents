@@ -37,7 +37,8 @@ resolve_version() {
 for spec in \
   "@anthropic-ai/claude-code CLAUDE_CODE_VERSION" \
   "@openai/codex CODEX_VERSION" \
-  "@google/gemini-cli GEMINI_VERSION"; do
+  "@google/gemini-cli GEMINI_VERSION" \
+  "opencode-ai OPENCODE_VERSION"; do
   set -- $spec
   pkg="$1"
   arg="$2"
@@ -50,6 +51,15 @@ for spec in \
   fi
   BUILD_ARGS+=(--build-arg "$arg=$ver")
 done
+
+# Resolve native releases in the existing Node resolver container. No host npm
+# or server-side Node dependency is needed, and failures stop before the build.
+NATIVE_VERSIONS="$(docker run --rm -i "${RESOLVER_ARGS[@]}" \
+  "$RESOLVER_IMAGE" node < "$SCRIPT_DIR/resolve_native_versions.cjs")"
+while read -r arg ver; do
+  [[ -n "$arg" && -n "$ver" ]] || exit 1
+  BUILD_ARGS+=(--build-arg "$arg=$ver")
+done <<< "$NATIVE_VERSIONS"
 
 if docker buildx version >/dev/null 2>&1; then
   echo "Building with Docker BuildKit (buildx --load)"

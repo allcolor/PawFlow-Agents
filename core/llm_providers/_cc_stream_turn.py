@@ -161,8 +161,8 @@ class _CCStreamTurnMixin:
                 "type": "user",
                 "message": {"role": "user", "content": catchup},
             })
-            _p.stdin.write(msg + "\n")
-            _p.stdin.flush()
+            from core.llm_providers._cc_native_input import write_message
+            write_message(_p, msg)
             self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
 
     def _ccs_emit_pending_thinking(self, st):

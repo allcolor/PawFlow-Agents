@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Native Cursor ACP and Grok Build ACP connectors, with managed containers,
+  persistent authentication scoped to each user and service, exact workspace
+  mounts, session reuse, cancellation, and PawFlow MCP tool access.
+- OpenCode server integration using its SDK v2 HTTP/SSE protocol, isolated
+  sessions, native questions and permissions, streaming usage, and managed
+  runtime cleanup.
+- Cursor, Grok Build and OpenCode installation and version inventory in the
+  tools image, plus service actions for native login, credential presence,
+  version checks and managed updates.
+
+### Fixed
+
+- Native questions now preserve provider option identities and explicit user
+  choices across Antigravity ACP, Cursor, Grok, OpenCode, Claude Code and Codex
+  app-server. Cancellation, late replies and disconnects close pending requests
+  without granting unrelated permissions or selecting a default answer.
+- Claude Code control and hook replies preserve exact question answers;
+  serialized stdin writes prevent concurrent prompt and control messages from
+  interleaving. Terminal errors remain failures.
+- Stateful native providers participate in context tracking and the no-replay
+  policy, preventing automatic retries from repeating a session turn.
+- Native service authentication status reports configured provider environment
+  variables without exposing values or claiming that credentials are valid.
+
+### Changed
+
+- Document Claude Code subprocess and Codex app-server as supported native
+  integrations, with their authentication and interaction contracts.
+- Document native connector configuration and validation limits. Offline CLI
+  checks cover initialization, questions and local transports; authenticated
+  model calls and interactive login UI checks remain unverified.
+
 ## [1.0.0-beta.267] — 2026-09-04
 
 ### Changed

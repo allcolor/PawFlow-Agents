@@ -193,6 +193,8 @@ class CCInteractiveSessionEvents:
     # PawFlow's TodoStore remains authoritative; the adapter correlates each
     # observed native tool_use with its later successful tool_result.
     native_todo_adapter: Any = None
+    # Protected by the service's sessions lock; workers check these on every wait.
+    native_input_cancels: set = field(default_factory=set)
 
 
 class CCInteractiveEventService(BaseService):
@@ -264,6 +266,9 @@ class CCInteractiveEventService(BaseService):
         with self._instances_lock:
             self._instances.pop(self._service_id, None)
         with self._sessions_lock:
+            for state in self._sessions.values():
+                for cancel in state.native_input_cancels:
+                    cancel.set()
             self._sessions.clear()
         self._connection = None
         self._route_path = ""
@@ -338,7 +343,10 @@ class CCInteractiveEventService(BaseService):
 
     def unregister_session(self, session_token: str) -> None:
         with self._sessions_lock:
-            self._sessions.pop(session_token, None)
+            state = self._sessions.pop(session_token, None)
+            if state is not None:
+                for cancel in state.native_input_cancels:
+                    cancel.set()
 
     def mark_code_mode(self, session_token: str) -> None:
         """Record that this session runs its tools from inside a code body."""
@@ -1783,6 +1791,8 @@ class CCInteractiveEventService(BaseService):
         from services.filesystem_service import _ws_recv_frame, _ws_send_frame
 
         session_token = ""  # nosec B105
+        native_cancel = threading.Event()
+        native_task = None
         try:
             opcode, payload = await _ws_recv_frame(reader)
             if opcode != 0x01:
@@ -1831,6 +1841,22 @@ class CCInteractiveEventService(BaseService):
                 if msg.get("type") == "ping":
                     await _ws_send_frame(writer, json.dumps({"type": "pong"}).encode())
                     continue
+                if msg.get("type") == "native_input" and client_kind == "hook":
+                    from services._cci_native_input import answer_native_input
+                    if native_task is not None:
+                        break
+                    with self._sessions_lock:
+                        available = (self._sessions.get(session_token) is state
+                                     and len(state.native_input_cancels) < 16)
+                        if available:
+                            state.native_input_cancels.add(native_cancel)
+                    if not available:
+                        await _ws_send_frame(writer, json.dumps({
+                            "type": "error", "message": "Native interaction unavailable"}).encode())
+                        break
+                    native_task = asyncio.create_task(answer_native_input(
+                        state, msg.get("input"), native_cancel, writer))
+                    continue
                 if msg.get("type") != "event":
                     continue
                 event = msg.get("event") or {}
@@ -1843,10 +1869,19 @@ class CCInteractiveEventService(BaseService):
                         "type": "error", "message": str(exc)}).encode())
                     break
         finally:
+            native_cancel.set()
+            if native_task is not None:
+                native_task.cancel()
+                await asyncio.gather(native_task, return_exceptions=True)
             if session_token:
-                state = self.session_state(session_token)
-                if state and locals().get("client_kind", "proxy") == "proxy":
-                    state.connected = False
+                with self._sessions_lock:
+                    state = self._sessions.get(session_token)
+                    if state:
+                        state.native_input_cancels.discard(native_cancel)
+                        if locals().get("client_kind", "proxy") == "proxy":
+                            state.connected = False
+                            for cancel in state.native_input_cancels:
+                                cancel.set()
             try:
                 writer.close()
             except Exception:

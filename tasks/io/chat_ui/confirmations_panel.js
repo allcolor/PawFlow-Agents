@@ -107,7 +107,7 @@ function _confFormInput(schema) {
     if (field.type === 'choice') {
       const select = document.createElement('select');
       select.className = 'conf-input';
-      if (!field.required) select.appendChild(new Option('', ''));
+      if (!field.required || field.no_default) select.appendChild(new Option('', ''));
       (field.options || []).forEach((option) => {
         const value = typeof option === 'object' ? option.value : option;
         const label = typeof option === 'object' ? (option.label || value) : value;
@@ -134,6 +134,18 @@ function _confFormInput(schema) {
       const typed = _confTypedInput(field.type || 'text', field);
       row.appendChild(typed.element);
       reader = typed.read;
+    }
+    if (field.allow_other === true && (field.type === 'choice' || field.type === 'multi')) {
+      const custom = _confTypedInput('multiline', field);
+      custom.element.placeholder = 'Type another answer';
+      custom.element.setAttribute('aria-label', (field.label || field.name) + ' — custom answer');
+      row.appendChild(custom.element);
+      const readChoices = reader;
+      reader = () => {
+        const text = custom.read();
+        if (!text.trim()) return readChoices();
+        return field.type === 'multi' ? [...readChoices(), text] : text;
+      };
     }
     readers.push({ name: field.name, read: reader });
     wrapper.appendChild(row);

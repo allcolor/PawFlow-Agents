@@ -293,32 +293,11 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 | **Claude Code (`cc -p`)** | Non-interactive CLI subprocess/container + MCP | Supported transport for programmatic Claude Code sessions; choose authentication appropriate to the integration |
 | **Codex app-server** | App-server protocol in pooled container | Supported native integration, with OpenAI API-key or ChatGPT subscription login |
 
-Switch providers per agent, per conversation, or globally. API keys normally use
-direct `openai`/`anthropic` services; subscription logins use the matching
-interactive or managed native-hook provider. `cc_mcp`, `codex_mcp`, and
-`agy_mcp` reuse the same OAuth pools as their interactive siblings and are all
-selectable; Agy final-only output is read from the transcript named by its
-documented `Stop` hook payload. `claude-code` (`cc -p`) and
-`codex-app-server` are legacy agent transports kept for existing configurations;
-do not select them for new agent services. Self-hosted and third-party LLMs can
-use the OpenAI-compatible endpoint (`base_url` override). See
-[LLM Providers](docs/llm_providers.md).
-
-### beta.264 highlights
-
-- **Native Agy finals**: `agy_mcp` is selectable and reuses the managed
-  Antigravity pool while taking final-only answers from Agy's native
-  `StopHookArgs.finalModelOutput`, without vendor-traffic interception.
-- **Exact fast history**: segment indexes retain exact display-row counts, so
-  `read_history(search)` does not decode every earlier segment merely to compute
-  result indices; ripgrep, standard grep, and a dependency-free candidate scan
-  all preserve the same bounded decode path.
-- **Conversation-local Grab state**: tiled conversations reject stale Active
-  Agents and terminal-inventory results, so one conversation cannot repaint
-  another conversation's Grab control.
-
-See the [beta.264 changelog](CHANGELOG.md#100-beta264--2026-09-04) for the full
-implementation record.
+Switch providers per agent, per conversation, or globally. Choose direct API,
+native CLI, or managed interactive integrations to match your setup.
+Self-hosted and third-party LLMs can use an OpenAI-compatible endpoint.
+See [LLM Providers](docs/llm_providers.md) for configuration, authentication,
+and provider-specific behavior.
 
 ### Multi-LLM Advisor Aggregation
 

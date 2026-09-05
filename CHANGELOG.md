@@ -23,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Grok Build ACP, and OpenCode, linking their existing configuration guides.
 - Remove outdated release highlights and stale provider-selection guidance from
   the README; keep implementation history in the changelog and provider guides.
+- Complete the README connector overview with external MCP and AG-UI agents,
+  remote A2A targets, ACP registry imports, Azure OpenAI, and GitHub Copilot.
 
 ## [1.0.0-beta.268] — 2026-09-05
 

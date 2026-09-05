@@ -73,8 +73,6 @@ PawFlow gives agents a real operating surface without handing your workspace to 
   `runtime_kind=external_agui` plus a direct endpoint or a scoped
   `aguiConnection`; it does not use or fall back to `llm_service`. See
   [LLM providers and agent runtimes](docs/llm_providers.md#external-ag-ui-agent-runtime).
-  The old Codex app-server and Claude Code `-p` transports remain available only
-  for legacy configurations.
 - **Native CLI engines, not API reimplementations**: subscription providers run the real interactive Codex, Claude Code, Antigravity, and Gemini CLI engines per conversation — native harness and reasoning preserved — with native Codex plugins (`codex_plugins`) and Claude Code plugin marketplaces (`claude_plugins`/`claude_marketplaces`) declarable per LLM service.
 - **External agent interoperability**: publish several agents from one
   conversation as independent authenticated MCP endpoints, publish one or more
@@ -271,7 +269,10 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 
 ## LLM Providers
 
-| Provider | Mode | Features |
+Connect a PawFlow agent to an LLM API, run a native agent CLI, or integrate an
+external agent through MCP, AG-UI, A2A, or ACP:
+
+| Provider / agent connector | Mode | Features |
 |---|---|---|
 | **Claude Code interactive** | Interactive CLI container + observed stream | **Recommended Claude Code provider**; subscription sessions, live control, provider-observed usage |
 | **Codex interactive** | Interactive Codex TUI in tmux + observed stream | **Recommended Codex provider**; long-lived sessions, live control, shares the Codex OAuth pool, one row per tool even for code-mode harnesses |
@@ -280,7 +281,7 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 | **Claude Code MCP hooks** (`cc_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Claude interactive pool and PawFlow MCP bridge; final-only output from the native Stop hook without vendor-traffic interception |
 | **Codex MCP hooks** (`codex_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Codex interactive pool; native rollout usage/context, while Codex built-in tools are not observable |
 | **Antigravity MCP hooks** (`agy_mcp`) | Managed native CLI + lifecycle hooks | Reuses the Antigravity pool; the documented `Stop` hook ends the turn and the final text is read from the transcript it names, while Agy built-in tools are not observable |
-| **ACP agent** (`acp`) | Outbound Agent Client Protocol v1 process | Launches an explicitly configured agent command without a shell, with negotiated sessions and opt-in PawFlow MCP/client filesystem capabilities |
+| **[ACP agent / registry import](docs/llm_providers.md#acp-registry-import)** (`acp`) | Agent Client Protocol v1 process | Connect an installed ACP agent or import one from the public ACP registry; session reuse and optional PawFlow tools |
 | **[Antigravity / Agy ACP](docs/ANTIGRAVITY_ACP.md)** (`antigravity-acp`) | Official Antigravity ACP server in a managed container | Google's `agy_acp_server`, session reuse, PawFlow MCP tools, and browser login or API-key authentication |
 | **[Cursor ACP](docs/NATIVE_ACP_PROVIDERS.md)** (`cursor-acp`) | Native Cursor CLI through ACP in a managed container | `cursor-agent acp`, persistent CLI authentication, scoped PawFlow MCP tools, permissions, and cancellation |
 | **[Grok Build ACP](docs/NATIVE_ACP_PROVIDERS.md)** (`grok-build-acp`) | Native Grok Build CLI through ACP in a managed container | `grok agent stdio`, native authentication, questions, plan confirmation, and scoped PawFlow MCP tools |
@@ -288,13 +289,21 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 | **Anthropic API** | Direct HTTP | Streaming, tool use, vision, extended thinking |
 | **OpenAI API** | Direct HTTP | Streaming, tool use, vision, JSON mode |
 | **OpenAI Responses** (`openai-responses`) | Direct HTTP Responses API | Typed events, reasoning-item continuity, function calling, and server-side built-in tools |
+| **Azure OpenAI** (`azure-openai`) | Direct Azure API | Connect Azure-hosted model deployments with Azure-specific endpoint and API-version settings |
+| **GitHub Copilot** (`copilot`) | Direct Copilot API | Connect a Copilot endpoint with provider-specific authentication |
 | **OmniRoute** (`omniroute`) | Direct gateway API | Explicit virtual-route selection, bounded routing controls, sanitized gateway metadata, and model discovery |
 | **OpenAI-compatible** | Direct HTTP | Local/self-hosted and third-party compatible endpoints via `base_url` |
 | **Claude Code (`cc -p`)** | Non-interactive CLI subprocess/container + MCP | Supported transport for programmatic Claude Code sessions; choose authentication appropriate to the integration |
 | **Codex app-server** | App-server protocol in pooled container | Supported native integration, with OpenAI API-key or ChatGPT subscription login |
+| **[External MCP agents](docs/PUBLISHED_MCP_SERVER.md)** (`external_mcp`) | External MCP client attached to a PawFlow conversation | Bring Claude Code, Codex, Agy/Gemini, OpenCode, JCode, Pi, Hermes, or another MCP client with its own model and native session; share PawFlow tools and context |
+| **[External AG-UI agents](docs/llm_providers.md#external-ag-ui-agent-runtime)** (`external_agui`) | Remote HTTP/SSE agent endpoint | Use an existing AG-UI agent as a conversation participant, with streaming, tools, shared state, and user questions |
+| **[Remote A2A agents](docs/a2a_integration.md)** | Agent Card + A2A HTTP+JSON | Send tasks to agents on another PawFlow instance or compatible runtime, retrieve results, and cancel tasks |
 
 Switch providers per agent, per conversation, or globally. Choose direct API,
-native CLI, or managed interactive integrations to match your setup.
+native CLI, or managed interactive integrations to match your setup. External
+MCP and AG-UI agents participate in the conversation; A2A configures remote task
+targets through their Agent Cards. MCP tool-server connections extend an
+agent's tools independently of its LLM choice.
 Self-hosted and third-party LLMs can use an OpenAI-compatible endpoint.
 See [LLM Providers](docs/llm_providers.md) for configuration, authentication,
 and provider-specific behavior.

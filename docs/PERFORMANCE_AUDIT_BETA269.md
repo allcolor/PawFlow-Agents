@@ -132,3 +132,107 @@ Existing tests: `tests/test_sse_streaming.py` and `tests/test_conversation_histo
 Evidence files are in the agent ScratchDir under `performance269/`: `benchmarks.py`, `benchmarks.json`, `comparisons.py`, `comparisons.json`. A FileStore archive accompanies this report so evidence survives ScratchDir expiry.
 
 To reproduce through PawFlow, run with `bash(path='fs://scratchdir/performance269', ...)`. The scripts assume the source checkout at `/workspace` and the project's Python/Playwright environment. Compile the scripts first. The full original benchmark creates synthetic segmented transcripts if absent and should use background execution with durable output and a passive continuation if it will exceed one minute. Run `comparisons.py` after `benchmarks.py`; no real conversation payloads are required.
+
+## Implemented follow-up to beta.270
+
+The next performance pass starts from `88c14934c0ee8e5cefd40e95b53b6a5bb54bf92e`
+(beta.270). The changes below address the seven additional implementation
+priorities approved after that pass. They do not change the earlier audit's
+measurements or imply a deployment or a new release.
+
+### Storage and scheduling
+
+`SegmentedJsonl.scrub_secret_runtime_values` now keeps a versioned
+`secret_scrub.json` completion cache beside each stream's segments. A cache entry
+records device/inode, size, nanosecond modification/change timestamps, and whether
+rows were decoded with a codec. An unchanged segment is checked by metadata rather
+than decoded again. A changed tail, new segment, replaced/restored file, obsolete
+marker, or encryption rewrite is rescanned. The marker contains no message text
+or secrets and is replaced atomically only after successful validation. A failed
+marker write leaves validation retryable. An unchanged encrypted row is no longer
+re-encrypted during a scan.
+
+The first migration still performs the full cleanup. Read/write sanitization
+remains mandatory, and locked encrypted conversations defer validation until
+unlock. Git history changes clear the process-local completion memo. Appends do
+not write the marker: after a restart, only segments changed since the last check
+need scanning. The marker is an optimization for trusted storage metadata, not a
+cryptographic integrity check or a replacement for sanitization.
+
+The poller now collects busy/held-agent retry decisions under its activity lock,
+then persists one retry batch per conversation outside that lock.
+`PollScheduler.reschedule_due` accepts only original entries from its latest due
+batch. Cancellation, filtered cancellation (including a future rekeyed target),
+replacement, or another poll invalidates stale retry decisions. Unrelated
+schedules remain intact; recurring schedules retain their recurrence. Claims and
+cancel filters are process-local and discarded at the next poll. Scheduler file
+I/O remains serialized by the scheduler's own lock.
+
+### Frontend and agent-loop CPU
+
+BTW replies now batch Markdown rendering and scrolling through the existing
+animation-frame/50 ms scheduler. Main-answer and BTW callbacks have independent
+slots, share conversation cleanup, and flush final text at lifecycle boundaries.
+Agent-local SSE events avoid repainting unrelated streams. Shared DOM boundaries
+and simplified-view finalization continue to flush all affected previews. Full
+Markdown rendering still occurs for each scheduled update; progressive block
+rendering remains a separate project.
+
+Token counting reuses raw counts for unchanged text and serialized tool schemas.
+The LRU holds at most 2,048 entries with a conservative 4 MiB text budget and
+256 KiB per-entry budget; oversized text bypasses it. Multipliers apply after raw
+totals, and tokenizer/fallback implementation changes invalidate cached counts.
+Exact content keys detect message, nested-block, prompt, and schema changes.
+Tokenization runs outside the cache lock. Schemas still serialize to detect
+mutation, and contexts larger than the cache budget may receive little benefit.
+
+### Event encoding, gauge writes, and assets
+
+Published SSE events capture their wire bytes once before asynchronous dispatch.
+Subscribers and replay reuse that snapshot; producer/listener payload mutations
+cannot change bytes already accepted for publication. Ordinary standalone events
+remain encodable, including multiline data. FIFO draining and reconnect behavior
+remain part of the delivery contract.
+
+Gauge persistence coalesces pending values per conversation/agent with at most
+two process-wide daemon writers. Intermediate snapshots can merge, while reset
+barriers and the latest state are retained. Persistence checks timestamps and
+provider revisions and coordinates the complete extras read/merge/write with
+other storage updates. This bounds workers and repeated updates per key; it does
+not impose global admission limits on the number of conversations. Persistence
+remains best effort across storage failures and process termination, as before.
+
+Static asset cache lookup and publication use short critical sections. File bytes
+are read outside the common cache lock. File signatures are checked before and
+after reading, and a concurrent cache publication causes a fresh lookup rather
+than replacing a newer result. Same-size/mtime replacement detection and HEAD
+response behavior are preserved.
+
+### Follow-up validation evidence
+
+New regressions cover unchanged restart, changed/replaced segments, invalid
+markers, deferred encrypted validation, marker-write failure, concurrent segment
+changes, retry batching, cancellation/replacement races, recurring schedules,
+token parity/invalidation/bounds, and browser streaming lifecycle boundaries.
+Existing storage, encryption, agent-loop, and UI suites are included in validation.
+
+An isolated 12,050-row, 13-segment synthetic fixture measured a median 55.96 ms
+for forced full validation versus 0.334 ms for a new storage instance validating
+unchanged signatures (five repetitions, warm filesystem). The latter decoded
+zero rows. After one append, only 51 rows in the tail segment were decoded,
+taking 0.912 ms. The reproducible script and JSON are in the assistant ScratchDir
+under `perf-followup/bench_scrub.py` and `perf-followup/scrub-benchmark.json`.
+These are storage-path measurements, not complete server startup times.
+
+The combined regression gate passes 142 tests, including 32 Chromium cases.
+Separate validation covers 271 storage/agent-loop tests, 73 segmentation/encryption
+tests, and the delegate's 673-test backend selection (these selections overlap;
+the counts must not be added as distinct tests). The frontend delegate also
+validated 113 UI tests. Error-focused Ruff checks and `git diff --check` pass.
+Bandit reports no findings in the changed scrub, scheduler, and gauge-persistence
+modules. No production load test or runtime activation was performed.
+
+An independent storage/scheduler review found one cleanup-error regression:
+failure to delete a temporary marker could propagate after a failed marker save.
+Cleanup is now best effort, and a regression reproduces both failures together.
+The final 52-test storage/scheduler selection and 142-test combined gate pass.

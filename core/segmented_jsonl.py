@@ -421,34 +421,6 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
             self.replace_dicts(out)
         return changed
 
-    def scrub_secret_runtime_values(self) -> tuple[int, int]:
-        """Physically remove runtime secret keys from existing segments.
-
-        Returns ``(changed_rows, removed_keys)`` and never logs row content.
-        """
-        from core.secret_sanitization import strip_secret_runtime_values_counted
-
-        self._flush_own_append_handles()
-        changed_rows = 0
-        removed_keys = 0
-        codec = self.codec
-        for path in self._segment_paths():
-            raw_rows = list(self._iter_file(path))
-            stored_rows = []
-            path_changed = False
-            for raw in raw_rows:
-                decoded = codec.decode(raw) if codec is not None else raw
-                clean, removed = strip_secret_runtime_values_counted(decoded)
-                if removed:
-                    changed_rows += 1
-                    removed_keys += removed
-                    path_changed = True
-                stored_rows.append(
-                    codec.encode(clean) if codec is not None else clean)
-            if path_changed:
-                self._replace_rows_in_path(path, stored_rows)
-        return changed_rows, removed_keys
-
     def patch_first_by_msg_id(self, msg_id: str,
                               fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Patch one message row without rewriting every segment."""

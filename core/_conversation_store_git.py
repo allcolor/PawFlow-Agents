@@ -336,6 +336,7 @@ class _CsGitMixin:
         conv_dir = self._conv_dir(cid)
         SegmentedJsonl.close_append_handles(conv_dir)
         SegmentedJsonl.invalidate_index_cache(conv_dir)
+        self._secret_runtime_scrubbed.discard(cid)
 
     def is_temporary(self, cid: str) -> bool:
         """A conversation is temporary iff it carries a non-zero TTL.

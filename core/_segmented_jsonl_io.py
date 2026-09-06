@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 
 _SEGMENT_INDEX_VERSION = 2
+_SECRET_SCRUB_VERSION = 1
 _ROLE_KEY_BYTES = b'"role":'
 _ROLE_STRING_PREFIX = b'{"role": "'
 
@@ -43,6 +44,83 @@ class _SegmentedJsonlIOMixin:
 
     def _defer_hot_index_writes(self) -> bool:
         return _is_windows_wsl_unc_path(self.index_path)
+
+    @staticmethod
+    def _scrub_segment_signature(path: Path) -> list:
+        stat = path.stat()
+        return [stat.st_dev, stat.st_ino, stat.st_size,
+                stat.st_mtime_ns, stat.st_ctime_ns]
+
+    def scrub_secret_runtime_values(self) -> tuple[int, int]:
+        """Remove legacy runtime secrets, rechecking only changed segments.
+
+        Callers serialize this migration with conversation writes. Completion
+        is a versioned, atomic cache of file identities, not a replacement for
+        read/write sanitization. Appends invalidate only the changed tail;
+        restored/replaced files and encryption rewrites invalidate themselves.
+        """
+        from core.secret_sanitization import strip_secret_runtime_values_counted
+
+        self._flush_own_append_handles()
+        paths = self._segment_paths()
+        if not paths:
+            return 0, 0
+        marker_path = self.segment_dir / "secret_scrub.json"
+        try:
+            previous = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = {}
+        codec = self.codec
+        marker = {"version": _SECRET_SCRUB_VERSION,
+                  "decoded": codec is not None, "segments": {}}
+        completed = {}
+        if (isinstance(previous, dict)
+                and previous.get("version") == marker["version"]
+                and previous.get("decoded") == marker["decoded"]
+                and isinstance(previous.get("segments"), dict)):
+            completed = previous["segments"]
+        changed_rows = removed_keys = 0
+        for path in paths:
+            signature = self._scrub_segment_signature(path)
+            if completed.get(path.name) == signature:
+                marker["segments"][path.name] = signature
+                continue
+            stored_rows = []
+            path_changed = False
+            for raw in self._iter_file(path):
+                decoded = codec.decode(raw) if codec is not None else raw
+                clean, removed = strip_secret_runtime_values_counted(decoded)
+                if removed:
+                    changed_rows += 1
+                    removed_keys += removed
+                    path_changed = True
+                    raw = codec.encode(clean) if codec is not None else clean
+                stored_rows.append(raw)
+            if self._scrub_segment_signature(path) != signature:
+                raise RuntimeError("Segment changed during secret cleanup")
+            if path_changed:
+                self._replace_rows_in_path(path, stored_rows)
+                signature = self._scrub_segment_signature(path)
+            marker["segments"][path.name] = signature
+        if marker != previous:
+            tmp = marker_path.with_name(
+                f"{marker_path.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                tmp.write_text(json.dumps(marker, separators=(",", ":")),
+                               encoding="utf-8")
+                self._replace_path(tmp, marker_path)
+            except OSError:
+                # A failed cache write must not hide rows or mark the files on
+                # disk as migrated. The next process simply checks them again.
+                logging.getLogger(__name__).warning(
+                    "Could not persist secret cleanup completion", exc_info=True)
+            finally:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    logging.getLogger(__name__).debug(
+                        "Could not remove secret cleanup temporary marker", exc_info=True)
+        return changed_rows, removed_keys
 
     def _write_index(self, index: Dict[str, Any]) -> None:
         self.segment_dir.mkdir(parents=True, exist_ok=True)

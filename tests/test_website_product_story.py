@@ -272,13 +272,16 @@ def test_site_soundtrack_autoplays_with_a_user_control() -> None:
     assert ".site-sound-toggle" in css
 
 
-def test_release_fallback_matches_current_release() -> None:
+def test_release_fallback_matches_structured_version_metadata() -> None:
     script = (SITE / "site.js").read_text(encoding="utf-8")
+    homepage = (SITE / "index.html").read_text(encoding="utf-8")
 
-    assert "version: '1.0.0-beta.264'" in script
+    version = re.search(r"version: '(1\.0\.0-beta\.\d+)'", script)
+    assert version is not None
+    assert f'"softwareVersion": "{version[1]}"' in homepage
 
 
-def test_beta_264_provider_and_history_story_is_public() -> None:
+def test_provider_story_is_public_without_release_notes() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     providers = (ROOT / "docs" / "llm_providers.md").read_text(encoding="utf-8")
     homepage = (SITE / "index.html").read_text(encoding="utf-8")
@@ -298,11 +301,15 @@ def test_beta_264_provider_and_history_story_is_public() -> None:
         assert provider in providers
         assert provider in faq
 
-    assert "beta.264:" in homepage
-    assert "exact display-row indices" in features
+    docs = (SITE / "docs.html").read_text(encoding="utf-8")
+    for page in (homepage, features, faq, docs):
+        body = page.split("<body", 1)[1]
+        assert not re.search(r"\bbeta[.-]\d+", body)
+        assert "implementation record" not in body
+    assert 'href="https://github.com/allcolor/PawFlow-Agents/blob/main/CHANGELOG.md"' in docs
     assert "MCP, ACP, A2A, and AG-UI" in integrations
     assert "registered but unavailable" not in faq
-    assert "StopHookArgs.finalModelOutput" in faq
+    assert "What shipped in PawFlow" not in faq
     assert "| `agy_mcp` | Available" in providers
     assert "external_agui" in readme
     assert "external_agui" in providers

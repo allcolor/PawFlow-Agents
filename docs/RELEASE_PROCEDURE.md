@@ -24,6 +24,10 @@ This document is the version-controlled source of truth. The project wiki page
 - `1.0.0bN` is the PEP 440 package version; `1.0.0-beta.N` is the Git tag
   and GitHub release name.
 - Beta GitHub releases are normal releases, not GitHub prereleases.
+- Keep version-by-version change summaries in `CHANGELOG.md`. Public website
+  copy describes lasting product capabilities: do not add release-summary
+  banners, beta-specific feature blurbs, implementation notes, or release FAQ
+  entries. Download links and current version metadata may still be updated.
 - Never amend, force-push, bypass hooks, or move/reuse a published release tag.
 
 ## 1. Establish the release candidate

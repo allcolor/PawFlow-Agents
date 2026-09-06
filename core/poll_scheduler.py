@@ -46,6 +46,11 @@ class PollScheduler:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._schedules: Dict[str, Dict[str, Any]] = {}  # keyed by conversation_id
+        # Only the most recent poll batch may put consumed entries back. Keep
+        # the original objects as claims, invalidated by cancellation/replacement.
+        self._due_entries: Dict[str, Dict[str, Any]] = {}
+        self._due_cancelled_keys: set[str] = set()
+        self._due_cancel_filters: list = []
         self._load()
 
     # ── Public API ──────────────────────────────────────────────────
@@ -70,6 +75,7 @@ class PollScheduler:
         """
         actual_key = key or conversation_id
         with self._lock:
+            self._due_entries.pop(actual_key, None)
             self._schedules[actual_key] = {
                 "conversation_id": conversation_id,
                 "key": actual_key,
@@ -108,6 +114,7 @@ class PollScheduler:
         loop_key = key or f"loop::{conversation_id}::{prompt_hash}"
         recheck_at = time.time() + interval_seconds
         with self._lock:
+            self._due_entries.pop(loop_key, None)
             self._schedules[loop_key] = {
                 "conversation_id": conversation_id,
                 "key": loop_key,
@@ -126,12 +133,15 @@ class PollScheduler:
     def cancel(self, key: str) -> bool:
         """Cancel a scheduled recheck by key. Returns True if it existed."""
         with self._lock:
+            if self._due_entries:
+                self._due_cancelled_keys.add(key)
+            claimed = self._due_entries.pop(key, None)
             if key in self._schedules:
                 del self._schedules[key]
                 self._save()
                 logger.info(f"[poll_scheduler] Cancelled: {key}")
                 return True
-        return False
+        return claimed is not None
 
     def cancel_for_conversation(
         self,
@@ -148,7 +158,12 @@ class PollScheduler:
             return 0
         with self._lock:
             removed = []
-            for key, entry in list(self._schedules.items()):
+            if self._due_entries:
+                self._due_cancel_filters.append((
+                    conversation_id, tuple(key_prefixes or ()),
+                    tuple(reason_prefixes or ())))
+            candidates = {**self._due_entries, **self._schedules}
+            for key, entry in candidates.items():
                 if entry.get("conversation_id") != conversation_id:
                     continue
                 reason = entry.get("reason", "") or ""
@@ -158,9 +173,11 @@ class PollScheduler:
                     reason.startswith(prefix) for prefix in reason_prefixes))
                 if key_match and reason_match:
                     removed.append(key)
+            disk_changed = False
             for key in removed:
-                del self._schedules[key]
-            if removed:
+                self._due_entries.pop(key, None)
+                disk_changed = self._schedules.pop(key, None) is not None or disk_changed
+            if disk_changed:
                 self._save()
         for key in removed:
             logger.info("[poll_scheduler] Cancelled: %s", key)
@@ -178,17 +195,22 @@ class PollScheduler:
     def get_due(self) -> List[Dict[str, Any]]:
         """Return all entries whose recheck_at <= now, removing them from schedule.
 
-        Recurring entries are automatically re-scheduled.
+        Recurring entries are automatically re-scheduled. The single poller may
+        defer this batch through reschedule_due until its next get_due call.
         """
         now = time.time()
         due: List[Dict[str, Any]] = []
         with self._lock:
+            self._due_entries.clear()
+            self._due_cancelled_keys.clear()
+            self._due_cancel_filters.clear()
             expired_keys = [
                 k for k, v in self._schedules.items()
                 if v["recheck_at"] <= now
             ]
             for k in expired_keys:
                 entry = self._schedules.pop(k)
+                self._due_entries[k] = entry
                 due.append(entry)
                 # Re-schedule recurring entries
                 if entry.get("recurring") and entry.get("interval_seconds"):
@@ -203,6 +225,47 @@ class PollScheduler:
             if expired_keys:
                 self._save()
         return due
+
+    def reschedule_due(self, retries: List[tuple[Dict[str, Any], str, float]]) -> int:
+        """Persist one batch of (original due entry, target key, delay) retries.
+
+        Activity decisions happen outside this lock. Cancellation, replacement,
+        or a later poll invalidates their claims, so moving persistence out of
+        the activity lock cannot resurrect stale work. Claims never reach disk.
+        """
+        updated = 0
+        now = time.time()
+        with self._lock:
+            for entry, key, delay in retries:
+                original_key = entry.get("key") or entry["conversation_id"]
+                if self._due_entries.get(original_key) is not entry:
+                    continue
+                self._due_entries.pop(original_key)
+                if key in self._due_cancelled_keys or any(
+                        cid == entry["conversation_id"]
+                        and (not prefixes or any(key.startswith(p) for p in prefixes))
+                        and (not reasons or any(
+                            (entry.get("reason") or "").startswith(p) for p in reasons))
+                        for cid, prefixes, reasons in self._due_cancel_filters):
+                    continue
+                if key != original_key and key in self._schedules:
+                    # A separate wake now owns the destination. Do not replace
+                    # its reason, owner or deadline with this older decision.
+                    continue
+                current = self._schedules.get(key, {})
+                self._schedules[key] = {
+                    **current,
+                    "conversation_id": entry["conversation_id"],
+                    "key": key,
+                    "recheck_at": now + delay,
+                    "user_id": entry.get("user_id", ""),
+                    "reason": entry.get("reason", ""),
+                    "created_at": now,
+                }
+                updated += 1
+            if updated:
+                self._save()
+        return updated
 
     def get(self, conversation_id: str) -> Optional[Dict[str, Any]]:
         """Get the scheduled recheck for a conversation (if any)."""

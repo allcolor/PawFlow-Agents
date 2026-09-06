@@ -126,6 +126,46 @@ def _reason_digest(reason):
                         usedforsecurity=False).hexdigest()[:8]
 
 
+def test_deferred_wakes_batch_persistence_outside_activity_lock(poller_env, monkeypatch):
+    from core.poll_scheduler import PollScheduler
+
+    cid = "batch_deferred"
+    task = _active_task(cid, ["assistant", "claude"])
+    for agent in ("assistant", "claude"):
+        _schedule(cid, f"{cid}::pending::{agent}", f"[pending] wake {agent}")
+    scheduler = PollScheduler.instance()
+    save = scheduler._save
+    saves = []
+
+    def checked_save():
+        assert not task._active_lock._is_owned(), "disk I/O under activity lock"
+        saves.append(True)
+        save()
+
+    monkeypatch.setattr(scheduler, "_save", checked_save)
+    assert _poll(task, cid) == []
+    assert len(_remaining(cid)) == 2
+    assert len(saves) == 2  # due removal, then one batch for both deferrals
+
+
+def test_cancel_between_activity_decision_and_persistence_wins(poller_env, monkeypatch):
+    from core.poll_scheduler import PollScheduler
+
+    cid = "cancel_deferred"
+    task = _active_task(cid, ["assistant"])
+    _schedule(cid, f"{cid}::pending::assistant", "[pending] wake assistant")
+    scheduler = PollScheduler.instance()
+    reschedule = scheduler.reschedule_due
+
+    def cancel_first(retries):
+        scheduler.cancel_for_conversation(cid)
+        return reschedule(retries)
+
+    monkeypatch.setattr(scheduler, "reschedule_due", cancel_first)
+    assert _poll(task, cid) == []
+    assert _remaining(cid) == []
+
+
 @pytest.mark.parametrize("active_agents", [[], ["assistant"]])
 @pytest.mark.parametrize("reason", [
     "[delegate_reply] queued result for claude",

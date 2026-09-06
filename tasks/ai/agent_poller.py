@@ -369,6 +369,7 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                 self._scheduled_entry_target(conversation_id, entry)
                 for entry in entries
             ]
+            retries = []
             with self._active_lock:
                 conversation_active = conversation_id in self._active_conversations
                 deferred_entries = []  # (target_agent, entry)
@@ -401,11 +402,6 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                             entry_key)
                         continue
                     deferred_entries.append((target_agent, entry))
-                if not entries and conversation_active:
-                    deferred_entries = [
-                        ("", {"reason": r}) for r in (
-                            scheduled_reasons.get(conversation_id, [])
-                            or ["[pending] active retry"])]
                 for target_agent, entry in deferred_entries:
                     r = entry.get("reason", "") or "[pending] active retry"
                     entry_key = entry.get("key", "") or ""
@@ -424,34 +420,33 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                                 usedforsecurity=False,
                             ).hexdigest()[:8]
                             key = f"{conversation_id}::pending::{digest}"
-                    scheduler.schedule_delay(
-                        conversation_id, 10, key=key, reason=r,
-                        user_id=entry.get("user_id", "") or "")
-                if not runnable:
-                    continue
+                    retries.append((entry, key, 10))
                 # One poll wake runs one agent. Other targets due in the
                 # same pass are held for the next pass instead of being
                 # folded into the first agent's wake and lost.
-                wake_agent = runnable[0][0]
-                run_entries = [e for t, e in runnable if t == wake_agent]
-                held = [(t, e) for t, e in runnable if t != wake_agent]
-                for target_agent, entry in held:
-                    scheduler.schedule_delay(
-                        conversation_id, 0, key=entry.get("key", ""),
-                        reason=entry.get("reason", "") or "",
-                        user_id=entry.get("user_id", "") or "")
-                    logger.info(
-                        "[poller] Holding wake for %s/%s until the next "
-                        "pass (%s starts first)", conversation_id[:8],
-                        target_agent, wake_agent)
-                if held and getattr(self, "_poller_wake", None) is not None:
-                    self._poller_wake.set()
-                scheduled_entries[conversation_id] = run_entries
-                scheduled_reasons[conversation_id] = [
-                    self._tag_reason_for_agent(
-                        wake_agent, entry.get("reason", "scheduled recheck"))
-                    for entry in run_entries
-                ]
+                held = []
+                if runnable:
+                    wake_agent = runnable[0][0]
+                    run_entries = [e for t, e in runnable if t == wake_agent]
+                    held = [(t, e) for t, e in runnable if t != wake_agent]
+                    retries.extend(
+                        (entry, entry.get("key") or conversation_id, 0)
+                        for _, entry in held)
+                    scheduled_entries[conversation_id] = run_entries
+                    scheduled_reasons[conversation_id] = [
+                        self._tag_reason_for_agent(
+                            wake_agent, entry.get("reason", "scheduled recheck"))
+                        for entry in run_entries
+                    ]
+
+            # File I/O must never hold the global activity lock. The scheduler
+            # validates the consumed-entry claims against intervening cancels.
+            if retries:
+                scheduler.reschedule_due(retries)
+            if held and getattr(self, "_poller_wake", None) is not None:
+                self._poller_wake.set()
+            if not runnable:
+                continue
 
             # Load conversation history
             messages_data = store.load(conversation_id)

@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.271] — 2026-09-06
+
+### Changed
+
+- Secret sanitation records per-segment validation signatures so unchanged
+  conversation history is not decoded and scrubbed again after every restart.
+  Changed segments and restored history are revalidated; read and write
+  sanitation remains active.
+- Scheduler retries are persisted in batches outside the shared agent activity
+  lock, preserving cancellation, replacement, and recurring schedule ordering.
+- Secondary chat streams coalesce Markdown and scroll rendering. Agent-specific
+  events flush only the affected previews, with final text preserved at message
+  and terminal boundaries.
+- Token counting reuses unchanged text and tool-schema counts in a bounded
+  cache, with content and tokenizer changes invalidating cached results.
+- Published SSE events capture their payload and encoded bytes once for all
+  subscribers and replay, preventing later mutations from changing delivery.
+- Context-gauge persistence coalesces pending updates with at most two writer
+  threads, preserving reset barriers and protecting newer stored revisions.
+- Static assets are read outside the common cache lock, with file-signature and
+  concurrent-publication checks before cached bytes are replaced.
+- Public website pages describe lasting product capabilities; release summaries
+  and implementation history remain in the changelog and technical documentation.
+
 ## [1.0.0-beta.270] — 2026-09-05
 
 ### Fixed

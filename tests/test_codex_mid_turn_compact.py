@@ -578,7 +578,7 @@ def test_streaming_api_live_context_usage_is_not_published_by_done():
     heartbeat_block = _AGENT_EMITTER[heartbeat_start:heartbeat_end]
     assert 'emitter._publish_context_usage("heartbeat")' in heartbeat_block
     assert 'reason == "heartbeat" and input_sig == self._context_usage_input_sig' in _AGENT_EMITTER
-    assert 'name=f"ctx-gauge-persist-{self.event_cid[:8]}"' in _AGENT_EMITTER
+    assert "persist_context_usage_async(" in _AGENT_EMITTER
     done_start = _AGENT_EMITTER.index("def on_done", stream_start)
     done_end = _AGENT_EMITTER.index("def on_error", done_start)
     done_block = _AGENT_EMITTER[done_start:done_end]

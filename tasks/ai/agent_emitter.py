@@ -1,5 +1,4 @@
 """Agent emitter — separates execution mode from core loop logic."""
-import copy
 import json
 import logging
 import threading
@@ -274,17 +273,10 @@ class StreamEmitter(AgentEmitter):
         self._context_usage_payload_sig = payload_sig
         try:
             if payload_sig != self._context_usage_persist_sig:
-                usage = copy.deepcopy(payload.get("context_cache") or {})
+                from tasks.ai.context_usage import persist_context_usage_async
+                persist_context_usage_async(
+                    self.event_cid, self._agent_name, payload.get("context_cache") or {})
                 self._context_usage_persist_sig = payload_sig
-                def _persist():
-                    try:
-                        from tasks.ai.context_usage import persist_context_usage
-                        persist_context_usage(self.event_cid, self._agent_name, usage)
-                    except Exception:
-                        logger.debug("stream context_usage persist failed", exc_info=True)
-                threading.Thread(
-                    target=_persist, daemon=True,
-                    name=f"ctx-gauge-persist-{self.event_cid[:8]}").start()
         except Exception:
             logger.debug("stream context_usage persist scheduling failed", exc_info=True)
         self._emit("message_meta", payload)

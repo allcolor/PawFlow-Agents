@@ -1,6 +1,7 @@
 """Single source of truth for PawFlow agent context gauge calculation."""
 
 from __future__ import annotations
+import copy
 import logging
 
 import threading
@@ -26,6 +27,128 @@ _CLI_CONTEXT_PROVIDERS = (
 )
 _USAGE_CACHE_LOCK = threading.RLock()
 _USAGE_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
+# Fallback for stores without their own extras lock (including lightweight
+# test stores). Real ConversationStore writers share its per-conversation lock.
+_USAGE_WRITE_LOCKS = tuple(threading.RLock() for _ in range(64))
+
+
+def _context_usage_resets_measurement(usage) -> bool:
+    return (usage.get("cli_context_state") == "cold"
+            or usage.get("source") in {"compact_post", "compact_done", "rebuild_compact"})
+
+
+def _older_context_usage(usage, current) -> bool:
+    if not current:
+        return False
+    updated = float(usage.get("updated_at", 0) or 0)
+    previous = float(current.get("updated_at", 0) or 0)
+    if updated < previous:
+        return True
+    # Explicit context replacement can legitimately lower the gauge and reset
+    # provider revisions. A late snapshot from before the reset fails above.
+    if _context_usage_resets_measurement(usage):
+        return False
+    if current.get("context_source_measured"):
+        if not usage.get("context_source_measured"):
+            return True
+        return (int(usage.get("context_measurement_revision", 0) or 0)
+                < int(current.get("context_measurement_revision", 0) or 0))
+    return False
+
+
+class _ContextUsagePersistence:
+    """Use at most two daemon writers for the process-wide instance.
+
+    Each conversation/agent has one pending value and at most one reset barrier.
+    Distinct pending keys have no hard global cap; active conversations drain
+    serially, so different agents cannot overwrite one another's extras.
+    """
+
+    def __init__(self):
+        self._condition = threading.Condition()
+        self._pending = {}
+        self._active = set()
+        self._workers = 0
+        self._threads = []
+        self._stopping = False
+
+    def submit(self, conversation_id, agent_name, usage, *, store=None):
+        if not conversation_id or not agent_name or not usage or int(usage.get("max", 0) or 0) <= 0:
+            return
+        usage = copy.deepcopy(usage)
+        key = (conversation_id, agent_name)
+        with self._condition:
+            if self._stopping:
+                raise RuntimeError("context usage persistence has shut down")
+            pending = self._pending.get(key)
+            if pending and _older_context_usage(usage, pending[0]):
+                return
+            # Keep one reset barrier as well as the latest value: the next
+            # session can restart revisions at one before the reset is written.
+            reset = None
+            if pending and not _context_usage_resets_measurement(usage):
+                reset = pending[0] if _context_usage_resets_measurement(pending[0]) else pending[2]
+            self._pending[key] = (usage, store, reset)
+            if self._workers < 2 and conversation_id not in self._active:
+                worker = threading.Thread(
+                    target=self._drain, daemon=True, name="ctx-gauge-persist")
+                self._threads = [thread for thread in self._threads if thread.is_alive()]
+                self._threads.append(worker)
+                self._workers += 1
+                try:
+                    worker.start()
+                except Exception:
+                    self._workers -= 1
+                    raise
+            self._condition.notify_all()
+
+    def shutdown(self):
+        """Drain and join workers during controlled teardown, never force-stop."""
+        with self._condition:
+            self._stopping = True
+            threads = tuple(self._threads)
+            self._condition.notify_all()
+        for worker in threads:
+            if worker.ident is not None:
+                worker.join()
+
+    def _drain(self):
+        while True:
+            with self._condition:
+                # Reuse workers across heartbeat updates; retire after an idle
+                # period so inactive conversations do not retain live threads.
+                ready = self._condition.wait_for(
+                    lambda: self._stopping or any(
+                        key[0] not in self._active for key in self._pending),
+                    timeout=30)
+                key = next((key for key in self._pending
+                            if key[0] not in self._active), None)
+                if not ready or key is None:
+                    self._workers -= 1
+                    self._condition.notify_all()
+                    return
+                usage, store, reset = self._pending.pop(key)
+                self._active.add(key[0])
+            try:
+                if reset is not None:
+                    persist_context_usage(*key, reset, store=store)
+                persist_context_usage(*key, usage, store=store)
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "stream context_usage persist failed", exc_info=True)
+            finally:
+                with self._condition:
+                    self._active.remove(key[0])
+                    self._condition.notify_all()
+
+
+_CONTEXT_USAGE_PERSISTENCE = _ContextUsagePersistence()
+
+
+def persist_context_usage_async(conversation_id: str, agent_name: str,
+                                usage: Dict[str, Any]) -> None:
+    """Queue the latest gauge without waiting for storage or another writer."""
+    _CONTEXT_USAGE_PERSISTENCE.submit(conversation_id, agent_name, usage)
 
 
 def _agent_key(agent_name: str) -> str:
@@ -550,29 +673,49 @@ def persist_context_usage(conversation_id: str, agent_name: str,
     if store is None:
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
-    with _USAGE_CACHE_LOCK:
-        usage_map = {
-            aname: dict(entry)
-            for (cid, aname), entry in _USAGE_CACHE.items()
-            if cid == conversation_id and isinstance(entry, dict)
-        }
-        if not usage_map:
-            try:
+    usage = copy.deepcopy(usage)
+    get_extras_lock = getattr(store, "_get_extras_lock", None)
+    if callable(get_extras_lock):
+        # Finish owner-index bootstrap before taking an extras lock. set_extra
+        # also checks exists, but that check is then only a warm cache lookup.
+        exists = getattr(store, "exists", None)
+        if callable(exists) and not exists(conversation_id):
+            return
+        write_lock = get_extras_lock(conversation_id)
+    else:
+        write_lock = _USAGE_WRITE_LOCKS[hash(conversation_id) % len(_USAGE_WRITE_LOCKS)]
+    with write_lock:
+        usage_map = {}
+        try:
+            read_extras = getattr(store, "_read_extras", None)
+            if callable(read_extras):
+                # Cache-only snapshots may miss a patch on a cold conversation.
+                snap = (read_extras(conversation_id) or {}).get("context_usage", {})
+            else:
                 snap = store.get_extra_snapshot(
                     conversation_id, "context_usage", {})
-                if isinstance(snap, dict):
-                    usage_map.update({
-                        str(aname): dict(entry)
-                        for aname, entry in snap.items()
-                        if isinstance(entry, dict)
-                    })
-            except Exception:
-                logging.getLogger(__name__).debug(
-                    "context usage snapshot merge failed", exc_info=True)
-        usage_map[agent_name] = dict(usage)
-        _USAGE_CACHE[(conversation_id, agent_name)] = dict(usage)
-    if hasattr(store, "set_extra"):
-        store.set_extra(conversation_id, "context_usage", usage_map)
+            if isinstance(snap, dict):
+                usage_map.update({
+                    str(aname): dict(entry)
+                    for aname, entry in snap.items()
+                    if isinstance(entry, dict)
+                })
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "context usage snapshot merge failed", exc_info=True)
+        with _USAGE_CACHE_LOCK:
+            for (cid, aname), entry in _USAGE_CACHE.items():
+                if (cid == conversation_id and isinstance(entry, dict)
+                        and not _older_context_usage(entry, usage_map.get(aname))):
+                    usage_map[aname] = dict(entry)
+        if _older_context_usage(usage, usage_map.get(agent_name)):
+            return
+        usage_map[agent_name] = usage
+        if hasattr(store, "set_extra"):
+            store.set_extra(conversation_id, "context_usage", usage_map)
+        with _USAGE_CACHE_LOCK:
+            for aname, entry in usage_map.items():
+                _USAGE_CACHE[(conversation_id, aname)] = dict(entry)
 
 
 def usage_event_payload(usage: Dict[str, Any]) -> Dict[str, Any]:

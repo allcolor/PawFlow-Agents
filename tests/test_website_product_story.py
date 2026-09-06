@@ -74,7 +74,9 @@ def test_website_pages_have_one_heading_and_valid_local_targets(name: str) -> No
     parser = parse_page(name)
 
     assert parser.h1_count == 1
-    assert "site.js?v=a34" in parser.scripts
+    assert {value.split('?', 1)[0] for value in parser.scripts} >= {
+        'esper-world.js', 'esper-camera.js', 'site.js'
+    }
 
     references = parser.links + parser.scripts
     if name in PRODUCT_PAGES:
@@ -150,75 +152,6 @@ def test_secondary_pages_have_a_distinct_job(name: str, expected: str) -> None:
     assert expected in (SITE / name).read_text(encoding="utf-8")
 
 
-def test_homepage_uses_a_fluid_infinite_zoom_canvas() -> None:
-    css = (SITE / "style.css").read_text(encoding="utf-8")
-    script = (SITE / "site.js").read_text(encoding="utf-8")
-
-    assert "@media (prefers-reduced-motion: reduce)" in css
-    assert ".stage-link i" in css
-    assert "animation: none !important" in css
-    assert ".zoom-story-active" in css
-    assert "initZoomStory" in script
-    assert "loopClone" in script
-    assert "portalFrames" in script
-    assert "frame.width / width" in script
-    assert "frame.height / height" in script
-    assert "easeInOut" in script
-    assert "const threshold = raf ? 60 : 1" in script
-    assert "queuedWheelDirection" in script
-    assert "queueWheelStep" in script
-    assert "window.addEventListener('wheel', onWheel, { passive: false })" in script
-    assert "--scene-content-fit" in script
-    assert "--scene-blur" in script
-    assert "wheelLocked" not in script
-    assert "wheelUnlockTimer" not in script
-    assert "lastWheelEvent < 1000" not in script
-
-
-def test_mobile_story_uses_boundary_aware_zoom_scenes() -> None:
-    css = (SITE / "style.css").read_text(encoding="utf-8")
-    script = (SITE / "site.js").read_text(encoding="utf-8")
-
-    assert "initMobileStoryCanvas" in script
-    assert "Array(scenes.length).fill('zoom')" in script
-    assert "atBottom: scene.scrollTop + scene.clientHeight >= scene.scrollHeight - 2" in script
-    assert "if (delta < 0 && start.atBottom) move(1)" in script
-    assert "if (delta > 0 && start.atTop) move(-1)" in script
-    assert "(current + direction + scenes.length) % scenes.length" in script
-    assert ".mobile-story-active .mobile-story-scene" in css
-    assert "overflow-y: auto" in css
-    assert "mobile-zoom-in" in css
-
-
-def test_story_navigation_yields_to_help_chat_input_and_scrolling() -> None:
-    script = (SITE / "site.js").read_text(encoding="utf-8")
-
-    assert "function isStoryKeyboardTarget(target)" in script
-    assert script.count("if (isStoryKeyboardTarget(event.target)) return;") == 2
-    assert "if (!enabled || isHelpWidgetTarget(event.target)) return;" in script
-    assert "panel.addEventListener('wheel', (event) =>" in script
-    assert "event.stopPropagation();" in script
-    assert "target.closest('.pf-help-log')" in script
-    assert "textarea.scrollHeight > textarea.clientHeight" in script
-    assert "log.scrollTop += delta;" in script
-
-
-def test_homepage_chapters_form_an_ordered_portal_chain() -> None:
-    html = (SITE / "index.html").read_text(encoding="utf-8")
-    script = (SITE / "site.js").read_text(encoding="utf-8")
-
-    assert html.count("data-zoom-portal") == 7
-    assert '<figure class="runtime-stage" data-zoom-portal' in html
-    assert "'product', 'architecture', 'why', 'demos', 'stack', 'comparison', 'install'" in script
-    architecture_link = 'href="#architecture" data-zoom-target="1"'
-    about_link = 'href="#why" data-zoom-target="2"'
-    assert architecture_link in html
-    assert about_link in html
-    assert html.index(architecture_link) < html.index(about_link)
-    assert '<div class="zoom-story-hint" aria-hidden="true"><span></span></div>' in html
-    assert "Scroll to zoom" not in html
-
-
 def test_homepage_keeps_direct_navigation_around_the_zoom_story() -> None:
     html = (SITE / "index.html").read_text(encoding="utf-8")
 
@@ -245,31 +178,10 @@ def test_howto_canvas_indexes_every_recipe_and_keeps_full_reader() -> None:
     assert 'data-howto-canvas' in html
     assert 'class="howto-reader"' in html
     assert html.count('data-zoom-target') == 9
-    assert "buildHowtoCanvas" in script
-    assert "howtos.html?read=" in script
-    for recipe_id in recipe_ids:
-        assert f"'{recipe_id}'" in script
-
-
-def test_site_soundtrack_autoplays_with_a_user_control() -> None:
-    script = (SITE / "site.js").read_text(encoding="utf-8")
-    css = (SITE / "style.css").read_text(encoding="utf-8")
-    soundtrack = SITE / "assets/media/audio/music_suno_brand.mp3"
-
-    assert soundtrack.stat().st_size > 1_000_000
-    assert "initAmbientSound" in script
-    assert "audio.autoplay = true" in script
-    assert "audio.loop = true" in script
-    assert "pawflow-site-sound" in script
-    assert "pawflow-site-sound-playback" in script
-    assert "sessionStorage.setItem(playbackKey" in script
-    assert "audio.currentTime = (savedPlayback.position + transit) % audio.duration" in script
-    assert "window.addEventListener('pagehide'" in script
-    assert "resumeOnGesture" in script
-    assert "event.target.closest('.site-sound-toggle')" in script
-    assert "toggle.classList.contains('is-blocked')" in script
-    assert "audio.addEventListener('playing'" in script
-    assert ".site-sound-toggle" in css
+    groups = __import__('json').loads(re.search(r'const GUIDE_GROUPS = (\[.*\]);', script)[1])
+    indexed = [recipe for group in groups for recipe in group['recipes']]
+    assert len(indexed) == len(set(indexed)) == 56
+    assert set(indexed) == set(recipe_ids)
 
 
 def test_release_fallback_matches_structured_version_metadata() -> None:

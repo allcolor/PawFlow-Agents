@@ -1,0 +1,182 @@
+{
+  "image_service": "gpt_image_service",
+  "generated_on": "2026-09-06",
+  "base_scenes": [
+    {
+      "path": "scene-00.jpg",
+      "source": "fs://filestore/d611a51a44cd/generated_1788680904_899c.jpg"
+    },
+    {
+      "path": "scene-01.jpg",
+      "source": "fs://filestore/ace0dfc5ea29/edited_1788681828_276c.jpg",
+      "replaces": "fs://filestore/f623f58959a0/edited_1788681080_597f.jpg"
+    },
+    {
+      "path": "scene-02.jpg",
+      "source": "fs://filestore/0516e47c1068/edited_1788681516_c94c.jpg"
+    },
+    {
+      "path": "scene-05.jpg",
+      "source": "fs://filestore/8fbbff079819/generated_1788681882_61f8.jpg"
+    }
+  ],
+  "derived_scenes": [
+    {
+      "key": "workshop",
+      "index": 3,
+      "ref": "fs://filestore/0516e47c1068/edited_1788681516_c94c.jpg",
+      "where": "left framed photograph at x12%..24%, y34%..54%",
+      "scene": "the intimate inventor workshop shown in that photo: weathered workbench, precision mechanical tools, brass instruments, a warm hanging lamp, rain on tall teal windows",
+      "next": "a lush rooftop greenhouse in a rainy futuristic city",
+      "prompt": "Use case precise-object-edit, recursive photographic enhancement. The reference is the exact preceding scene in an ESPER photo zoom. Identify the left framed photograph at x12%..24%, y34%..54%. Enlarge ONLY the image INSIDE that photograph until its depicted world occupies the entire new canvas. Outer reference room and frame are outside the crop. Preserve the scene actually shown in the small photograph and reveal new tiny details: the intimate inventor workshop shown in that photo: weathered workbench, precision mechanical tools, brass instruments, a warm hanging lamp, rain on tall teal windows. Photographic science-fiction film noir in the Blade Runner ESPER spirit, breathtaking real materials, restrained teal shadows and copper practical light, analog grain, optical realism, deep cinematic composition. IMPORTANT NEXT PORTAL: put ONE distinct rectangular framed photograph naturally on the LEFT side of this new environment, front-facing, level, no glare or perspective skew, opening around x22%..43%, y34%..53%. It depicts a lush rooftop greenhouse in a rainy futuristic city. This next picture will contain the next generated scene, so make its boundary clean and its image recognizable at small size. Keep right40% darker atmospheric negative space for readable website text. No people, readable text, logos, UI, synthetic collage, holographic overlays or cartoons. The entirety must look like a beautiful photograph of a real scene. Landscape if possible.",
+      "path": "/workspace/pawflow-website/assets/media/esper/scene-03.jpg",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Image edited and saved to MyWorkspace: /workspace/pawflow-website/assets/media/esper/scene-03.jpg"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "key": "garden",
+      "index": 4,
+      "ref": "fs://filestore/ace0dfc5ea29/edited_1788681828_276c.jpg",
+      "where": "LOWER LEFT framed rooftop greenhouse photograph",
+      "scene": "the beautiful rooftop botanical greenhouse shown inside the photo: glass dome, rich living foliage, wet copper terraces, futuristic skyline under teal rain and small warm lamps",
+      "next": "a domed astronomical observatory beneath a starry sky",
+      "prompt": "Use case precise-object-edit, recursive photographic enhancement. The reference is the exact preceding scene in an ESPER photo zoom. Identify the LOWER LEFT framed rooftop greenhouse photograph. Enlarge ONLY the image INSIDE that photograph until its depicted world occupies the entire new canvas. Outer reference room and frame are outside the crop. Preserve the scene actually shown in the small photograph and reveal new tiny details: the beautiful rooftop botanical greenhouse shown inside the photo: glass dome, rich living foliage, wet copper terraces, futuristic skyline under teal rain and small warm lamps. Photographic science-fiction film noir in the Blade Runner ESPER spirit, breathtaking real materials, restrained teal shadows and copper practical light, analog grain, optical realism, deep cinematic composition. IMPORTANT NEXT PORTAL: put ONE distinct rectangular framed photograph naturally on the LEFT side of this new environment, front-facing, level, no glare or perspective skew, opening around x22%..43%, y34%..53%. It depicts a domed astronomical observatory beneath a starry sky. This next picture will contain the next generated scene, so make its boundary clean and its image recognizable at small size. Keep right40% darker atmospheric negative space for readable website text. No people, readable text, logos, UI, synthetic collage, holographic overlays or cartoons. The entirety must look like a beautiful photograph of a real scene. Landscape if possible.",
+      "path": "/workspace/pawflow-website/assets/media/esper/scene-04.jpg",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Image edited and saved to MyWorkspace: /workspace/pawflow-website/assets/media/esper/scene-04.jpg"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "key": "observatory",
+      "index": 6,
+      "ref": "fs://filestore/8fbbff079819/generated_1788681882_61f8.jpg",
+      "where": "BOTTOM RIGHT framed observatory photograph",
+      "scene": "the domed astronomical observatory shown in the image: immense vintage brass telescope, open glass dome, deep teal stars, amber instrument lamps, tactile wood and weathered metal",
+      "next": "the richly furnished circular library/archive from the reference, with its eight framed pictures in wood cabinets",
+      "prompt": "Use case precise-object-edit, recursive photographic enhancement. The reference is the exact preceding scene in an ESPER photo zoom. Identify the BOTTOM RIGHT framed observatory photograph. Enlarge ONLY the image INSIDE that photograph until its depicted world occupies the entire new canvas. Outer reference room and frame are outside the crop. Preserve the scene actually shown in the small photograph and reveal new tiny details: the domed astronomical observatory shown in the image: immense vintage brass telescope, open glass dome, deep teal stars, amber instrument lamps, tactile wood and weathered metal. Photographic science-fiction film noir in the Blade Runner ESPER spirit, breathtaking real materials, restrained teal shadows and copper practical light, analog grain, optical realism, deep cinematic composition. IMPORTANT NEXT PORTAL: put ONE distinct rectangular framed photograph naturally on the LEFT side of this new environment, front-facing, level, no glare or perspective skew, opening around x22%..43%, y34%..53%. It depicts the richly furnished circular library/archive from the reference, with its eight framed pictures in wood cabinets. This next picture will contain the next generated scene, so make its boundary clean and its image recognizable at small size. Keep right40% darker atmospheric negative space for readable website text. No people, readable text, logos, UI, synthetic collage, holographic overlays or cartoons. The entirety must look like a beautiful photograph of a real scene. Landscape if possible.",
+      "path": "/workspace/pawflow-website/assets/media/esper/scene-06.jpg",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Image edited and saved to MyWorkspace: /workspace/pawflow-website/assets/media/esper/scene-06.jpg"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "key": "vault",
+      "index": 7,
+      "ref": "fs://filestore/8fbbff079819/generated_1788681882_61f8.jpg",
+      "where": "BOTTOM LEFT framed vault photograph",
+      "scene": "the majestic bronze vault room shown inside the image: heavy circular vault door, intricate solid brass locking mechanism, deep amber highlights, teal shadows, richly textured stone",
+      "next": "an elegant cabinet of curious mechanical artifacts and glass capsules on dark shelves",
+      "prompt": "Use case precise-object-edit, recursive photographic enhancement. The reference is the exact preceding scene in an ESPER photo zoom. Identify the BOTTOM LEFT framed vault photograph. Enlarge ONLY the image INSIDE that photograph until its depicted world occupies the entire new canvas. Outer reference room and frame are outside the crop. Preserve the scene actually shown in the small photograph and reveal new tiny details: the majestic bronze vault room shown inside the image: heavy circular vault door, intricate solid brass locking mechanism, deep amber highlights, teal shadows, richly textured stone. Photographic science-fiction film noir in the Blade Runner ESPER spirit, breathtaking real materials, restrained teal shadows and copper practical light, analog grain, optical realism, deep cinematic composition. IMPORTANT NEXT PORTAL: put ONE distinct rectangular framed photograph naturally on the LEFT side of this new environment, front-facing, level, no glare or perspective skew, opening around x22%..43%, y34%..53%. It depicts an elegant cabinet of curious mechanical artifacts and glass capsules on dark shelves. This next picture will contain the next generated scene, so make its boundary clean and its image recognizable at small size. Keep right40% darker atmospheric negative space for readable website text. No people, readable text, logos, UI, synthetic collage, holographic overlays or cartoons. The entirety must look like a beautiful photograph of a real scene. Landscape if possible.",
+      "path": "/workspace/pawflow-website/assets/media/esper/scene-07.jpg",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Image edited and saved to MyWorkspace: /workspace/pawflow-website/assets/media/esper/scene-07.jpg"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "key": "station",
+      "index": 8,
+      "ref": "fs://filestore/8fbbff079819/generated_1788681882_61f8.jpg",
+      "where": "TOP LEFT framed arrival-station photograph",
+      "scene": "the nocturnal arrival station shown in the photograph: grand arched amber-lit entrance, copper and glass architecture, wet paving, soft mist, teal futuristic city outside",
+      "next": "a rain-soaked penthouse study with walnut desk at lower left, a warm lamp, city window on left and a brass framed photograph on its dark wall",
+      "prompt": "Use case precise-object-edit, recursive photographic enhancement. The reference is the exact preceding scene in an ESPER photo zoom. Identify the TOP LEFT framed arrival-station photograph. Enlarge ONLY the image INSIDE that photograph until its depicted world occupies the entire new canvas. Outer reference room and frame are outside the crop. Preserve the scene actually shown in the small photograph and reveal new tiny details: the nocturnal arrival station shown in the photograph: grand arched amber-lit entrance, copper and glass architecture, wet paving, soft mist, teal futuristic city outside. Photographic science-fiction film noir in the Blade Runner ESPER spirit, breathtaking real materials, restrained teal shadows and copper practical light, analog grain, optical realism, deep cinematic composition. IMPORTANT NEXT PORTAL: put ONE distinct rectangular framed photograph naturally on the LEFT side of this new environment, front-facing, level, no glare or perspective skew, opening around x22%..43%, y34%..53%. It depicts a rain-soaked penthouse study with walnut desk at lower left, a warm lamp, city window on left and a brass framed photograph on its dark wall. This next picture will contain the next generated scene, so make its boundary clean and its image recognizable at small size. Keep right40% darker atmospheric negative space for readable website text. No people, readable text, logos, UI, synthetic collage, holographic overlays or cartoons. The entirety must look like a beautiful photograph of a real scene. Landscape if possible.",
+      "path": "/workspace/pawflow-website/assets/media/esper/scene-08.jpg",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Image edited and saved to MyWorkspace: /workspace/pawflow-website/assets/media/esper/scene-08.jpg"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "key": "resources",
+      "index": 11,
+      "ref": "fs://filestore/8fbbff079819/generated_1788681882_61f8.jpg",
+      "where": "BOTTOM ROW SECOND framed artifact cabinet photograph",
+      "scene": "the elegant cabinet of mechanical curiosities depicted in that photo: beautifully arranged brass mechanisms, glass capsules, small sculptural scientific instruments on dark mahogany shelves, tiny amber lights and teal reflections",
+      "next": "an intimate inventor workshop with a worn workbench, mechanical tools and a warm lamp by rain-streaked windows",
+      "prompt": "Use case precise-object-edit, recursive photographic enhancement. The reference is the exact preceding scene in an ESPER photo zoom. Identify the BOTTOM ROW SECOND framed artifact cabinet photograph. Enlarge ONLY the image INSIDE that photograph until its depicted world occupies the entire new canvas. Outer reference room and frame are outside the crop. Preserve the scene actually shown in the small photograph and reveal new tiny details: the elegant cabinet of mechanical curiosities depicted in that photo: beautifully arranged brass mechanisms, glass capsules, small sculptural scientific instruments on dark mahogany shelves, tiny amber lights and teal reflections. Photographic science-fiction film noir in the Blade Runner ESPER spirit, breathtaking real materials, restrained teal shadows and copper practical light, analog grain, optical realism, deep cinematic composition. IMPORTANT NEXT PORTAL: put ONE distinct rectangular framed photograph naturally on the LEFT side of this new environment, front-facing, level, no glare or perspective skew, opening around x22%..43%, y34%..53%. It depicts an intimate inventor workshop with a worn workbench, mechanical tools and a warm lamp by rain-streaked windows. This next picture will contain the next generated scene, so make its boundary clean and its image recognizable at small size. Keep right40% darker atmospheric negative space for readable website text. No people, readable text, logos, UI, synthetic collage, holographic overlays or cartoons. The entirety must look like a beautiful photograph of a real scene. Landscape if possible.",
+      "path": "/workspace/pawflow-website/assets/media/esper/scene-11.jpg",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Image edited and saved to MyWorkspace: /workspace/pawflow-website/assets/media/esper/scene-11.jpg"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "key": "agents",
+      "index": 9,
+      "ref": "fs://filestore/8fbbff079819/generated_1788681882_61f8.jpg",
+      "where": "TOP ROW SECOND framed lamplit study photograph",
+      "scene": "the thoughtful lamplit study shown in the photo: vintage analog computing consoles, a warm shaded lamp, open notebooks, shelves of reference books, beautiful dark walnut, teal night window",
+      "next": "a circular retrofuturistic control room with curved consoles and four framed photographs on a walnut wall",
+      "prompt": "Use case precise-object-edit, recursive photographic enhancement. The reference is the exact preceding scene in an ESPER photo zoom. Identify the TOP ROW SECOND framed lamplit study photograph. Enlarge ONLY the image INSIDE that photograph until its depicted world occupies the entire new canvas. Outer reference room and frame are outside the crop. Preserve the scene actually shown in the small photograph and reveal new tiny details: the thoughtful lamplit study shown in the photo: vintage analog computing consoles, a warm shaded lamp, open notebooks, shelves of reference books, beautiful dark walnut, teal night window. Photographic science-fiction film noir in the Blade Runner ESPER spirit, breathtaking real materials, restrained teal shadows and copper practical light, analog grain, optical realism, deep cinematic composition. IMPORTANT NEXT PORTAL: put ONE distinct rectangular framed photograph naturally on the LEFT side of this new environment, front-facing, level, no glare or perspective skew, opening around x22%..43%, y34%..53%. It depicts a circular retrofuturistic control room with curved consoles and four framed photographs on a walnut wall. This next picture will contain the next generated scene, so make its boundary clean and its image recognizable at small size. Keep right40% darker atmospheric negative space for readable website text. No people, readable text, logos, UI, synthetic collage, holographic overlays or cartoons. The entirety must look like a beautiful photograph of a real scene. Landscape if possible.",
+      "path": "/workspace/pawflow-website/assets/media/esper/scene-09.jpg",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Image edited and saved to MyWorkspace: /workspace/pawflow-website/assets/media/esper/scene-09.jpg"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "key": "train",
+      "index": 10,
+      "ref": "fs://filestore/8fbbff079819/generated_1788681882_61f8.jpg",
+      "where": "TOP ROW THIRD framed red night-train photograph",
+      "scene": "the luxurious night train carriage depicted in that photograph: red velvet chairs, polished dark timber, brass luggage racks, warm lamps, raindrops and teal city light on tall windows",
+      "next": "an immense nocturnal server aisle with dark racks, teal indicator lights and warm copper conduits",
+      "prompt": "Use case precise-object-edit, recursive photographic enhancement. The reference is the exact preceding scene in an ESPER photo zoom. Identify the TOP ROW THIRD framed red night-train photograph. Enlarge ONLY the image INSIDE that photograph until its depicted world occupies the entire new canvas. Outer reference room and frame are outside the crop. Preserve the scene actually shown in the small photograph and reveal new tiny details: the luxurious night train carriage depicted in that photograph: red velvet chairs, polished dark timber, brass luggage racks, warm lamps, raindrops and teal city light on tall windows. Photographic science-fiction film noir in the Blade Runner ESPER spirit, breathtaking real materials, restrained teal shadows and copper practical light, analog grain, optical realism, deep cinematic composition. IMPORTANT NEXT PORTAL: put ONE distinct rectangular framed photograph naturally on the LEFT side of this new environment, front-facing, level, no glare or perspective skew, opening around x22%..43%, y34%..53%. It depicts an immense nocturnal server aisle with dark racks, teal indicator lights and warm copper conduits. This next picture will contain the next generated scene, so make its boundary clean and its image recognizable at small size. Keep right40% darker atmospheric negative space for readable website text. No people, readable text, logos, UI, synthetic collage, holographic overlays or cartoons. The entirety must look like a beautiful photograph of a real scene. Landscape if possible.",
+      "path": "/workspace/pawflow-website/assets/media/esper/scene-10.jpg",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Image edited and saved to MyWorkspace: /workspace/pawflow-website/assets/media/esper/scene-10.jpg"
+          }
+        ],
+        "isError": false
+      }
+    }
+  ],
+  "audio": {
+    "ambient": "Validated assistant mock assets/esper-suno-v2.mp3",
+    "zoom_in": "Validated mock assets/zoom-reference-a.mp3, supplied Blade Runner reference 81-88 seconds",
+    "zoom_out": "Validated mock assets/zoom-reference-b.mp3, supplied reference 102-109 seconds"
+  }
+}

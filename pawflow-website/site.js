@@ -1,7 +1,3 @@
-const header = document.querySelector('[data-header]');
-const nav = document.querySelector('[data-nav]');
-const toggle = document.querySelector('[data-nav-toggle]');
-
 // Fallback when the GitHub API is unreachable or rate-limited. Keep the
 // version in sync with the latest release tag on a best-effort basis — the
 // live fetch below overrides it on every page load.
@@ -125,899 +121,478 @@ renderReleaseReferences();
   }
 })();
 
-function setScrolled() {
-  if (!header) return;
-  header.classList.toggle('is-scrolled', window.scrollY > 8);
-}
-
-setScrolled();
-window.addEventListener('scroll', setScrolled, { passive: true });
-
-if (toggle && nav) {
-  toggle.addEventListener('click', () => {
-    const open = nav.classList.toggle('is-open');
-    toggle.setAttribute('aria-expanded', String(open));
-  });
-}
-
-const currentPage = document.body.dataset.page;
-document.querySelectorAll('.site-nav a').forEach((link) => {
-  const href = link.getAttribute('href') || '';
-  if (currentPage && href.startsWith(currentPage + '.html')) link.classList.add('is-active');
-  if (currentPage === 'home' && href === 'index.html') link.classList.add('is-active');
-});
-
-// Ambient soundtrack. Browsers may reject audible autoplay before the first
-// user gesture; in that case the same requested playback starts on the first
-// click, key press, or wheel gesture. A visitor's explicit mute always wins.
-(function initAmbientSound() {
-  const preferenceKey = 'pawflow-site-sound';
-  const playbackKey = 'pawflow-site-sound-playback';
-  const audio = document.createElement('audio');
-  const toggle = document.createElement('button');
-  let wanted = true;
-  let blocked = false;
-  let savedPlayback = null;
-  let lastSavedAt = 0;
-
-  try {
-    wanted = localStorage.getItem(preferenceKey) !== 'off';
-    savedPlayback = JSON.parse(sessionStorage.getItem(playbackKey) || 'null');
-  } catch (_) {}
-
-  audio.className = 'site-ambient-audio';
-  audio.src = 'assets/media/audio/music_suno_brand.mp3';
-  audio.autoplay = true;
-  audio.loop = true;
-  audio.preload = 'auto';
-  audio.volume = .2;
-  audio.setAttribute('playsinline', '');
-
-  toggle.className = 'site-sound-toggle';
-  toggle.type = 'button';
-  toggle.innerHTML = `
-    <span class="site-sound-bars" aria-hidden="true"><i></i><i></i><i></i></span>
-    <span class="site-sound-label">Sound on</span>`;
-
-  function update() {
-    const playing = wanted && !audio.paused;
-    const label = !wanted ? 'Sound off' : blocked && !playing ? 'Start sound' : 'Sound on';
-    toggle.classList.toggle('is-on', playing);
-    toggle.classList.toggle('is-blocked', blocked && wanted && !playing);
-    toggle.setAttribute('aria-pressed', String(wanted));
-    toggle.setAttribute('aria-label', label + '. Toggle background music.');
-    toggle.querySelector('.site-sound-label').textContent = label;
-  }
-
-  function remember() {
-    try { localStorage.setItem(preferenceKey, wanted ? 'on' : 'off'); } catch (_) {}
-  }
-
-  function savePosition(force = false) {
-    const now = Date.now();
-    if (!force && now - lastSavedAt < 750) return;
-    if (!Number.isFinite(audio.currentTime)) return;
-    lastSavedAt = now;
-    try {
-      sessionStorage.setItem(playbackKey, JSON.stringify({
-        position: audio.currentTime,
-        savedAt: now,
-        playing: wanted && !audio.paused && !document.hidden,
-      }));
-    } catch (_) {}
-  }
-
-  function restorePosition() {
-    if (savedPlayback && Number.isFinite(savedPlayback.position) &&
-        Number.isFinite(audio.duration) && audio.duration > 0) {
-      const transit = savedPlayback.playing && Number.isFinite(savedPlayback.savedAt)
-        ? Math.max(0, (Date.now() - savedPlayback.savedAt) / 1000)
-        : 0;
-      audio.currentTime = (savedPlayback.position + transit) % audio.duration;
-    }
-    if (wanted) play();
-  }
-
-  async function play() {
-    if (!wanted || document.hidden || !audio.paused) {
-      update();
-      return;
-    }
-    try {
-      await audio.play();
-      blocked = false;
-    } catch (_) {
-      blocked = true;
-    }
-    update();
-  }
-
-  function resumeOnGesture(event) {
-    if (event.target && event.target.closest && event.target.closest('.site-sound-toggle')) return;
-    if (wanted && audio.paused) play();
-  }
-
-  toggle.addEventListener('click', () => {
-    if (toggle.classList.contains('is-blocked') || (wanted && audio.paused)) {
-      wanted = true;
-      blocked = false;
-      remember();
-      play();
-      return;
-    }
-    wanted = !wanted;
-    blocked = false;
-    remember();
-    if (wanted) play();
-    else audio.pause();
-    update();
-  });
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      savePosition(true);
-      audio.pause();
-    }
-    else if (wanted) play();
-    update();
-  });
-  audio.addEventListener('playing', () => {
-    blocked = false;
-    update();
-  });
-  audio.addEventListener('pause', update);
-  audio.addEventListener('timeupdate', () => savePosition());
-  window.addEventListener('pagehide', () => savePosition(true));
-  document.addEventListener('pointerdown', resumeOnGesture, { passive: true });
-  document.addEventListener('keydown', resumeOnGesture);
-  window.addEventListener('wheel', resumeOnGesture, { passive: true });
-
-  document.body.append(audio, toggle);
-  update();
-  if (audio.readyState >= 1) restorePosition();
-  else audio.addEventListener('loadedmetadata', restorePosition, { once: true });
-})();
-
-// Build the desktop How-to canvas from the canonical recipe reader. Category
-// cards are an index only: full recipes keep their original, readable markup.
-(function buildHowtoCanvas() {
-  const body = document.body;
-  const canvas = document.querySelector('[data-howto-canvas]');
-  const reader = document.querySelector('.howto-reader');
-  if (!body.classList.contains('howto-canvas-page') || !canvas || !reader) return;
-
-  const requestedId = decodeURIComponent(location.hash.replace(/^#/, ''));
-  const requestedNode = requestedId
-    ? reader.querySelector('#' + CSS.escape(requestedId))
-    : null;
-  const forceReader = new URLSearchParams(location.search).has('read') ||
-    (requestedNode && requestedNode.matches('.recipe'));
-
-  if (forceReader) {
-    body.classList.add('howto-reader-active');
-    canvas.hidden = true;
-    if (requestedNode) {
-      requestAnimationFrame(() => requestedNode.scrollIntoView({ block: 'start' }));
-    }
-    return;
-  }
-
-  body.classList.add('howto-map-active');
-  const groups = [
-    {
-      id: 'install',
-      eyebrow: '01 / START',
-      title: 'From install to the first useful task.',
-      copy: 'Set up the runtime, choose the first agent, and diagnose the path without guessing.',
-      recipes: ['agent-tool-selection', 'install-wizard', 'install-docker', 'server-update', 'first-agent', 'troubleshoot'],
-    },
-    {
-      id: 'agents-interop',
-      eyebrow: '02 / AGENTS + INTEROP',
-      title: 'Choose models, routing, and external interfaces.',
-      copy: 'Connect reasoning services without rebuilding the durable runtime around one provider.',
-      recipes: ['published-mcp-client', 'acp-agent', 'managed-mcp-providers', 'agui-embed', 'delegated-vision', 'multi-llm-aggregator', 'fault-tolerant-llm', 'native-cli-plugins', 'provider-tmux'],
-    },
-    {
-      id: 'clients',
-      eyebrow: '03 / CLIENTS',
-      title: 'Continue the same work from every client.',
-      copy: 'Web, terminal, editor, mobile, and messaging clients share conversations and runtime state.',
-      recipes: ['pawcode-installer', 'pawcode-usage', 'vscode-plugin-installer', 'vscode-code-server', 'chat-views', 'telegram', 'android-app'],
-    },
-    {
-      id: 'relays-workspaces',
-      eyebrow: '04 / RELAYS',
-      title: 'Connect the machines where the work lives.',
-      copy: 'Pick the right Relay client and expose only the workspace surfaces the task needs.',
-      recipes: ['desktop-novnc-audio', 'relay-desktop-installer', 'relay-cli-installer', 'server-relay', 'remote-relay', 'desktop-relay', 'relay-terminals'],
-    },
-    {
-      id: 'identity',
-      eyebrow: '05 / IDENTITY + SECURITY',
-      title: 'Keep access narrow and context intentional.',
-      copy: 'Identity, secrets, encryption, memory, and gateway controls stay explicit.',
-      recipes: ['oauth-provider', 'oauth-refresh-policy', 'rclone-filesystem', 'variables-secrets', 'encryption', 'webchat-editors', 'cognitive-routing', 'compact-summarizer', 'private-gateway', 'private-demo'],
-    },
-    {
-      id: 'resources',
-      eyebrow: '06 / RESOURCES',
-      title: 'Build a reusable runtime library.',
-      copy: 'Curate skills, packages, tools, prompts, themes, and marketplace resources.',
-      recipes: ['pawflow-depots', 'skills', 'skill-loop', 'mcp-hooks-tools-prompts', 'pfp-packages', 'marketplace', 'themes'],
-    },
-    {
-      id: 'flows',
-      eyebrow: '07 / FLOWS',
-      title: 'Turn useful agent work into explicit automation.',
-      copy: 'Design with agents, then schedule and operate repeatable work as durable Flows.',
-      recipes: ['flows-explained', 'agent-flow-main', 'workflow-agents', 'workflow-proposals', 'tasks-plans', 'daily-digest'],
-    },
-    {
-      id: 'media-voice',
-      eyebrow: '08 / MEDIA + VOICE',
-      title: 'Add multimodal services after the core works.',
-      copy: 'Connect reviewed image, video, audio, ComfyUI, speech, and realtime voice services.',
-      recipes: ['media-service', 'comfyui', 'voice-service', 'realtime-voice'],
-    },
+/* PawFlow ESPER: one photographic journey across the complete public site. */
+(() => {
+  'use strict';
+  const CHAPTERS = [
+    ['index.html','Discover'],['product.html','The runtime'],['features.html','Capabilities'],
+    ['relays.html','Real machines'],['flows.html','Flows'],['integrations.html','Connections'],
+    ['use-cases.html','In practice'],['howtos.html','How-tos'],['docs.html','Documentation'],
+    ['faq.html','Questions'],['quickstart.html','Install']
   ];
+  const GUIDE_GROUPS = [{"id":"install","scene":"station","title":"Start with something useful.","copy":"Install the runtime, configure your first agent, and verify the route.","recipes":["agent-tool-selection","install-wizard","install-docker","server-update","first-agent","troubleshoot"]},{"id":"agents-interop","scene":"agents","title":"Give reasoning a durable home.","copy":"Models, routing, external agents, and shared context.","recipes":["published-mcp-client","acp-agent","managed-mcp-providers","agui-embed","delegated-vision","multi-llm-aggregator","fault-tolerant-llm","native-cli-plugins","provider-tmux"]},{"id":"clients","scene":"train","title":"Continue from anywhere.","copy":"One conversation across your browser, terminal, editor, and phone.","aliases":["channels"],"recipes":["pawcode-installer","pawcode-usage","vscode-plugin-installer","vscode-code-server","chat-views","telegram","android-app"]},{"id":"relays-workspaces","scene":"servers","title":"Reach your real machines.","copy":"Connect the files, tools, browsers, and desktops where work lives.","recipes":["desktop-novnc-audio","relay-desktop-installer","relay-cli-installer","server-relay","remote-relay","desktop-relay","relay-terminals"]},{"id":"identity","scene":"vault","title":"Keep access intentional.","copy":"Identity, secrets, encryption, and the context your agents retain.","aliases":["security-context"],"recipes":["oauth-provider","oauth-refresh-policy","rclone-filesystem","variables-secrets","encryption","webchat-editors","cognitive-routing","compact-summarizer","private-gateway","private-demo"]},{"id":"resources","scene":"resources","title":"Build a library that stays.","copy":"Reusable skills, tools, packages, prompts, and themes.","recipes":["pawflow-depots","skills","skill-loop","mcp-hooks-tools-prompts","pfp-packages","marketplace","themes"]},{"id":"flows","scene":"workshop","title":"Turn discoveries into routines.","copy":"Design with agents. Run repeatable work as durable flows.","recipes":["flows-explained","agent-flow-main","workflow-agents","workflow-proposals","tasks-plans","daily-digest"]},{"id":"media-voice","scene":"observatory","title":"Make something worth seeing.","copy":"Images, films, music, voice, and multimodal tools.","recipes":["media-service","comfyui","voice-service","realtime-voice"]}];
+  let visitStack = [], settledPath = null;
+  const baseURL = new URL('.', location.href);
+  const mod = (n, count) => ((n % count) + count) % count;
+  const byId = id => document.getElementById(id);
+  const safeGet = (key, fallback) => { try { return localStorage.getItem(key) ?? fallback; } catch (_) { return fallback; } };
+  const safeSet = (key, value) => { try { localStorage.setItem(key,value); } catch (_) {} };
+  const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const mediaQuery = matchMedia('(prefers-reduced-motion: reduce)');
+  let reduced = safeGet('pawflow-site-motion','') === 'reduce' || mediaQuery.matches;
+  let steps = [], pages = [], current = 0, ordinal = 0, camera, anim = 0, busy = false;
+  let content, shell, indexDialog, savedIndexFocus, activeToken = 0;
+  let sound, indexReady = false;
 
-  groups.forEach((group) => {
-    const originalSection = reader.querySelector('#' + CSS.escape(group.id));
-    if (originalSection) originalSection.removeAttribute('id');
-  });
-
-  const hero = document.createElement('section');
-  hero.className = 'landing-hero howto-map-hero';
-  hero.id = 'howtos-home';
-  hero.innerHTML = `
-    <div class="landing-hero-grid" aria-hidden="true"></div>
-    <div class="landing-glow landing-glow-one" aria-hidden="true"></div>
-    <div class="container howto-map-intro">
-      <div data-reveal>
-        <p class="landing-kicker"><span></span> Practical PawFlow guide</p>
-        <h1>Learn PawFlow by doing real work.</h1>
-        <p>Choose a journey, open one complete recipe, and return to the map whenever you need the next move.</p>
-        <div class="hero-actions">
-          <a class="button button-primary" href="?read=agent-tool-selection#agent-tool-selection">Start with tool selection →</a>
-          <a class="button button-secondary" href="quickstart.html">5-minute install</a>
-        </div>
-      </div>
-      <div class="howto-map-summary" data-reveal>
-        <strong>56</strong><span>complete recipes</span>
-        <strong>08</strong><span>guided journeys</span>
-        <strong>01</strong><span>shared runtime</span>
-      </div>
-    </div>`;
-  canvas.appendChild(hero);
-
-  groups.forEach((group) => {
-    const section = document.createElement('section');
-    section.className = 'landing-section howto-map-scene';
-    section.id = group.id;
-    const container = document.createElement('div');
-    container.className = 'container';
-    const heading = document.createElement('header');
-    heading.className = 'howto-map-heading';
-    heading.innerHTML = `
-      <div><p class="landing-index">${group.eyebrow}</p><h2>${group.title}</h2></div>
-      <p>${group.copy}</p>`;
-    container.appendChild(heading);
-
-    const grid = document.createElement('div');
-    grid.className = 'howto-map-grid';
-    group.recipes.forEach((recipeId, index) => {
-      const recipe = reader.querySelector('#' + CSS.escape(recipeId));
-      if (!recipe) return;
-      const title = recipe.querySelector('h2');
-      const meta = recipe.querySelector('.recipe-meta');
-      const link = document.createElement('a');
-      link.className = 'howto-map-card';
-      link.href = 'howtos.html?read=' + encodeURIComponent(recipeId) + '#' + recipeId;
-      link.innerHTML = `
-        <span>${String(index + 1).padStart(2, '0')}</span>
-        <small>${meta ? meta.textContent.trim() : 'How-to'}</small>
-        <h3>${title ? title.textContent.trim() : recipeId}</h3>
-        <i aria-hidden="true">↗</i>`;
-      grid.appendChild(link);
+  function extract(doc, file, chapter) {
+    const main = doc.querySelector(file === 'howtos.html' ? '.howto-reader' : 'main');
+    if (!main) throw new Error('Missing page content: ' + file);
+    let nodes;
+    if (file === 'howtos.html') {
+      const intro=main.querySelector('.page-hero').cloneNode(true);
+      intro.dataset.esperScene='archive';intro.dataset.esperDetail='0';intro.id='howtos-home';
+      nodes=[intro];
+      for(const group of GUIDE_GROUPS){
+        const category=document.createElement('section');category.className='howto-section';
+        category.id=group.id;category.dataset.esperScene=group.scene;category.dataset.esperDetail='0';
+        category.dataset.esperAliases=(group.aliases||[]).join(' ');
+        category.innerHTML='<p class="eyebrow">FIELD GUIDES / '+escape(group.id.replaceAll('-',' '))+'</p><h2>'+escape(group.title)+'</h2><p>'+escape(group.copy)+'</p><div class="esper-recipes"></div>';
+        const recipes=group.recipes.map((id,i)=>{
+          const source=main.querySelector('#'+CSS.escape(id));
+          if(!source)throw new Error('Missing canonical recipe: '+id);
+          const recipe=source.cloneNode(true);recipe.dataset.esperScene=group.scene;recipe.dataset.esperDetail=String(i+1);
+          const link=document.createElement('a');link.href='howtos.html#'+id;
+          link.innerHTML='<span>'+String(i+1).padStart(2,'0')+'</span><b>'+escape(recipe.querySelector('h2').textContent)+'</b><i>↗</i>';
+          category.querySelector('.esper-recipes').append(link);
+          return recipe;
+        });
+        nodes.push(category,...recipes);
+      }
+    } else if (file === 'faq.html') {
+      nodes = [main.querySelector('.page-hero'), ...main.querySelectorAll('details'), main.lastElementChild];
+    } else if (['features.html','docs.html','use-cases.html'].includes(file)) {
+      nodes = [main.querySelector('.page-hero'),...main.querySelectorAll('article.doc-group')];
+      const last = main.lastElementChild;
+      if (last && !last.querySelector('article.doc-group')) nodes.push(last);
+    } else {
+      nodes = [...main.children].filter(node => node.tagName === 'SECTION');
+    }
+    const unique = [...new Set(nodes.filter(Boolean))];
+    const records = unique.map((source, part) => {
+      const node = source.cloneNode(true);
+      const id = node.id || (part ? 'part-' + (part+1) : 'overview');
+      node.id = id;
+      node.removeAttribute('hidden');
+      node.classList.add('esper-section');
+      node.querySelectorAll('[data-reveal]').forEach(el => { el.removeAttribute('data-reveal'); el.classList.add('is-visible'); });
+      if (node.matches('details')) node.open = true;
+      const heading = node.querySelector('h1,h2,summary') || node;
+      const title = heading.textContent.trim().replace(/\s+/g,' ');
+      const aliases = [id,...node.querySelectorAll('[id]')].map(el => typeof el === 'string' ? el : el.id);
+      aliases.push(...(node.dataset.esperAliases||'').split(' ').filter(Boolean));
+      const homeScenes=['study','control','workshop','observatory','garden','archive','station'];
+      const pageScenes=['study','control','agents','servers','workshop','garden','workshop','archive','archive','vault','station'];
+      const sceneId=node.dataset.esperScene || (file==='index.html'?homeScenes[part]:pageScenes[chapter]);
+      const detail=node.dataset.esperDetail!==undefined?Number(node.dataset.esperDetail):(file==='index.html'?0:part);
+      return {file,chapter,part,id,title,node,aliases,sceneId,detail,url:file+'#'+encodeURIComponent(id)};
     });
-    container.appendChild(grid);
-    section.appendChild(container);
-    canvas.appendChild(section);
-  });
-})();
+    return {file,chapter,title:doc.title,records};
+  }
 
-const revealItems = document.querySelectorAll('[data-reveal]');
-if ('IntersectionObserver' in window) {
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('is-visible');
-        observer.unobserve(entry.target);
+  function createAudio() {
+    const music = new Audio(new URL('assets/media/esper/ambient.mp3',baseURL));
+    const forward = new Audio(new URL('assets/media/esper/zoom-in.mp3',baseURL));
+    const backward = new Audio(new URL('assets/media/esper/zoom-out.mp3',baseURL));
+    music.loop = true; music.preload = 'metadata'; music.setAttribute('playsinline','');
+    forward.preload = backward.preload = 'none';
+    let wanted = safeGet('pawflow-site-sound','on') !== 'off';
+    let volume = Math.min(1,Math.max(0,Number(safeGet('pawflow-site-volume','0.85')) || 0));
+    let ctx, stopTimer, failed = false, restore = null;
+    try { restore = JSON.parse(sessionStorage.getItem('pawflow-site-sound-playback') || 'null'); } catch (_) {}
+    const button = byId('esper-sound');
+    const slider = byId('esper-volume');
+    slider.value = String(Math.round(volume*100));
+    function update() {
+      const playing = wanted && !music.paused;
+      button.setAttribute('aria-pressed',String(playing));
+      button.querySelector('span').textContent = failed ? 'Audio unavailable' : playing ? 'Sound on' : wanted ? 'Start sound' : 'Sound off';
+      button.classList.toggle('is-on',playing);
+    }
+    function applyVolume() {
+      const videoPlaying = [...document.querySelectorAll('.esper-reader video')].some(v => !v.paused && !v.muted);
+      music.volume = volume*(videoPlaying ? .065 : .28);
+      forward.volume = backward.volume = volume*.36;
+    }
+    async function start() {
+      if (!wanted || document.hidden) return;
+      if (!ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) ctx = new AC(); }
+      if (ctx?.state === 'suspended') ctx.resume().catch(()=>{});
+      if (music.paused && !failed) { try { await music.play(); } catch (_) {} }
+      update();
+    }
+    function stopEffects() { clearTimeout(stopTimer); forward.pause(); backward.pause(); }
+    function click() {
+      if (!wanted || !ctx || ctx.state !== 'running') return;
+      const oscillator = ctx.createOscillator(), gain = ctx.createGain(), t = ctx.currentTime;
+      oscillator.frequency.setValueAtTime(740,t); oscillator.frequency.exponentialRampToValueAtTime(440,t+.075);
+      gain.gain.setValueAtTime(Math.max(.0001,volume*.018),t); gain.gain.exponentialRampToValueAtTime(.0001,t+.12);
+      oscillator.connect(gain);gain.connect(ctx.destination);oscillator.start(t);oscillator.stop(t+.13);
+    }
+    function zoom(direction, duration) {
+      stopEffects();
+      if (!wanted || reduced) return;
+      const audio = direction > 0 ? forward : backward;
+      try { audio.currentTime = Math.max(0,7-duration/1000); } catch (_) {}
+      audio.play().catch(()=>{});
+      stopTimer = setTimeout(()=>audio.pause(),duration+30);
+    }
+    button.addEventListener('click',() => {
+      if (wanted && music.paused) start();
+      else { wanted = !wanted; if (wanted) start(); else {music.pause();stopEffects();} }
+      safeSet('pawflow-site-sound',wanted?'on':'off');update();
+    });
+    slider.addEventListener('input',() => {volume=Number(slider.value)/100;safeSet('pawflow-site-volume',String(volume));applyVolume();});
+    document.addEventListener('pointerdown', event => { if (!event.target.closest('#esper-sound')) start(); },{passive:true});
+    document.addEventListener('keydown',start,{passive:true});
+    music.addEventListener('playing',update);music.addEventListener('pause',update);
+    music.addEventListener('error',()=>{failed=true;update();});
+    music.addEventListener('loadedmetadata',()=>{
+      if (restore && Number.isFinite(restore.position) && music.duration) music.currentTime=restore.position%music.duration;
+      restore=null;
+    });
+    document.addEventListener('play',applyVolume,true);document.addEventListener('pause',applyVolume,true);
+    document.addEventListener('volumechange',event=>{if(event.target.tagName==='VIDEO')applyVolume();},true);
+    document.addEventListener('visibilitychange',()=>{
+      if(document.hidden){music.pause();stopEffects();}
+      else start();
+    });
+    window.addEventListener('pagehide',()=>{
+      try {sessionStorage.setItem('pawflow-site-sound-playback',JSON.stringify({position:music.currentTime,savedAt:Date.now()}));} catch (_) {}
+    });
+    applyVolume();update();
+    return {start,click,zoom,stopEffects,applyVolume,get state(){return {wanted,paused:music.paused,time:music.currentTime,duration:music.duration,loop:music.loop,volume:music.volume};}};
+  }
+
+  function mount() {
+    shell = document.createElement('div');
+    shell.className = 'esper-shell';
+    shell.innerHTML = `
+      <div class="esper-stage" aria-hidden="true"><canvas id="esper-photo"></canvas><div class="esper-vignette"></div><div class="esper-grain"></div></div>
+      <header class="esper-header">
+        <a class="esper-brand" href="index.html"><img src="assets/logo.png" alt=""><span>PAWFLOW<small>SELF-HOSTED INTELLIGENCE</small></span></a>
+        <div class="esper-header-links"><a href="docs.html">Documentation</a><a href="quickstart.html">Install PawFlow ↗</a></div>
+        <button id="esper-index-open" aria-haspopup="dialog" aria-controls="esper-index">All sections <span>☰</span></button>
+      </header>
+      <nav class="esper-chapters" aria-label="Website chapters">${CHAPTERS.map(([file,title],i)=>`<a href="${file}" title="${title}" aria-label="${title}"><span>${String(i+1).padStart(2,'0')}</span><b>${title}</b></a>`).join('')}</nav>
+      <nav id="esper-portals" aria-label="Photographic destinations"></nav>
+      <div class="esper-optics" aria-hidden="true"><div class="esper-scan"></div><i></i><i></i><i></i><div id="esper-command">TRACK. ENHANCE. EXPLORE.</div></div>
+      <div class="esper-photo-caption" aria-hidden="true"><span id="esper-photo-number">FRAME / 001</span><strong id="esper-photo-title">A world within a photograph.</strong><small>SCROLL TO EXPLORE · CLICK THE FRAME TO ENTER</small></div>
+      <main class="esper-reader" id="esper-content" tabindex="-1" aria-label="Section content"></main>
+      <div class="esper-reader-heading"><span id="esper-chapter-name"></span><span id="esper-part-number"></span></div>
+      <footer class="esper-controls">
+        <div class="esper-travel"><button id="esper-junction" aria-label="Return to the photo junction">⌂ <span>Junction</span></button><button id="esper-back" aria-label="Zoom out to previous section">← <span>Pull back</span></button><button id="esper-next" aria-label="Zoom into next section"><span>Enhance</span> →</button></div>
+        <div class="esper-readout" aria-hidden="true"><span>ZM <b id="esper-zm">1.00</b></span><span>NS <b id="esper-ns">0500</b></span><span>EW <b id="esper-ew">0500</b></span></div>
+        <div class="esper-preferences"><button id="esper-motion" aria-pressed="false">Motion</button><button id="esper-sound" aria-pressed="false"><i aria-hidden="true">▥</i> <span>Start sound</span></button><label class="esper-volume"><span class="sr-only">Volume</span><input id="esper-volume" type="range" min="0" max="100" value="85"></label></div>
+      </footer>
+      <div id="esper-status" class="sr-only" role="status" aria-live="polite"></div>
+      <dialog id="esper-index" aria-labelledby="esper-index-title">
+        <header><div><p class="eyebrow">CHOOSE YOUR DESTINATION</p><h2 id="esper-index-title">A closer look.</h2></div><button id="esper-index-close" aria-label="Close section index">×</button></header>
+        <label class="esper-search"><span class="sr-only">Find a section or recipe</span><input type="search" id="esper-search" placeholder="Find a section, a capability, a recipe…" autocomplete="off"></label>
+        <div class="esper-index-results" id="esper-index-results"></div>
+        <p class="esper-index-hint">Select a destination to zoom directly into it.</p>
+      </dialog>`;
+    document.querySelectorAll('body > main,body > header,body > footer,.zoom-story-links,.zoom-story-hint').forEach(el=>el.remove());
+    document.body.prepend(shell);
+    document.body.className = 'esper-active';
+    content = byId('esper-content');
+    indexDialog = byId('esper-index');
+    sound = createAudio();
+    const motionButton = byId('esper-motion');
+    const updateMotion = () => {motionButton.setAttribute('aria-pressed',String(!reduced));motionButton.textContent=reduced?'Motion reduced':'Motion full';};
+    motionButton.addEventListener('click',()=>{reduced=!reduced;safeSet('pawflow-site-motion',reduced?'reduce':'full');updateMotion();});
+    mediaQuery.addEventListener('change',event=>{reduced=event.matches;updateMotion();});
+    updateMotion();
+    byId('esper-back').addEventListener('click',()=>move(-1));
+    byId('esper-next').addEventListener('click',()=>move(1));
+    byId('esper-junction').addEventListener('click',()=>{
+      const route=settledPath||camera.path;
+      let end=route.length-2;
+      while(end>0&&window.ESPER_WORLD.scenes[route[end]].portals.length<2)end--;
+      const path=route.slice(0,end+1),scene=path[path.length-1];
+      const record=steps.find(r=>r.sceneId===scene&&r.detail===0)||steps[0];
+      navigate(record.index,{path});
+    });
+    byId('esper-index-open').addEventListener('click',()=>{
+      savedIndexFocus=document.activeElement;indexDialog.showModal();byId('esper-search').focus();
+    });
+    byId('esper-index-close').addEventListener('click',()=>indexDialog.close());
+    indexDialog.addEventListener('click',event=>{if(event.target===indexDialog)indexDialog.close();});
+    indexDialog.addEventListener('close',()=>savedIndexFocus?.focus({preventScroll:true}));
+    byId('esper-search').addEventListener('input',renderIndex);
+    renderIndex();
+  }
+
+  function renderIndex() {
+    const query = byId('esper-search').value.toLowerCase().trim();
+    const results = byId('esper-index-results');
+    results.replaceChildren();
+    let count = 0;
+    pages.forEach(page => {
+      const records = page.records.filter(record => (CHAPTERS[record.chapter][1]+' '+record.title+' '+record.id).toLowerCase().includes(query));
+      if (!records.length) return;
+      const group = document.createElement('section');
+      group.innerHTML = '<h3>'+escape(CHAPTERS[page.chapter][1])+'</h3>';
+      for (const record of records) {
+        const a = document.createElement('a');a.href=record.url;
+        a.innerHTML='<span>'+String(record.index+1).padStart(3,'0')+'</span><b>'+escape(record.title)+'</b><i>↗</i>';
+        group.append(a);count++;
+      }
+      results.append(group);
+    });
+    if (!count) results.textContent='No matching section. Try another word.';
+  }
+
+  function findRoute(url) {
+    const file = (window.ESPER_PREVIEW && url.searchParams.get('page')) || url.pathname.split('/').pop() || 'index.html';
+    if (!CHAPTERS.some(([name])=>name===file)) return null;
+    if (new URL('.',url).pathname !== baseURL.pathname || url.origin !== baseURL.origin) return null;
+    let fragment;
+    try {fragment=decodeURIComponent(url.hash.slice(1)) || url.searchParams.get('read') || '';} catch (_) {return null;}
+    const page = pages.find(item=>item.file===file);
+    if (!page) return null;
+    return page.records.find(record=>record.aliases.includes(fragment)) || (!fragment ? page.records[0] : null);
+  }
+
+  function renderContent(record, fragment='') {
+    content.querySelectorAll('video').forEach(video=>video.pause());
+    content.replaceChildren(record.node);
+    content.scrollTop=0;
+    document.title=pages[record.chapter].title;
+    document.body.dataset.page=record.file.replace('.html','');
+    byId('esper-chapter-name').textContent=String(record.chapter+1).padStart(2,'0')+' / '+CHAPTERS[record.chapter][1];
+    byId('esper-part-number').textContent=String(record.part+1).padStart(2,'0')+' / '+String(pages[record.chapter].records.length).padStart(2,'0');
+    document.querySelectorAll('.esper-chapters a').forEach((a,index)=>{
+      if(index===record.chapter)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');
+    });
+    byId('esper-next').title=steps[mod(record.index+1,steps.length)].title;
+    byId('esper-back').title=steps[mod(record.index-1,steps.length)].title;
+
+    if (typeof renderReleaseReferences === 'function') renderReleaseReferences();
+    sound.applyVolume();
+    if(fragment) {
+      const target=content.querySelector('#'+CSS.escape(fragment));
+      if(target && target!==record.node)target.scrollIntoView({block:'start'});
+    }
+  }
+
+  function onCamera(state) {
+    const host=byId('esper-portals'),stage=byId('esper-photo').parentElement.getBoundingClientRect();
+    if(host.dataset.scene!==state.scene){
+      host.replaceChildren();host.dataset.scene=state.scene;
+      for(const portal of state.portals){
+        const link=document.createElement('a');link.className='esper-portal';
+        link.href=portal.href||'#';link.dataset.photoTarget=portal.target;
+        link.dataset.caption=window.ESPER_WORLD.scenes[portal.target].shortLabel;
+        link.innerHTML='<i></i><span>'+escape(portal.label)+' <b>↗</b></span>';
+        link.setAttribute('aria-label','Zoom into '+portal.label);host.append(link);
+      }
+    }
+    state.portals.forEach((p,i)=>{
+      const el=host.children[i];el.style.left=(p.x+stage.left)+'px';el.style.top=(p.y+stage.top)+'px';
+      el.style.width=Math.max(32,p.w)+'px';el.style.height=Math.max(32,p.h)+'px';
+      const visible=p.x+p.w>0&&p.y+p.h>0&&p.x<state.width&&p.y<state.height;
+      el.hidden=!visible;el.tabIndex=busy?-1:0;
+    });
+    shell.classList.toggle('is-junction',state.portals.length>1&&!busy);
+    byId('esper-zm').textContent=state.depth<8?Math.pow(4,state.depth).toFixed(2)+'×':'10^'+(state.depth*Math.log10(4)).toFixed(2);
+    byId('esper-ns').textContent=(500+state.fraction*100).toFixed(3);
+    byId('esper-ew').textContent=(500-state.fraction*100).toFixed(3);
+    byId('esper-photo-number').textContent='DEPTH / '+String(Math.floor(state.depth)).padStart(3,'0');
+    byId('esper-photo-title').textContent=window.ESPER_WORLD.scenes[state.scene].label;
+  }
+
+  function canonicalRoute(record) {return camera.extend(camera.canonicalPath(record.sceneId),record.detail);}
+  function navigate(index,options={}) {
+    if(!indexReady)return;
+    const record=steps[index];if(!record)return;
+    const oldPath=[...(settledPath||camera.path)];
+    const newPath=options.path||canonicalRoute(record);
+    if(!options.instant&&!options.skipRemember&&settledPath)visitStack.push({index:current,path:oldPath});
+    current=index;ordinal=Number.isFinite(options.ordinal)?options.ordinal:index;
+    const token=++activeToken;cancelAnimationFrame(anim);
+    const fromDepth=camera.depth,common=EsperCamera.commonPrefix(camera.path,newPath);
+    const pivot=Math.max(0,common-1),oldRoute=[...camera.path];
+    const needsReturn=common<Math.min(oldRoute.length,newPath.length);
+    const outDistance=needsReturn?Math.max(0,fromDepth-pivot):0;
+    const destination=newPath.length-1;
+    const totalDistance=outDistance+(needsReturn?destination-pivot:Math.abs(destination-fromDepth));
+    const split=needsReturn?Math.max(.25,Math.min(.65,outDistance/Math.max(1,totalDistance))):0;
+    const ms=options.instant?0:reduced?120:Math.min(3200,1550+totalDistance*100);
+    if(options.history!==false){
+      const url=new URL(record.url,baseURL);if(options.fragment)url.hash=options.fragment;
+      if(window.ESPER_PREVIEW){
+        url.pathname=location.pathname;url.searchParams.set('page',record.file);
+      }
+      history.pushState({esper:index,ordinal,path:newPath},'',url);
+    }
+    if(indexDialog.open)indexDialog.close();
+    busy=ms>0;shell.classList.toggle('is-travelling',busy);content.inert=busy;
+    byId('esper-command').textContent=(needsReturn?'PULL BACK. REFRAME. ':'TRACK. ENHANCE. ')+record.title.toUpperCase();
+    sound.zoom(needsReturn||destination<fromDepth?-1:1,ms);
+    const ease=t=>t*t*(3-2*t),start=performance.now();let swapped=false;
+    function tick(now){
+      if(token!==activeToken)return;
+      const p=ms?Math.min(1,(now-start)/ms):1;
+      const t=Math.max(0,Math.min(1,(p-.10)/.78));
+      if(reduced)camera.draw(p<.5?fromDepth:destination,p<.5?oldRoute:newPath);
+      else if(needsReturn&&t<split)camera.draw(fromDepth+(pivot-fromDepth)*ease(t/split),oldRoute);
+      else if(needsReturn)camera.draw(pivot+(destination-pivot)*ease((t-split)/(1-split)),newPath);
+      else camera.draw(fromDepth+(destination-fromDepth)*ease(t),common===oldRoute.length?newPath:oldRoute);
+      if(!swapped&&p>=.55){renderContent(record,options.fragment);swapped=true;}
+      content.style.opacity=p<.55?String(Math.max(0,1-p/.16)):String(Math.max(0,(p-.82)/.18));
+      if(p<1){anim=requestAnimationFrame(tick);return;}
+      settledPath=[...newPath];busy=false;content.inert=false;content.style.opacity='';
+      camera.draw(destination,newPath);shell.classList.remove('is-travelling');sound.stopEffects();
+      byId('esper-status').textContent=CHAPTERS[record.chapter][1]+'. '+record.title;
+      if(!options.instant){const heading=content.querySelector('h1,h2,summary');if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});}}
+    }
+    tick(start);
+  }
+  function move(direction) {
+    if(busy)return;
+    if(direction<0&&visitStack.length){
+      const visit=visitStack.pop();navigate(visit.index,{path:visit.path,skipRemember:true});return;
+    }
+    const index=mod(current+direction,steps.length);
+    let path=canonicalRoute(steps[index]);
+    if(direction>0){
+      const old=settledPath||camera.path;
+      const from=old[old.length-1],target=path[path.length-1];
+      let suffix=camera.canonicalPath(target,from).slice(1);
+      if(!suffix.length){
+        const first=window.ESPER_WORLD.scenes[from].portals[0].target;
+        suffix=[first,...camera.canonicalPath(target,first).slice(1)];
+      }
+      path=[...old,...suffix];
+    }
+    navigate(index,{path,ordinal:ordinal+direction});
+  }
+  function isControl(target) {return target.closest('input,textarea,select,[contenteditable],video,pre,.pf-help-panel,.pf-help-launcher,dialog');}
+  function canScroll(target, direction) {
+    for(let el=target;el && el!==shell;el=el.parentElement){
+      if(el.scrollHeight>el.clientHeight+2&&/(auto|scroll)/.test(getComputedStyle(el).overflowY)){
+        if(direction>0?el.scrollTop+el.clientHeight<el.scrollHeight-2:el.scrollTop>2)return true;
+      }
+    }return false;
+  }
+  function bindNavigation() {
+    document.addEventListener('click',event=>{
+      const link=event.target.closest('a[href]');
+      if(!link||event.defaultPrevented||event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||link.target==='_blank'||link.hasAttribute('download'))return;
+      const url=new URL(link.getAttribute('href'),location.href);
+      if(link.dataset.photoTarget){
+        if(busy){event.preventDefault();return;}
+        event.preventDefault();sound.click();
+        const record=findRoute(url)||steps[mod(current+1,steps.length)];
+        navigate(record.index,{path:[...(settledPath||camera.path),link.dataset.photoTarget]});
+        return;
+      }
+      const record=findRoute(url);
+      if(!record)return;
+      event.preventDefault();sound.click();
+      navigate(record.index,{fragment:decodeURIComponent(url.hash.slice(1))});
+    });
+    document.addEventListener('click',event=>{
+      if(event.target.closest('button,summary'))sound.click();
+      const button=event.target.closest('[data-copy]');
+      if(!button)return;
+      const target=content.querySelector(button.dataset.copy);
+      if(target)navigator.clipboard?.writeText(target.textContent).then(()=>{button.textContent='Copied';}).catch(()=>{button.textContent='Select and copy';});
+    });
+    let lastWheel=0, accumulator=0, consumed=false, scrolling=false;
+    window.addEventListener('wheel',event=>{
+      if(!indexReady||event.ctrlKey||Math.abs(event.deltaX)>Math.abs(event.deltaY)||isControl(event.target)||indexDialog.open)return;
+      const now=performance.now(),fresh=now-lastWheel>180;lastWheel=now;
+      if(fresh){accumulator=0;consumed=false;scrolling=canScroll(event.target,Math.sign(event.deltaY));}
+      if(scrolling)return;
+      event.preventDefault();
+      if(consumed||busy)return;
+      const delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?innerHeight:1);
+      accumulator+=delta;
+      if(Math.abs(accumulator)>=45){consumed=true;move(Math.sign(accumulator));}
+    },{passive:false});
+    document.addEventListener('keydown',event=>{
+      if(event.defaultPrevented||isControl(event.target)||indexDialog.open||event.metaKey||event.ctrlKey||event.altKey)return;
+      if(['ArrowRight','PageDown','ArrowLeft','PageUp'].includes(event.key)){
+        event.preventDefault();move(['ArrowRight','PageDown'].includes(event.key)?1:-1);
       }
     });
-  }, { threshold: 0.12 });
-  revealItems.forEach((item) => observer.observe(item));
-} else {
-  revealItems.forEach((item) => item.classList.add('is-visible'));
-}
-
-function orderLandingStoryScenes(scenes) {
-  if (document.body.dataset.page !== 'home') return scenes;
-  const byId = new Map(scenes.map((scene) => [scene.id, scene]));
-  const ordered = [
-    'product', 'architecture', 'why', 'demos', 'stack', 'comparison', 'install',
-  ].map((id) => byId.get(id)).filter(Boolean);
-  return ordered.length === scenes.length ? ordered : scenes;
-}
-
-function isStoryKeyboardTarget(target) {
-  if (!target || typeof target.closest !== 'function') return false;
-  return Boolean(target.closest(
-    'input, textarea, select, button, a[href], summary, '
-    + '[contenteditable]:not([contenteditable="false"]), '
-    + '[role="textbox"], [role="button"], [role="link"]'));
-}
-
-function isHelpWidgetTarget(target) {
-  return Boolean(
-    target
-    && typeof target.closest === 'function'
-    && target.closest('.pf-help-panel'));
-}
-
-// Mobile uses discrete full-screen scenes rather than a decorated document
-// scroll. Long scenes scroll inside their viewport; only a new gesture that
-// starts at a boundary can trigger the next zoom/pan transition.
-(function initMobileStoryCanvas() {
-  const body = document.body;
-  const main = document.querySelector('.landing-main');
-  if (!main || !body.classList.contains('landing-page')) return;
-
-  const scenes = orderLandingStoryScenes(Array.from(main.children).filter(
-    (node) => node.matches('.landing-hero, .landing-section')));
-  const directLinks = Array.from(document.querySelectorAll('[data-zoom-target]'));
-  const query = window.matchMedia(
-    '(max-width: 999px) and (prefers-reduced-motion: no-preference)');
-  const choreography = Array(scenes.length).fill('zoom');
-  let enabled = false;
-  let current = 0;
-  let transitioning = false;
-  let transitionTimer = 0;
-  let touchStart = null;
-
-  if (scenes.length < 2) return;
-
-  function updateNavigation() {
-    scenes.forEach((scene, index) => {
-      const active = index === current;
-      scene.classList.toggle('is-mobile-current', active);
-      scene.setAttribute('aria-hidden', String(!active));
+    let touch;
+    shell.addEventListener('touchstart',event=>{
+      if(event.touches.length!==1||isControl(event.target))return;
+      const t=event.touches[0];touch={x:t.clientX,y:t.clientY,target:event.target,
+        up:canScroll(event.target,1),down:canScroll(event.target,-1)};
+    },{passive:true});
+    shell.addEventListener('touchend',event=>{
+      if(!touch||busy)return;
+      const t=event.changedTouches[0],dx=t.clientX-touch.x,dy=t.clientY-touch.y;
+      if(Math.abs(dy)>65&&Math.abs(dy)>Math.abs(dx)&&!(dy<0?touch.up:touch.down))move(dy<0?1:-1);
+      touch=null;
+    },{passive:true});
+    window.addEventListener('popstate',event=>{
+      const record=findRoute(new URL(location.href));
+      if(record)navigate(record.index,{history:false,ordinal:event.state?.ordinal,path:event.state?.path,skipRemember:true,fragment:decodeURIComponent(location.hash.slice(1))});
     });
-    directLinks.forEach((link) => {
-      const active = Number(link.dataset.zoomTarget) === current;
-      link.classList.toggle('is-current', active);
-      if (active) link.setAttribute('aria-current', 'true');
-      else link.removeAttribute('aria-current');
-    });
-    const scene = scenes[current];
-    if (scene && scene.id) history.replaceState(null, '', '#' + scene.id);
-  }
-
-  function transitionTo(index, direction) {
-    if (!enabled || transitioning || index === current) return;
-    transitioning = true;
-    const previousIndex = current;
-    const outgoing = scenes[previousIndex];
-    const incoming = scenes[index];
-    const kindIndex = direction > 0 ? previousIndex : index;
-    const kind = choreography[kindIndex] || 'pan';
-    const reverse = direction < 0;
-
-    incoming.scrollTop = reverse
-      ? Math.max(0, incoming.scrollHeight - incoming.clientHeight)
-      : 0;
-    incoming.setAttribute('aria-hidden', 'false');
-    outgoing.classList.add(
-      'is-mobile-leaving', 'mobile-transition-' + kind,
-      reverse ? 'is-mobile-reverse' : 'is-mobile-forward');
-    incoming.classList.add(
-      'is-mobile-entering', 'mobile-transition-' + kind,
-      reverse ? 'is-mobile-reverse' : 'is-mobile-forward');
-    body.classList.add('mobile-story-transitioning');
-
-    transitionTimer = window.setTimeout(() => {
-      outgoing.classList.remove(
-        'is-mobile-current', 'is-mobile-leaving', 'mobile-transition-' + kind,
-        'is-mobile-reverse', 'is-mobile-forward');
-      incoming.classList.remove(
-        'is-mobile-entering', 'mobile-transition-' + kind,
-        'is-mobile-reverse', 'is-mobile-forward');
-      current = index;
-      body.classList.remove('mobile-story-transitioning');
-      updateNavigation();
-      transitioning = false;
-    }, 760);
-  }
-
-  function move(direction) {
-    const next = (current + direction + scenes.length) % scenes.length;
-    transitionTo(next, direction);
-  }
-
-  function onTouchStart(event) {
-    if (!enabled || transitioning || event.touches.length !== 1) return;
-    const scene = scenes[current];
-    touchStart = {
-      y: event.touches[0].clientY,
-      time: performance.now(),
-      atTop: scene.scrollTop <= 2,
-      atBottom: scene.scrollTop + scene.clientHeight >= scene.scrollHeight - 2,
-    };
-  }
-
-  function onTouchEnd(event) {
-    if (!enabled || transitioning || !touchStart || !event.changedTouches.length) return;
-    const delta = event.changedTouches[0].clientY - touchStart.y;
-    const elapsed = performance.now() - touchStart.time;
-    const start = touchStart;
-    touchStart = null;
-    if (elapsed > 1100 || Math.abs(delta) < 54) return;
-    if (delta < 0 && start.atBottom) move(1);
-    else if (delta > 0 && start.atTop) move(-1);
-  }
-
-  function onTouchCancel() { touchStart = null; }
-
-  function onKeydown(event) {
-    if (!enabled || transitioning || event.altKey || event.ctrlKey || event.metaKey) return;
-    if (isStoryKeyboardTarget(event.target)) return;
-    const scene = scenes[current];
-    const atTop = scene.scrollTop <= 2;
-    const atBottom = scene.scrollTop + scene.clientHeight >= scene.scrollHeight - 2;
-    if (['ArrowDown', 'PageDown', ' '].includes(event.key) && atBottom) {
-      event.preventDefault();
-      move(1);
-    } else if (['ArrowUp', 'PageUp'].includes(event.key) && atTop) {
-      event.preventDefault();
-      move(-1);
-    }
-  }
-
-  function enable() {
-    if (enabled) return;
-    enabled = true;
-    body.classList.add('mobile-story-active');
-    const hashIndex = scenes.findIndex((scene) => '#' + scene.id === location.hash);
-    current = hashIndex >= 0 ? hashIndex : 0;
-    scenes.forEach((scene) => {
-      scene.classList.add('mobile-story-scene');
-    });
-    updateNavigation();
-    main.addEventListener('touchstart', onTouchStart, { passive: true });
-    main.addEventListener('touchend', onTouchEnd, { passive: true });
-    main.addEventListener('touchcancel', onTouchCancel, { passive: true });
-    window.addEventListener('keydown', onKeydown);
-  }
-
-  function disable() {
-    if (!enabled) return;
-    enabled = false;
-    clearTimeout(transitionTimer);
-    transitioning = false;
-    touchStart = null;
-    main.removeEventListener('touchstart', onTouchStart);
-    main.removeEventListener('touchend', onTouchEnd);
-    main.removeEventListener('touchcancel', onTouchCancel);
-    window.removeEventListener('keydown', onKeydown);
-    body.classList.remove('mobile-story-active', 'mobile-story-transitioning');
-    scenes.forEach((scene) => {
-      scene.classList.remove(
-        'mobile-story-scene', 'is-mobile-current', 'is-mobile-leaving',
-        'is-mobile-entering', 'mobile-transition-zoom', 'mobile-transition-pan',
-        'is-mobile-reverse', 'is-mobile-forward');
-      scene.removeAttribute('aria-hidden');
+    window.addEventListener('hashchange',()=>{
+      const record=findRoute(new URL(location.href));
+      if(record&&record.index!==current)navigate(record.index,{history:false,fragment:decodeURIComponent(location.hash.slice(1))});
     });
   }
 
-  function sync() {
-    if (query.matches) enable();
-    else disable();
-  }
-
-  sync();
-  query.addEventListener('change', () => requestAnimationFrame(sync));
-
-  directLinks.forEach((link) => {
-    link.addEventListener('click', (event) => {
-      if (!enabled) return;
-      const index = Number(link.dataset.zoomTarget);
-      if (!Number.isInteger(index) || index < 0 || index >= scenes.length) return;
-      event.preventDefault();
-      transitionTo(index, index > current ? 1 : -1);
-    });
-  });
-  document.querySelectorAll('.site-nav a[href^="#"]').forEach((link) => {
-    link.addEventListener('click', (event) => {
-      if (!enabled) return;
-      const index = scenes.findIndex(
-        (scene) => '#' + scene.id === link.getAttribute('href'));
-      if (index < 0) return;
-      event.preventDefault();
-      transitionTo(index, index > current ? 1 : -1);
-    });
-  });
-})();
-
-// ── Homepage inception canvas ────────────────────────────────────────────
-// Desktop wheel input drives a camera through nested full-page scenes. The
-// final scene contains a visual copy of the first one, so the camera can reset
-// to the root without a visible seam. Mobile uses the boundary-aware scene
-// canvas above, with internal scroll only when a chapter needs it.
-(function initZoomStory() {
-  const body = document.body;
-  const main = document.querySelector('.landing-main');
-  if (!main || !body.classList.contains('landing-page')) return;
-
-  const query = window.matchMedia(
-    '(min-width: 1000px) and (pointer: fine) and (prefers-reduced-motion: no-preference)');
-  const domScenes = Array.from(main.children).filter(
-    (node) => node.matches('.landing-hero, .landing-section'));
-  const sourceScenes = orderLandingStoryScenes(domScenes);
-  const directLinks = Array.from(document.querySelectorAll('[data-zoom-target]'));
-  const sceneCount = sourceScenes.length;
-  if (sceneCount < 2) return;
-
-  let world = null;
-  let loopClone = null;
-  let scenes = [];
-  let placements = [];
-  let progress = 0;
-  let target = 0;
-  let raf = 0;
-  let activeIndex = -1;
-  let enabled = false;
-  let wheelDelta = 0;
-  let wheelDirection = 0;
-  let lastWheelAt = 0;
-  let queuedWheelDirection = 0;
-  let animationFrom = 0;
-  let animationStarted = 0;
-  let animationDuration = 900;
-
-  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-  const smooth = (value) => value * value * (3 - 2 * value);
-  const mix = (from, to, amount) => from + (to - from) * amount;
-  const easeInOut = (value) => value < .5
-    ? 4 * value * value * value
-    : 1 - Math.pow(-2 * value + 2, 3) / 2;
-
-  function stripCloneIdentity(root) {
-    root.dataset.zoomClone = '';
-    root.setAttribute('aria-hidden', 'true');
-    root.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
-    root.querySelectorAll('a, button, video').forEach((node) => {
-      node.setAttribute('tabindex', '-1');
-      if (node.tagName === 'VIDEO') node.removeAttribute('controls');
-    });
-  }
-
-  function layoutScenes() {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-    const ratio = .255;
-    const fallbackChoreography = [
-      'zoom', 'pan', 'zoom', 'pan', 'pan', 'zoom', 'zoom',
-    ];
-    let x = 0;
-    let y = 0;
-    let scale = 1;
-    placements = [];
-
-    scenes.forEach((scene) => {
-      const content = scene.querySelector(':scope > .container');
-      if (!content) return;
-      scene.style.setProperty('--scene-content-fit', '1');
-      const availableWidth = Math.max(640, width - 210);
-      const availableHeight = Math.max(520, height - 126);
-      const naturalWidth = Math.max(1, content.scrollWidth);
-      const naturalHeight = Math.max(1, content.scrollHeight);
-      const fit = Math.min(
-        1,
-        availableWidth / naturalWidth,
-        availableHeight / naturalHeight);
-      scene.style.setProperty('--scene-content-fit', String(fit));
-    });
-
-    world.style.transform = 'none';
-    scenes.forEach((scene) => {
-      scene.style.setProperty('--scene-x', '0px');
-      scene.style.setProperty('--scene-y', '0px');
-      scene.style.setProperty('--scene-scale', '1');
-      scene.style.visibility = 'visible';
-      scene.style.contentVisibility = 'visible';
-    });
-    const portalFrames = scenes.map((scene) => {
-      const portal = scene.querySelector('[data-zoom-portal]');
-      return portal ? portal.getBoundingClientRect() : null;
-    });
-
-    scenes.forEach((scene, index) => {
-      placements.push({ x, y, scale });
-      scene.style.setProperty('--scene-x', x + 'px');
-      scene.style.setProperty('--scene-y', y + 'px');
-      scene.style.setProperty('--scene-scale', String(scale));
-      if (index < scenes.length - 1) {
-        const frame = portalFrames[index];
-        if (frame) {
-          const portalScale = Math.min(frame.width / width, frame.height / height);
-          x += scale * (frame.left + (frame.width - width * portalScale) / 2);
-          y += scale * (frame.top + (frame.height - height * portalScale) / 2);
-          scale *= portalScale;
-        } else if (fallbackChoreography[index] === 'pan') {
-          x += scale * width * (index % 2 ? .035 : -.025);
-          y += scale * height * 1.06;
-        } else {
-          x += scale * width * (index % 2 ? .16 : .54);
-          y += scale * height * (index % 3 === 1 ? .44 : .17);
-          scale *= ratio;
+  async function boot() {
+    const initialFile=location.pathname.split('/').pop() || 'index.html';
+    pages=await Promise.all(CHAPTERS.map(async([file],chapter)=>{
+      let doc;
+      if(file===initialFile)doc=document;
+      else {
+        const embedded=window.ESPER_DOCUMENTS?.[file];
+        if(embedded)doc=new DOMParser().parseFromString(embedded,'text/html');
+        else {
+          const response=await fetch(new URL(file,baseURL));
+          if(!response.ok)throw new Error('Page unavailable: '+file);
+          doc=new DOMParser().parseFromString(await response.text(),'text/html');
         }
       }
-    });
-    render();
+      return extract(doc,file,chapter);
+    }));
+    steps=pages.flatMap(page=>page.records);
+    steps.forEach((record,index)=>{record.index=index;});
+    const initial=findRoute(new URL(location.href)) || steps[0];
+    mount();
+    camera=new EsperCamera(byId('esper-photo'),window.ESPER_WORLD,onCamera);
+    renderContent(initial);
+    await camera.ready;
+    indexReady=true;bindNavigation();
+    current=initial.index;ordinal=initial.index;
+    history.replaceState({esper:current,ordinal,path:canonicalRoute(initial)},'',location.href);
+    navigate(current,{instant:true,history:false,ordinal,fragment:decodeURIComponent(location.hash.slice(1))});
+    window.PawFlowEsper={navigate:(index)=>navigate(index),next:()=>move(1),previous:()=>move(-1),
+      get state(){return {ready:indexReady,current,ordinal,busy,total:steps.length,reduced,camera:camera.state,audio:sound.state,
+        section:steps[current].id,file:steps[current].file};},
+      get sections(){return steps.map(({index,file,id,title,url})=>({index,file,id,title,url}));}};
   }
-
-  function render() {
-    if (!world || !placements.length) return;
-    const max = placements.length - 1;
-    const safe = clamp(progress, 0, max);
-    const lower = Math.min(Math.floor(safe), max - 1);
-    const local = smooth(safe - lower);
-    const from = placements[lower];
-    const to = placements[Math.min(lower + 1, max)];
-    const focusX = mix(from.x, to.x, local);
-    const focusY = mix(from.y, to.y, local);
-    const scale = Math.exp(mix(Math.log(from.scale), Math.log(to.scale), local) * -1);
-    world.style.transform =
-      'translate3d(' + (-focusX * scale) + 'px,' + (-focusY * scale) + 'px,0) scale(' + scale + ')';
-
-    scenes.forEach((scene, index) => {
-      const visible = index === lower || index === lower + 1;
-      const reveal = index === lower
-        ? 1 - smooth(clamp((local - .72) / .28, 0, 1))
-        : index === lower + 1
-          ? smooth(clamp((local - .08) / .58, 0, 1))
-          : 0;
-      scene.style.setProperty('--scene-opacity', String(reveal));
-      const blur = index === lower
-        ? smooth(local) * 5
-        : index === lower + 1
-          ? (1 - smooth(local)) * 5
-          : 0;
-      scene.style.setProperty('--scene-blur', blur.toFixed(2) + 'px');
-      scene.style.visibility = visible ? 'visible' : 'hidden';
-      scene.style.contentVisibility = visible ? 'visible' : 'hidden';
-    });
-
-    const nearest = clamp(Math.round(progress), 0, sceneCount);
-    const publicIndex = nearest === sceneCount ? 0 : nearest;
-    if (publicIndex !== activeIndex) {
-      activeIndex = publicIndex;
-      sourceScenes.forEach((scene, index) => {
-        scene.setAttribute('aria-hidden', String(index !== publicIndex));
-      });
-      directLinks.forEach((link) => {
-        const current = Number(link.dataset.zoomTarget) === publicIndex;
-        link.classList.toggle('is-current', current);
-        if (current) link.setAttribute('aria-current', 'true');
-        else link.removeAttribute('aria-current');
-      });
-      const section = sourceScenes[publicIndex];
-      if (section && section.id) {
-        history.replaceState(null, '', '#' + section.id);
-      }
+  boot().catch(error=>{
+    console.error('PawFlow exploration could not start',error);
+    if(shell){
+      content.inert=false;shell.classList.remove('is-travelling');
+      const note=document.createElement('p');note.className='esper-load-error';
+      note.textContent='The photographic journey is unavailable. Use the section links to continue reading.';
+      content.prepend(note);
+      byId('esper-index-open').onclick=()=>indexDialog.showModal();
     }
-  }
-
-  function animate(now) {
-    const elapsed = Math.max(0, now - animationStarted);
-    const time = clamp(elapsed / animationDuration, 0, 1);
-    const eased = easeInOut(time);
-    progress = mix(animationFrom, target, eased);
-    render();
-    if (time >= 1) {
-      progress = target;
-      render();
-      raf = 0;
-      if (target >= sceneCount) {
-        progress = 0;
-        target = 0;
-        activeIndex = -1;
-        render();
-      }
-      const nextDirection = queuedWheelDirection;
-      queuedWheelDirection = 0;
-      if (nextDirection) runWheelStep(nextDirection);
-      return;
-    }
-    raf = requestAnimationFrame(animate);
-  }
-
-  function startAnimation(next, duration) {
-    animationFrom = progress;
-    target = next;
-    animationStarted = performance.now();
-    animationDuration = duration;
-    if (!raf) raf = requestAnimationFrame(animate);
-  }
-
-  function runWheelStep(direction) {
-    const current = clamp(Math.round(progress), 0, sceneCount - 1);
-    if (current <= 0 && direction < 0) {
-      progress = sceneCount;
-      target = sceneCount;
-      activeIndex = -1;
-      render();
-      startAnimation(sceneCount - 1, 860);
-      return;
-    }
-    const next = current === sceneCount - 1 && direction > 0
-      ? sceneCount
-      : current + direction;
-    startAnimation(next, 820);
-  }
-
-  function queueWheelStep(direction) {
-    if (raf) {
-      queuedWheelDirection = direction;
-      return;
-    }
-    runWheelStep(direction);
-  }
-
-  function onWheel(event) {
-    if (!enabled || isHelpWidgetTarget(event.target)) return;
-    event.preventDefault();
-    const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
-    const direction = Math.sign(delta);
-    if (!direction) return;
-
-    const now = performance.now();
-    if (now - lastWheelAt > 180 || direction !== wheelDirection) wheelDelta = 0;
-    lastWheelAt = now;
-    wheelDirection = direction;
-    wheelDelta += Math.min(160, Math.abs(delta));
-    const threshold = raf ? 60 : 1;
-    if (wheelDelta < threshold) return;
-    wheelDelta = 0;
-    queueWheelStep(direction);
-  }
-
-  function onKeydown(event) {
-    if (!enabled || event.altKey || event.ctrlKey || event.metaKey) return;
-    if (isStoryKeyboardTarget(event.target)) return;
-    if (['ArrowDown', 'PageDown', ' '].includes(event.key)) {
-      event.preventDefault();
-      queueWheelStep(1);
-    } else if (['ArrowUp', 'PageUp'].includes(event.key)) {
-      event.preventDefault();
-      queueWheelStep(-1);
-    } else if (event.key === 'Home') {
-      event.preventDefault();
-      goTo(0);
-    } else if (event.key === 'End') {
-      event.preventDefault();
-      goTo(sceneCount - 1);
-    }
-  }
-
-  function goTo(index, includeLoop = false) {
-    queuedWheelDirection = 0;
-    wheelDelta = 0;
-    animationFrom = progress;
-    target = clamp(index, 0, includeLoop ? sceneCount : sceneCount - 1);
-    animationStarted = performance.now();
-    animationDuration = 900 + Math.min(3, Math.abs(target - progress)) * 90;
-    if (!raf) raf = requestAnimationFrame(animate);
-  }
-
-  function enable() {
-    if (enabled) return;
-    enabled = true;
-    body.classList.add('zoom-story-active');
-    world = document.createElement('div');
-    world.className = 'zoom-world';
-    main.insertBefore(world, sourceScenes[0]);
-    domScenes.forEach((scene) => {
-      scene.classList.add('zoom-scene');
-      world.appendChild(scene);
-    });
-    loopClone = sourceScenes[0].cloneNode(true);
-    stripCloneIdentity(loopClone);
-    loopClone.classList.add('zoom-scene');
-    world.appendChild(loopClone);
-    scenes = sourceScenes.concat(loopClone);
-    const hashIndex = sourceScenes.findIndex((scene) => '#' + scene.id === location.hash);
-    progress = target = hashIndex >= 0 ? hashIndex : 0;
-    animationFrom = progress;
-    animationStarted = performance.now();
-    activeIndex = -1;
-    layoutScenes();
-    window.addEventListener('wheel', onWheel, { passive: false });
-    window.addEventListener('keydown', onKeydown);
-    window.addEventListener('resize', layoutScenes);
-  }
-
-  function disable() {
-    if (!enabled) return;
-    enabled = false;
-    cancelAnimationFrame(raf);
-    raf = 0;
-    window.removeEventListener('wheel', onWheel);
-    window.removeEventListener('keydown', onKeydown);
-    window.removeEventListener('resize', layoutScenes);
-    sourceScenes.forEach((scene) => {
-      scene.classList.remove('zoom-scene');
-      scene.style.removeProperty('--scene-x');
-      scene.style.removeProperty('--scene-y');
-      scene.style.removeProperty('--scene-scale');
-      scene.style.removeProperty('--scene-opacity');
-      scene.style.removeProperty('--scene-blur');
-      scene.style.removeProperty('--scene-content-fit');
-      scene.style.removeProperty('visibility');
-      scene.style.removeProperty('content-visibility');
-      scene.removeAttribute('aria-hidden');
-      main.insertBefore(scene, world);
-    });
-    if (world) world.remove();
-    world = null;
-    loopClone = null;
-    scenes = [];
-    wheelDelta = 0;
-    wheelDirection = 0;
-    lastWheelAt = 0;
-    queuedWheelDirection = 0;
-    body.classList.remove('zoom-story-active');
-  }
-
-  directLinks.forEach((link) => {
-    link.addEventListener('click', (event) => {
-      if (!enabled) return;
-      event.preventDefault();
-      goTo(Number(link.dataset.zoomTarget));
-    });
   });
-  document.querySelectorAll('.site-nav a[href^="#"]').forEach((link) => {
-    link.addEventListener('click', (event) => {
-      if (!enabled) return;
-      const index = sourceScenes.findIndex(
-        (scene) => '#' + scene.id === link.getAttribute('href'));
-      if (index < 0) return;
-      event.preventDefault();
-      goTo(index);
-    });
-  });
-
-  function syncMode() { query.matches ? enable() : disable(); }
-  syncMode();
-  query.addEventListener('change', syncMode);
 })();
 
-document.querySelectorAll('[data-copy]').forEach((button) => {
-  button.addEventListener('click', async () => {
-    const target = document.querySelector(button.dataset.copy);
-    if (!target) return;
-    const text = target.innerText.trim();
-    try {
-      await navigator.clipboard.writeText(text);
-      const original = button.textContent;
-      button.textContent = 'Copied';
-      setTimeout(() => { button.textContent = original; }, 1200);
-    } catch (error) {
-      button.textContent = 'Select';
-    }
-  });
-});
 
 // ── Help widget (talks to the web_help_bot flow: POST /api/help) ──────
 // Same-origin endpoint, fronted by Caddy (keep the listener port private).

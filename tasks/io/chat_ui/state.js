@@ -104,6 +104,7 @@ function clearStream(agent) {
 function clearAllStreams() {
   for (const a of Object.keys(streams)) {
     const s = streams[a];
+    _flushStreamRender(s.btw);
     _cancelStreamRender(s);
     for (const c of s.chunks) { if (c && c.parentNode) c.remove(); }
   }
@@ -118,6 +119,7 @@ function clearAllStreamsKeepDOM() {
 // still delivers the final partial preview when animation frames are paused.
 function _cancelStreamRender(s) {
   if (!s) return;
+  if (s.btw) _cancelStreamRender(s.btw);
   if (s.renderFrame != null) cancelAnimationFrame(s.renderFrame);
   if (s.renderTimer != null) clearTimeout(s.renderTimer);
   s.renderFrame = null;
@@ -127,6 +129,7 @@ function _cancelStreamRender(s) {
 }
 
 function _flushStreamRender(s) {
+  if (s && s.btw) _flushStreamRender(s.btw);
   if (!s || !s.pendingRender) return;
   const render = s.pendingRender;
   if (s.renderFrame != null) cancelAnimationFrame(s.renderFrame);

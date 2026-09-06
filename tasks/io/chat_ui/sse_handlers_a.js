@@ -2,12 +2,30 @@
 // Called by connectSSE() in sse.js after the EventSource is created.
 function _sseWireA() {
 
-  // Flush before any event that can move, reconcile or retire a preview. These
-  // listeners run before the normal handlers, including group B's terminals.
+  // Flush before moving or retiring previews. Agent-local events must not
+  // force unrelated streams to repaint between their scheduled frames.
+  const localStreamEvents = new Set(['thinking', 'thinking_delta', 'thinking_content',
+    'turn_complete', 'done', 'discard', 'error', 'error_event', 'active_released', 'cancelled']);
   ['new_message', 'thinking', 'thinking_delta', 'thinking_content', 'tool_call',
     'tool_result', 'turn_complete', 'done', 'discard', 'error', 'active_released',
-    'task_stopped', 'task_progress'].forEach(name => {
-    eventSource.addEventListener(name, () => {
+    'task_stopped', 'task_progress', 'error_event', 'cancelled'].forEach(name => {
+    eventSource.addEventListener(name, (e) => {
+      let data = {};
+      try { data = e.data ? JSON.parse(e.data) || {} : {}; } catch (_) {}
+      let agent = data.agent_name || '';
+      if (!agent && ['thinking_delta', 'thinking_content', 'done'].includes(name)) {
+        agent = data.source && (data.source.name
+          || (name !== 'done' && data.source.from)) || '';
+      }
+      const key = String(agent).trim().toLowerCase();
+      // User/message insertion and tool/task grouping can move shared DOM.
+      // Simplified-view terminals also close the shared positional turn.
+      const sharedTerminal = ['done', 'discard', 'error_event', 'active_released', 'cancelled'].includes(name)
+        && typeof turnViewIsSimplified === 'function' && turnViewIsSimplified();
+      if (localStreamEvents.has(name) && key && key !== 'all' && !sharedTerminal) {
+        _flushStreamRender(streams[key]);
+        return;
+      }
       Object.values(streams).forEach(_flushStreamRender);
     });
   });

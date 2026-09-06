@@ -455,6 +455,7 @@ function _sseWireB() {
     const agent = data.agent_name || '';
     const bKey = agent.toLowerCase();
     const dName = displayAgentName(agent);
+    _flushStreamRender(btwElements[bKey]);
     const el = addMsg('btw', '');
     el.innerHTML = makeTimeHtml() + '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span><em style="color:#888;">thinking...</em>';
     btwElements[bKey] = el;
@@ -471,8 +472,14 @@ function _sseWireB() {
     btwTexts[bKey] = (btwTexts[bKey] || '') + data.text;
     const el = btwElements[bKey];
     if (el) {
-      el.innerHTML = makeTimeHtml() + '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span>' + renderMarkdown(btwTexts[bKey]);
-      scrollBottom();
+      // Share the agent/session cleanup lifecycle, with a separate render slot
+      // so main-answer and BTW tokens cannot replace each other's callbacks.
+      getStream(agent).btw = el;
+      _scheduleStreamRender(el, () => {
+        if (btwElements[bKey] !== el || !el.isConnected) return;
+        el.innerHTML = makeTimeHtml() + '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span>' + renderMarkdown(btwTexts[bKey]);
+        scrollBottom();
+      });
     }
   });
 
@@ -482,6 +489,7 @@ function _sseWireB() {
     const agent = data.agent_name || '';
     const bKey = agent.toLowerCase();
     const dName = displayAgentName(agent);
+    _flushStreamRender(btwElements[bKey]);
     if (data.error) {
       const el = btwElements[bKey];
       if (el) { el.innerHTML = makeTimeHtml() + '<span style="color:#f87171;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] Error: ' + escapeHtml(data.error) + '</span>'; }
@@ -491,6 +499,8 @@ function _sseWireB() {
       const el = btwElements[bKey] || addMsg('btw', '');
       el.innerHTML = makeTimeHtml() + '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span>' + renderMarkdown(data.response);
     }
+    const stream = streams[bKey];
+    if (stream && stream.btw === btwElements[bKey]) delete stream.btw;
     delete btwElements[bKey];
     delete btwTexts[bKey];
     scrollBottom();

@@ -155,17 +155,28 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return True
 
-        stat = target.stat()
         cache_key = str(target)
-        # Match the asset manifest: copies may preserve both mtime and size.
-        cache_sig = (stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, stat.st_ino)
-        with self._chat_js_cache_lock:
-            cached = self._chat_js_cache.get(cache_key)
-            if cached and cached[0] == cache_sig:
-                body = cached[1]
-            else:
-                body = target.read_bytes()
+        while True:
+            stat = target.stat()
+            # Match the asset manifest: copies may preserve both mtime and size.
+            cache_sig = (stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, stat.st_ino)
+            with self._chat_js_cache_lock:
+                cached = self._chat_js_cache.get(cache_key)
+                if cached and cached[0] == cache_sig:
+                    body = cached[1]
+                    break
+            body = target.read_bytes()
+            after = target.stat()
+            if cache_sig != (after.st_mtime_ns, after.st_size,
+                             after.st_ctime_ns, after.st_ino):
+                continue
+            with self._chat_js_cache_lock:
+                # Another reader may have published a newer file while this
+                # read was in flight. Re-stat before trusting that publication.
+                if self._chat_js_cache.get(cache_key) is not cached:
+                    continue
                 self._chat_js_cache[cache_key] = (cache_sig, body)
+                break
 
         mime_type, _ = mimetypes.guess_type(str(target))
         self.send_response(200)

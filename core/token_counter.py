@@ -13,6 +13,8 @@ unset = 1.0 (no correction).
 
 import json
 import logging
+import threading
+from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,18 @@ _encoding_failed_at = 0.0  # monotonic timestamp of last failure; 0 = never trie
 # failure at startup doesn't permanently degrade token counting for the
 # entire server lifetime.
 _ENCODING_RETRY_SECONDS = 300.0  # 5 minutes
+
+# Cache only raw counts, never message lists or provider-specific totals.
+# Exact string keys reuse Python's cached hash and still notice in-place
+# message/schema edits. Bound both retained text bytes and entry overhead;
+# oversized payloads are counted normally without being retained.
+_TOKEN_CACHE_MAX_ENTRIES = 2048
+_TOKEN_CACHE_MAX_BYTES = 4 * 1024 * 1024
+_TOKEN_CACHE_MAX_TEXT_BYTES = 256 * 1024
+_token_cache = OrderedDict()
+_token_cache_bytes = 0
+_token_cache_state = None
+_token_cache_lock = threading.Lock()
 
 
 def _get_encoding():
@@ -68,12 +82,47 @@ def _estimate_tokens(text: str) -> int:
 def count_tokens(text: str, multiplier: float = 1.0) -> int:
     """Count tokens precisely and scale by `multiplier`."""
     encoding = _get_encoding()
-    if encoding is None:
-        raw = _estimate_tokens(text)
-    else:
-        raw = len(encoding.encode(text, disallowed_special=()))
+    raw = _count_raw_tokens(text, encoding)
     if multiplier and multiplier != 1.0:
         return int(raw * multiplier)
+    return raw
+
+
+def _count_raw_tokens(text, encoding):
+    global _token_cache_bytes, _token_cache_state
+    encode = encoding.encode if encoding is not None else None
+    # Include the implementation as well as the encoding instance so tests
+    # replacing encode or the fallback cannot reuse a previous implementation.
+    state = (encoding, getattr(encode, "__func__", encode),
+             _estimate_tokens, _get_encoding)
+    # Reserve wide Unicode storage plus a possible cached UTF-8 representation.
+    # Unlike getsizeof(), this budget cannot grow after an encoder reads text.
+    size = 128 + 8 * len(text) if type(text) is str else 0
+    cacheable = 0 < size <= _TOKEN_CACHE_MAX_TEXT_BYTES
+    with _token_cache_lock:
+        if (_token_cache_state is None or any(
+                old is not new for old, new in zip(_token_cache_state, state))):
+            _token_cache.clear()
+            _token_cache_bytes = 0
+            _token_cache_state = state
+        generation = _token_cache_state
+        if cacheable and text in _token_cache:
+            _token_cache.move_to_end(text)
+            return _token_cache[text]
+
+    # Tokenization can release the GIL; don't serialize unrelated callers.
+    raw = _estimate_tokens(text) if encode is None else len(
+        encode(text, disallowed_special=()))
+    if cacheable:
+        with _token_cache_lock:
+            # A concurrent tokenizer change must not publish an old count.
+            if _token_cache_state is generation and text not in _token_cache:
+                _token_cache[text] = raw
+                _token_cache_bytes += size
+                while (len(_token_cache) > _TOKEN_CACHE_MAX_ENTRIES or
+                       _token_cache_bytes > _TOKEN_CACHE_MAX_BYTES):
+                    old_text, _ = _token_cache.popitem(last=False)
+                    _token_cache_bytes -= 128 + 8 * len(old_text)
     return raw
 
 

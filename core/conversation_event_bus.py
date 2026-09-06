@@ -266,6 +266,10 @@ class ConversationEventBus:
         If no live subscribers exist, the event is buffered for replay
         when a subscriber connects (up to _MAX_BUFFER events, _BUFFER_TTL seconds).
         """
+        # Every subscriber/replay shares these immutable bytes. Listener or
+        # producer mutations after publication cannot change the wire snapshot.
+        event = event.snapshot()
+
         def _buffer_locked() -> None:
             if event.event in ("done", "error_event"):
                 logger.info(f"EventBus: buffering '{event.event}' for "

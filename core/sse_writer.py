@@ -9,12 +9,13 @@ SSE format (per spec):
     \n
 """
 
+import copy
 import json
 import logging
 import os
 import queue
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -26,9 +27,19 @@ class SSEEvent:
     event: str  # event type: thinking, tool_call, tool_result, token, done, error
     data: Any = ""  # will be JSON-serialized if dict/list
     id: Optional[str] = None
+    _encoded: Optional[bytes] = field(default=None, init=False, repr=False, compare=False)
+
+    def snapshot(self) -> "SSEEvent":
+        """Capture wire bytes before handing the event to asynchronous consumers."""
+        data = copy.deepcopy(self.data) if isinstance(self.data, (dict, list)) else self.data
+        snapshot = SSEEvent(self.event, data, self.id)
+        snapshot._encoded = snapshot.encode()
+        return snapshot
 
     def encode(self) -> bytes:
         """Format as SSE wire format."""
+        if self._encoded is not None:
+            return self._encoded
         lines = []
         if self.id:
             lines.append(f"id: {self.id}")

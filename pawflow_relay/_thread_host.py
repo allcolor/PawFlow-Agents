@@ -112,6 +112,10 @@ class _RelayHostHelperMixin:
             conn.sendall(resp.encode("utf-8"))
             return
 
+        if action == "local_desktop_connect":
+            self._host_desktop_connect(conn, req)
+            return
+
         tools_dir = _relay_tools_dir()
         if tools_dir not in sys.path:
             sys.path.insert(0, tools_dir)
@@ -244,6 +248,47 @@ class _RelayHostHelperMixin:
             except Exception as e:
                 resp = json.dumps({"type": "error", "error": str(e)}) + "\n"
             conn.sendall(resp.encode("utf-8"))
+
+    def _host_desktop_connect(self, conn, req):
+        """Tunnel only the current host desktop's WebSocket listener."""
+        import select
+
+        upstream = None
+        try:
+            with self._host_desktop_lifecycle_lock:
+                if not self.allow_remote_desktop:
+                    raise PermissionError("Remote desktop is disabled")
+                procs = getattr(self, "_local_desktop_procs", None)
+                if not procs or any(proc.poll() is not None for proc in procs):
+                    raise ValueError("Host desktop is not running")
+                port = int(req.get("port") or 0)
+                if not port or port != self._local_desktop_novnc_port:
+                    raise ValueError(
+                        "Desktop port does not match the running host desktop")
+                upstream = socket.create_connection(("127.0.0.1", port), timeout=10)
+        except (OSError, ValueError) as exc:
+            conn.sendall((json.dumps({
+                "type": "error", "error": str(exc),
+            }) + "\n").encode("utf-8"))
+            return
+
+        try:
+            conn.sendall(b'{"type":"result","data":{"ok":true}}\n')
+            sockets = (conn, upstream)
+            while not self._stop_event.is_set():
+                readable, _, exceptional = select.select(sockets, (), sockets, 1)
+                if exceptional:
+                    break
+                for source in readable:
+                    data = source.recv(65536)
+                    if not data:
+                        return
+                    destination = upstream if source is conn else conn
+                    destination.sendall(data)
+        except OSError:
+            logging.getLogger(__name__).debug("Host desktop tunnel closed", exc_info=True)
+        finally:
+            upstream.close()
 
     def _handle_host_screen_action(self, conn, req, action):
         """Handle screen/desktop actions on the host machine."""

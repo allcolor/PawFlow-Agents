@@ -277,6 +277,7 @@ def register_session(session_id: str, port: int, *,
         conversation_id=conversation_id,
         session_id=login_session_id,
         ttl_seconds=ttl_seconds)
+    previous = None
     with _lock:
         entry = {
             "port": port,
@@ -286,14 +287,32 @@ def register_session(session_id: str, port: int, *,
             "capability_token": token,
             **kwargs,
         }
-        entry.setdefault("vnc_ws_sessions", {})
+        previous = _sessions.get(session_id)
+        same_target = previous is not None and all(
+            previous.get(key) == entry.get(key)
+            for key in ("owner_user_id", "port", "host", "relay_service",
+                        "relay_id", "local_screen"))
+        entry["vnc_ws_sessions"] = (
+            previous["vnc_ws_sessions"] if same_target else {})
         _sessions[session_id] = entry
+    if previous is not None and not same_target:
+        _close_vnc_viewers(previous)
     return token
 
 
 def unregister_session(session_id: str):
     with _lock:
         session = _sessions.pop(session_id, None)
+    _close_vnc_viewers(session)
+    try:
+        from core.capability_routes import revoke_route_tokens
+        revoke_route_tokens(session_id)
+    except Exception:
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
+
+def _close_vnc_viewers(session):
+    """Close viewers when their desktop is removed or its target changes."""
     if session:
         relay_service = session.get("relay_service")
         for ws_session_id, ws_session in list(
@@ -309,11 +328,6 @@ def unregister_session(session_id: str):
                     browser_sock.close()
                 except Exception:
                     logger.debug("Ignored exception", exc_info=True)
-    try:
-        from core.capability_routes import revoke_route_tokens
-        revoke_route_tokens(session_id)
-    except Exception:
-        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def get_session_token(session_id: str) -> str:
@@ -626,6 +640,16 @@ _PAWFLOW_NOVNC_CLIENT_SCRIPT = b"""
 def _patch_novnc_static_body(sub_path: str, body: bytes) -> bytes:
     """Inject PawFlow desktop behavior without vendoring noVNC files."""
     safe_path = _os.path.normpath(str(sub_path or "")).lstrip(_os.sep).lstrip("/")
+    if safe_path == "core/util/browser.js":
+        # noVNC 1.6's feature probe creates a real VideoFrame and decoder.
+        body = body.replace(
+            b"output: (frame) => { gotframe = true; },",
+            b"output: (frame) => { frame.close(); gotframe = true; },", 1)
+        if b"decoder.close();" not in body:
+            body = body.replace(
+                b"await decoder.flush();",
+                b"try { await decoder.flush(); } finally { decoder.close(); }", 1)
+        return body
     if safe_path in {"vnc.html", "vnc_lite.html"}:
         marker = b'<script type="module" crossorigin="anonymous" src="app/ui.js"></script>'
         if marker in body and b"PawFlowNoVNC" not in body:
@@ -644,7 +668,8 @@ def _is_novnc_static_path(sub_path: str) -> bool:
     safe_path = _os.path.normpath(str(sub_path or "")).lstrip(_os.sep).lstrip("/")
     if not safe_path or ".." in safe_path:
         return False
-    if safe_path in {"vnc.html", "vnc_lite.html"}:
+    if safe_path in {"vnc.html", "vnc_lite.html", "package.json",
+                     "defaults.json", "mandatory.json"}:
         return True
     return safe_path.startswith(("app/", "core/", "vendor/", "include/"))
 

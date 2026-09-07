@@ -413,6 +413,41 @@ def probe_host_helper(host_helper, token, timeout=3):
     return True
 
 
+def open_host_desktop_socket(host_helper, token, desktop_port, timeout=10):
+    """Open a raw VNC WebSocket transport through the authenticated helper."""
+    import socket as _sock
+
+    if not host_helper:
+        raise ValueError("Host helper address is missing")
+    if not token:
+        raise ValueError("Host helper token is missing")
+    host, port = host_helper.rsplit(":", 1)
+    sock = _sock.create_connection((host, int(port)), timeout=timeout)
+    try:
+        request = json.dumps({
+            "action": "local_desktop_connect",
+            "port": desktop_port,
+            "_host_helper_token": token,
+        }) + "\n"
+        sock.sendall(request.encode("utf-8"))
+        response = bytearray()
+        while not response.endswith(b"\n"):
+            chunk = sock.recv(1)
+            if not chunk:
+                raise RuntimeError("Host helper closed the desktop connection")
+            response.extend(chunk)
+            if len(response) > 65536:
+                raise RuntimeError("Host helper desktop response is too large")
+        result = json.loads(response)
+        if (result.get("type") != "result"
+                or result.get("data", {}).get("ok") is not True):
+            raise RuntimeError(result.get("error") or "Host desktop tunnel rejected")
+        return sock
+    except Exception:
+        sock.close()
+        raise
+
+
 def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
     """Forward a command to the host helper (CLI process outside Docker).
 

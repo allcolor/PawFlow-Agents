@@ -189,10 +189,28 @@ noVNC/websockify backend. Directly reachable server-managed desktops use the
 backend host/port path. Remote Docker and local-host desktops use the relay
 WebSocket tunnel (`desktop_ws_open`, `desktop_ws_send`, and
 `desktop_ws_close`), so NAT and host firewalls do not need to expose noVNC.
-When the desktop mirrors the relay host screen, the relay worker connects to
-the host address already advertised by `PAWFLOW_HOST_HELPER`; containerized
-desktops continue to use the worker's loopback interface.
+When the desktop mirrors the relay host screen, the relay worker opens an
+authenticated `local_desktop_connect` stream at the exact endpoint advertised
+by `PAWFLOW_HOST_HELPER`. The helper connects to its own loopback interface,
+and accepts only the WebSocket port of its currently running local desktop,
+with remote desktop enabled. The worker must supply `PAWFLOW_HOST_HELPER_TOKEN`.
+On Windows/WSL, this keeps VNC on the same tracked bridge as host commands;
+the bridge resolves the Windows route per connection. Its Docker-facing
+hostname must never be reused with the Windows desktop's dynamic port.
+The helper and relay worker must both be updated for this transport.
+Containerized desktops and workers running directly on the host continue to
+use the worker's loopback interface. Closing a viewer closes its transport
+without stopping the host desktop.
 The proxy checks session auth before either transport is opened.
+
+Attaching another viewer to the same desktop preserves existing viewer streams,
+including when the same user opens it from another browser login. Replacing the
+desktop owner or backend closes the old streams instead of leaving a frozen
+image. The relay processes VNC sends and closes in wire order, outside its
+parallel command pool, so input and framebuffer requests cannot overtake each
+other. noVNC package metadata and optional JSON configuration are served as UI
+assets; absent optional configuration means no overrides. The noVNC 1.6 browser
+capability probe releases its temporary video frame and decoder after testing.
 
 Desktop, service-login, and installer viewers pass an origin-rooted noVNC
 `path` setting (`/vnc/{session_id}/{token}/websockify`). noVNC resolves that

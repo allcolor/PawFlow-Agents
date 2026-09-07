@@ -76,6 +76,21 @@ def test_novnc_asset_rejects_non_ui_and_traversal_paths(monkeypatch, tmp_path):
     assert dt.novnc_asset({"path": "secrets.txt"})["ok"] is False
 
 
+def test_novnc_metadata_and_optional_configuration(monkeypatch, tmp_path):
+    root = tmp_path / "novnc"
+    root.mkdir()
+    monkeypatch.setenv("PAWFLOW_NOVNC_WEB", str(root))
+    (root / "package.json").write_text('{"version":"1.6.0"}', encoding="utf-8")
+    (root / "defaults.json").write_text('{"resize":"scale"}', encoding="utf-8")
+    for name, expected in (("package.json", b'{"version":"1.6.0"}'),
+                           ("defaults.json", b'{"resize":"scale"}'),
+                           ("mandatory.json", b"{}")):
+        result = dt.novnc_asset({"path": name})
+        assert result["ok"]
+        assert base64.b64decode(result["data"]["body"]) == expected
+        assert result["data"]["content_type"] == "application/json"
+
+
 def test_desktop_is_healthy(monkeypatch):
     st = _state()
     assert dt.desktop_is_healthy(st) is False  # no procs

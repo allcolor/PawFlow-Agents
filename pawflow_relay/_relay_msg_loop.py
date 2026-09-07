@@ -300,6 +300,9 @@ class ConnSession:
         if msg.get("action") in ("cs_ws_send", "cs_ws_close"):
             self._run_command_sync(msg, request_id)
             return
+        if msg.get("action") in ("desktop_ws_send", "desktop_ws_close"):
+            self._run_command_sync(msg, request_id)
+            return
         with self.inflight_lock:
             self.inflight_cmds[request_id] = {
                 "action": msg.get('action', '?'),
@@ -310,8 +313,8 @@ class ConnSession:
             self._run_command, msg, request_id, self.sock, self.ws_frame_send)
 
     def _run_command_sync(self, msg: dict, request_id: str):
-        # cs_ws_send / cs_ws_close run inline (no pool, no inflight tracking):
-        # they must preserve the ordering of code-server WS frames.
+        # WebSocket sends and closes run inline (no pool or inflight tracking)
+        # to preserve each code-server and VNC byte stream's wire ordering.
         try:
             result = self.execute_command(msg)
         except Exception as e:

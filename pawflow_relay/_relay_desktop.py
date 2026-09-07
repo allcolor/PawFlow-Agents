@@ -46,7 +46,8 @@ def novnc_asset(msg):
     raw_path = str(msg.get("path") or "").replace("\\", "/")
     parts = Path(raw_path).parts
     allowed = (
-        raw_path in {"vnc.html", "vnc_lite.html"}
+        raw_path in {"vnc.html", "vnc_lite.html", "package.json",
+                     "defaults.json", "mandatory.json"}
         or raw_path.startswith(("app/", "core/", "vendor/", "include/"))
     )
     if (not raw_path or raw_path.startswith("/") or ".." in parts
@@ -73,6 +74,12 @@ def novnc_asset(msg):
                 "body": base64.b64encode(candidate.read_bytes()).decode("ascii"),
                 "content_type": content_type or "application/octet-stream",
             }}
+    if raw_path in {"defaults.json", "mandatory.json"}:
+        # These optional noVNC configuration files mean no overrides when absent.
+        return {"ok": True, "data": {
+            "body": base64.b64encode(b"{}").decode("ascii"),
+            "content_type": "application/json",
+        }}
     return {"ok": False, "error": "noVNC asset not found in relay runtime"}
 
 
@@ -83,12 +90,11 @@ def desktop_ws_open(state, msg, send_frame):
     _ws_path = msg.get("ws_path", "/")
     _ws_headers = msg.get("headers", {})
     _ws_host = "127.0.0.1"
-    if msg.get("local_screen"):
-        _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
-        if _host_helper:
-            _ws_host = _host_helper.rsplit(":", 1)[0] or _ws_host
+    _host_helper = (os.environ.get("PAWFLOW_HOST_HELPER", "")
+                    if msg.get("local_screen") else "")
     if not _ws_sid or not _ws_port:
         return {"ok": False, "error": "Missing session_id or port"}
+    _vnc_sock = None
     try:
         _ws_key = base64.b64encode(os.urandom(16)).decode()
         _hdr_lines = [
@@ -106,11 +112,18 @@ def desktop_ws_open(state, msg, send_frame):
                 _hdr_lines.append(f"{_hk}: {_hv}")
         _handshake = "\r\n".join(_hdr_lines) + "\r\n\r\n"
         sys.stderr.write(f"[FSRelay] desktop_ws_open connecting to {_ws_host}:{_ws_port} path={_ws_path[:80]}\n")
-        _vnc_sock = socket.create_connection((_ws_host, _ws_port), timeout=10)
+        if _host_helper:
+            from pawflow_relay.auth import open_host_desktop_socket
+            _vnc_sock = open_host_desktop_socket(
+                _host_helper, os.environ.get("PAWFLOW_HOST_HELPER_TOKEN", ""),
+                _ws_port)
+        else:
+            _vnc_sock = socket.create_connection((_ws_host, _ws_port), timeout=10)
         _vnc_sock.sendall(_handshake.encode())
         _resp = b""
         while b"\r\n\r\n" not in _resp:
-            _chunk = _vnc_sock.recv(4096)
+            # Leave any coalesced first VNC frame for the WebSocket reader.
+            _chunk = _vnc_sock.recv(1)
             if not _chunk:
                 raise ConnectionError("WS handshake failed")
             _resp += _chunk
@@ -119,6 +132,7 @@ def desktop_ws_open(state, msg, send_frame):
             sys.stderr.write(f"[FSRelay] desktop_ws_open handshake rejected: {_resp[:500]}\n")
             _vnc_sock.close()
             return {"ok": False, "error": f"WS handshake rejected: {_status_line.decode(errors='replace')}"}
+        _vnc_sock.settimeout(None)
         state.desktop_ws_sessions[_ws_sid] = {"sock": _vnc_sock}
 
         def _desktop_ws_reader(_sock, _sid):
@@ -163,10 +177,12 @@ def desktop_ws_open(state, msg, send_frame):
                     _log.debug("Ignored exception", exc_info=True)
 
         _t = threading.Thread(target=_desktop_ws_reader, args=(_vnc_sock, _ws_sid), daemon=True)
-        _t.start()
         state.desktop_ws_sessions[_ws_sid]["reader"] = _t
+        _t.start()
         return {"ok": True}
     except Exception as e:
+        if _vnc_sock is not None:
+            _vnc_sock.close()
         return {"ok": False, "error": f"desktop_ws_open error: {e}"}
 
 
@@ -192,6 +208,10 @@ def desktop_ws_close(state, msg):
     _ws_sid = msg.get("session_id", "")
     _ws_sess = state.desktop_ws_sessions.pop(_ws_sid, None)
     if _ws_sess and _ws_sess.get("sock"):
+        try:
+            _ws_sess["sock"].shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         try:
             _ws_sess["sock"].close()
         except Exception:

@@ -2,6 +2,8 @@
 
 import base64
 import json
+import shutil
+import subprocess
 
 import pytest
 
@@ -228,7 +230,9 @@ def test_remote_vnc_assets_prefer_server_local_static(
     assert relay.http_fetch_calls == []
 
 
-def test_remote_local_screen_assets_use_host_helper_http(cap_db, monkeypatch):
+@pytest.mark.parametrize("asset_path", ["app/styles/base.css", "package.json",
+                                       "defaults.json", "mandatory.json"])
+def test_remote_local_screen_assets_use_host_helper_http(cap_db, monkeypatch, asset_path):
     relay = _HttpRelay(b"body{}")
     token = vnc_proxy.register_session(
         "desktop-host", 62966,
@@ -238,16 +242,107 @@ def test_remote_local_screen_assets_use_host_helper_http(cap_db, monkeypatch):
         local_screen=True)
     monkeypatch.setattr(vnc_proxy, "_NOVNC_LOCAL_DIRS", [])
 
-    request = _HttpRequest(
-        "desktop-host", token, "app/styles/base.css")
+    request = _HttpRequest("desktop-host", token, asset_path)
     vnc_proxy.vnc_http_proxy(request)
 
     assert request.completed[0] == 200
     assert request.completed[2] == b"body{}"
     assert relay.calls[-1] == (
-        "novnc_asset", {"path": "app/styles/base.css"})
+        "novnc_asset", {"path": asset_path})
     assert relay.http_fetch_calls == []
     assert relay.http_proxy_calls == []
+
+
+def test_novnc_video_probe_releases_resources_on_success_and_failure():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required to exercise the browser resource lifecycle")
+    probe = b"""
+async function probe() {
+    let gotframe = false;
+    let error = null;
+    let decoder = new VideoDecoder({
+        output: (frame) => { gotframe = true; },
+        error: (e) => { error = e; },
+    });
+    decoder.configure({});
+    decoder.decode({});
+    try {
+        await decoder.flush();
+    } catch (e) {
+        error = e;
+    }
+    return gotframe && error === null;
+}
+"""
+    patched = vnc_proxy._patch_novnc_static_body("core/util/browser.js", probe)
+    assert vnc_proxy._patch_novnc_static_body("core/util/browser.js", patched) == patched
+    harness = """
+import assert from 'node:assert/strict';
+let frameClosed = 0, decoderClosed = 0, failFlush = false;
+class VideoDecoder {
+    constructor(callbacks) { this.callbacks = callbacks; }
+    configure() {}
+    decode() { this.callbacks.output({ close() { frameClosed++; } }); }
+    async flush() { if (failFlush) throw new Error('decode failure'); }
+    close() { decoderClosed++; }
+}
+""" + patched.decode() + """
+assert.equal(await probe(), true);
+assert.equal(frameClosed, 1);
+assert.equal(decoderClosed, 1);
+failFlush = true;
+assert.equal(await probe(), false);
+assert.equal(frameClosed, 2);
+assert.equal(decoderClosed, 2);
+"""
+    result = subprocess.run([node, "--input-type=module", "--eval", harness],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("login_session_id", ["login-1", "login-2"])
+def test_reregistering_desktop_keeps_existing_viewer_streams(cap_db, login_session_id):
+    relay = _Relay()
+    registration = dict(owner_user_id="alice", relay_service=relay,
+                        relay_id="relay-1", local_screen=True)
+    vnc_proxy.register_session("desktop-host", 62966,
+                               login_session_id="login-1", **registration)
+    browser = _BrowserSocket()
+    vnc_proxy._sessions["desktop-host"]["vnc_ws_sessions"]["ws-1"] = {
+        "browser_sock": browser,
+    }
+    vnc_proxy.dispatch_vnc_ws_data("relay-1", "ws-1", "YWJj")
+
+    vnc_proxy.register_session("desktop-host", 62966,
+                               login_session_id=login_session_id, **registration)
+    vnc_proxy.dispatch_vnc_ws_data("relay-1", "ws-1", "ZGVm")
+
+    assert browser.sent == [b"\x82\x03abc", b"\x82\x03def"]
+    assert not browser.closed
+    vnc_proxy.dispatch_vnc_ws_close("relay-1", "ws-1")
+    assert browser.closed
+
+
+@pytest.mark.parametrize("changed", [{"owner_user_id": "bob"}, {"port": 62967}])
+def test_replacing_desktop_target_closes_old_viewers(cap_db, monkeypatch, changed):
+    relay = _Relay()
+    registration = dict(owner_user_id="alice", relay_service=relay,
+                        relay_id="relay-1", local_screen=True, port=62966)
+    vnc_proxy.register_session("desktop-host", **registration)
+    browser = _BrowserSocket()
+    vnc_proxy._sessions["desktop-host"]["vnc_ws_sessions"]["ws-1"] = {
+        "browser_sock": browser,
+    }
+    commands = []
+    monkeypatch.setattr(vnc_proxy, "_send_command_to_relay",
+                        lambda _relay, command: commands.append(command))
+
+    vnc_proxy.register_session("desktop-host", **{**registration, **changed})
+
+    assert browser.closed
+    assert commands == [{"action": "desktop_ws_close", "session_id": "ws-1"}]
+    assert not vnc_proxy._sessions["desktop-host"]["vnc_ws_sessions"]
 
 
 def test_relay_vnc_frames_are_forwarded_to_browser(cap_db):

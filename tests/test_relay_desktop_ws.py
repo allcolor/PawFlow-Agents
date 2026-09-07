@@ -61,7 +61,8 @@ class _Backend:
             req += c
         self.handshake_request = req
         conn.sendall(b"HTTP/1.1 101 Switching Protocols\r\n"
-                     b"Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+                     b"Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+                     + getattr(self, "initial_frame", b""))
         self._ready.set()
         try:
             while True:
@@ -109,28 +110,154 @@ def test_desktop_ws_open_forwards_browser_headers(backend):
     assert b"X-Custom: yes" in backend.handshake_request
 
 
-def test_desktop_ws_open_reaches_host_screen_via_host_helper(
-        backend, monkeypatch):
-    original_create_connection = dt.socket.create_connection
+@pytest.fixture
+def host_helper(backend, monkeypatch):
+    from pawflow_relay._thread_host import _RelayHostHelperMixin
+
+    helper = _RelayHostHelperMixin()
+    helper._host_helper_token = "desktop-test-capability"
+    helper._host_desktop_lifecycle_lock = threading.RLock()
+    helper._local_desktop_procs = [types.SimpleNamespace(poll=lambda: None)]
+    helper._local_desktop_novnc_port = backend.port
+    helper.allow_remote_desktop = True
+    helper._stop_event = threading.Event()
+    helper._log = lambda _message: None
+    original_connect = socket.create_connection
     addresses = []
+    connections = []
+    threads = []
+    relay_thread = threading.get_ident()
 
-    def _create_connection(address, timeout):
+    def connect(address, timeout):
+        if threading.get_ident() != relay_thread:
+            return original_connect(address, timeout=timeout)
         addresses.append(address)
-        return original_create_connection(
-            ("127.0.0.1", address[1]), timeout=timeout)
+        # Only the helper's WSL bridge port is reachable from Docker.
+        if address != ("host.docker.internal", 48123):
+            raise ConnectionRefusedError("Windows desktop port is not on WSL")
+        client, server = socket.socketpair()
+        client.settimeout(timeout)
+        connections.extend((client, server))
+        thread = threading.Thread(
+            target=helper._handle_host_helper_conn_safe,
+            args=(server,), daemon=True)
+        threads.append(thread)
+        thread.start()
+        return client
 
-    monkeypatch.setenv("PAWFLOW_HOST_HELPER", "192.0.2.25:48123")
-    monkeypatch.setattr(dt.socket, "create_connection", _create_connection)
+    monkeypatch.setenv("PAWFLOW_HOST_HELPER", "host.docker.internal:48123")
+    monkeypatch.setenv("PAWFLOW_HOST_HELPER_TOKEN", helper._host_helper_token)
+    monkeypatch.setattr(socket, "create_connection", connect)
+    yield helper, addresses
+    helper._stop_event.set()
+    for connection in connections:
+        try:
+            connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        connection.close()
+    for thread in threads:
+        thread.join(timeout=2)
+        assert not thread.is_alive(), "host desktop tunnel did not close"
 
-    assert dt.desktop_ws_open(
-        _state(),
-        {"session_id": "d-host", "port": backend.port,
-         "ws_path": "/websockify", "local_screen": True},
-        lambda _f: None,
-    ) == {"ok": True}
-    backend.wait_connected()
-    assert addresses == [("192.0.2.25", backend.port)]
-    assert f"Host: 192.0.2.25:{backend.port}".encode() in backend.handshake_request
+
+def test_desktop_ws_open_reaches_host_screen_via_host_helper(
+        backend, host_helper):
+    _, addresses = host_helper
+    state = _state()
+    frames = []
+    greeting = b"RFB 003.008\n"
+    backend.initial_frame = bytes([0x82, len(greeting)]) + greeting
+    try:
+        assert dt.desktop_ws_open(
+            state,
+            {"session_id": "d-host", "port": backend.port,
+             "ws_path": "/websockify", "local_screen": True},
+            lambda frame: frames.append(json.loads(frame)),
+        ) == {"ok": True}
+        backend.wait_connected()
+        assert addresses == [("host.docker.internal", 48123)]
+        assert f"Host: 127.0.0.1:{backend.port}".encode() in backend.handshake_request
+        assert state.desktop_ws_sessions["d-host"]["sock"].gettimeout() is None
+        assert _wait(lambda: any(
+            frame.get("type") == "desktop_ws_data"
+            and base64.b64decode(frame["data"]) == b"RFB 003.008\n"
+            for frame in frames))
+        assert dt.desktop_ws_send(state, {
+            "session_id": "d-host",
+            "data": base64.b64encode(b"client-vnc-data").decode(),
+        }) == {"ok": True}
+        assert _wait(lambda: b"client-vnc-data" in bytes(backend.received))
+    finally:
+        reader = state.desktop_ws_sessions.get("d-host", {}).get("reader")
+        dt.desktop_ws_close(state, {"session_id": "d-host"})
+        if reader:
+            reader.join(timeout=2)
+            assert not reader.is_alive()
+
+
+@pytest.mark.parametrize("failure, error", [
+    ("wrong_token", "Invalid host helper capability"),
+    ("missing_token", "Host helper token is missing"),
+    ("wrong_port", "Desktop port does not match the running host desktop"),
+    ("stopped", "Host desktop is not running"),
+    ("disabled", "Remote desktop is disabled"),
+])
+def test_host_desktop_tunnel_rejects_invalid_connection(
+        backend, host_helper, monkeypatch, failure, error):
+    helper, _ = host_helper
+    port = backend.port
+    if failure == "wrong_token":
+        monkeypatch.setenv("PAWFLOW_HOST_HELPER_TOKEN", "wrong")
+    elif failure == "missing_token":
+        monkeypatch.delenv("PAWFLOW_HOST_HELPER_TOKEN")
+    elif failure == "wrong_port":
+        port += 1
+    elif failure == "stopped":
+        helper._local_desktop_procs[0].poll = lambda: 1
+    elif failure == "disabled":
+        helper.allow_remote_desktop = False
+    state = _state()
+    result = dt.desktop_ws_open(
+        state,
+        {"session_id": "d-rejected", "port": port,
+         "local_screen": True}, lambda _frame: None)
+    assert result["ok"] is False
+    assert error in result["error"]
+    assert not state.desktop_ws_sessions
+    assert not backend.handshake_request
+
+
+def test_desktop_commands_preserve_wire_order_under_pool_contention():
+    from pawflow_relay._relay_msg_loop import ConnSession
+
+    session = object.__new__(ConnSession)
+    deferred = []
+    executed = []
+    session.pool = types.SimpleNamespace(
+        submit=lambda fn, *args: deferred.append((fn, args)))
+    session.inflight_lock = threading.Lock()
+    session.inflight_cmds = {}
+    session.send_lock = threading.Lock()
+    session.socket_diag = {}
+    session.sock = object()
+    session.ws_frame_send = lambda *_args: None
+    session._fence_refuses = lambda _msg: False
+    session.execute_command = lambda msg, **_kwargs: (
+        executed.append((msg["action"], msg.get("data"))) or {"ok": True})
+    commands = [
+        {"action": "desktop_ws_send", "data": "first"},
+        {"action": "desktop_ws_send", "data": "second"},
+        {"action": "desktop_ws_close"},
+    ]
+    for index, command in enumerate(commands):
+        session._handle_command({"request_id": str(index), **command})
+    for fn, args in reversed(deferred):
+        fn(*args)
+
+    assert executed == [("desktop_ws_send", "first"),
+                        ("desktop_ws_send", "second"),
+                        ("desktop_ws_close", None)]
 
 
 def test_desktop_ws_open_streams_data_with_opcode(backend):

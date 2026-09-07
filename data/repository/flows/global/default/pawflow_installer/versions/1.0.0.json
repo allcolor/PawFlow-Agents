@@ -31,6 +31,90 @@
         "routes": [
           {
             "method": "GET",
+            "pattern": "/install/assets/installer-esper.css",
+            "relationship": "GET:/install/assets/installer-esper.css",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/installer-esper.js",
+            "relationship": "GET:/install/assets/installer-esper.js",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/scene-00.jpg",
+            "relationship": "GET:/install/assets/scene-00.jpg",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/scene-01.jpg",
+            "relationship": "GET:/install/assets/scene-01.jpg",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/scene-02.jpg",
+            "relationship": "GET:/install/assets/scene-02.jpg",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/scene-03.jpg",
+            "relationship": "GET:/install/assets/scene-03.jpg",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/scene-04.jpg",
+            "relationship": "GET:/install/assets/scene-04.jpg",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/scene-05.jpg",
+            "relationship": "GET:/install/assets/scene-05.jpg",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/scene-06.jpg",
+            "relationship": "GET:/install/assets/scene-06.jpg",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/scene-07.jpg",
+            "relationship": "GET:/install/assets/scene-07.jpg",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/scene-08.jpg",
+            "relationship": "GET:/install/assets/scene-08.jpg",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/ambient.mp3",
+            "relationship": "GET:/install/assets/ambient.mp3",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/zoom-in.mp3",
+            "relationship": "GET:/install/assets/zoom-in.mp3",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/assets/zoom-out.mp3",
+            "relationship": "GET:/install/assets/zoom-out.mp3",
+            "public": true
+          },
+          {
+            "method": "GET",
             "pattern": "/",
             "relationship": "GET:/",
             "public": true
@@ -153,6 +237,211 @@
       "label": "Install UI",
       "description": "Processes the install ui step using generateFlowFile."
     },
+    "esper_installer_esper_css": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/installer-esper.css",
+        "content_type": "text/css; charset=utf-8",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "text/css; charset=utf-8",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer installer-esper.css",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_installer_esper_js": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/installer-esper.js",
+        "content_type": "application/javascript; charset=utf-8",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "application/javascript; charset=utf-8",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer installer-esper.js",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_scene_00_jpg": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/scene-00.jpg",
+        "content_type": "image/jpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "image/jpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer scene-00.jpg",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_scene_01_jpg": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/scene-01.jpg",
+        "content_type": "image/jpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "image/jpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer scene-01.jpg",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_scene_02_jpg": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/scene-02.jpg",
+        "content_type": "image/jpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "image/jpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer scene-02.jpg",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_scene_03_jpg": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/scene-03.jpg",
+        "content_type": "image/jpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "image/jpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer scene-03.jpg",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_scene_04_jpg": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/scene-04.jpg",
+        "content_type": "image/jpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "image/jpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer scene-04.jpg",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_scene_05_jpg": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/scene-05.jpg",
+        "content_type": "image/jpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "image/jpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer scene-05.jpg",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_scene_06_jpg": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/scene-06.jpg",
+        "content_type": "image/jpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "image/jpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer scene-06.jpg",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_scene_07_jpg": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/scene-07.jpg",
+        "content_type": "image/jpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "image/jpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer scene-07.jpg",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_scene_08_jpg": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/scene-08.jpg",
+        "content_type": "image/jpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "image/jpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer scene-08.jpg",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_ambient_mp3": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/ambient.mp3",
+        "content_type": "audio/mpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "audio/mpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer ambient.mp3",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_zoom_in_mp3": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/zoom-in.mp3",
+        "content_type": "audio/mpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "audio/mpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer zoom-in.mp3",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "esper_zoom_out_mp3": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_file": "esper/zoom-out.mp3",
+        "content_type": "audio/mpeg",
+        "custom_attributes": {
+          "http.response.header.Content-Type": "audio/mpeg",
+          "http.response.header.Cache-Control": "private, no-cache",
+          "http.response.header.X-Content-Type-Options": "nosniff"
+        }
+      },
+      "label": "Installer zoom-out.mp3",
+      "description": "Load a packaged ESPER presentation asset."
+    },
+    "send_esper_asset": {
+      "type": "handleHTTPResponse",
+      "parameters": {
+        "service_id": "http_listener",
+        "content_type": "application/octet-stream"
+      },
+      "label": "Send ESPER asset",
+      "description": "Deliver the exact packaged asset using its declared content type."
+    },
     "install_api": {
       "type": "installBootstrap",
       "parameters": {},
@@ -193,6 +482,174 @@
     }
   },
   "relations": [
+    {
+      "from": "http_in",
+      "to": "esper_installer_esper_css",
+      "type": "GET:/install/assets/installer-esper.css",
+      "relation_id": "rel_http_esper_installer_esper_css"
+    },
+    {
+      "from": "esper_installer_esper_css",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_installer_esper_css"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_installer_esper_js",
+      "type": "GET:/install/assets/installer-esper.js",
+      "relation_id": "rel_http_esper_installer_esper_js"
+    },
+    {
+      "from": "esper_installer_esper_js",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_installer_esper_js"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_scene_00_jpg",
+      "type": "GET:/install/assets/scene-00.jpg",
+      "relation_id": "rel_http_esper_scene_00_jpg"
+    },
+    {
+      "from": "esper_scene_00_jpg",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_scene_00_jpg"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_scene_01_jpg",
+      "type": "GET:/install/assets/scene-01.jpg",
+      "relation_id": "rel_http_esper_scene_01_jpg"
+    },
+    {
+      "from": "esper_scene_01_jpg",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_scene_01_jpg"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_scene_02_jpg",
+      "type": "GET:/install/assets/scene-02.jpg",
+      "relation_id": "rel_http_esper_scene_02_jpg"
+    },
+    {
+      "from": "esper_scene_02_jpg",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_scene_02_jpg"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_scene_03_jpg",
+      "type": "GET:/install/assets/scene-03.jpg",
+      "relation_id": "rel_http_esper_scene_03_jpg"
+    },
+    {
+      "from": "esper_scene_03_jpg",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_scene_03_jpg"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_scene_04_jpg",
+      "type": "GET:/install/assets/scene-04.jpg",
+      "relation_id": "rel_http_esper_scene_04_jpg"
+    },
+    {
+      "from": "esper_scene_04_jpg",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_scene_04_jpg"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_scene_05_jpg",
+      "type": "GET:/install/assets/scene-05.jpg",
+      "relation_id": "rel_http_esper_scene_05_jpg"
+    },
+    {
+      "from": "esper_scene_05_jpg",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_scene_05_jpg"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_scene_06_jpg",
+      "type": "GET:/install/assets/scene-06.jpg",
+      "relation_id": "rel_http_esper_scene_06_jpg"
+    },
+    {
+      "from": "esper_scene_06_jpg",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_scene_06_jpg"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_scene_07_jpg",
+      "type": "GET:/install/assets/scene-07.jpg",
+      "relation_id": "rel_http_esper_scene_07_jpg"
+    },
+    {
+      "from": "esper_scene_07_jpg",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_scene_07_jpg"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_scene_08_jpg",
+      "type": "GET:/install/assets/scene-08.jpg",
+      "relation_id": "rel_http_esper_scene_08_jpg"
+    },
+    {
+      "from": "esper_scene_08_jpg",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_scene_08_jpg"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_ambient_mp3",
+      "type": "GET:/install/assets/ambient.mp3",
+      "relation_id": "rel_http_esper_ambient_mp3"
+    },
+    {
+      "from": "esper_ambient_mp3",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_ambient_mp3"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_zoom_in_mp3",
+      "type": "GET:/install/assets/zoom-in.mp3",
+      "relation_id": "rel_http_esper_zoom_in_mp3"
+    },
+    {
+      "from": "esper_zoom_in_mp3",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_zoom_in_mp3"
+    },
+    {
+      "from": "http_in",
+      "to": "esper_zoom_out_mp3",
+      "type": "GET:/install/assets/zoom-out.mp3",
+      "relation_id": "rel_http_esper_zoom_out_mp3"
+    },
+    {
+      "from": "esper_zoom_out_mp3",
+      "to": "send_esper_asset",
+      "type": "success",
+      "relation_id": "rel_send_esper_zoom_out_mp3"
+    },
     {
       "from": "http_in",
       "to": "redirect_to_install",

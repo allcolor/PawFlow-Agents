@@ -4,20 +4,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PawFlow Installer</title>
-<style>:root{color-scheme:dark;--bg:#0d1020;--panel:#12172a;--line:#26304a;--field:#0b1020;--text:#e6edf7;--muted:#9aa7bd;--green:#1e8f4d;--amber:#ffcf66;--danger:#ff7a7a}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif}.wrap{max-width:1120px;margin:0 auto;padding:36px 24px}.badge{display:inline-block;background:var(--green);color:white;border-radius:6px;padding:4px 8px;font-size:12px}.panel{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:22px;margin-top:18px}.layout{display:grid;grid-template-columns:minmax(220px,280px) 1fr;gap:18px}.steps{display:grid;gap:8px;align-content:start}.step{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:6px;padding:10px;background:#0f1424;color:var(--muted);text-align:left}.step.current{border-color:var(--green);color:var(--text)}.step.done{color:#9ff0bd}.num{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:999px;background:#1b2440;font-size:12px}.step.done .num,.step.current .num{background:var(--green);color:white}.formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}.muted{color:var(--muted)}.warn{color:var(--amber)}.error{color:var(--danger);min-height:1.2em}label{display:block;margin:12px 0 6px}input,select{width:100%;background:var(--field);color:var(--text);border:1px solid #394764;border-radius:6px;padding:10px}input[type=checkbox]{width:auto}button{background:var(--green);color:white;border:0;border-radius:6px;padding:10px 14px;font-weight:700}button.secondary{background:#25304a}button:disabled{opacity:.45}.actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}.screen{display:none}.screen.active{display:block}pre{white-space:pre-wrap;background:var(--field);border:1px solid var(--line);border-radius:6px;padding:12px;max-height:260px;overflow:auto}.kv{display:grid;grid-template-columns:190px 1fr;gap:8px;margin-top:12px}.kv div{padding:8px;border-bottom:1px solid var(--line)}.pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:4px 4px 0 0;color:var(--muted)}.vnc-backdrop{position:fixed;inset:0;background:rgba(4,7,16,.78);display:grid;place-items:center;padding:18px;z-index:20}.vnc-backdrop[hidden]{display:none}.vnc-modal{width:min(1120px,96vw);height:min(760px,92vh);background:var(--panel);border:1px solid var(--line);border-radius:8px;display:grid;grid-template-rows:auto 1fr}.vnc-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line)}.vnc-head strong{font-size:14px}.vnc-modal iframe{width:100%;height:100%;border:0;background:#050814}@media(max-width:820px){.layout{grid-template-columns:1fr}.steps{grid-template-columns:1fr 1fr}.step{font-size:13px}.kv{grid-template-columns:1fr}.vnc-modal{width:100vw;height:100vh;border-radius:0}}
-</style>
-<style>.param-help{display:inline-grid;place-items:center;width:15px;height:15px;margin-left:5px;border-radius:50%;border:1px solid var(--line);background:var(--field);color:var(--muted);font-size:10px;padding:0;vertical-align:middle}.param-fill{width:38px;min-width:38px;height:38px;padding:0;border:1px solid var(--green);background:var(--field);color:var(--green);font-size:11px}.param-row{display:flex;gap:6px;align-items:flex-start}.param-row input,.param-row select,.param-row textarea{min-width:0;flex:1}.helper-pop{position:fixed;z-index:40;width:min(620px,calc(100vw - 24px));max-height:min(520px,calc(100vh - 24px));display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 12px 36px rgba(0,0,0,.55);overflow:hidden}.helper-head{display:flex;align-items:center;gap:8px;padding:9px 11px;background:#0f1424;border-bottom:1px solid var(--line)}.helper-head strong{flex:1;font-size:13px}.helper-body{padding:12px;overflow:auto;font-size:13px;line-height:1.45}.helper-item{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start;border:1px solid var(--line);border-radius:6px;padding:9px;margin-bottom:7px;background:var(--field)}.helper-item small{display:block;color:var(--muted);margin-top:3px}.param-help:hover,.param-fill:hover{background:var(--field);color:var(--green);border-color:var(--green)}</style>
+<link rel="stylesheet" href="/install/assets/installer-esper.css">
+<script src="/install/assets/installer-esper.js"></script>
 </head>
 <body>
+<header class="installer-header">
+<div class="installer-brand"><div class="installer-mark" aria-hidden="true"><span>P</span></div><div><h1>PawFlow Installer</h1><small>FIRST LIGHT / INITIALIZATION SEQUENCE</small></div></div>
+<div class="installer-preferences"><span class="badge">BOOTSTRAP HTTPS</span><button type="button" id="esper-motion" aria-pressed="true">Motion full</button><button type="button" id="esper-sound" aria-pressed="false">Start sound</button><label class="installer-volume"><span class="sr-only">Sound volume</span><input id="esper-volume" type="range" min="0" max="100" value="65"></label></div>
+</header>
 <main class="wrap">
-<span class="badge">bootstrap HTTPS</span>
-<h1>PawFlow Installer</h1>
-<p class="muted">Complete each step in order. Relay image profiles are prepared by the installer before this bootstrap UI opens. The last step applies the configuration and opens the first conversation.</p>
-<section class="panel">
+<div class="esper-view" id="esper-view">
+<canvas id="esper-photo" aria-hidden="true"></canvas><div class="esper-grain" aria-hidden="true"></div>
+<button type="button" id="esper-portal" hidden><span id="esper-portal-label">ENHANCE / NEXT STEP</span></button>
+<div class="esper-scanner" aria-hidden="true"></div>
+</div>
+<div class="esper-caption" aria-hidden="true"><p class="eyebrow" id="esper-chapter">01 / IDENTITY</p><h2 id="esper-title">It starts with you.</h2><p id="esper-description">Create the account that will own this installation.</p><small>SCROLL THE PHOTOGRAPH TO EXPLORE / SELECT A FRAME TO CONTINUE</small></div>
+<div class="esper-telemetry" aria-hidden="true"><span>SEQUENCE<b id="esper-depth">1.00 / 08</b></span><span>MAGNIFICATION<b id="esper-zoom">1.00×</b></span><span>CONNECTION<b>LOCAL / SECURE</b></span></div>
+<p id="esper-media-note" role="status"></p>
+<section class="panel installer-panel">
 <div class="layout">
-<nav class="steps" id="steps">
+<nav class="steps" id="steps" aria-label="Installation steps">
 </nav>
-<form id="wizard">
+<form id="wizard" novalidate>
 <section class="screen active" data-step="0">
 <h2>Admin User</h2>
 <div class="formgrid">
@@ -161,17 +169,19 @@
 <div class="kv" id="review">
 </div>
 </section>
-<p class="error" id="error">
+<p class="error" id="error" role="alert">
 </p>
 <div class="actions">
-<button type="button" class="secondary" id="back">Back</button>
-<button type="button" id="next">Next</button>
+<button type="button" class="secondary" id="back">← Pull back</button>
+<button type="button" id="next">Continue →</button>
 <button type="submit" id="finalize" style="display:none">Finalize installation</button>
 </div>
+<p class="install-status" id="install-message" role="status" aria-live="polite"></p>
 </form>
 </div>
 </section>
 </main>
+<div id="esper-status" class="sr-only" role="status" aria-live="polite"></div>
 
 <div class="vnc-backdrop" id="vnc_dialog" hidden>
 <div class="vnc-modal" role="dialog" aria-modal="true" aria-label="Server login">
@@ -187,6 +197,10 @@
 const names = ['Admin User','OAuth Configuration','Private Gateway','LLM Services','Relay Server','Voice I/O','First Conversation','Finalize'];
 let step = 0;
 let status = null;
+let maxVisited = 0;
+let navigating = false;
+let finalizing = false;
+let esper = null;
 const form = document.getElementById('wizard');
 const screens = [...document.querySelectorAll('.screen')];
 const steps = document.getElementById('steps');
@@ -316,20 +330,23 @@ let firstConversation = {title:'Welcome to PawFlow', relay_id:'', agents:[{insta
 function drawSteps() {
   steps.innerHTML = names.map((n, i) => {
     const cls = 'step ' + (i === step ? 'current ' : '') + (i < step ? 'done' : '');
-    return '<div class="' + cls + '"><span class="num">' + (i + 1) + '</span><span>' + escapeHtml(n) + '</span></div>';
+    return '<button type="button" class="' + cls + '" data-step-target="' + i + '" title="' + escapeAttr(n) + '" aria-label="Step ' + (i + 1) + ': ' + escapeAttr(n) + '"' + (i === step ? ' aria-current="step"' : '') + (i > maxVisited || navigating || finalizing ? ' disabled' : '') + '><span class="num">' + String(i + 1).padStart(2, '0') + '</span><span class="step-label">' + escapeHtml(n) + '</span></button>';
   }).join('');
 }
 function show() {
   if (step === 6) { collectLlmEditorValues(); renderFirstConversation(); }
   renderRelayServer();
   renderVoiceServices();
-  screens.forEach((s, i) => s.classList.toggle('active', i === step));
-  document.getElementById('back').disabled = step === 0;
+  screens.forEach((s, i) => { s.classList.toggle('active', i === step); s.inert = i !== step; });
+  document.getElementById('back').disabled = step === 0 || navigating || finalizing;
+  document.getElementById('next').disabled = navigating || finalizing;
+  document.getElementById('finalize').disabled = navigating || finalizing;
   document.getElementById('next').style.display = step === names.length - 1 ? 'none' : '';
   document.getElementById('finalize').style.display = step === names.length - 1 ? '' : 'none';
   err.textContent = '';
   drawSteps();
-  renderReview();
+  if (step === names.length - 1) renderReview();
+  esper?.setStep(step);
 }
 function requireFields(list) {
   for (const name of list) {
@@ -526,10 +543,10 @@ async function openLlmParamHelper(btn) {
       html += '<div class="helper-item"><div><strong>' + escapeHtml(item.label || item.value || '') + '</strong>' + (item.description ? '<small>' + escapeHtml(item.description) + '</small>' : '') + '</div><button type="button" data-helper-apply="' + index + '" data-helper-param="' + escapeAttr(key) + '" data-helper-value="' + escapeAttr(value) + '">Use</button></div>';
     });
     const pop = document.querySelector('.helper-pop .helper-body');
-    if (pop) pop.innerHTML = html;
+    if (pop) { pop.innerHTML = html; positionPopup(pop.parentElement, btn); }
   } catch (e) {
     const pop = document.querySelector('.helper-pop .helper-body');
-    if (pop) pop.innerHTML = '<p class="error">' + escapeHtml(e.message) + '</p>';
+    if (pop) { pop.innerHTML = '<p class="error">' + escapeHtml(e.message) + '</p>'; positionPopup(pop.parentElement, btn); }
   }
 }
 function applyLlmHelperValue(btn) {
@@ -902,6 +919,14 @@ async function refresh() {
   document.getElementById('state').textContent = JSON.stringify(status, null, 2);
 }
 document.getElementById('save_credentials').addEventListener('click', saveCredentials);
+document.addEventListener('click', event => {
+  const help = event.target.closest('[data-help-key]');
+  const fill = event.target.closest('[data-helper-key]');
+  const apply = event.target.closest('[data-helper-apply]');
+  if (help) showLlmParamHelp(help);
+  else if (fill) openLlmParamHelper(fill);
+  else if (apply) applyLlmHelperValue(apply);
+});
 document.getElementById('vnc_close').addEventListener('click', closeVncDialog);
 document.getElementById('add_oauth_provider').addEventListener('click', addOauthProvider);
 document.getElementById('oauth_provider_list').addEventListener('change', handleOauthChange);
@@ -937,24 +962,96 @@ document.getElementById('first_conversation_title').addEventListener('input', co
 document.getElementById('first_conversation_relay').addEventListener('change', collectFirstConversationValues);
 field('admin_password').addEventListener('input', clearAdminPasswordValidity);
 field('admin_password_confirm').addEventListener('input', clearAdminPasswordValidity);
-document.getElementById('back').addEventListener('click', () => { if (step > 0) { step--; show(); } });
-document.getElementById('next').addEventListener('click', () => {
-  try {
-    if (validate() && step < names.length - 1) { step++; show(); }
-  } catch (e) {
-    err.textContent = 'Installer UI error: ' + (e && e.message ? e.message : String(e));
-    console.error(e);
+// Every forward route revalidates preceding steps, including previously visited ones.
+function validateUntil(target) {
+  const previous = step;
+  for (let index = 0; index < target; index++) {
+    step = index;
+    if (!validate()) {
+      const message = err.textContent || 'Complete the required fields before continuing.';
+      maxVisited = Math.min(maxVisited, index);
+      show();
+      err.textContent = message;
+      screens[index].querySelector(':invalid')?.reportValidity();
+      return false;
+    }
   }
+  step = previous;
+  return true;
+}
+async function goToStep(target) {
+  if (navigating || finalizing || target === step || target < 0 || target >= names.length) return;
+  if (target > maxVisited && target !== step + 1) return;
+  if (!document.getElementById('vnc_dialog').hidden) return;
+  try {
+    if (target > step && !validateUntil(target)) return;
+    closeHelperPopups();
+    const previous = step;
+    navigating = true;
+    drawSteps();
+    document.getElementById('back').disabled = true;
+    document.getElementById('next').disabled = true;
+    document.getElementById('finalize').disabled = true;
+    await esper.transition(previous, target, () => {
+      step = target;
+      maxVisited = Math.max(maxVisited, target);
+      show();
+      screens[target].scrollTop = 0;
+    });
+  } catch (error) {
+    err.textContent = 'Could not change step: ' + error.message;
+  } finally {
+    navigating = false;
+    document.getElementById('back').disabled = step === 0 || finalizing;
+    document.getElementById('next').disabled = finalizing;
+    document.getElementById('finalize').disabled = finalizing;
+    drawSteps();
+  }
+}
+document.getElementById('back').addEventListener('click', () => goToStep(step - 1));
+document.getElementById('next').addEventListener('click', () => goToStep(step + 1));
+steps.addEventListener('click', event => {
+  const button = event.target.closest('[data-step-target]');
+  if (button && !button.disabled) goToStep(Number(button.dataset.stepTarget));
 });
 form.addEventListener('submit', async e => {
   e.preventDefault();
-  if (!validate()) return;
-  const r = await fetch('/install/api/finalize', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(values())});
-  const data = await r.json();
-  document.getElementById('state').textContent = JSON.stringify(data, null, 2);
-  if (!r.ok || data.error) { err.textContent = data.error || 'Finalization failed'; return; }
-  if (data.install_complete) window.location.href='/chat';
+  if (navigating || finalizing) return;
+  if (step < names.length - 1) { goToStep(step + 1); return; }
+  const message = document.getElementById('install-message');
+  try {
+    if (!validateUntil(names.length)) return;
+    const payload = values();
+    finalizing = true;
+    form.inert = true;
+    esper.setLocked(true);
+    drawSteps();
+    document.getElementById('finalize').disabled = true;
+    err.textContent = '';
+    message.textContent = 'Applying your configuration. This may take a moment...';
+    const r = await fetch('/install/api/finalize', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const data = await r.json();
+    document.getElementById('state').textContent = JSON.stringify(data, null, 2);
+    if (!r.ok || data.error) throw new Error(data.error || 'Finalization failed');
+    if (data.install_complete) {
+      message.textContent = 'Your runtime is ready. Opening your first conversation...';
+      window.location.href='/chat';
+    } else {
+      message.textContent = 'Configuration received. Review the installer status before retrying.';
+    }
+  } catch (error) {
+    message.textContent = '';
+    err.textContent = 'Installation could not finish: ' + error.message;
+  } finally {
+    finalizing = false;
+    form.inert = false;
+    esper.setLocked(false);
+    document.getElementById('finalize').disabled = false;
+    drawSteps();
+  }
 });
+esper = createInstallerEsper(goToStep);
+window.InstallerEsper = esper;
 renderLlmServices();
 renderRelayServer();
 renderVoiceServices();

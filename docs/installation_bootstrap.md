@@ -215,7 +215,7 @@ generated, startup must fail loudly instead of falling back to plain HTTP.
 
 The installer template is stored at
 `data/repository/flows/global/default/pawflow_installer/versions/1.0.0.json`.
-The browser UI is a single versioned flow asset at
+The browser UI is the versioned flow asset at
 `data/repository/flows/global/default/pawflow_installer/versions/assets/install.html`,
 referenced by the installer flow through `generateFlowFile.content_file`. The
 template defines a public `GET /` redirect to `/install`, `/install`, dynamic
@@ -253,6 +253,42 @@ failed-finalization rollback, and controlled internal restarts are the only
 explicitly authorized lifecycle mutations.
 
 ## Wizard Steps
+
+The browser wizard uses the ESPER photographic interface: nine generated images
+are physically nested within their measured frames, with a forward zoom between
+steps and a reverse zoom on return. The eight real configuration steps and their
+API payloads remain unchanged. A fixed, scrollable form stays readable beside
+the camera; on phones the photograph sits above the form.
+
+Continue, the photograph frame, and wheel/swipe navigation on the photograph all
+use the same step validation. The step rail revisits unlocked steps; going forward
+revalidates all preceding steps. Form scrolling, typing, helper popups and the
+embedded OAuth desktop retain their own controls. Enter advances the current
+form step and only submits from Finalize. Parameter help and suggestion buttons
+open working popups that stay within the viewport after suggestions load.
+Transitions and finalization prevent
+duplicate submissions. An API failure keeps the form values available for retry.
+
+Sound and volume controls operate a continuous looping soundtrack plus zoom and
+click effects. Audio starts after a browser-permitted user gesture and pauses in
+background tabs or while the embedded login desktop is open. Only sound, volume
+and motion preferences are stored locally, never setup fields or credentials.
+Reduced motion bypasses camera travel. Failure to load photographs leaves the
+configuration form usable.
+
+All presentation files live beside the HTML in `versions/assets/esper/`.
+Exact `GET /install/assets/<filename>` routes serve them through existing
+`generateFlowFile` and `handleHTTPResponse` tasks, behind the same bootstrap
+private gateway. File names and MIME types are declared in the flow; no arbitrary
+filesystem path is accepted. Assets use private revalidation and require neither
+the public website nor a CDN. The provenance manifest records the approved mockup
+sources. Changes must ship the HTML, flow definition and the entire asset folder
+together, including in persistent-template refreshes and distribution packages.
+
+`tests/test_installer_esper.py` verifies binary asset delivery, backward/forward
+navigation, validations, preserved setup payloads, finalization retry, mobile,
+sound, and reduced motion. Browser checks intercept installation APIs; they never
+configure or finalize the running server.
 
 1. Admin user
    - create or update the local admin user

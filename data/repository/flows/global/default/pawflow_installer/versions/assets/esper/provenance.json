@@ -1,0 +1,56 @@
+{
+  "source": "Approved PawFlow ESPER installer mockup, 2026-09-06",
+  "image_service": "gpt_image_service",
+  "music_service": "suno_music_service",
+  "files": [
+    {
+      "path": "scene-00.jpg",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/esper-apartment.jpg"
+    },
+    {
+      "path": "scene-01.jpg",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/depth-01.jpg"
+    },
+    {
+      "path": "scene-02.jpg",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/depth-02.jpg"
+    },
+    {
+      "path": "scene-03.jpg",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/depth-03.jpg"
+    },
+    {
+      "path": "scene-04.jpg",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/depth-04.jpg"
+    },
+    {
+      "path": "scene-05.jpg",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/depth-05.jpg"
+    },
+    {
+      "path": "scene-06.jpg",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/depth-06.jpg"
+    },
+    {
+      "path": "scene-07.jpg",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/depth-07.jpg"
+    },
+    {
+      "path": "scene-08.jpg",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/depth-08.jpg"
+    },
+    {
+      "path": "ambient.mp3",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/esper-suno-v2.mp3"
+    },
+    {
+      "path": "zoom-in.mp3",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/zoom-reference-a.mp3"
+    },
+    {
+      "path": "zoom-out.mp3",
+      "source": "80c37670429e4f56/installer-mockups/assistant/assets/zoom-reference-b.mp3"
+    }
+  ],
+  "audio_notes": "Ambient track and reference zoom effects reused from the user-approved mockup. No external media URLs are needed by the installed wizard."
+}

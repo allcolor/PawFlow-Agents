@@ -140,9 +140,12 @@ def browser():
 
 
 @pytest.fixture
-def wizard(browser):
+def wizard(browser, request):
     context = browser.new_context(viewport={"width": 1440, "height": 1000}, reduced_motion="reduce")
     page = context.new_page()
+    if getattr(request, "param", None) == "controlled_clock":
+        # Install before the page registers timers or animation callbacks.
+        page.clock.install(time="2026-01-01T00:00:00Z")
     api = {"posts": [], "held": []}
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -265,14 +268,22 @@ def test_finalize_is_explicit_single_flight_and_retryable(wizard):
     assert len([path for path, _ in api["posts"] if path.endswith("/finalize")]) == 2
 
 
+@pytest.mark.parametrize("wizard", ["controlled_clock"], indirect=True)
 def test_animated_photos_sound_and_login_do_not_reset_form(wizard):
     page, _ = wizard
     admin(page)
     page.locator("#esper-motion").click()
+    # A late poll can miss the entire transition; hold a real intermediate frame.
+    page.clock.pause_at("2026-01-01T01:00:00Z")
     page.locator("#esper-portal").click()
-    page.wait_for_function("InstallerEsper.state.busy && InstallerEsper.state.depth > .1 && InstallerEsper.state.depth < .9")
+    page.clock.run_for(800)
+    assert page.evaluate("InstallerEsper.state.busy && InstallerEsper.state.depth > .1 && InstallerEsper.state.depth < .9")
     assert page.locator("#wizard").evaluate("(el)=>el.inert")
+    page.clock.run_for(1000)
     at_step(page, 1)
+    assert page.evaluate("InstallerEsper.state.depth") == 1
+    assert not page.locator("#wizard").evaluate("(el)=>el.inert")
+    page.clock.resume()
     page.wait_for_function("InstallerEsper.state.musicTime > .1")
     first_time = page.evaluate("InstallerEsper.state.musicTime")
     page.locator("#back").click()

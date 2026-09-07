@@ -1,6 +1,8 @@
 import json
 import subprocess
+import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -55,7 +57,7 @@ def test_web_search_service_schema_is_fully_supported_by_chat_ui():
     assert "action$('update_service'" in form_ui
 
 
-def test_search_cli_runs_server_binary_with_isolated_scoped_keys(monkeypatch):
+def test_search_cli_runs_server_binary_with_isolated_scoped_keys(monkeypatch, tmp_path):
     service = _connected_service({
         "brave_api_key": "scoped-brave-secret",
         "providers": "brave",
@@ -64,11 +66,17 @@ def test_search_cli_runs_server_binary_with_isolated_scoped_keys(monkeypatch):
     captured = {}
     monkeypatch.setenv("BRAVE_API_KEY", "inherited-brave-secret")
     monkeypatch.setenv("SEARCH_KEYS_EXA", "inherited-exa-secret")
+    monkeypatch.setattr(
+        "services.web_search_service.tempfile",
+        SimpleNamespace(TemporaryDirectory=lambda **kwargs: tempfile.TemporaryDirectory(
+            dir=tmp_path, **kwargs)),
+    )
 
     def fake_run(command, **kwargs):
         captured["command"] = command
         captured["env"] = kwargs["env"]
         captured["timeout"] = kwargs["timeout"]
+        assert Path(kwargs["env"]["XDG_CONFIG_HOME"]).parent.is_dir()
         return subprocess.CompletedProcess(command, 0, stdout=json.dumps({
             "status": "success",
             "results": [],
@@ -87,7 +95,11 @@ def test_search_cli_runs_server_binary_with_isolated_scoped_keys(monkeypatch):
     assert captured["env"]["SEARCH_KEYS_BRAVE"] == "scoped-brave-secret"
     assert "BRAVE_API_KEY" not in captured["env"]
     assert "SEARCH_KEYS_EXA" not in captured["env"]
-    assert captured["env"]["XDG_CONFIG_HOME"].startswith("/tmp/pawflow-search-")
+    config_dir = Path(captured["env"]["XDG_CONFIG_HOME"])
+    assert config_dir.name == "config"
+    assert config_dir.parent.parent == tmp_path
+    assert config_dir.parent.name.startswith("pawflow-search-")
+    assert not config_dir.parent.exists()
     assert captured["timeout"] == 12
 
 

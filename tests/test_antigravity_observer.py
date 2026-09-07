@@ -773,6 +773,7 @@ def test_observer_proxy_log_ready_requires_current_backend(tmp_path):
 
 
 def test_observer_tmux_starts_agy_without_prompt_injection(monkeypatch):
+    from types import SimpleNamespace
     from core.antigravity_observer_pool import AntigravityObserverPool
 
     calls = []
@@ -787,7 +788,9 @@ def test_observer_tmux_starts_agy_without_prompt_injection(monkeypatch):
         return _Run()
 
     monkeypatch.setattr("core.antigravity_observer_pool.docker_cmd", lambda: ["docker"])
-    monkeypatch.setattr("core.antigravity_observer_pool.subprocess.run", fake_run)
+    # Keep unrelated threads on the real stdlib subprocess module.
+    monkeypatch.setattr("core.antigravity_observer_pool.subprocess",
+                        SimpleNamespace(run=fake_run))
 
     AntigravityObserverPool()._start_agy_tmux(
         name="container", container_workdir="/cc_sessions_host/u/c/a",

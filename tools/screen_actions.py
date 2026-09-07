@@ -51,7 +51,7 @@ def handle_screen_action(action: str, req: dict) -> dict:
     """
     if os.environ.get(_CHILD_ENV) != "1":
         mode = (os.environ.get("PAWFLOW_SCREEN_MODE") or "").strip().lower()
-        if mode != "cua":
+        if mode != "cua" or action == "screen_keyboard_state":
             return _screen_action_subprocess(action, req)
         try:
             from tools.screen_actions_cua import handle_screen_action_cua
@@ -71,6 +71,7 @@ def _handle_screen_action_direct(action: str, req: dict) -> dict:
         "screen_move": _move,
         "screen_scroll": _scroll,
         "screen_mouse_position": _mouse_position,
+        "screen_keyboard_state": _keyboard_state,
         "screen_status": _status_pawflow,
         "screen_windows": _cua_only,
         "screen_window_state": _cua_only,
@@ -82,6 +83,39 @@ def _handle_screen_action_direct(action: str, req: dict) -> dict:
         return fn(req)
     except Exception as e:
         return {"error": str(e)}
+
+
+def _keyboard_state(req):
+    """Read the selected desktop LED without an external Python or xset."""
+    import ctypes
+
+    if sys.platform == "win32":
+        return {"numlock": bool(ctypes.windll.user32.GetKeyState(0x90) & 1)}
+    if not sys.platform.startswith("linux"):
+        return {"numlock": None}
+    x11 = ctypes.CDLL("libX11.so.6")
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+    x11.XInternAtom.restype = ctypes.c_ulong
+    x11.XkbGetNamedIndicator.argtypes = [
+        ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int), ctypes.c_void_p, ctypes.c_void_p]
+    x11.XkbGetNamedIndicator.restype = ctypes.c_int
+    display_name = req.get("display")
+    display = x11.XOpenDisplay(display_name.encode() if display_name else None)
+    if not display:
+        return {"numlock": None}
+    try:
+        atom = x11.XInternAtom(display, b"Num Lock", 1)
+        state = ctypes.c_int()
+        if atom and x11.XkbGetNamedIndicator(
+                display, atom, None, ctypes.byref(state), None, None):
+            return {"numlock": bool(state.value)}
+        return {"numlock": None}
+    finally:
+        x11.XCloseDisplay(display)
 
 
 def _status_pawflow(req: dict) -> dict:

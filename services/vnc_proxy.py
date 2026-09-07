@@ -577,44 +577,106 @@ _PAWFLOW_NOVNC_CLIENT_SCRIPT = b"""
     ArrowDown: 0xff54,
   };
   let rfb = null;
+  let keyboardSync = null;
+
+  function localNumLock(event) {
+    // These platforms report false even though they cannot observe NumLock.
+    if (/Mac|iPhone|iPad|iPod/.test(navigator.platform || '')
+        || typeof event.getModifierState !== 'function') return null;
+    return event.getModifierState('NumLock');
+  }
+
+  function queueInput(action, numlock = null, code = '', down = false) {
+    const sync = keyboardSync;
+    if (!sync) return;
+    const generation = sync.generation;
+    sync.queue = sync.queue.then(async () => {
+      if (keyboardSync !== sync || !sync.connected || sync.rfb.viewOnly
+          || generation !== sync.generation) return;
+      if (down && typeof numlock === 'boolean'
+          && (sync.checkedEpoch !== sync.epoch || code === 'NumLock')) {
+        const epoch = sync.epoch;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        try {
+          const response = await fetch(new URL('keyboard-state', window.location.href), {
+            cache: 'no-store', credentials: 'same-origin', signal: controller.signal
+          });
+          const state = response.ok ? await response.json() : {};
+          sync.remote = typeof state.numlock === 'boolean' ? state.numlock : null;
+        } catch (_) {
+          sync.remote = null;
+        } finally {
+          clearTimeout(timer);
+          sync.checkedEpoch = epoch;
+        }
+      }
+      if (keyboardSync !== sync || !sync.connected || sync.rfb.viewOnly
+          || generation !== sync.generation) return;
+      if (down && typeof numlock === 'boolean' && typeof sync.remote === 'boolean') {
+        if (sync.remote !== numlock) {
+          sync.rfb.sendKey(0xff7f, 'NumLock', true);
+          sync.rfb.sendKey(0xff7f, 'NumLock', false);
+          sync.remote = numlock;
+        }
+        // The local key event already describes the desired state after the
+        // press. Forwarding it again would undo the alignment above.
+        if (code === 'NumLock') {
+          sync.suppressNumLock = true;
+          return;
+        }
+      }
+      if (code === 'NumLock' && !down && sync.suppressNumLock) {
+        sync.suppressNumLock = false;
+        return;
+      }
+      return action(sync);
+    }).catch(() => {});
+  }
+
+  function invalidateKeyboardState() {
+    if (keyboardSync) keyboardSync.epoch++;
+  }
 
   function canUseClipboard() {
     return window.isSecureContext && navigator.clipboard;
   }
 
-  function sendCtrlV() {
-    if (!rfb) return;
-    rfb.sendKey(0xffe3, 'ControlLeft', true);
-    rfb.sendKey(0x0076, 'KeyV');
-    rfb.sendKey(0xffe3, 'ControlLeft', false);
+  function sendCtrlV(target) {
+    if (rfb !== target) return;
+    target.sendKey(0xffe3, 'ControlLeft', true);
+    target.sendKey(0x0076, 'KeyV');
+    target.sendKey(0xffe3, 'ControlLeft', false);
   }
 
-  function pasteHostClipboard() {
-    if (!rfb || !canUseClipboard() || !navigator.clipboard.readText) {
-      sendCtrlV();
-      return;
-    }
-    navigator.clipboard.readText().then((text) => {
-      rfb.clipboardPasteFrom(text || '');
-      sendCtrlV();
-    }).catch(() => sendCtrlV());
+  function pasteHostClipboard(target, clipboard) {
+    return clipboard.then((text) => {
+      if (rfb !== target) return;
+      if (typeof text === 'string') target.clipboardPasteFrom(text);
+      sendCtrlV(target);
+    }).catch(() => sendCtrlV(target));
   }
 
   function onKeyDown(event) {
-    if (!rfb) return;
+    if (!rfb || rfb.viewOnly || !keyboardSync) return;
     const pasteShortcut = (event.ctrlKey || event.metaKey) && !event.altKey &&
       !event.shiftKey && String(event.key || '').toLowerCase() === 'v';
     if (pasteShortcut) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      pasteHostClipboard();
+      // Request clipboard access during the user gesture, before any LED read.
+      const clipboard = canUseClipboard() && navigator.clipboard.readText
+        ? navigator.clipboard.readText().catch(() => null) : Promise.resolve(null);
+      queueInput((sync) => pasteHostClipboard(sync.rfb, clipboard),
+        localNumLock(event), event.code, true);
       return;
     }
     const keysym = repeatKeysyms[event.key];
     if (!event.repeat || !keysym) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    rfb.sendKey(keysym, event.code || event.key);
+    queueInput((sync) => sync.rfb.sendKey(keysym, event.code || event.key),
+      localNumLock(event), event.code, true);
   }
 
   function onRemoteClipboard(event) {
@@ -627,11 +689,39 @@ _PAWFLOW_NOVNC_CLIENT_SCRIPT = b"""
     attach(nextRfb) {
       if (rfb === nextRfb) return;
       if (rfb) rfb.removeEventListener('clipboard', onRemoteClipboard);
+      if (keyboardSync) {
+        keyboardSync.keyboard.onkeyevent = keyboardSync.original;
+        keyboardSync.rfb.removeEventListener('connect', keyboardSync.connect);
+        keyboardSync.rfb.removeEventListener('disconnect', keyboardSync.disconnect);
+      }
       rfb = nextRfb;
+      keyboardSync = null;
       if (rfb) rfb.addEventListener('clipboard', onRemoteClipboard);
+      if (rfb && rfb._keyboard && typeof rfb._keyboard.onkeyevent === 'function'
+          && typeof rfb._rfbConnectionState === 'string') {
+        const sync = {
+          rfb, keyboard: rfb._keyboard, original: rfb._keyboard.onkeyevent,
+          queue: Promise.resolve(),
+          epoch: 0, checkedEpoch: -1, generation: 0, remote: null, suppressNumLock: false,
+          connected: rfb._rfbConnectionState === 'connected'
+        };
+        sync.connect = () => {
+          sync.connected = true; sync.epoch++; sync.suppressNumLock = false;
+        };
+        sync.disconnect = () => { sync.connected = false; sync.generation++; };
+        keyboardSync = sync;
+        rfb._keyboard.onkeyevent = (keysym, code, down, numlock, capslock) => {
+          queueInput(() => sync.original.call(sync.keyboard, keysym, code, down,
+            sync.remote === null ? numlock : null, capslock), numlock, code, down);
+        };
+        rfb.addEventListener('connect', sync.connect);
+        rfb.addEventListener('disconnect', sync.disconnect);
+      }
     }
   };
   document.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('focus', invalidateKeyboardState, true);
+  document.addEventListener('visibilitychange', invalidateKeyboardState);
 })();
 </script>
 """
@@ -902,6 +992,11 @@ def vnc_http_proxy(pending_req):
     if not port:
         pending_req.complete(404, {"Content-Type": "application/json"},
                              b'{"error": "Unknown VNC session"}')
+        return
+
+    if sub_path == "keyboard-state":
+        from services.vnc_keyboard import serve_keyboard_state
+        serve_keyboard_state(pending_req, session_id, session)
         return
 
     # noVNC is application UI, not session state.  The server image bundles a

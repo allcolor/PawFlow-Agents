@@ -165,6 +165,9 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         _session_kwargs = {
                             "owner_user_id": user_id,
                             "login_session_id": _login_sid,
+                            "keyboard_relay_service": svc,
+                            "keyboard_local": True,
+                            "keyboard_display": status.get("display") if _server_local else None,
                         }
                         if _server_local:
                             _session_kwargs["host"] = _relay_addr
@@ -222,6 +225,9 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         _session_kwargs = {
                             "owner_user_id": user_id,
                             "login_session_id": _login_sid,
+                            "keyboard_relay_service": svc,
+                            "keyboard_local": False,
+                            "keyboard_display": status.get("display"),
                         }
                         if _direct_backend:
                             _session_kwargs["host"] = _backend_host
@@ -290,6 +296,9 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                 _session_kwargs = {
                     "owner_user_id": user_id,
                     "login_session_id": _login_sid,
+                    "keyboard_relay_service": svc,
+                    "keyboard_local": True,
+                    "keyboard_display": result.get("display") if _server_local else None,
                 }
                 if _server_local:
                     _session_kwargs["host"] = _relay_addr
@@ -313,6 +322,9 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                 _session_kwargs = {
                     "owner_user_id": user_id,
                     "login_session_id": _login_sid,
+                    "keyboard_relay_service": svc,
+                    "keyboard_local": False,
+                    "keyboard_display": result.get("display"),
                 }
                 if direct_backend:
                     _session_kwargs["host"] = backend_host

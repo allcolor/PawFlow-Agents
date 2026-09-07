@@ -355,6 +355,15 @@ def action_screen_mouse_position(root_dir, abs_path, req):
     return {"x": int(parts.get("x", 0)), "y": int(parts.get("y", 0))}
 
 
+def action_screen_keyboard_state(root_dir, abs_path, req):
+    """Read the existing VNC display in a bounded screen-action child."""
+    try:
+        from screen_actions import handle_screen_action
+    except ImportError:
+        from tools.screen_actions import handle_screen_action
+    return handle_screen_action("screen_keyboard_state", req)
+
+
 def action_screen_status(root_dir, abs_path, req):
     """Backend health: cua health_report in cua mode, else pawflow info."""
     cua = _cua_route("screen_status", req)

@@ -219,9 +219,31 @@ session directory and sends the WebSocket handshake to an invalid route.
 
 The proxied noVNC page also injects a small PawFlow bridge for native desktop ergonomics. Browser clipboard reads and writes are connected to noVNC clipboard events so ordinary OS copy/paste shortcuts work in the remote desktop without a separate PawFlow clipboard panel. Docker virtual desktops start `autocutsel` when available to keep X11 `CLIPBOARD` and `PRIMARY` selections synchronized with desktop applications. The same bridge handles repeated keydown events for repeatable keys such as Backspace so holding the key behaves like a local desktop session. Chromium's benign ResizeObserver loop notifications are intercepted before noVNC's fatal error handler, preventing a permanent red status overlay while the live desktop continues normally.
 
+NumLock is aligned with the browser keyboard before the first keypress and
+after focus returns to the viewer. This also covers CLI login viewers in the
+Claude Code Docker image. The bridge reads the remote LED through the
+capability-protected, uncached `keyboard-state` route, then sends a standard
+VNC NumLock press only when the states differ. Keyboard events, repeat keys,
+and paste shortcuts remain ordered while that asynchronous read completes.
+The read uses the registered relay and desktop display, or the registered CLI
+login container's `:99` display; the browser cannot choose another target.
+Windows uses its native keyboard state and Linux uses XKB's named indicator,
+without an `xset` dependency. If the state is unavailable, or the browser cannot
+report NumLock (macOS/iOS), input continues without guessing the remote state.
+
+Relay targets use the internal `screen_keyboard_state` action with the registered
+display and a bounded child process. Packaged relays use their embedded screen
+child entry point, so the host does not need a separate Python installation.
+The probe reads the VNC desktop even when the relay's automation backend is CUA;
+it never creates a desktop or changes the relay process's `DISPLAY`. Direct CLI
+login containers use their bundled `python3` for the equivalent fixed probe.
+If noVNC's private keyboard callback or connection-state interface is absent,
+PawFlow leaves native keyboard and shortcut handling intact.
+
 Related implementation:
 
 - `services/vnc_proxy.py`
+- `services/vnc_keyboard.py`
 - Debian's `novnc` package (`/usr/share/novnc`)
 - `/desktop` slash command
 - `core/handlers/screen.py`

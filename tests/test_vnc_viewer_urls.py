@@ -19,6 +19,7 @@ from tasks.ai.actions import _sf_k7
 def test_desktop_viewer_websocket_resolves_to_session_route(
         monkeypatch, local_screen, managed, already_running):
     calls = []
+    registrations = []
 
     def request(action, **kwargs):
         calls.append(action)
@@ -28,15 +29,16 @@ def test_desktop_viewer_websocket_resolves_to_session_route(
                 "local_screen_running": already_running,
                 "novnc_port": 6080,
                 "local_screen_novnc_port": 6080,
+                "display": ":102",
             }
         assert action in ("start_desktop", "start_local_desktop")
-        return {"novnc_port": 6080}
+        return {"novnc_port": 6080, "display": ":102"}
 
     relay = SimpleNamespace(
         config={"server_managed": managed, "server_local_exec": managed},
         _relay_addr="198.51.100.10", _request=request)
     monkeypatch.setattr("services.vnc_proxy.register_session",
-                        lambda *args, **kwargs: "test-capability")
+                        lambda *args, **kwargs: registrations.append(kwargs) or "test-capability")
     monkeypatch.setattr(_sf_k7, "_ensure_vnc_routes", lambda ff: None)
     monkeypatch.setattr(_sf_k7, "_novnc_backend_http_ready", lambda *args: True)
     helpers = (lambda rid: relay, None, None, None,
@@ -50,6 +52,10 @@ def test_desktop_viewer_websocket_resolves_to_session_route(
         None, "alice", ff, helpers)
     result = json.loads(ff.get_content())
     assert result["ok"], result
+    assert registrations[0]["keyboard_relay_service"] is relay
+    assert registrations[0]["keyboard_local"] is local_screen
+    assert registrations[0]["keyboard_display"] == (
+        None if local_screen and not managed else ":102")
     viewer = urljoin("https://pawflow.example/chat", result["url"])
     ws_path = parse_qs(urlsplit(viewer).query)["path"][0]
     prefix = "local_desktop" if local_screen else "desktop"

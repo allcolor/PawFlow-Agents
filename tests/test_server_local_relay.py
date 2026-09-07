@@ -135,6 +135,9 @@ def test_desktop_handler_proxies_server_local_novnc_on_loopback(monkeypatch):
     assert registered == [(('local_desktop_Managed', 6099), {
         "owner_user_id": "alice", "login_session_id": "login-1",
         "host": "127.0.0.1",
+        "keyboard_relay_service": service,
+        "keyboard_local": True,
+        "keyboard_display": None,
     })]
     payload = json.loads(flowfile.get_content())
     assert payload["local_screen"] is True

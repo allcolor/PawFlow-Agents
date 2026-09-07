@@ -419,6 +419,8 @@ def test_open_remote_desktop_registers_relay_transport(
     assert registered[0][0][1] == port
     assert registered[0][1]["relay_service"] is relay
     assert registered[0][1]["relay_id"] == "relay-1"
+    assert registered[0][1]["keyboard_relay_service"] is relay
+    assert registered[0][1]["keyboard_local"] is local_screen
     assert bool(registered[0][1].get("local_screen")) is local_screen
     assert "host" not in registered[0][1]
     assert audio_registered[0][0][1:] == ("", 6180)
@@ -481,5 +483,7 @@ def test_server_managed_desktop_keeps_direct_vnc_and_audio_registration(
     assert vnc_registered[0][0][1] == 6080
     assert vnc_registered[0][1]["host"] == "172.17.0.2"
     assert "relay_service" not in vnc_registered[0][1]
+    assert vnc_registered[0][1]["keyboard_relay_service"] is relay
+    assert vnc_registered[0][1]["keyboard_local"] is False
     assert audio_registered[0][0][1:] == ("172.17.0.2", 6180)
     assert "relay_service" not in audio_registered[0][1]

@@ -1,3 +1,12 @@
+.msg.scheduled-wakeup { align-self: stretch; display: flex; flex: none; align-items: center;
+                        gap: 8px; max-width: 100%; padding: 1px 0; margin: -3px 0;
+                        border: 0; border-radius: 0; background: none; color: var(--pf-muted);
+                        font-size: 11px; font-weight: normal; line-height: 14px;
+                        white-space: nowrap; cursor: help; }
+.msg.scheduled-wakeup::before, .msg.scheduled-wakeup::after {
+  content: ''; flex: 1; border-top: 1px solid var(--pf-border); opacity: .55;
+}
+
 /* Battery-style context gauge icon; the fill height mirrors the percentage. */
 .ctx-gauge-icon { position: relative; width: 12px; height: 16px; border: 2px solid currentColor;
                   border-radius: 2px; display: inline-block; }

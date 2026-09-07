@@ -2552,6 +2552,45 @@ test('a background-tool result stays in the open positional block', () => {
     'the bg result row lives inside that block');
 });
 
+test('scheduled wakeups stay compact and keep their boundary through replay and view changes', () => {
+  const e = env('simplified');
+  Object.assign(e.ctx, {
+    collapseTechnicalGroups() {}, sourceBadge() { return ''; },
+    _authorBadgeHtml() { return ''; }, makeTimeHtml() { return ''; },
+    _messageSortTs(extra) { return extra.ts; }, _hasRealSortTs() { return true; },
+    isNearBottom() { return false; }, scrollBottom() {}, pawflowDebugLog() {},
+    _insertMessageChronologically(container, el) { container.appendChild(el); },
+  });
+  const text = '[System: Scheduled wake-up] full instruction\n' + 'detail '.repeat(100)
+    + '<img src=x onerror=alert(1)> end';
+  const extra = {msg_id: 'wake-1', ts: 123, raw_index: 8, turn_id: 'turn-wake',
+    source: {type: 'scheduled_wakeup', target_agent: 'assistant'}};
+  const before = JSON.stringify(extra);
+  const row = e.ctx.addMsg('user', text, extra);
+  eq(row.textContent, 'wake up');
+  eq(row.title, text, 'the tooltip must not use the truncated rawText preview');
+  eq(row.getAttribute('aria-label'), text);
+  eq(row.dataset.msgid, 'wake-1');
+  eq(row.dataset.turnId, 'turn-wake');
+  eq(row.dataset.turnBoundary, 'scheduled_wakeup');
+  eq(row.dataset.messageRole, 'user');
+  assert(!row.classList.contains('user'), 'a wakeup must not use user bubble styling');
+  eq(JSON.stringify(extra), before, 'rendering cannot mutate the source message');
+  eq(e.ctx.addMsg('user', text, extra), null, 'SSE replay must deduplicate');
+  e.ctx.turnViewReconcile();
+  assert(row.parentNode === e.messages, 'the wakeup remains a top-level boundary');
+  e.ctx.turnViewSetMode('detailed');
+  eq(row.textContent, 'wake up', 'detailed view keeps the compact separator');
+  row.remove(); e.ctx._seenMsgIds.delete('wake-1');
+  const replay = e.ctx.addMsg('user', [{type: 'text', text}], extra);
+  eq(replay.title, text, 'history multipart text keeps the full tooltip');
+  eq(replay.textContent, 'wake up');
+  const user = e.ctx.addMsg('user', 'wake up', {msg_id: 'user-1', ts: 124,
+    source: {type: 'user', name: 'owner'}});
+  assert(user.classList.contains('user'), 'ordinary user messages keep their bubble');
+  assert(!user.dataset.scheduledWakeup, 'text alone must not identify a wakeup');
+});
+
 if (failures.length) {
   console.error('\n' + failures.length + ' failing, ' + passed + ' passing');
   for (const f of failures) console.error('  - ' + f);

@@ -521,6 +521,13 @@ function addMsg(role, text, extra) {
     details.appendChild(content);
     el.innerHTML = '';
     el.appendChild(details);
+  } else if (el.dataset.scheduledWakeup === '1') {
+    el.className = 'msg scheduled-wakeup';
+    el.textContent = 'wake up';
+    el.title = text || '';
+    el.setAttribute('role', 'separator');
+    el.setAttribute('aria-label', text || 'wake up');
+    el.tabIndex = 0;
   } else if (role === 'user') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge
       + _authorBadgeHtml(extra) + escapeHtml(text) + _attachHtml;

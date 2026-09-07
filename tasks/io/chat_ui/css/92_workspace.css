@@ -69,16 +69,18 @@
   overflow: hidden;
   background: var(--pf-bg);
 }
-.workspace-surface-header {
+.workspace-surface > .workspace-surface-header {
+  --workspace-header-bg: color-mix(in srgb, var(--pf-bg) 96%, var(--pf-text));
   display: none;
   flex: 0 0 31px;
   min-width: 0;
   align-items: center;
   gap: 8px;
   padding: 3px 5px 3px 9px;
-  border-bottom: 1px solid var(--pf-border);
-  background: var(--pf-sidebar);
-  color: var(--pf-text);
+  border-bottom: 1px solid color-mix(in srgb, var(--pf-text) 12%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--pf-text) 12%, transparent) !important;
+  background: var(--workspace-header-bg) !important;
+  color: color-mix(in srgb, var(--pf-text) 82%, var(--pf-bg));
   font-size: 11px;
   user-select: none;
   cursor: grab;
@@ -87,8 +89,13 @@
   cursor: grabbing;
 }
 .workspace-surface.workspace-selected > .workspace-surface-header {
-  background: color-mix(in srgb, var(--pf-accent) 18%, var(--pf-sidebar)) !important;
+  --workspace-header-bg: color-mix(in srgb, var(--pf-accent) 18%, var(--pf-sidebar));
+  background: var(--workspace-header-bg) !important;
   border-bottom-color: var(--pf-accent) !important;
+  color: var(--pf-text);
+}
+html[data-pf-atmosphere="on"] .workspace-surface > .workspace-surface-header {
+  background: color-mix(in srgb, var(--workspace-header-bg) var(--pf-atmosphere-panel-opacity), transparent) !important;
 }
 .workspace-surface-identity {
   flex: 1 1 auto;
@@ -236,9 +243,9 @@ body.pf-android-app .workspace-surface-actions {
   box-shadow: 0 0 0 1px var(--pf-accent),
               0 4px 16px color-mix(in srgb, var(--pf-shadow) 74%, transparent);
 }
-.workspace-tiled .workspace-surface.workspace-target {
-  border-color: var(--pf-accent-2);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--pf-accent-2) 70%, transparent);
+.workspace-tiled .workspace-surface.workspace-target:not(.workspace-selected) {
+  border-color: var(--pf-muted);
+  border-style: dashed;
 }
 .workspace-filter-messages {
   flex: 1 1 auto;

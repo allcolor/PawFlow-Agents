@@ -59,6 +59,11 @@ html = render_chat_page(agent_path="/api/agent", sse_path="/api/agent/events",
 
 ## Layout
 
+Scheduled wakeup messages render as a single muted 11 px `wake up` separator
+in both chat views, including history replay. The full original message is
+available in its hover tooltip and accessible label; its stored content,
+message identity, chronological position and turn boundary remain unchanged.
+
 Header status popovers retain their original IDs and controls but move to
 `document.body` when opened. `pfFloatingLayer` owns their viewport placement,
 outside-pointer and Escape dismissal, and resize/scroll cleanup. Its standalone

@@ -2,7 +2,7 @@
 import logging
 import time
 
-from core._llm_types import NO_REPLAY_PROVIDERS
+from core._llm_types import LLMCallError, NO_REPLAY_PROVIDERS
 from core.llm_client import (
     AgentSuperseded,
     CCCompactDetected,
@@ -584,7 +584,8 @@ class _ALCLlmTurnMixin:
                 st._transient = any(p in st.err_str for p in (
                     "500", "503", "502", "529", "overloaded", "timeout",
                     "Internal server error", "api_error", "server_error",
-                    "rate_limit", "429"))
+                    "rate_limit", "429")) and not (
+                        isinstance(llm_err, LLMCallError) and not llm_err.retryable)
                 # An interactive CLI already retried inside the CLI and its
                 # prompt is consumed by the live tmux session: re-calling the
                 # provider here would paste the turn again. Surface the error

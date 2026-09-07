@@ -803,6 +803,15 @@ The custom TOML can add providers and models, while PawFlow's MCP bridge,
 internal authentication, trust policy, and context-management settings win on
 conflicting keys.
 
+Automatic retries in the shared LLM client, with or without streaming, wait at
+most 60 seconds per retry. A longer provider `Retry-After`, reset delay parsed
+from an error message, or exponential backoff immediately raises a
+non-retryable `LLMCallError`; PawFlow does not shorten that delay and retry early.
+The error retains the provider status, category and retry delay. The agent loop
+respects this terminal failure, reports it and releases the active run instead
+of performing its extra transient retry. Short waits remain subject to the
+configured attempt limit; stateful providers retain their no-replay behavior.
+
 **OpenAI-dialect providers** (`core/llm_providers/openai_dialects.py`): Azure
 OpenAI and GitHub Copilot send OpenAI chat-completions bodies, so they reuse
 the whole OpenAI path. Only the envelope differs.

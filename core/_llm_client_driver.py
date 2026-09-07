@@ -41,9 +41,38 @@ OPENAI_WIRE_PROVIDERS = ("openai", "azure-openai", "copilot", "omniroute")
 #: rather than joining OPENAI_WIRE_PROVIDERS.
 RESPONSES_WIRE_PROVIDERS = ("openai-responses",)
 
+#: Longer provider cooldowns must surface as errors, not hold an active turn.
+MAX_AUTO_RETRY_DELAY_SECONDS = 60.0
+
 
 class _LLMClientDriverMixin:
     """complete / complete_stream / embed + abort control for LLMClient."""
+
+    def _retry_delay(self, error: Exception, model: str, attempt: int) -> float:
+        """Honor short cooldowns and make excessive waits terminal for this call."""
+        if isinstance(error, LLMCallError) and error.retry_after_seconds > 0:
+            wait = error.retry_after_seconds
+        else:
+            wait = self._parse_retry_after(str(error))
+            if wait == 2.0:
+                wait = 2.0 * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)  # nosec B311
+        if wait > MAX_AUTO_RETRY_DELAY_SECONDS:
+            self._circuit_after_failure(model, str(error))
+            message = (
+                f"Automatic LLM retry stopped: required delay {wait:g}s exceeds "
+                f"the {MAX_AUTO_RETRY_DELAY_SECONDS:g}s limit. {error}")
+            logger.warning("%s", message)
+            raise LLMCallError(
+                message,
+                category=getattr(error, "category", "unknown"),
+                origin=getattr(error, "origin", "provider"),
+                provider_status=getattr(error, "provider_status", 0),
+                retryable=False, retry_after_seconds=wait,
+                provider=getattr(error, "provider", self.provider),
+                model=getattr(error, "model", model),
+                caused_by_local_timeout=getattr(error, "caused_by_local_timeout", False),
+            ) from error
+        return wait
 
     @staticmethod
     def _redact_relay_proxy_url(url: str) -> str:
@@ -335,14 +364,9 @@ class _LLMClientDriverMixin:
                      or is_truncated_stream
                      or bool(_other_code_re.search(err_str)))
                     and not _is_cc_our_exit)
+                if retryable:
+                    wait = self._retry_delay(e, model, attempt)
                 if retryable and attempt < self.max_retries:
-                    server_delay = (e.retry_after_seconds
-                                    if isinstance(e, LLMCallError)
-                                    and e.retry_after_seconds > 0
-                                    else self._parse_retry_after(err_str))
-                    base_delay = 2.0
-                    exp_delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)  # nosec B311
-                    wait = server_delay if server_delay != 2.0 else exp_delay
                     if is_429:
                         logger.warning(f"Rate limited (429), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
                     elif is_529:
@@ -798,15 +822,9 @@ class _LLMClientDriverMixin:
                     streamed_visible = ""
                     continue
 
+                if retryable:
+                    wait = self._retry_delay(e, model, attempt)
                 if retryable and attempt < self.max_retries:
-                    # Prefer server-specified delay, fall back to exponential backoff with jitter
-                    server_delay = (e.retry_after_seconds
-                                    if isinstance(e, LLMCallError)
-                                    and e.retry_after_seconds > 0
-                                    else self._parse_retry_after(err_str))
-                    base_delay = 2.0
-                    exp_delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)  # nosec B311
-                    wait = server_delay if server_delay != 2.0 else exp_delay
                     if is_429:
                         logger.warning(f"Rate limited (429), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
                     elif is_529:

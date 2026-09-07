@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Flow repository package branches open and close independently, retain their
+  state across resource refreshes and page reloads, and support keyboard toggling.
+- Local VNC on Windows/WSL uses the authenticated host-helper tunnel and the
+  running desktop's exact WebSocket port, preserving the first framebuffer
+  data received with the handshake and releasing closed viewer transports.
+- Reopening a desktop preserves existing viewer streams. Replacing its owner
+  or backend closes old streams, and VNC sends and closes retain their wire
+  order under concurrent relay activity.
+- noVNC package metadata and optional JSON configuration load as UI assets.
+  Its browser capability probe releases its temporary video frame and decoder.
+- Automatic LLM retries stop when the required delay exceeds 60 seconds.
+  Retry tests isolate clock mocks from concurrent workers, and the installer
+  retains guidance about image profiles prepared before bootstrap.
+
+### Changed
+
+- The public website uses branching ESPER photo navigation, and the setup
+  wizard carries the same photographic interface through installation.
+
 ## [1.0.0-beta.271] — 2026-09-06
 
 ### Changed

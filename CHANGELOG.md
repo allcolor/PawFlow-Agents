@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.274] — 2026-09-07
+
+### Upgrade notes
+
+- Update the relay alongside the server to enable NumLock synchronization.
+
 ### Fixed
 
 - VNC desktops and Docker CLI login viewers synchronize NumLock with the local

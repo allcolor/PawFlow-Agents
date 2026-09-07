@@ -72,6 +72,12 @@ Edges now carry `connection_id`, `queue_bytes`, `max_queue_bytes`,
 
 ## Viewer UI
 
+The Flow Repository sidebar groups templates by package. Each package uses an
+independent disclosure button: opening a package reveals its templates without
+changing the parent or sibling branches. Resource refreshes preserve those
+sections, and page reloads restore their saved expanded state. Buttons support
+keyboard activation and expose their expanded state to assistive technology.
+
 - Edges read as queues: `relationship · N · size` always; grey when empty,
   green/orange/red as they fill; `⏸` + dashed grey + NO animated current
   when paused; `🔴 (n/max)` under backpressure.

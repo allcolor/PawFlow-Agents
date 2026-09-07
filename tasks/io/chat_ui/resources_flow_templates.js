@@ -283,13 +283,14 @@ function _renderFlowPackageGroup(packageName, flows) {
   const sectionId = _flowPackageSectionId(packageName);
   const collapsed = _isSectionCollapsed(sectionId);
   const arrow = collapsed ? '\u25B6' : '\u25BC';
-  const display = collapsed ? 'none' : 'block';
-  let html = `<div${_resourceRowAttr('flow-package', packageName)} style="margin:2px 0 4px 8px;">
-    <div style="display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;" onclick="_toggleSection('${sectionId}')">
-      <span id="res-arrow-${sectionId}" style="font-size:10px;color:var(--pf-muted);">${arrow}</span>
+  let html = `<section class="resource-section" data-resource-section="${sectionId}" style="margin:2px 0 4px 8px;">
+    <div class="resource-section-header-row">
+      <button type="button" class="resource-section-control resource-section-toggle" style="display:flex;align-items:center;gap:4px;width:100%;" aria-controls="res-section-${sectionId}" aria-expanded="${collapsed ? 'false' : 'true'}" onclick="_toggleSection('${sectionId}')">
+      <span id="res-arrow-${sectionId}" aria-hidden="true" style="font-size:10px;color:var(--pf-muted);">${arrow}</span>
       <span style="font-size:12px;color:var(--pf-text);font-weight:600;flex:1;">${escapeHtml(packageName || 'default')}</span>
+      </button>
     </div>
-    <div id="res-section-${sectionId}" style="display:${display};margin-top:2px;">`;
+    <div class="resource-section-body" id="res-section-${sectionId}" style="margin-top:2px;"${collapsed ? ' hidden aria-hidden="true" inert' : ''}>`;
   flows.forEach(t => {
     const ver = t.version ? ` v${escapeHtml(t.version)}` : '';
     const desc = t.description ? ` title="${_pfpAttr(t.description)}"` : '';
@@ -298,7 +299,7 @@ function _renderFlowPackageGroup(packageName, flows) {
       <span style="color:var(--pf-muted);font-size:10px;">[${escapeHtml(t.tasks_count)} tasks]</span>${_ownerBadge(t)}
     </div>`;
   });
-  html += '</div></div>';
+  html += '</div></section>';
   return html;
 }
 

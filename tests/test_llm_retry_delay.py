@@ -1,5 +1,7 @@
 """LLM retries must not keep a foreground agent asleep for hours."""
 
+import time
+from threading import Thread
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -26,8 +28,11 @@ def case(monkeypatch, request):
     monkeypatch.setattr(client, "_circuit_after_success", Mock())
     monkeypatch.setattr(client, "_report_tokens", Mock())
     sleep = Mock()
-    monkeypatch.setattr("core._llm_client_driver.time.sleep", sleep)
-    monkeypatch.setattr("core._llm_client_driver.random.random", lambda: 0.5)
+    # Replace driver bindings, not stdlib modules shared by background threads.
+    monkeypatch.setattr(
+        "core._llm_client_driver.time", SimpleNamespace(time=time.time, sleep=sleep))
+    monkeypatch.setattr(
+        "core._llm_client_driver.random", SimpleNamespace(random=lambda: 0.5))
     messages = [LLMMessage("user", "hello", conversation_id="retry-test")]
     response = LLMResponse(content="ok", model="test-model", tokens_in=1, tokens_out=1)
     return SimpleNamespace(
@@ -83,6 +88,19 @@ def test_retry_after_up_to_one_minute_is_honored(case, delay):
     assert case.call().content == "ok"
 
     case.sleep.assert_called_once_with(delay)
+    assert case.dispatch.call_count == 2
+
+
+def test_retry_sleep_does_not_capture_other_threads(case):
+    worker = Thread(target=time.sleep, args=(0.05,), daemon=True)
+    worker.start()
+    worker.join(timeout=1)
+    assert not worker.is_alive()
+
+    case.dispatch.side_effect = [classify_http_error(429), case.response]
+
+    assert case.call().content == "ok"
+    case.sleep.assert_called_once_with(2.0)
     assert case.dispatch.call_count == 2
 
 

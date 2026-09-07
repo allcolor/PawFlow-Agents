@@ -181,6 +181,10 @@ def configure_to_review(page):
     page.locator('[data-llm-param="api_key"]').fill("test-api-key")
     page.locator('[data-llm-param="default_model"]').fill("test-model")
     next_step(page, 4)
+    assert page.get_by_text(
+        "Relay image profiles are prepared by the installer before this bootstrap UI opens.",
+        exact=True,
+    ).is_visible()
     page.locator("#relay_server_enabled").check()
     page.locator("#relay_server_id").fill("lab_relay")
     next_step(page, 5)

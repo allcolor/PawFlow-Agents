@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.272] — 2026-09-07
+
 ### Fixed
 
 - Flow repository package branches open and close independently, retain their

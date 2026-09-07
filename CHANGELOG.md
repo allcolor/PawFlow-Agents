@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- VNC desktops and Docker CLI login viewers synchronize NumLock with the local
+  keyboard before input and after focus returns, preserving queued key order.
+  Packaged relay hosts need no external Python; missing noVNC private interfaces
+  preserve native keyboard handling.
+- Inactive workspace tile headers stay nearly neutral, reserving the accent
+  header and luminous outline for the selected panel while respecting atmosphere opacity.
+- Scheduled wakeups occupy one discreet separator line, with the complete
+  message available on hover in both chat views and after history reload.
+- Codex interactive transport handshakes no longer reopen completed agent turns.
+  Captured terminal turns retain incoming screenshots, including image-only messages.
+- Native compaction during captured CLI turns hands off to PawFlow compaction,
+  preserving accepted messages and resuming only after successful completion.
+  Rejected short histories preserve the native session, synchronous failures
+  reach the caller, and exact-token eviction preserves replacement sessions.
+
 ## [1.0.0-beta.273] — 2026-09-07
 
 ### Fixed

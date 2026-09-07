@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- LLM retries cap each provider delay and exponential backoff at five minutes
+  while preserving all remaining attempts and the configured fallback model
+  in both streaming and non-streaming calls. Stop interrupts the wait immediately.
+
 ## [1.0.0-beta.272] — 2026-09-07
 
 ### Fixed

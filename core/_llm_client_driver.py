@@ -41,15 +41,15 @@ OPENAI_WIRE_PROVIDERS = ("openai", "azure-openai", "copilot", "omniroute")
 #: rather than joining OPENAI_WIRE_PROVIDERS.
 RESPONSES_WIRE_PROVIDERS = ("openai-responses",)
 
-#: Longer provider cooldowns must surface as errors, not hold an active turn.
-MAX_AUTO_RETRY_DELAY_SECONDS = 60.0
+#: Bound each retry wait without discarding attempts or model fallback.
+MAX_AUTO_RETRY_DELAY_SECONDS = 300.0
 
 
 class _LLMClientDriverMixin:
     """complete / complete_stream / embed + abort control for LLMClient."""
 
-    def _retry_delay(self, error: Exception, model: str, attempt: int) -> float:
-        """Honor short cooldowns and make excessive waits terminal for this call."""
+    def _retry_delay(self, error: Exception, attempt: int) -> float:
+        """Honor provider cooldowns and backoff up to five minutes per retry."""
         if isinstance(error, LLMCallError) and error.retry_after_seconds > 0:
             wait = error.retry_after_seconds
         else:
@@ -57,22 +57,17 @@ class _LLMClientDriverMixin:
             if wait == 2.0:
                 wait = 2.0 * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)  # nosec B311
         if wait > MAX_AUTO_RETRY_DELAY_SECONDS:
-            self._circuit_after_failure(model, str(error))
-            message = (
-                f"Automatic LLM retry stopped: required delay {wait:g}s exceeds "
-                f"the {MAX_AUTO_RETRY_DELAY_SECONDS:g}s limit. {error}")
-            logger.warning("%s", message)
-            raise LLMCallError(
-                message,
-                category=getattr(error, "category", "unknown"),
-                origin=getattr(error, "origin", "provider"),
-                provider_status=getattr(error, "provider_status", 0),
-                retryable=False, retry_after_seconds=wait,
-                provider=getattr(error, "provider", self.provider),
-                model=getattr(error, "model", model),
-                caused_by_local_timeout=getattr(error, "caused_by_local_timeout", False),
-            ) from error
+            logger.warning(
+                "LLM retry delay %.1fs capped to %.1fs (attempt %d/%d)",
+                wait, MAX_AUTO_RETRY_DELAY_SECONDS, attempt, self.max_retries)
+            wait = MAX_AUTO_RETRY_DELAY_SECONDS
         return wait
+
+    def _wait_for_retry(self, delay: float) -> None:
+        """Allow Stop to wake a retry immediately without another provider call."""
+        if self._abort.wait(delay):
+            from tasks.ai.agent_exceptions import AgentCancelled
+            raise AgentCancelled("LLM retry cancelled")
 
     @staticmethod
     def _redact_relay_proxy_url(url: str) -> str:
@@ -364,9 +359,8 @@ class _LLMClientDriverMixin:
                      or is_truncated_stream
                      or bool(_other_code_re.search(err_str)))
                     and not _is_cc_our_exit)
-                if retryable:
-                    wait = self._retry_delay(e, model, attempt)
                 if retryable and attempt < self.max_retries:
+                    wait = self._retry_delay(e, attempt)
                     if is_429:
                         logger.warning(f"Rate limited (429), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
                     elif is_529:
@@ -375,7 +369,7 @@ class _LLMClientDriverMixin:
                         logger.warning(f"Server error (500), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
                     else:
                         logger.warning(f"LLM request attempt {attempt}/{self.max_retries} failed: {e}, retrying in {wait:.1f}s...")
-                    time.sleep(wait)
+                    self._wait_for_retry(wait)
                     continue
 
                 # All retries exhausted — try fallback model if configured
@@ -822,9 +816,8 @@ class _LLMClientDriverMixin:
                     streamed_visible = ""
                     continue
 
-                if retryable:
-                    wait = self._retry_delay(e, model, attempt)
                 if retryable and attempt < self.max_retries:
+                    wait = self._retry_delay(e, attempt)
                     if is_429:
                         logger.warning(f"Rate limited (429), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
                     elif is_529:
@@ -834,7 +827,7 @@ class _LLMClientDriverMixin:
                     else:
                         logger.warning(f"LLM stream attempt {attempt}/{self.max_retries} failed "
                                        f"({type(e).__name__}), retrying in {wait:.1f}s")
-                    time.sleep(wait)
+                    self._wait_for_retry(wait)
                     continue
 
                 # Final attempt failed — try fallback model

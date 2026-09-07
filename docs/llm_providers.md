@@ -39,6 +39,20 @@ relay/MCP bridge. The managed MCP variants use official lifecycle hooks and
 local CLI metadata instead of inspecting vendor traffic; their capability
 matrix reports unavailable telemetry explicitly.
 
+### Retry waits and fallback
+
+Retryable provider failures retain the configured attempt budget in both
+streaming and non-streaming calls. Each wait honors the provider's retry delay
+or exponential backoff up to **300 seconds (five minutes)**. A longer delay is
+capped; it does not turn the failure into a terminal error or skip remaining
+attempts. After the primary attempts are exhausted, the configured fallback
+model is still tried, without an extra wait after the final attempt. Existing
+non-retryable errors and provider-specific retry limits retain their behavior.
+
+Stop interrupts a retry wait immediately and prevents another attempt or
+fallback call. Stateful interactive CLI providers keep their existing no-replay
+contract: PawFlow does not resubmit a prompt already consumed by the CLI.
+
 ### Direct API request identity
 
 Every outbound HTTP request owned by a direct LLM provider identifies itself as

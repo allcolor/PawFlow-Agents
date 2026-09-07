@@ -1,15 +1,16 @@
-"""LLM retries must not keep a foreground agent asleep for hours."""
+"""LLM retries retain their attempt budget with bounded, cancellable waits."""
 
 import time
-from threading import Thread
+from threading import Event, Thread
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
 from core._llm_types import LLMCallError, LLMClientError
 from core.llm_client import LLMClient, LLMMessage, LLMResponse
 from core.llm_failure_classifier import classify_http_error
+from tasks.ai.agent_exceptions import AgentCancelled
 
 
 @pytest.fixture(params=["complete", "complete_stream"])
@@ -27,81 +28,108 @@ def case(monkeypatch, request):
     monkeypatch.setattr(client, "_circuit_after_failure", Mock())
     monkeypatch.setattr(client, "_circuit_after_success", Mock())
     monkeypatch.setattr(client, "_report_tokens", Mock())
-    sleep = Mock()
-    # Replace driver bindings, not stdlib modules shared by background threads.
+    wait = Mock(return_value=False)
+    real_wait = client._abort.wait
+    monkeypatch.setattr(client._abort, "wait", wait)
+    # Isolate the old sleeper too so the regression fails without real delays.
     monkeypatch.setattr(
-        "core._llm_client_driver.time", SimpleNamespace(time=time.time, sleep=sleep))
+        "core._llm_client_driver.time", SimpleNamespace(time=time.time, sleep=wait))
     monkeypatch.setattr(
         "core._llm_client_driver.random", SimpleNamespace(random=lambda: 0.5))
     messages = [LLMMessage("user", "hello", conversation_id="retry-test")]
     response = LLMResponse(content="ok", model="test-model", tokens_in=1, tokens_out=1)
     return SimpleNamespace(
-        client=client, dispatch=dispatch, sleep=sleep, response=response,
-        messages=messages, call=lambda: getattr(client, method)(messages))
+        client=client, dispatch=dispatch, wait=wait, real_wait=real_wait,
+        response=response, messages=messages,
+        call=lambda: getattr(client, method)(messages))
 
 
-@pytest.mark.parametrize("delay", [60.001, 10312])
-@pytest.mark.parametrize("max_retries", [1, 3])
-def test_long_retry_after_fails_without_sleep_or_fallback(case, delay, max_retries):
-    case.client._config_ref["max_retries"] = max_retries
+@pytest.mark.parametrize("delay", [2, 59.9, 60, 60.001, 180, 299.9, 300, 301, 10312, 14400])
+def test_retry_after_is_honored_up_to_five_minutes(case, delay):
     error = classify_http_error(
         429, headers={"Retry-After": str(delay)}, body="Too Many Requests",
         provider="openai", model="test-model")
     case.dispatch.side_effect = [error, case.response]
 
-    with pytest.raises(LLMCallError, match="60") as caught:
-        case.call()
+    assert case.call().content == "ok"
 
-    assert caught.value.retryable is False
-    assert caught.value.category == "rate_limited"
-    assert caught.value.provider_status == 429
-    assert caught.value.retry_after_seconds == delay
-    assert caught.value.provider == "openai"
-    assert caught.value.model == "test-model"
-    assert str(delay) in str(caught.value)
-    case.sleep.assert_not_called()
-    assert case.dispatch.call_count == 1
-    case.client._circuit_after_failure.assert_called_once()
+    case.wait.assert_called_once_with(min(delay, 300))
+    assert case.dispatch.call_count == 2
+    assert all(item.args[1] == "test-model" for item in case.dispatch.call_args_list)
+    case.client._circuit_after_failure.assert_not_called()
+    assert error.retryable is True
+    assert error.retry_after_seconds == delay
 
 
 @pytest.mark.parametrize("message", [
     "HTTP 429: Retry-After: 10312",
     "HTTP 429: Please try again in 10312s.",
 ])
-def test_long_text_delay_also_stops_retries(case, message):
+def test_long_text_delay_is_capped_and_retried(case, message):
     case.dispatch.side_effect = [LLMClientError(message), case.response]
 
-    with pytest.raises(LLMCallError, match="60") as caught:
+    assert case.call().content == "ok"
+
+    case.wait.assert_called_once_with(300)
+    assert case.dispatch.call_count == 2
+
+
+@pytest.mark.parametrize("status", [429, 503])
+@pytest.mark.parametrize("max_retries", [1, 3])
+def test_long_delay_exhausts_primary_budget_then_uses_fallback(case, status, max_retries):
+    case.client._config_ref["max_retries"] = max_retries
+    error = classify_http_error(status, headers={"Retry-After": "14400"})
+    case.dispatch.side_effect = [error] * max_retries + [case.response]
+
+    assert case.call().content == "ok"
+
+    assert [item.args[1] for item in case.dispatch.call_args_list] == (
+        ["test-model"] * max_retries + ["fallback-model"])
+    assert case.wait.call_args_list == [call(300)] * (max_retries - 1)
+    case.client._circuit_after_failure.assert_called_once()
+
+
+def test_final_attempt_does_not_calculate_or_wait_for_a_retry(case, monkeypatch):
+    case.client._config_ref["max_retries"] = 1
+    delay = Mock(side_effect=AssertionError("No retry remains"))
+    monkeypatch.setattr(case.client, "_retry_delay", delay)
+    case.dispatch.side_effect = [
+        classify_http_error(429, headers={"Retry-After": "14400"}),
+        case.response,
+    ]
+
+    assert case.call().content == "ok"
+
+    delay.assert_not_called()
+    case.wait.assert_not_called()
+    assert [item.args[1] for item in case.dispatch.call_args_list] == [
+        "test-model", "fallback-model"]
+
+
+def test_long_delay_can_recover_on_last_primary_attempt(case):
+    error = classify_http_error(429, headers={"Retry-After": "14400"})
+    case.dispatch.side_effect = [error, error, case.response]
+
+    assert case.call().content == "ok"
+
+    assert case.wait.call_args_list == [call(300), call(300)]
+    assert [item.args[1] for item in case.dispatch.call_args_list] == ["test-model"] * 3
+    case.client._circuit_after_failure.assert_not_called()
+
+
+def test_long_delay_without_fallback_raises_only_after_all_attempts(case):
+    case.client._config_ref["fallback_model"] = ""
+    error = classify_http_error(429, headers={"Retry-After": "14400"})
+    case.dispatch.side_effect = error
+
+    with pytest.raises(LLMClientError):
         case.call()
 
-    assert caught.value.retryable is False
-    assert caught.value.retry_after_seconds > 10312
-    case.sleep.assert_not_called()
-    assert case.dispatch.call_count == 1
-
-
-@pytest.mark.parametrize("delay", [2, 59.9, 60])
-def test_retry_after_up_to_one_minute_is_honored(case, delay):
-    error = classify_http_error(429, headers={"Retry-After": str(delay)})
-    case.dispatch.side_effect = [error, case.response]
-
-    assert case.call().content == "ok"
-
-    case.sleep.assert_called_once_with(delay)
-    assert case.dispatch.call_count == 2
-
-
-def test_retry_sleep_does_not_capture_other_threads(case):
-    worker = Thread(target=time.sleep, args=(0.05,), daemon=True)
-    worker.start()
-    worker.join(timeout=1)
-    assert not worker.is_alive()
-
-    case.dispatch.side_effect = [classify_http_error(429), case.response]
-
-    assert case.call().content == "ok"
-    case.sleep.assert_called_once_with(2.0)
-    assert case.dispatch.call_count == 2
+    assert case.dispatch.call_count == 3
+    assert case.wait.call_args_list == [call(300), call(300)]
+    case.client._circuit_after_failure.assert_called_once()
+    assert error.retryable is True
+    assert error.retry_after_seconds == 14400
 
 
 def test_missing_retry_after_uses_short_backoff(case):
@@ -112,74 +140,79 @@ def test_missing_retry_after_uses_short_backoff(case):
 
     assert case.call().content == "ok"
 
-    case.sleep.assert_called_once_with(2.0)
-    assert case.dispatch.call_count == 2
+    case.wait.assert_called_once_with(2.0)
 
 
-def test_exponential_backoff_cannot_exceed_one_minute(case):
-    case.client._config_ref["max_retries"] = 10
-    case.dispatch.side_effect = classify_http_error(429)
+def test_exponential_backoff_is_capped_without_losing_attempts(case):
+    case.client._config_ref["max_retries"] = 12
+    case.dispatch.side_effect = [classify_http_error(429)] * 11 + [case.response]
 
-    with pytest.raises(LLMCallError, match="60"):
+    assert case.call().content == "ok"
+
+    assert [item.args[0] for item in case.wait.call_args_list] == [
+        2, 4, 8, 16, 32, 64, 128, 256, 300, 300, 300]
+    assert case.dispatch.call_count == 12
+    case.client._circuit_after_failure.assert_not_called()
+
+
+def test_non_retryable_error_is_not_retried_even_with_long_delay(case):
+    case.dispatch.side_effect = LLMCallError(
+        "Rejected request", category="invalid_request", retryable=False,
+        retry_after_seconds=14400)
+
+    with pytest.raises(LLMCallError):
         case.call()
 
-    assert [call.args[0] for call in case.sleep.call_args_list] == [
-        2, 4, 8, 16, 32]
-    assert case.dispatch.call_count == 6
-
-
-def test_provider_unavailable_cannot_request_hours_of_sleep(case):
-    case.dispatch.side_effect = [
-        classify_http_error(503, headers={"Retry-After": "10312"}),
-        case.response,
-    ]
-
-    with pytest.raises(LLMCallError) as caught:
-        case.call()
-
-    assert caught.value.provider_status == 503
-    assert caught.value.category == "provider_unavailable"
-    assert caught.value.retryable is False
-    case.sleep.assert_not_called()
+    case.wait.assert_not_called()
     assert case.dispatch.call_count == 1
 
 
-@pytest.mark.parametrize("max_retries", [1, 3])
-def test_agent_surfaces_long_delay_without_outer_retry_and_releases_context(
-        case, monkeypatch, max_retries):
-    from tasks.ai._alc_base import _ALC_BREAK
-    from tasks.ai.agent_loop import AgentLoopTask
+def test_abort_interrupts_wait_without_retry_or_fallback(case, monkeypatch):
+    entered_wait = Event()
+    errors = []
 
-    case.client._config_ref["max_retries"] = max_retries
-    task = AgentLoopTask({"api_key": "test-key"})
-    context = {"conversation_id": "retry-test", "active_agent_name": "assistant"}
-    emitter = Mock()
-    emitter.check_interrupt.return_value = False
-    state = SimpleNamespace(
-        ctx=context, emitter=emitter, client=case.client,
-        conversation_id="retry-test", _budget_precheck_done=True,
-        total_tokens_in=0, total_tokens_out=0, total_cache_read=0,
-        total_cache_write=0, _call_context=case.messages,
-        llm_context=case.messages, _llm_call=lambda _: case.call(),
-        _is_claude_code=False, _fatal_error=False, _fatal_error_msg="",
-        iteration=1)
-    case.dispatch.side_effect = [
-        classify_http_error(429, headers={"Retry-After": "10312"}),
-        case.response,
-    ]
-    monkeypatch.setattr("tasks.ai._alc_llm_turn._check_budget", lambda *_: None)
+    def wait_for_abort(timeout):
+        assert timeout == 300
+        entered_wait.set()
+        return case.real_wait(timeout)
 
-    def run_inner(ctx, actual_emitter):
-        assert task._active_contexts["retry-test:assistant"] is ctx
-        return task._alc_llm_turn(state)
+    monkeypatch.setattr(case.client._abort, "wait", wait_for_abort)
+    case.dispatch.side_effect = classify_http_error(
+        429, headers={"Retry-After": "14400"})
 
-    monkeypatch.setattr(task, "_run_agent_loop_inner", run_inner)
+    def run():
+        try:
+            case.call()
+        except Exception as exc:
+            errors.append(exc)
 
-    assert task._run_agent_loop(context, emitter) is _ALC_BREAK
-    assert state._fatal_error is True
-    assert "10312" in state._fatal_error_msg and "60" in state._fatal_error_msg
-    emitter.on_fatal_error.assert_called_once()
-    assert "_agent_transient_retried" not in context
-    case.sleep.assert_not_called()
-    assert case.dispatch.call_count == 1
-    assert "retry-test:assistant" not in task._active_contexts
+    worker = Thread(target=run, daemon=True)
+    worker.start()
+    try:
+        assert entered_wait.wait(timeout=1), "Retry did not enter its cancellable wait"
+        # This is the signal set by LLMClient.abort().
+        case.client._abort.set()
+        worker.join(timeout=1)
+        assert not worker.is_alive()
+        assert len(errors) == 1 and isinstance(errors[0], AgentCancelled)
+        assert case.dispatch.call_count == 1
+        case.client._circuit_after_failure.assert_not_called()
+    finally:
+        case.client._abort.set()
+        worker.join(timeout=1)
+
+    case.client.reset_abort()
+    case.dispatch.side_effect = [case.response]
+    assert case.call().content == "ok"
+
+
+def test_retry_wait_mock_does_not_capture_other_threads(case):
+    worker = Thread(target=time.sleep, args=(0.05,), daemon=True)
+    worker.start()
+    worker.join(timeout=1)
+    assert not worker.is_alive()
+    case.wait.assert_not_called()
+
+    case.dispatch.side_effect = [classify_http_error(429), case.response]
+    assert case.call().content == "ok"
+    case.wait.assert_called_once_with(2.0)

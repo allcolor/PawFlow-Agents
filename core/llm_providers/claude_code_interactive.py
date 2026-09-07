@@ -440,7 +440,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             block = self._cci_attachment_block(att, user_id, conversation_id)
             if block:
                 parts.append(block)
-        if len(parts) <= 1:
+        if not any(part.get("type") != "text" for part in parts):
             return text
         msg = LLMMessage(role="user", content=parts,
                          conversation_id=conversation_id)

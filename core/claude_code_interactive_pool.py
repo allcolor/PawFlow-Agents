@@ -1208,6 +1208,21 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             logger.debug("[cci-ephemeral] runtime cleanup failed: %s",
                          state.workdir, exc_info=True)
 
+    def kill_and_evict_by_session_token(self, session_token: str, reason: str) -> int:
+        """Retire one observed session without touching a replacement's key."""
+        with self._lock:
+            victim = next(((key, state) for key, state in self._sessions.items()
+                           if state.session_token == session_token), None)
+            if victim is None:
+                return 0
+            key, state = victim
+            self._sessions.pop(key)
+        logger.info("[cci-live] kill_by_session %s (%s)", self._fmt_key(key), reason)
+        self._recover_container_tokens(state)
+        self._unregister_event_session(state)
+        self._kill_container(state.name)
+        return 1
+
     def kill_and_evict_by_conv(self, conv_id: str, reason: str) -> int:
         """Kill live containers for every interactive session in a conversation."""
         with self._lock:

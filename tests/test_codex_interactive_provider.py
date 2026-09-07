@@ -32,6 +32,16 @@ class _Events:
         self.code_mode_sessions.append(session_token)
 
 
+class _BoundedEvents(_Events):
+    """Fail immediately if a coordinator outlives its scripted idle poll."""
+
+    def wait_event(self, _session_token, timeout=None):
+        try:
+            return self.queue.get_nowait()
+        except Empty:
+            pytest.fail("coordinator kept waiting after the final idle poll")
+
+
 def _state(key, index=-1):
     return InteractiveContainer(
         key=key, name=f"container-{key[1]}", workdir=f"/tmp/{key[1]}",
@@ -953,3 +963,131 @@ def test_codex_event_session_adopts_prefixed_responses_request_with_query(
     })
 
     assert adopted == [(state, "request in flight")]
+
+
+def test_websocket_handshake_after_stop_does_not_keep_coordinator_active(monkeypatch):
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+
+    events = _BoundedEvents([
+        {"type": "hook", "hook_event_name": "Stop", "timestamp": 20},
+        {"type": "request_start", "method": "GET", "timestamp": 30,
+         "path": "/backend-api/codex/responses"},
+        {},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(events, "session")
+    coordinator.run()
+    assert coordinator._stop_seen
+
+
+def test_native_submit_over_reused_websocket_keeps_coordinator_listening(monkeypatch):
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    events = _BoundedEvents([
+        {"type": "hook", "hook_event_name": "Stop"},
+        {"type": "hook", "hook_event_name": "UserPromptSubmit"},
+        {},
+        {"type": "sse", "payload": {
+            "type": "response.output_text.delta", "delta": "Second turn"}},
+        {"type": "hook", "hook_event_name": "Stop"},
+        {},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(events, "session")
+    assert coordinator.run().content == "Second turn"
+
+
+@pytest.fixture(params=["submit", "request"])
+def codex_turn_start(request):
+    if request.param == "submit":
+        return {"type": "hook", "hook_event_name": "UserPromptSubmit"}
+    return {"type": "request_start", "method": "POST",
+            "path": "/backend-api/codex/responses/?mode=stream"}
+
+
+def test_stale_turn_start_after_stop_finishes(monkeypatch, codex_turn_start):
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    events = _BoundedEvents([
+        {"type": "sse", "payload": {
+            "type": "response.output_text.delta", "delta": "Done"}},
+        {"type": "hook", "hook_event_name": "Stop", "timestamp": 20},
+        dict(codex_turn_start, timestamp=10),
+        {},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(events, "session")
+
+    assert coordinator.run().content == "Done"
+    assert coordinator._stop_seen
+
+
+def test_followup_turn_start_ignores_delayed_stop(monkeypatch, codex_turn_start):
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    events = _BoundedEvents([
+        {"type": "response_start"},
+        {"type": "hook", "hook_event_name": "Stop", "timestamp": 10},
+        dict(codex_turn_start, timestamp=15),
+        dict(codex_turn_start, timestamp=30),
+        dict(codex_turn_start, timestamp=15),
+        {"type": "hook", "hook_event_name": "Stop", "timestamp": 20},
+        {},
+        {"type": "sse", "payload": {
+            "type": "response.output_text.delta", "delta": "Second turn"}},
+        {"type": "hook", "hook_event_name": "Stop", "timestamp": 40},
+        {},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(events, "session")
+
+    assert coordinator.run().content == "Second turn"
+    assert coordinator._stop_seen
+    assert events.queue.empty()
+
+
+@pytest.mark.parametrize("stamp", [20, 0, None])
+def test_turn_boundaries_use_receipt_order_for_ties_or_zero_timestamps(
+        monkeypatch, codex_turn_start, stamp):
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    events = _BoundedEvents([
+        {"type": "response_start"},
+        {"type": "hook", "hook_event_name": "Stop", "timestamp": 20},
+        dict(codex_turn_start, timestamp=stamp),
+        # A zero timestamp must not move the boundary clock backwards.
+        {"type": "hook", "hook_event_name": "Stop", "timestamp": 10},
+        {},
+        {"type": "sse", "payload": {
+            "type": "response.output_text.delta", "delta": "Followup"}},
+        {"type": "hook", "hook_event_name": "Stop", "timestamp": stamp},
+        {},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(events, "session")
+
+    assert coordinator.run().content == "Followup"
+    assert events.queue.empty()
+
+
+def test_delayed_stop_does_not_abort_a_failed_followup_exchange(monkeypatch):
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    events = _BoundedEvents([
+        {"type": "hook", "hook_event_name": "UserPromptSubmit", "timestamp": 30},
+        {"type": "sse", "payload": {"type": "response.failed", "response": {
+            "error": {"message": "upstream down"}}}},
+        {"type": "hook", "hook_event_name": "Stop", "timestamp": 20},
+        {},
+        {"type": "sse", "payload": {"type": "response.created"}},
+        {"type": "sse", "payload": {
+            "type": "response.output_text.delta", "delta": "Recovered"}},
+        {"type": "hook", "hook_event_name": "Stop", "timestamp": 40},
+        {},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(events, "session")
+
+    assert coordinator.run().content == "Recovered"
+    assert coordinator._failed_exchange_detail == ""

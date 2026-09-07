@@ -585,7 +585,8 @@ class AgentActionsMixin(_AgentActionsConvMixin):
 
 
     def _run_bg_context_op(self, conv_id: str, op_name: str, fn, flowfile,
-                            agent_name: str = ""):
+                            agent_name: str = "", *, background: bool = True,
+                            capture_handoff=None):
         """Run a context operation in background with lock + SSE progress.
 
         Lock scope:
@@ -602,6 +603,10 @@ class AgentActionsMixin(_AgentActionsConvMixin):
         3. Runs fn()
         4. Publishes SSE done/error
         5. Releases the lock
+
+        A capture coordinator already runs off the request thread. It uses
+        background=False to hand over its active marker synchronously, before
+        capture cleanup can make the compacted turn look idle and lose resume.
         """
         from core.conversation_event_bus import ConversationEventBus
         bus = ConversationEventBus.instance()
@@ -707,6 +712,7 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                     exc_info=True)
 
         def _bg():
+            _op_succeeded = False
             _resume_after_compact = False
             _resume_agent = agent_name or ""
             _resume_turn_started_at = 0.0
@@ -736,27 +742,41 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                             conv_id) or ""
                 except Exception:
                     logger.debug("compact resume detection failed", exc_info=True)
-            self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
-            if op_name == "compact":
-                from core.cli_live_sessions import (
-                    release_cli_live_sessions_for_context,
-                )
-                release_cli_live_sessions_for_context(
-                    conv_id, agent_name, reason="compact_started")
+            if capture_handoff is None:
+                self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
+                if op_name == "compact":
+                    from core.cli_live_sessions import (
+                        release_cli_live_sessions_for_context,
+                    )
+                    release_cli_live_sessions_for_context(
+                        conv_id, agent_name, reason="compact_started")
             if not self._acquire_context_op(conv_id, agent_name,
                                              timeout=60.0):
+                error = f"Timeout waiting for active agent ({op_name})"
                 bus.publish_event(conv_id, "compact_progress", {
                     "stage": "error",
-                    "error": f"Timeout waiting for active agent ({op_name})",
+                    "error": error,
                 })
-                return
+                return {"status": "error", "action": op_name, "error": error}
             try:
+                # A captured turn has no worker to cancel. Reserve the context
+                # first, then atomically retire only its still-owned session.
+                if capture_handoff is not None and not capture_handoff():
+                    return {"status": "skipped", "action": op_name,
+                            "reason": "Captured session ownership changed"}
                 bus.publish_event(conv_id, "compact_progress", {
                     "stage": "start", "detail": op_name,
                     "agent": agent_name or "",
                 })
                 if op_name == "compact":
                     _set_context_usage_suspended(agent_name, True)
+                    # Capture callbacks persist through this same async writer.
+                    # The compactor must include every accepted preempt and
+                    # streamed block before replacing the session context.
+                    from core.conversation_writer import ConversationWriter
+                    if not ConversationWriter.for_conversation(conv_id).flush(
+                            timeout=15.0):
+                        raise TimeoutError("Conversation writer did not flush before compact")
                 result = fn()
                 _agent = result.get("agent", "") or agent_name
                 if op_name == "compact" and _agent and _agent != "shared":
@@ -798,17 +818,20 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                         "stage": "done", **result,
                     })
                 _publish_command_result(result)
+                _op_succeeded = True
+                return {"status": "completed", "action": op_name, "result": result}
             except Exception as e:
                 bus.publish_event(conv_id, "compact_progress", {
                     "stage": "error", "error": str(e),
                 })
                 _publish_command_result({"error": str(e), "operation": op_name})
                 logger.error("%s failed: %s", op_name, e, exc_info=True)
+                return {"status": "error", "action": op_name, "error": str(e)}
             finally:
                 if op_name == "compact":
                     _set_context_usage_suspended(agent_name, False)
                 self._release_context_op(conv_id, agent_name)
-                if (op_name == "compact" and _resume_after_compact
+                if (op_name == "compact" and _op_succeeded and _resume_after_compact
                         and _resume_agent and _resume_agent != "shared"
                         and not force_stop_invalidates_turn_resume(
                             conv_id, _resume_agent,
@@ -825,13 +848,17 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                     except Exception:
                         logger.debug("compact resume wake failed", exc_info=True)
 
-        thread = threading.Thread(
-            target=_bg, daemon=True,
-            name=f"{op_name}-{conv_id[:8]}-{agent_name or 'shared'}")
-        thread.start()
-        flowfile.set_content(json.dumps({
-            "status": "accepted", "action": op_name,
-        }).encode())
+        if background:
+            thread = threading.Thread(
+                target=_bg, daemon=True,
+                name=f"{op_name}-{conv_id[:8]}-{agent_name or 'shared'}")
+            thread.start()
+            outcome = {"status": "accepted", "action": op_name}
+        else:
+            outcome = _bg()
+            if outcome.get("error"):
+                flowfile.set_attribute("http.response.status", "500")
+        flowfile.set_content(json.dumps(outcome).encode())
         flowfile.set_attribute("suppress_command_result", "1")
         return [flowfile]
 
@@ -866,10 +893,13 @@ class AgentActionsMixin(_AgentActionsConvMixin):
         """Acquire exclusive context-op lock for (conv, agent).
         Returns True if acquired."""
         evt = self._get_context_op_event(conversation_id, agent_name)
-        if not evt.wait(timeout=timeout):
-            return False
-        evt.clear()
-        return True
+        deadline = time.monotonic() + max(0.0, timeout)
+        while evt.wait(timeout=max(0.0, deadline - time.monotonic())):
+            with self._context_op_lock:
+                if evt.is_set():
+                    evt.clear()
+                    return True
+        return False
 
     def _release_context_op(self, conversation_id: str,
                               agent_name: str = ""):

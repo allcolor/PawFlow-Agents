@@ -448,6 +448,54 @@ def test_a_finished_turn_is_not_adopted_by_the_undelivered_rule(monkeypatch):
     assert captured == ["sess"], "a genuine unread turn is still adopted"
 
 
+def test_native_codex_recap_websocket_after_done_never_adopts_a_turn(monkeypatch):
+    """Replay the 2026-09-07 incident: Stop, idle, GET, recap, no second Stop."""
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+
+    def capture(_service, candidate):
+        captured.append(candidate.session_token)
+        candidate.manual_capture_active = True
+
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        capture)
+    svc.publish_event("sess", {"type": "hook", "hook_event_name": "Stop"})
+    sequence_before = state.provider_request_seq
+
+    svc.publish_event("sess", {
+        "type": "request_start", "method": "GET",
+        "path": "/backend-api/codex/responses", "body_bytes": 0,
+        "request_id": "native-recap"})
+    for payload in (
+        {"type": "response.created", "response": {}},
+        {"type": "response.output_text.delta", "delta": '{"recap":"Done"}'},
+        {"type": "response.completed", "response": {}},
+    ):
+        svc.publish_event("sess", {
+            "type": "sse", "request_id": "native-recap", "payload": payload})
+
+    _age_pending(svc, state,
+                 CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 10)
+    svc._adopt_if_undelivered(state)
+    assert state.turn_over
+    assert state.provider_request_seq == sequence_before
+    assert captured == []
+
+    # Discard the finished turn's backlog, as the next worker does, then a
+    # genuine prompt over this same socket still arms capture normally.
+    svc.drain_session("sess")
+    svc.publish_event("sess", {
+        "type": "hook", "hook_event_name": "UserPromptSubmit",
+        "input": {"pawflow_managed_prompt": True}})
+    _age_pending(svc, state,
+                 CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
+    svc._adopt_if_undelivered(state)
+    assert not state.turn_over
+    assert captured == ["sess"]
+
+
 def test_a_late_stop_does_not_close_the_turn_that_started_after_it(monkeypatch):
     """The two kinds of boundary event do not share a route.
 

@@ -72,7 +72,8 @@ _ACTION_ROLES = {
 _UNSCOPED_ACTIONS = frozenset()
 
 
-def _handle_context_ops(self, action, body, store, user_id, flowfile):
+def _handle_context_ops(self, action, body, store, user_id, flowfile, *,
+                        background=True, capture_handoff=None):
     """Handle context ops actions. Returns [flowfile] or None."""
     _denied = _gate_conversation_action(_ACTION_ROLES, action, body, store,
                                         user_id, flowfile)
@@ -236,7 +237,12 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _ctx_visible_contexts, _ctx_llm_service_config, _ctx_real_context_size, _ctx_max_tokens)
     for _handler in (_handle_ctxops_k1, _handle_ctxops_k2,
                      _handle_ctxops_k3, _handle_ctxops_k4):
-        _res = _handler(self, action, body, store, user_id, flowfile, _helpers)
+        options = ({"background": False}
+                   if _handler is _handle_ctxops_k2 and not background else {})
+        if _handler is _handle_ctxops_k2 and capture_handoff is not None:
+            options["capture_handoff"] = capture_handoff
+        _res = _handler(self, action, body, store, user_id, flowfile, _helpers,
+                        **options)
         if _res is not _UNHANDLED:
             return _res
     return None

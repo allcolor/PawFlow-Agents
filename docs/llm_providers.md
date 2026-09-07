@@ -895,6 +895,25 @@ Operational notes:
   calls, for instance. A Responses terminal event closes one exchange; the
   Codex `Stop` hook closes the turn. Token usage is summed across the
   exchanges, which is what each of them is actually billed.
+- Opening a `/responses` WebSocket is transport setup and does not start or
+  reactivate a user turn. Codex can open one for a native recap after `Stop`;
+  that activity must not create an active-agent capture or consume a scheduled
+  continuation. `UserPromptSubmit` arms real turns over new or reused sockets;
+  source timestamps prevent delayed lifecycle events from reopening a completed
+  turn or closing its successor.
+- `PreCompact` and `PostCompact` hand native compaction to PawFlow even when
+  the turn is being captured without a streaming worker. The capture uses the
+  same forced compaction procedure as `/compact`: reserve the context operation,
+  recheck capture ownership, persist unfinished text and thinking blocks, flush
+  accepted messages, and check that enough history exists before retiring the
+  native session. A failed flush or insufficient history leaves that session
+  intact. Ownership is checked again after the flush; eviction uses the exact
+  session token, including in the Antigravity pool, so a replacement survives.
+  After retirement, a final writer barrier precedes PawFlow compaction.
+  The synchronous caller receives the actual completed, error, or skipped
+  outcome; only background HTTP operations return accepted. Successful compaction resumes
+  with a fresh session and `initial_context`. Failed compaction and a user force
+  stop do not trigger a restart; a superseded capture cannot compact its replacement.
 - Native Codex plugins work here as they do for `codex-app-server`: `codex_plugins`
   is offered on the service for both Codex providers. See
   [Native Codex plugins](#native-codex-plugins).
@@ -905,6 +924,12 @@ Operational notes:
 - Preemption sends the new message into the live turn (`send_interrupt`), and a
   force stop kills the session outright — a non-forced cancel does nothing, by
   design.
+- Image attachments are materialized in the session's `.pawflow_vision`
+  directory and included as local file references on cold starts, ordinary
+  live preempts, and captured tmux turns without a registered worker. An
+  image-only message follows the same path. FileStore reads retain the
+  requesting user and conversation scope; failed materialization leaves the
+  message queued instead of acknowledging a text-only delivery.
 - Set `max_context_size` on the service and use `compact_threshold_pct` for
   proactive compaction, exactly as for `codex-app-server`.
 - Like every CLI provider, it obeys the cold/delta rule in both directions:

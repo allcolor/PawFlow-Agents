@@ -18,6 +18,7 @@ so a connected session proves there is a tmux to deliver into.
 """
 
 import pytest
+from types import SimpleNamespace
 
 from tasks.ai.agent_streaming import AgentStreamingMixin
 
@@ -136,3 +137,95 @@ def test_delivery_never_raises_into_the_request_path(monkeypatch):
 
     assert AgentStreamingMixin._deliver_to_captured_tmux(
         "80c37670", "claude", "hello") is False
+
+
+@pytest.fixture
+def attachment_store(monkeypatch):
+    from io import BytesIO
+    from PIL import Image
+
+    image = BytesIO()
+    Image.new("RGB", (3, 2), "red").save(image, format="PNG")
+
+    class Store:
+        denied = False
+
+        def get_required(self, file_id, user_id, conversation_id):
+            assert (user_id, conversation_id) == ("u", "conv")
+            if self.denied:
+                raise PermissionError("attachment unavailable")
+            assert file_id in {"shot1", "shot2"}
+            return "screen.png", image.getvalue(), "image/png"
+
+    store = Store()
+    monkeypatch.setattr("core.file_store.FileStore.instance", lambda: store)
+    return store
+
+
+@pytest.mark.parametrize("provider", ["codex-interactive", "claude-code-interactive"])
+@pytest.mark.parametrize("text", ["check both screenshots", ""])
+@pytest.mark.parametrize("file_ids", [("shot1",), ("shot1", "shot2")])
+def test_captured_turn_delivers_all_images(
+        wired, monkeypatch, tmp_path, attachment_store, provider, text, file_ids):
+    from PIL import Image
+
+    holder, pool = wired
+    holder["live"] = SimpleNamespace(provider=provider)
+    pool.container = SimpleNamespace(
+        workdir=str(tmp_path), container_workdir="/cc_sessions/conv/a")
+    monkeypatch.setattr(
+        "core.codex_interactive_pool.CodexInteractivePool.instance", lambda: pool)
+    attachments = [
+        {"file_id": fid, "filename": "screen.png", "mime_type": "image/png"}
+        for fid in file_ids]
+
+    assert AgentStreamingMixin._deliver_to_captured_tmux(
+        "conv", "a", text, attachments=attachments, user_id="u") is True
+
+    assert len(pool.typed) == 1
+    prompt = pool.typed[0][1]
+    if text:
+        assert text in prompt
+    for fid in file_ids:
+        assert f"@/cc_sessions/conv/a/.pawflow_vision/{fid}.png" in prompt
+        with Image.open(tmp_path / ".pawflow_vision" / f"{fid}.png") as screenshot:
+            assert screenshot.size == (3, 2)
+
+
+@pytest.mark.parametrize("user_id", ["u", ""])
+def test_captured_turn_never_acknowledges_a_missing_attachment(
+        wired, tmp_path, attachment_store, user_id):
+    holder, pool = wired
+    holder["live"] = SimpleNamespace(provider="claude-code-interactive")
+    pool.container = SimpleNamespace(
+        workdir=str(tmp_path), container_workdir="/cc_sessions/conv/a")
+    attachment_store.denied = True
+
+    assert AgentStreamingMixin._deliver_to_captured_tmux(
+        "conv", "a", "see this", user_id=user_id,
+        attachments=[{"file_id": "shot1", "mime_type": "image/png"}]) is False
+    assert pool.typed == []
+
+
+@pytest.mark.parametrize("initial_context", [True, False])
+def test_codex_cold_and_warm_prompts_expose_readable_images(
+        tmp_path, attachment_store, initial_context):
+    from core.llm_client import LLMClient, LLMMessage
+    from PIL import Image
+
+    client = LLMClient("codex-interactive")
+    message = LLMMessage(role="user", conversation_id="conv", content=[
+        {"type": "text", "text": "describe the screenshot"},
+        {"type": "image_ref", "file_id": "shot1", "filename": "screen.png"},
+    ])
+    prompt = client._cci_prompt(
+        [message], None, str(tmp_path), "/cc_sessions/conv/a", "u", "conv",
+        initial_context=initial_context, agent_name="a")
+
+    assert "@/cc_sessions/conv/a/.pawflow_vision/shot1.png" in prompt
+    with Image.open(tmp_path / ".pawflow_vision" / "shot1.png") as screenshot:
+        assert screenshot.size == (3, 2)
+    if initial_context:
+        assert "\n" not in prompt
+        context = (tmp_path / ".pawflow_cci" / "initial_context.md").read_text()
+        assert "describe the screenshot" in context

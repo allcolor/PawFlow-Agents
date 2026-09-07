@@ -10,7 +10,8 @@ from tasks.ai.actions._ctxops_base import (
 logger = logging.getLogger(__name__)
 
 
-def _handle_ctxops_k2(self, action, body, store, user_id, flowfile, _helpers):
+def _handle_ctxops_k2(self, action, body, store, user_id, flowfile, _helpers, *,
+                     background=True, capture_handoff=None):
     """context_ops cluster _ctxops_k2. Returns result or _UNHANDLED."""
     (_ctx_agent_name, _ctx_load, _ctx_save, _ctx_cached_usage,
      _ctx_visible_contexts, _ctx_llm_service_config, _ctx_real_context_size, _ctx_max_tokens) = _helpers
@@ -34,7 +35,7 @@ def _handle_ctxops_k2(self, action, body, store, user_id, flowfile, _helpers):
             flowfile.set_content(json.dumps({"error": _cp_err}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        if store.message_count(conv_id) < 4:
+        if background and store.message_count(conv_id) < 4:
             flowfile.set_content(json.dumps({"error": "Not enough messages to compact"}).encode())
             return [flowfile]
         # Shared-context compaction is the same deterministic hot path as
@@ -42,16 +43,20 @@ def _handle_ctxops_k2(self, action, body, store, user_id, flowfile, _helpers):
         # isolated independent contexts; _compact_context_from_store enforces
         # that case. Do not make /compact a second procedure with a stricter
         # service prerequisite than the trigger path.
-        _compact_client, _, _compact_svc_id = self._get_summarizer_client(
-            user_id, conversation_id=conv_id)
-        _compact_budget_config = _ctx_llm_service_config(conv_id, _ctx_agent)
-        _compact_max = _ctx_max_tokens(conv_id, _ctx_agent)
         _compact_conv = conv_id
         _compact_agent_name = _ctx_agent_name(_ctx_agent)
 
         _compact_instructions = body.get("instructions", "")
 
         def _do_compact():
+            # Captured blocks must reach the writer before eligibility and
+            # summarizer preparation; the native session has already stopped.
+            if store.message_count(conv_id) < 4:
+                raise ValueError("Not enough messages to compact")
+            _compact_client, _, _compact_svc_id = self._get_summarizer_client(
+                user_id, conversation_id=conv_id)
+            _compact_budget_config = _ctx_llm_service_config(conv_id, _ctx_agent)
+            _compact_max = _ctx_max_tokens(conv_id, _ctx_agent)
             stats = {}
             compacted = self._compact_context_from_store(
                 store,
@@ -85,7 +90,10 @@ def _handle_ctxops_k2(self, action, body, store, user_id, flowfile, _helpers):
             "" if _ctx_agent in ("", "ALL", "shared") else _ctx_agent)
         return self._run_bg_context_op(
             conv_id, "compact", _do_compact, flowfile,
-            agent_name=_compact_lock_agent)
+            agent_name=_compact_lock_agent,
+            **({"background": False} if not background else {}),
+            **({"capture_handoff": capture_handoff}
+               if capture_handoff is not None else {}))
 
     if action == "rebuild":
         conv_id = body.get("conversation_id", "")

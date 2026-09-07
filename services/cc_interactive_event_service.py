@@ -24,7 +24,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
 from core import ServiceFactory
-from core._llm_types import AgentSuperseded
+from core._llm_types import AgentSuperseded, CCCompactDetected
 from core.base_service import BaseService
 from core.llm_providers.cli_shared import is_anthropic_messages_endpoint
 from core.managed_mcp_spec import (
@@ -557,6 +557,8 @@ class CCInteractiveEventService(BaseService):
             if kind != "request" and state.active_request_consumer_epoch:
                 return 0
             with state.stream_condition:
+                if state.closed:
+                    return 0
                 state.consumer_epoch += 1
                 if kind == "request":
                     state.active_request_consumer_epoch = state.consumer_epoch
@@ -924,6 +926,14 @@ class CCInteractiveEventService(BaseService):
                              event: dict) -> bool:
         """A request_start that is the CLI calling its model for a real turn."""
         if event.get("type") != "request_start" or event.get("ignore_reason"):
+            return False
+        # Codex also opens /responses WebSockets for native background recaps.
+        # The GET handshake is transport setup, not a submitted user turn: it
+        # must neither adopt a capture nor rearm a session after its Stop hook.
+        # Real WebSocket turns are armed by UserPromptSubmit; HTTP model calls
+        # still use the request-based orphan recovery below.
+        if (managed_mcp_pool_family(state.provider) == "codex-interactive"
+                and str(event.get("method") or "").upper() == "GET"):
             return False
         path = event.get("path", "") or ""
         return (urlsplit(path).path.rstrip("/").endswith("/responses")
@@ -1687,9 +1697,88 @@ class CCInteractiveEventService(BaseService):
         pool = self._pool_for(state)
         return lambda: pool.session_is_live(container)
 
+    def _compact_captured_turn(self, state, capture_epoch: int, coordinator=None) -> None:
+        """Transfer a native compact to the normal PawFlow compact procedure.
+
+        This runs in the capture thread, not the hook's WebSocket handler.
+        Keeping it synchronous lets the context operation snapshot this turn
+        before teardown releases its marker, then stop the native session,
+        flush the transcript, force compact, and schedule a cold continuation.
+        """
+        from core import FlowFile
+        from core.conversation_store import ConversationStore
+        from tasks.ai.agent_loop import AgentLoopTask
+        from tasks.ai.actions.context_ops import _handle_context_ops
+
+        executor = AgentLoopTask._live_instance
+        if not executor or not state.user_id or not state.agent_name:
+            raise RuntimeError("Captured compaction has no agent execution scope")
+        key = f"{state.conversation_id}:{state.agent_name}"
+
+        def _owns_capture():
+            turn = executor._active_turns.get(key) or {}
+            return (not state.closed
+                    and self._sessions.get(state.session_token) is state
+                    and state.consumer_epoch == capture_epoch
+                    and not state.active_request_consumer_epoch
+                    and state.active_turn_owner_id
+                    and turn.get("owner_id") == state.active_turn_owner_id)
+
+        def _handoff():
+            # Same lock order as stream claims/teardown. No slow preparation
+            # may separate the ownership check from retiring the old stream.
+            with self._sessions_lock, state.stream_condition, executor._active_contexts_lock:
+                if not _owns_capture():
+                    return False
+                # Deltas reached the UI already, but incomplete blocks still
+                # live in the coordinator, ahead of the writer's FIFO barrier.
+                if coordinator is not None:
+                    coordinator._flush_all_thinking_blocks()
+                    coordinator._flush_all_text_blocks()
+            # Eligibility depends on durable captured blocks. Keep the native
+            # session intact until the FIFO barrier and count both succeed.
+            from core.conversation_writer import ConversationWriter
+            if not ConversationWriter.for_conversation(state.conversation_id).flush(
+                    timeout=15.0):
+                raise TimeoutError("Conversation writer did not flush before compact")
+            if ConversationStore.instance().message_count(state.conversation_id) < 4:
+                raise ValueError("Not enough messages to compact")
+            with self._sessions_lock, state.stream_condition, executor._active_contexts_lock:
+                if not _owns_capture():
+                    return False
+                state.closed = True
+                state.connected = False
+                state.turn_over = True
+                state.manual_capture_pending = 0
+                state.consumer_epoch += 1
+                state.stream_condition.notify_all()
+            # Scope teardown to the token we retired, never all sessions for
+            # the agent. A replacement may share its conversation/agent key.
+            try:
+                self._pool_for(state).kill_and_evict_by_session_token(
+                    state.session_token, reason="compact_started")
+            finally:
+                self.unregister_session(state.session_token)
+            return True
+
+        body = {"action": "compact", "conversation_id": state.conversation_id,
+                "agent_name": state.agent_name}
+        flowfile = FlowFile(content=json.dumps(body).encode())
+        flowfile.set_attribute("http.auth.principal", state.user_id)
+        logger.warning(
+            "CC interactive captured compact handoff: conv=%s agent=%s session=%s",
+            state.conversation_id[:8], state.agent_name, state.session_token[:8])
+        result = _handle_context_ops(
+            executor, "compact", body, ConversationStore.instance(),
+            state.user_id, flowfile, background=False, capture_handoff=_handoff)
+        payload = json.loads(flowfile.get_content())
+        if not result or payload.get("error"):
+            raise RuntimeError(payload.get("error") or "Captured compact was not handled")
+
     def _run_manual_capture(self, session_token: str) -> None:
         state = self.session_state(session_token)
         announced = False
+        capture_epoch = 0
         try:
             if not state:
                 return
@@ -1748,6 +1837,11 @@ class CCInteractiveEventService(BaseService):
                 "CC interactive captured turn streamed: conv=%s agent=%s chars=%d",
                 state.conversation_id[:8], state.agent_name,
                 len(response.content or ""))
+        except CCCompactDetected:
+            try:
+                self._compact_captured_turn(state, capture_epoch, coord)
+            except Exception:
+                logger.exception("CC interactive captured compact handoff failed")
         except CCIConsumerEvicted:
             # A real turn started and took the stream. Blocks already flushed
             # were complete when they were written, so they stay; only the

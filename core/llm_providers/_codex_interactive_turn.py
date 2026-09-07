@@ -135,6 +135,18 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         # again once a later ``response.created`` proves the retry is live.
         self._failed_exchange_detail = ""
         self._failed_exchange_at = 0.0
+        self._turn_boundary_at = 0.0
+
+    def _accept_turn_boundary(self, event: dict) -> bool:
+        # Match CCInteractiveEventService: hooks and proxy requests travel on
+        # separate connections, so an older boundary can arrive after a newer
+        # one. Equal or zero timestamps retain receipt order; publish_event
+        # stamps events that have no timestamp before they reach this queue.
+        stamp = float(event.get("timestamp") or 0.0)
+        if stamp and stamp < self._turn_boundary_at:
+            return False
+        self._turn_boundary_at = max(stamp, self._turn_boundary_at)
+        return True
 
     def _defer_failed_exchange(self, detail: str) -> None:
         self._failed_exchange_detail = detail
@@ -357,7 +369,10 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                 path = event.get("path", "") or ""
                 is_responses = (
                     urlsplit(path).path.rstrip("/").endswith("/responses")
+                    and str(event.get("method") or "").upper() != "GET"
                     and not event.get("ignore_reason"))
+                if is_responses and not self._accept_turn_boundary(event):
+                    continue
                 if is_responses and self._failed_exchange_detail:
                     # Codex is retrying: the deadline counts from this attempt.
                     self._failed_exchange_at = time.time()
@@ -383,6 +398,9 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
             if etype == "hook":
                 self.lifecycle_events.append(event)
                 hook_name = event.get("hook_event_name", "")
+                if (hook_name in {"Stop", "UserPromptSubmit"}
+                        and not self._accept_turn_boundary(event)):
+                    continue
                 if hook_name in {"PreCompact", "PostCompact"}:
                     logger.warning(
                         "[codex-interactive] %s detected — rejecting native "
@@ -398,6 +416,10 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                             self._failed_exchange_detail, "Codex gave up")
                     self._stop_seen = True
                     self._post_stop_last_event_at = time.time()
+                elif hook_name == "UserPromptSubmit":
+                    # A reused WebSocket has no new HTTP sampling request.
+                    # The native submit hook starts the next real user turn.
+                    self._stop_seen = False
                 continue
             if etype != "sse":
                 continue

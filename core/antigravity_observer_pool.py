@@ -241,6 +241,20 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
                 })
         return out
 
+    def kill_and_evict_by_session_token(self, session_token: str, reason: str) -> int:
+        """Retire only this native session, preserving any replacement."""
+        if not session_token:
+            return 0
+        with self._lock:
+            victims = [(key, state) for key, state in self._sessions.items()
+                       if state.session_token == session_token]
+            for key, _state in victims:
+                self._sessions.pop(key, None)
+        for _key, state in victims:
+            logger.info("[ag-live] kill_by_session_token %s (%s)", state.name, reason)
+            self.kill(state)
+        return len(victims)
+
     def kill_and_evict_by_conv(self, conv_id: str, reason: str) -> int:
         """Kill all live Antigravity sessions for one conversation."""
         with self._lock:

@@ -53,7 +53,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
 
     @staticmethod
     def _deliver_to_captured_tmux(conversation_id: str, agent_name: str,
-                                  text: str) -> bool:
+                                  text: str, *, attachments: list = None,
+                                  user_id: str = "") -> bool:
         """Type a user message into a tmux session working outside a worker.
 
         Reached only when a turn marker says the agent is busy while nothing
@@ -64,9 +65,14 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
         No connected session means no container to type into, and the message
         falls back to the queue.
 
-        Returns True when the text reached the live container.
+        Attachments use the same scoped prompt materialization as a worker's
+        live preempt. A captured turn has no registered provider client, but
+        that must not downgrade a multimodal message to a text-only paste.
+        Returns True when the complete prompt reached the live container.
         """
-        if not conversation_id or not (text or "").strip():
+        if not conversation_id or not ((text or "").strip() or attachments):
+            return False
+        if attachments and not user_id:
             return False
         try:
             from services.cc_interactive_event_service import (
@@ -84,9 +90,20 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 pool = InteractiveClaudeCodePool.instance()
             state = pool.find_live_by_conv_agent(
                 conversation_id, agent_name or "")
+            if state is None:
+                return False
+            prompt = text
+            if attachments:
+                from core.llm_client import LLMClient
+                provider = ("codex-interactive"
+                            if getattr(live, "provider", "") == "codex-interactive"
+                            else "claude-code-interactive")
+                prompt = LLMClient(provider)._cci_preempt_prompt(
+                    text, attachments, state, user_id, conversation_id,
+                    agent_name)
             # This tmux is visibly running: a normal send waits behind that turn.
             # Escape + receipt-verified Enter is the live-preempt path.
-            if state is None or not pool.send_interrupt(state, text):
+            if not pool.send_interrupt(state, prompt):
                 return False
         except Exception:
             logger.debug("captured-tmux delivery failed", exc_info=True)
@@ -1044,7 +1061,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 _fast_restart_after_preempt = True
                 _already_active = False
 
-            if (not _active_client and _active_turn and _user_text
+            if (not _active_client and _active_turn
+                    and (_user_text or _attachments_body)
                     and _modes_match):
                 # The thread exists, but the provider client is not currently
                 # published to _active_claude_client. This can happen while the
@@ -1066,7 +1084,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 # the message reaches nothing while the tmux is visibly
                 # working. The live container is still typeable: type into it.
                 if self._deliver_to_captured_tmux(
-                        conversation_id, _target, _user_text):
+                        conversation_id, _target, _user_text,
+                        attachments=_attachments_body, user_id=_uid):
                     ack = json.dumps({
                         "status": "accepted",
                         "conversation_id": conversation_id,

@@ -211,6 +211,7 @@ include = [
 exclude = ["tests*", "*.graphify-out", "*.graphify-out.*"]
 
 [tool.setuptools.package-data]
+"pawflow_relay" = ["physical-seccomp.json", "physical-seccomp.LICENSE"]
 "tasks.io.chat_ui" = ["**/*.html", "**/*.js", "**/*.css", "**/*.json", "vendor/*LICENSE*.txt"]
 
 [tool.setuptools.exclude-package-data]

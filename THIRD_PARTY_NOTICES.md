@@ -50,6 +50,14 @@ The project source code is licensed separately under the repository license. Thi
   commit `3ebd955e51035c53c7f8bf3c5b62be652ff441ff` with Cargo's locked
   dependency graph and without the unsupported Linux stealth feature.
 
+## Physical Relay Seccomp Profile
+
+- `pawflow_relay/physical-seccomp.json` derives from the default profile in
+  [moby/profiles](https://github.com/moby/profiles/blob/61eaf32614c7c71b60bd8927d3e6a4ffc8ff1f31/seccomp/default.json),
+  pinned at `61eaf32614c7c71b60bd8927d3e6a4ffc8ff1f31`, Apache-2.0.
+  PawFlow adds only a `pivot_root` allow rule conditional on `CAP_SYS_ADMIN`.
+  The upstream license is included as `pawflow_relay/physical-seccomp.LICENSE`.
+
 ## Release Checklist
 
 Before making a Docker release public:

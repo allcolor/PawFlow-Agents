@@ -190,6 +190,8 @@ def build_binary(python: str, version: str) -> Path:
         str(BUILD_ROOT),
         "--paths",
         str(ROOT),
+        "--collect-data",
+        "pawflow_relay",
         "--hidden-import",
         "pawflow_relay.manager_cli",
         "--hidden-import",

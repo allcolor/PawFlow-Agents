@@ -1,10 +1,53 @@
 """Private worker bootstrap invariants; mounted acceptance is separate."""
 
+import importlib.util
+import json
 from pathlib import Path
 
 import pytest
 
 from pawflow_relay import _physical_runtime as runtime
+
+
+def test_group_seccomp_allows_only_privileged_pivot_without_opening_other_syscalls():
+    profile = json.loads(runtime.SECCOMP_PROFILE.read_text(encoding="utf-8"))
+    assert profile["defaultAction"] == "SCMP_ACT_ERRNO"
+    assert profile["defaultErrnoRet"] == 1
+    pivot = [rule for rule in profile["syscalls"] if "pivot_root" in rule["names"]]
+    assert len(pivot) == 1
+    assert pivot[0]["names"] == ["pivot_root"]
+    assert pivot[0]["action"] == "SCMP_ACT_ALLOW"
+    assert pivot[0]["includes"] == {"caps": ["CAP_SYS_ADMIN"]}
+    for rule in profile["syscalls"]:
+        if rule["action"] != "SCMP_ACT_ALLOW":
+            continue
+        assert "keyctl" not in rule["names"]
+        if "reboot" in rule["names"]:
+            assert rule["includes"] == {"caps": ["CAP_SYS_BOOT"]}
+        if "open_by_handle_at" in rule["names"]:
+            assert rule["includes"] == {"caps": ["CAP_DAC_READ_SEARCH"]}
+
+
+def test_cli_binary_collects_the_physical_seccomp_data(tmp_path, monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "physical_relay_cli_builder", root / "scripts/build-relay-cli-installer.py")
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    monkeypatch.setattr(builder, "DIST_ROOT", tmp_path / "dist")
+    monkeypatch.setattr(builder, "BUILD_ROOT", tmp_path / "build")
+    monkeypatch.setattr(builder, "ensure_pyinstaller", lambda _python: None)
+    calls = []
+
+    def build(command, **_kwargs):
+        calls.append(command)
+        output = Path(command[command.index("--distpath") + 1])
+        (output / builder.executable_name()).touch()
+
+    monkeypatch.setattr(builder, "_run", build)
+    builder.build_binary("python3", "acceptance-test")
+    command = calls[0]
+    assert command[command.index("--collect-data") + 1] == "pawflow_relay"
 
 
 def test_pivot_detaches_old_root_before_worker_execution(tmp_path, monkeypatch):

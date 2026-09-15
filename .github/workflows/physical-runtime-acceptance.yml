@@ -30,6 +30,8 @@ jobs:
           mkdir -p acceptance-output
           docker image inspect pawflow-static-acceptance:local > acceptance-output/image.json
           uname -a > acceptance-output/kernel.txt
+          docker version > acceptance-output/docker-version.txt
+          cp pawflow_relay/physical-seccomp.json acceptance-output/seccomp.json
           test -c /dev/fuse
           test -c /dev/net/tun
 
@@ -40,6 +42,7 @@ jobs:
             --cap-add SYS_ADMIN --cap-add NET_ADMIN \
             --device /dev/fuse --device /dev/net/tun \
             --security-opt apparmor=unconfined \
+            --security-opt seccomp=pawflow_relay/physical-seccomp.json \
             --volume /run/pawflow-rootfs \
             --mount type=bind,source="$RUNNER_TEMP/physical-image/runtime",target=/opt/pawflow,readonly \
             --mount type=bind,source="$PWD/acceptance-output",target=/acceptance-output \

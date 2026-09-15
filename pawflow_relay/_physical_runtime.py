@@ -25,6 +25,7 @@ from pathlib import Path
 
 ROOTFS = "/run/pawflow-rootfs"
 SCRIPT = "/opt/pawflow/pawflow_relay/_physical_runtime.py"
+SECCOMP_PROFILE = Path(__file__).with_name("physical-seccomp.json")
 
 
 def _run(*args):

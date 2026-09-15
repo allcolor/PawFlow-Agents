@@ -37,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
     libncurses-dev libgdbm-dev liblzma-dev tk-dev uuid-dev \
     libfontconfig1-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev \
-    fuse3 libfuse3-dev \
+    fuse3 libfuse3-dev slirp4netns util-linux \
     cryfs \
     && rm -rf /var/lib/apt/lists/*
 
@@ -300,7 +300,7 @@ RUN mkdir -p /opt/pawflow \
 ENV PYTHONPATH="/opt/pawflow:/workspace/.pylib"
 
 # ── Init script: repair bind-mount permissions, then exec as pawflow ─────
-RUN printf '#!/bin/bash\nset -e\nchronyd 2>/dev/null || true\nrun_uid="1001"\nrun_gid="1001"\nif [ "$run_gid" != "$(id -g pawflow)" ]; then\n  if getent group "$run_gid" >/dev/null; then usermod -g "$run_gid" pawflow; else groupmod -g "$run_gid" pawflow; fi\nfi\nif [ "$run_uid" != "$(id -u pawflow)" ]; then usermod -u "$run_uid" pawflow; fi\nrm -rf /home/pawflow/.rustup /home/pawflow/.cache/go-build /home/pawflow/.cache/huggingface /home/pawflow/.config/chromium 2>/dev/null || true\nchown -R pawflow:$(id -gn pawflow) /home/pawflow 2>/dev/null || true\nfor d in /workspace /cc_sessions /filestore /skills; do\n  mkdir -p "$d"\n  chown -R pawflow:$(id -gn pawflow) "$d" 2>/dev/null || true\n  gid=$(stat -c %g "$d" 2>/dev/null || echo "$run_gid")\n  group=$(getent group "$gid" | cut -d: -f1 || true)\n  if [ -z "$group" ]; then group=pfmount_$gid; groupadd -g "$gid" "$group" 2>/dev/null || true; fi\n  usermod -aG "$group" pawflow 2>/dev/null || true\n  chmod g+rwx "$d" 2>/dev/null || true\ndone\nexec sudo -E -u pawflow "$@"\n' > /usr/local/bin/init.sh \
+RUN printf '#!/bin/bash\nset -e\nchronyd 2>/dev/null || true\nrun_uid="1001"\nrun_gid="1001"\nif [ "$run_gid" != "$(id -g pawflow)" ]; then\n  if getent group "$run_gid" >/dev/null; then usermod -g "$run_gid" pawflow; else groupmod -g "$run_gid" pawflow; fi\nfi\nif [ "$run_uid" != "$(id -u pawflow)" ]; then usermod -u "$run_uid" pawflow; fi\nrm -rf /home/pawflow/.rustup /home/pawflow/.cache/go-build /home/pawflow/.cache/huggingface 2>/dev/null || true\nchown -R pawflow:$(id -gn pawflow) /home/pawflow 2>/dev/null || true\nfor d in /workspace /cc_sessions /filestore /skills; do\n  mkdir -p "$d"\n  chown -R pawflow:$(id -gn pawflow) "$d" 2>/dev/null || true\n  gid=$(stat -c %g "$d" 2>/dev/null || echo "$run_gid")\n  group=$(getent group "$gid" | cut -d: -f1 || true)\n  if [ -z "$group" ]; then group=pfmount_$gid; groupadd -g "$gid" "$group" 2>/dev/null || true; fi\n  usermod -aG "$group" pawflow 2>/dev/null || true\n  chmod g+rwx "$d" 2>/dev/null || true\ndone\nexec sudo -E -u pawflow "$@"\n' > /usr/local/bin/init.sh \
     && chmod +x /usr/local/bin/init.sh
 
 # ── Fix home ownership (usermod -m may keep old uid on preexisting files) ──

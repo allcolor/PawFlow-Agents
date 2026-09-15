@@ -104,7 +104,12 @@ retains mapped UID/GID ownership while limiting root capabilities to that
 logical view and locking inherited read-only mounts; each worker has a private
 init process to reap orphan descendants. See the Linux
 [mount namespace restrictions](https://man7.org/linux/man-pages/man7/mount_namespaces.7.html)
-for the kernel rules this design relies on. Real grouped mount, FUSE, network and desktop acceptance is
+for the kernel rules this design relies on. Grouped Docker launches load the
+bundled `pawflow_relay/physical-seccomp.json`: Moby's default seccomp profile pinned
+at `61eaf32614c7c71b60bd8927d3e6a4ffc8ff1f31`, with only `pivot_root` added under
+`CAP_SYS_ADMIN`. Docker's default profile blocks that call even when `SYS_ADMIN`
+allows the preceding mounts. The Docker CLI reads the bundled profile locally;
+the Desktop launcher translates its path for WSL. Real grouped mount, FUSE, network and desktop acceptance is
 still required before release; source and mocked lifecycle tests alone do not
 establish runtime isolation.
 

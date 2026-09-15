@@ -435,8 +435,14 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         timeout = max(0.0, float(timeout))
         deadline = time.time() + timeout
         previous = None
+        with self._lock:
+            state = next((item for item in self._sessions.values() if item.name == name), None)
         while True:
+            if state is not None:
+                self._check_native_compaction(state)
             current = self._codex_readiness_state(name)
+            if state is not None:
+                self._check_native_compaction(state)
             if timeout <= 0:
                 return current is not None
             if current is not None and current == previous:
@@ -521,7 +527,54 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         touches the composer. The shared send path waits after the paste, where
         the delay prevents Enter from being swallowed into the attachment.
         """
+        self._check_native_compaction(state)
         return self.send_keys(state, ["Escape", "Escape"])
+
+    def send_text(self, state: InteractiveContainer, text: str) -> bool:
+        self._check_native_compaction(state)
+        try:
+            sent = super().send_text(state, text)
+        except Exception:
+            self._check_native_compaction(state)
+            raise
+        self._check_native_compaction(state)
+        return sent
+
+    def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
+        self._check_native_compaction(state)
+        try:
+            sent = super().send_interrupt(state, text)
+        except Exception:
+            self._check_native_compaction(state)
+            raise
+        self._check_native_compaction(state)
+        return sent
+
+    def _check_native_compaction(self, state: InteractiveContainer) -> None:
+        """Preserve compaction handoff across readiness and transport failures."""
+        try:
+            from services.cc_interactive_event_service import (
+                get_or_create_cc_interactive_event_service)
+            service = get_or_create_cc_interactive_event_service()[2]
+            events = service.session_state(state.session_token)
+        except Exception:
+            # Isolated transport diagnostics may have no event service.
+            events = None
+        if events is not None:
+            self._raise_native_compaction(
+                state, getattr(events, "native_compact_hook", ""))
+
+    @staticmethod
+    def _raise_native_compaction(state: InteractiveContainer, hook: str) -> None:
+        if hook not in {"PreCompact", "PostCompact"}:
+            return
+        from core.llm_client import CCCompactDetected
+        state.last_error = ""
+        logger.warning(
+            "[codex-interactive] %s detected during prompt submission "
+            "for %s — handing context to PawFlow", hook, state.name)
+        raise CCCompactDetected(
+            f"Codex interactive {hook} hook detected during submission")
 
     def _paste_landed(self, state: InteractiveContainer, text: str,
                       before_pane: str = "") -> bool:
@@ -567,6 +620,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                     after_request=after_request,
                     timeout=proof_window)
                 proof_attempts_remaining -= 1
+                self._raise_native_compaction(state, proof)
                 if proof in {"hook", "request"}:
                     logger.debug(
                         "[codex-interactive] prompt submission confirmed for "

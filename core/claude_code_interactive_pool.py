@@ -1158,6 +1158,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             return False
         self._recover_container_tokens(state)
         self._kill_container(state.name)
+        self._unregister_event_session(state)
         return True
 
     def destroy_ephemeral(self, state: InteractiveContainer) -> None:

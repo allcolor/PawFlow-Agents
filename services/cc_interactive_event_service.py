@@ -37,6 +37,9 @@ from core.native_todo_adapter import native_task_id as _native_task_id
 
 logger = logging.getLogger(__name__)
 
+# Native CLI compaction hooks. A turn coordinator raises CCCompactDetected on
+# them; with no coordinator they must still arm the orphan-turn machinery.
+_NATIVE_COMPACT_HOOKS = frozenset({"PreCompact", "PostCompact"})
 
 _SENSITIVE_HEADER_RE = re.compile(
     rb"(?im)^(authorization|cookie|proxy-authorization|set-cookie|x-api-key|anthropic-api-key):[^\r\n]*"
@@ -190,6 +193,12 @@ class CCInteractiveSessionEvents:
     prompt_submit_seq: int = 0
     prompt_submit_receipts: list = field(default_factory=list)
     provider_request_seq: int = 0
+    # Native Codex compaction invalidates this session, even before submit ACK.
+    # Keep the signal across queue drains until the session is destroyed.
+    native_compact_hook: str = ""
+    # Only hooks admitted at the current boundary need orphan recovery. A Stop
+    # cannot cancel these signals; delivery or an explicit drain retires them.
+    pending_compact_events: set[int] = field(default_factory=set)
     # Compatibility mirror for Claude Code's native TaskCreate/TaskUpdate.
     # PawFlow's TodoStore remains authoritative; the adapter correlates each
     # observed native tool_use with its later successful tool_result.
@@ -478,6 +487,8 @@ class CCInteractiveEventService(BaseService):
         the provider MITM has already seen the model request, ``fragment`` when
         Codex submitted only a piece of PawFlow's paste, ``other`` when a
         different prompt was submitted after the marker, or ``""`` on timeout.
+        Codex ``PreCompact`` / ``PostCompact`` takes priority over all receipts:
+        the caller must preempt native compaction, not wait for submission.
         """
         state = self.session_state(session_token)
         if state is None:
@@ -486,6 +497,8 @@ class CCInteractiveEventService(BaseService):
         deadline = time.monotonic() + max(0.0, timeout)
         with state.stream_condition:
             while True:
+                if state.native_compact_hook:
+                    return state.native_compact_hook
                 saw_fragment = False
                 saw_other = False
                 for seq, digest, kind in state.prompt_submit_receipts:
@@ -647,6 +660,7 @@ class CCInteractiveEventService(BaseService):
         """
         state.oldest_pending_at = (
             time.time() if (state.pushback or not state.events.empty()) else 0.0)
+        state.pending_compact_events.discard(id(event))
         return event
 
     def drain_session(self, session_token: str) -> int:
@@ -659,6 +673,7 @@ class CCInteractiveEventService(BaseService):
         with state.stream_condition:
             drained += len(state.pushback)
             state.pushback.clear()
+            state.pending_compact_events.clear()
             while True:
                 try:
                     state.events.get_nowait()
@@ -723,7 +738,14 @@ class CCInteractiveEventService(BaseService):
 
     def _record_submission_signal(self, state: CCInteractiveSessionEvents,
                                   event: dict) -> None:
-        """Mirror submit proof into counters without removing the real event."""
+        """Mirror submission and compaction signals without taking stream events."""
+        if (state.provider == "codex-interactive"
+                and event.get("type") == "hook"
+                and event.get("hook_event_name") in {"PreCompact", "PostCompact"}):
+            with state.stream_condition:
+                state.native_compact_hook = event["hook_event_name"]
+                state.stream_condition.notify_all()
+            return
         if self._is_provider_request(state, event):
             with state.stream_condition:
                 state.provider_request_seq += 1
@@ -916,10 +938,29 @@ class CCInteractiveEventService(BaseService):
         event) because it only fires mid-turn: post-Stop stragglers can
         never spawn a capture that would outlive its turn and steal events
         from the next request's coordinator.
+
+        A native ``PreCompact``/``PostCompact`` hook is the other mid-turn
+        trigger. Reached with no listener it means the CLI is compacting on
+        its own while nobody can preempt it: the send path only reacts while
+        a send is in flight, and a coordinator only exists once a send was
+        acknowledged. Adopting the turn hands the hook to a capture, whose
+        coordinator raises ``CCCompactDetected`` and transfers the compaction
+        to PawFlow (``_compact_captured_turn``). Observed 2026-09-08: five
+        PreCompact hooks on one Codex session, none ever consumed.
         """
-        if not self._is_provider_request(state, event):
+        if self._is_provider_request(state, event):
+            self._adopt_orphan_turn(state, "request in flight")
             return
-        self._adopt_orphan_turn(state, "request in flight")
+        if (event.get("type") == "hook"
+                and event.get("hook_event_name") in _NATIVE_COMPACT_HOOKS):
+            # `_track_turn_boundary` ran first: a hook older than the Stop
+            # that followed it left `turn_over` True. That compaction belongs
+            # to a turn already over; adopting it would reopen history.
+            with state.stream_condition:
+                if state.turn_over and not state.pending_compact_events:
+                    return
+            self._adopt_orphan_turn(
+                state, f"native {event.get('hook_event_name')}")
 
     @staticmethod
     def _is_provider_request(state: CCInteractiveSessionEvents,
@@ -955,7 +996,10 @@ class CCInteractiveEventService(BaseService):
 
         A Stop says the turn is over. Anything that starts one -- a real
         provider request, a prompt submitted in the tmux -- arms the rule
-        again, so a genuine orphan turn is still adopted.
+        again, so a genuine orphan turn is still adopted. So does a native
+        ``PreCompact``/``PostCompact``: the CLI is working, on a compaction
+        PawFlow must take over, and a post-Stop ``turn_over`` would have the
+        undelivered rule file that hook as a straggler nobody needs to read.
 
         Decided on the events' own timestamps, not on their arrival order.
         The two kinds of boundary event do not share a route: the proxy emits
@@ -974,7 +1018,7 @@ class CCInteractiveEventService(BaseService):
             hook = event.get("hook_event_name", "")
             if hook == "Stop":
                 over = True
-            elif hook == "UserPromptSubmit":
+            elif hook == "UserPromptSubmit" or hook in _NATIVE_COMPACT_HOOKS:
                 over = False
             else:
                 return
@@ -990,6 +1034,9 @@ class CCInteractiveEventService(BaseService):
         with state.stream_condition:
             if stamp and stamp < state.turn_boundary_at:
                 return
+            if (event.get("type") == "hook"
+                    and event.get("hook_event_name") in _NATIVE_COMPACT_HOOKS):
+                state.pending_compact_events.add(id(event))
             state.turn_over = over
             state.turn_boundary_at = max(stamp, state.turn_boundary_at)
 
@@ -1045,6 +1092,7 @@ class CCInteractiveEventService(BaseService):
         with state.stream_condition:
             pending_since = state.oldest_pending_at
             between_turns = state.turn_over
+            compact_pending = bool(state.pending_compact_events)
         if not pending_since:
             return
         # Nothing drains a session's queue when a turn ENDS, only when the next
@@ -1052,7 +1100,7 @@ class CCInteractiveEventService(BaseService):
         # post-Stop tail, already streamed and persisted -- not a turn nobody is
         # showing. Adopting it raised the active-agent marker minutes after the
         # answer landed, on a capture waiting for a Stop that had come and gone.
-        if between_turns:
+        if between_turns and not compact_pending:
             return
         if time.time() - pending_since < self._UNDELIVERED_ADOPT_SECONDS:
             return

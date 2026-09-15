@@ -461,6 +461,34 @@ Timing controls are read once when the provider modules are imported:
   that has cleared or a pane that already looks busy still consumes the full
   configured acknowledgement window: cold sessions can submit before their
   hook or first MITM request reaches PawFlow, especially after compaction.
+  Native Codex `PreCompact` or `PostCompact` is a preemption signal, never a
+  submission acknowledgement. It wakes the submission waiter immediately,
+  takes priority over receipts, and remains latched for that session even if
+  the event queue is drained. A previously latched signal is checked before
+  preparing the composer, so no new prompt is pasted into that session.
+  Readiness probes and both send paths also check the latch before returning
+  transport failures, so a concurrent hook still triggers compaction handoff.
+  Destroying the pooled session also unregisters and closes its event state.
+  Compaction cleanup identifies the observed session by `state.session_token`
+  in both provider paths, so a concurrent replacement under the same
+  user/conversation/agent/service key keeps its container and event stream.
+  Both normal and interrupt provider sends route
+  `CCCompactDetected` through session destruction and consumer release before
+  the agent driver forces PawFlow compaction and starts a fresh session with
+  the pending user context. This also covers native compaction started before
+  `UserPromptSubmit`, when the turn coordinator has not started yet; it must
+  not be reported as a prompt-paste timeout or wait for native compaction to end.
+  A `PreCompact`/`PostCompact` that reaches the event service while no send is
+  in flight and no coordinator or capture is reading the session (a prompt
+  typed in the tmux, a native `/compact`) adopts a capture immediately, and
+  re-arms the undelivered-events backstop so a hook that landed while a reader
+  still looked recent is adopted within `_UNDELIVERED_ADOPT_SECONDS`. The
+  capture's coordinator raises `CCCompactDetected` on the queued hook and the
+  captured-compaction handoff takes over. A live request coordinator is never
+  displaced: it raises on the hook itself.
+  A later `Stop` does not cancel recovery of an unread compaction hook.
+  Delivery or an explicit queue drain retires that hook from orphan tracking;
+  ordinary post-Stop leftovers do not reopen a completed turn.
 - `PAWFLOW_CCI_IDLE_TTL_SECONDS` controls Claude Code idle container eviction;
   `PAWFLOW_CODEX_INTERACTIVE_IDLE_TTL_SECONDS` controls the equivalent Codex
   Interactive pool. **There is no default**: unset, or `0`, means containers

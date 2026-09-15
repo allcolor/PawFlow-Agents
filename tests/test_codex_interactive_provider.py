@@ -279,7 +279,7 @@ def test_codex_provider_kills_native_session_when_compaction_hook_fires(
         send_text=lambda _state, _prompt: True,
         send_interrupt=lambda _state, _text: True,
         destroy_ephemeral=lambda _state: None,
-        kill_session=lambda *args: killed.append(args) or True)
+        kill_and_evict_by_session_token=lambda *args: killed.append(args) or 1)
     events = SimpleNamespace(
         claim_consumer=lambda _token: 12,
         drain_session=lambda _token: None,
@@ -315,8 +315,8 @@ def test_codex_provider_kills_native_session_when_compaction_hook_fires(
             agent_name="assistant")
 
     assert killed == [
-        ("user", "conv", "assistant", "svc"),
-        ("user", "conv", "assistant", "svc"),
+        (state.session_token, "native_compaction"),
+        (state.session_token, "native_compaction"),
     ]
     assert released == [(state.session_token, 12), (state.session_token, 12)]
 

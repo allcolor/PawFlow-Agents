@@ -241,30 +241,27 @@ class LLMCodexInteractiveMixin:
                 agent_name=agent_name, state=state)
             _, _, event_service = get_or_create_cc_interactive_event_service()
             consumer_epoch = event_service.claim_consumer(state.session_token)
-            event_service.drain_session(state.session_token)
-            if not pool.send_text(state, prompt):
-                event_service.release_consumer(
-                    state.session_token, consumer_epoch)
-                detail = (
-                    getattr(state, "last_error", "") or "unknown tmux error")
-                raise LLMClientError(
-                    "Failed to paste prompt into Codex interactive tmux session: "
-                    f"{detail}")
-            state.initial_context_loaded = True
-            # Same dedup contract as the CCI provider: everything in
-            # `messages` has been conveyed, never re-paste it.
-            _submitted = getattr(state, "submitted_msg_ids", None)
-            if _submitted is None:
-                _submitted = set()
-                state.submitted_msg_ids = _submitted
-            _submitted.update(
-                mid for mid in (
-                    getattr(m, "msg_id", "")
-                    for m in (messages or [])
-                    if getattr(m, "role", "") == "user")
-                if mid)
-
             try:
+                event_service.drain_session(state.session_token)
+                if not pool.send_text(state, prompt):
+                    detail = (
+                        getattr(state, "last_error", "") or "unknown tmux error")
+                    raise LLMClientError(
+                        "Failed to paste prompt into Codex interactive tmux session: "
+                        f"{detail}")
+                state.initial_context_loaded = True
+                # Same dedup contract as the CCI provider: everything in
+                # `messages` has been conveyed, never re-paste it.
+                _submitted = getattr(state, "submitted_msg_ids", None)
+                if _submitted is None:
+                    _submitted = set()
+                    state.submitted_msg_ids = _submitted
+                _submitted.update(
+                    mid for mid in (
+                        getattr(m, "msg_id", "")
+                        for m in (messages or [])
+                        if getattr(m, "role", "") == "user")
+                    if mid)
                 coord = _CodexInteractiveTurnCoordinator(
                     event_service, state.session_token, callback=callback,
                     thinking_callback=thinking_callback,
@@ -282,11 +279,11 @@ class LLMCodexInteractiveMixin:
                 response = coord.run(getattr(self, "_abort", None))
             except CCCompactDetected:
                 # PreCompact is synchronous, but Codex resumes as soon as the
-                # hook process exits. Remove the pooled session immediately so
+                # hook process exits. Retire the observed session immediately so
                 # its native summarizer cannot race PawFlow's forced compact.
-                pool.kill_session(
-                    user_id, pool_conversation_id, agent_name,
-                    getattr(state, "service_id", "") or "")
+                # A concurrent replacement under the same key must survive.
+                pool.kill_and_evict_by_session_token(
+                    state.session_token, "native_compaction")
                 raise
             finally:
                 event_service.release_consumer(
@@ -320,17 +317,14 @@ class LLMCodexInteractiveMixin:
         try:
             _, _, event_service = get_or_create_cc_interactive_event_service()
             consumer_epoch = event_service.claim_consumer(state.session_token)
-            event_service.drain_session(state.session_token)
-            if not pool.send_interrupt(state, text):
-                # Same as the send path: no coordinator will poll this claim.
-                event_service.release_consumer(
-                    state.session_token, consumer_epoch)
-                detail = (
-                    getattr(state, "last_error", "") or "unknown tmux error")
-                raise LLMClientError(
-                    "Failed to interrupt Codex interactive tmux session: "
-                    f"{detail}")
             try:
+                event_service.drain_session(state.session_token)
+                if not pool.send_interrupt(state, text):
+                    detail = (
+                        getattr(state, "last_error", "") or "unknown tmux error")
+                    raise LLMClientError(
+                        "Failed to interrupt Codex interactive tmux session: "
+                        f"{detail}")
                 coord = _CodexInteractiveTurnCoordinator(
                     event_service, state.session_token, callback=callback,
                     thinking_callback=thinking_callback,
@@ -346,9 +340,8 @@ class LLMCodexInteractiveMixin:
                             user_id=user_id, event_cid=conversation_id)))
                 response = coord.run(getattr(self, "_abort", None))
             except CCCompactDetected:
-                pool.kill_session(
-                    user_id, conversation_id, agent_name,
-                    getattr(state, "service_id", "") or "")
+                pool.kill_and_evict_by_session_token(
+                    state.session_token, "native_compaction")
                 raise
             finally:
                 event_service.release_consumer(
@@ -394,7 +387,15 @@ class LLMCodexInteractiveMixin:
             kwargs.get("user_id") or "",
             kwargs.get("conversation_id") or "",
             kwargs.get("agent_name") or "")
-        ok = CodexInteractivePool.instance().send_interrupt(state, prompt)
+        from core.llm_client import CCCompactDetected
+
+        try:
+            ok = CodexInteractivePool.instance().send_interrupt(state, prompt)
+        except CCCompactDetected:
+            # The streaming coordinator owns native compaction and session
+            # destruction. Leave its hook queued and let HTTP retain the user
+            # message for the compacted restart instead of returning an error.
+            return False
         if ok:
             self._had_preempts_this_turn = True
         return ok

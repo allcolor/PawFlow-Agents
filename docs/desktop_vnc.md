@@ -257,6 +257,11 @@ Remote desktop audio is packetized at the relay and forwarded over the
 authenticated relay WebSocket. A server-managed relay instead keeps the direct
 TCP audio path to its published Docker port.
 
+The native Opus encoder declares its C pointer signatures explicitly so audio
+capture also works when a 64-bit process allocates the encoder above 4 GiB.
+The Linux regression check creates, encodes and destroys an actual encoder in
+a child process, both with the normal allocator and forced high-address mappings.
+
 Docker desktop audio can be affected by host clock drift, especially on WSL2. If audio plays too fast or too slow relative to video, install and run `chrony` in the WSL2 distro so the Linux clock stays synced with the Windows host.
 
 ```bash

@@ -55,9 +55,21 @@ class OpusEncoder:
         self._channels = channels
         self._frame_size = sample_rate * frame_duration_ms // 1000  # samples per frame
 
+        # Preserve native pointers on 64-bit systems, including high-address allocations.
+        self._lib.opus_encoder_create.argtypes = [
+            ctypes.c_int32, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        self._lib.opus_encoder_create.restype = ctypes.c_void_p
+        self._lib.opus_encoder_ctl.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        self._lib.opus_encoder_ctl.restype = ctypes.c_int
+        self._lib.opus_encode.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_int16), ctypes.c_int,
+            ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int32]
+        self._lib.opus_encode.restype = ctypes.c_int
+        self._lib.opus_encoder_destroy.argtypes = [ctypes.c_void_p]
+        self._lib.opus_encoder_destroy.restype = None
+
         # opus_encoder_create
         err = ctypes.c_int(0)
-        self._lib.opus_encoder_create.restype = ctypes.c_void_p
         self._enc = self._lib.opus_encoder_create(
             ctypes.c_int(sample_rate), ctypes.c_int(channels),
             ctypes.c_int(application), ctypes.byref(err))
@@ -77,12 +89,11 @@ class OpusEncoder:
         """Encode one frame of PCM (s16le) to Opus. Returns Opus packet bytes."""
         pcm_buf = ctypes.create_string_buffer(pcm_bytes)
         out_buf = ctypes.create_string_buffer(4000)  # max opus packet
-        self._lib.opus_encode.restype = ctypes.c_int
         n = self._lib.opus_encode(
             self._enc,
             ctypes.cast(pcm_buf, ctypes.POINTER(ctypes.c_int16)),
             ctypes.c_int(self._frame_size),
-            out_buf, ctypes.c_int(4000))
+            ctypes.cast(out_buf, ctypes.POINTER(ctypes.c_ubyte)), ctypes.c_int(4000))
         if n < 0:
             raise RuntimeError(f"opus_encode failed: {n}")
         return out_buf.raw[:n]

@@ -1,0 +1,56 @@
+name: Physical Runtime Acceptance
+
+on:
+  push:
+    branches: ["codex/physical-runtime-acceptance-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Generate the project minimal image
+        run: |
+          python3 scripts/generate-relay-image.py --profile client-minimal --out "$RUNNER_TEMP/physical-image" --image pawflow-static-acceptance:local
+          cp tests/physical_runtime_probe.py "$RUNNER_TEMP/physical-image/runtime/physical_runtime_probe.py"
+
+      - name: Build disposable test image
+        run: docker build -t pawflow-static-acceptance:local "$RUNNER_TEMP/physical-image"
+
+      - name: Record image and kernel
+        run: |
+          mkdir -p acceptance-output
+          docker image inspect pawflow-static-acceptance:local > acceptance-output/image.json
+          uname -a > acceptance-output/kernel.txt
+          test -c /dev/fuse
+          test -c /dev/net/tun
+
+      - name: Exercise real grouped startup and cleanup
+        run: |
+          docker run --rm --name pawflow-static-acceptance \
+            --cpus 2 --memory 2g --memory-swap 2g --pids-limit 512 \
+            --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+            --device /dev/fuse --device /dev/net/tun \
+            --security-opt apparmor=unconfined \
+            --volume /run/pawflow-rootfs \
+            --mount type=bind,source="$RUNNER_TEMP/physical-image/runtime",target=/opt/pawflow,readonly \
+            --mount type=bind,source="$PWD/acceptance-output",target=/acceptance-output \
+            --env PAWFLOW_DISPOSABLE_ACCEPTANCE=1 \
+            --entrypoint /usr/bin/tini pawflow-static-acceptance:local \
+            -- python3 -I /opt/pawflow/physical_runtime_probe.py
+
+      - name: Retain acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: physical-runtime-evidence
+          path: acceptance-output
+          if-no-files-found: error

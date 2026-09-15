@@ -1,10 +1,15 @@
 import importlib.util
 import json
+import os
 import re
+import shlex
+import shutil
+import subprocess
 from pathlib import Path
 
-from core.install_bootstrap import get_install_status
+import pytest
 
+from core.install_bootstrap import get_install_status
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config" / "relay_image_catalog.json"
@@ -40,6 +45,7 @@ def test_relay_catalog_has_required_base_runtime():
     assert "iproute2" in base["apt"]
     assert "netcat-openbsd" in base["apt"]
     assert "fuse3" in base["apt"]
+    assert {"tini", "slirp4netns", "util-linux"} <= set(base["apt"])
     assert "libfuse3-dev" in base["apt"]
     assert "build-essential" in base["apt"]
     assert "pkg-config" in base["apt"]
@@ -132,6 +138,7 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert dockerfile.index("pkg-config") < dockerfile.index("pip3 install")
     assert dockerfile.index("libfuse3-dev") < dockerfile.index("pip3 install")
     assert "ripgrep" in dockerfile
+    assert "tini" in dockerfile
     assert "https://deb.nodesource.com/setup_22.x" in dockerfile
     assert dockerfile.index("https://deb.nodesource.com/setup_22.x") < dockerfile.index("nodejs")
     assert "gimp gimp-plugin-registry" in dockerfile
@@ -184,6 +191,64 @@ def test_server_minimal_build_script_targets_runtime_default_image():
     assert "pawflow-relay-minimal:latest" in src
     assert "docker/relay-generated/server-minimal" in src
     assert "PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE" in src
+
+
+@pytest.mark.skipif(os.name != "posix" or shutil.which("bash") is None,
+                    reason="relay init requires POSIX and bash")
+@pytest.mark.parametrize("profile", ["dev", "server-full", "server-minimal", "client-minimal"])
+def test_relay_init_preserves_chromium_profiles(tmp_path, profile):
+    if profile == "dev":
+        dockerfile = (ROOT / "docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
+    else:
+        generator = _load_generator()
+        catalog = _catalog()
+        features = generator._resolve_features(catalog, profile, [])
+        dockerfile = generator._render_dockerfile(catalog, features, "relay:test")
+    line = next(line.strip() for line in dockerfile.splitlines()
+                if "> /usr/local/bin/init.sh" in line)
+    tokens = shlex.split(line.removeprefix("RUN ").removeprefix("&& ").rstrip("\\").strip())
+    assert tokens[0] == "printf"
+    # Use printf itself to decode the exact script embedded in the image.
+    script = subprocess.run(
+        ["bash", "-c", 'printf "$1"', "printf", tokens[1]],
+        check=True, capture_output=True, text=True, timeout=5,
+    ).stdout
+    relay_home = tmp_path / "home"
+    profiles = [relay_home / name for name in (
+        ".config/chromium", ".chromium-profile", "browser profiles/custom")]
+    sentinels = {}
+    for directory in profiles:
+        (directory / "Default").mkdir(parents=True)
+        for name in ("Default/Cookies", "Default/Bookmarks", "Local State"):
+            path = directory / name
+            sentinels[path] = f"persistent profile: {directory.name}/{name}".encode()
+            path.write_bytes(sentinels[path])
+    cache = relay_home / ".cache/huggingface"
+    cache.mkdir(parents=True)
+    (cache / "old-cache").write_text("disposable", encoding="utf-8")
+
+    # Confine all filesystem operations to fixtures and stub privileged setup.
+    script = script.replace("/home/pawflow", shlex.quote(str(relay_home)))
+    for mount in ("workspace", "cc_sessions", "filestore", "skills"):
+        script = script.replace("/" + mount, shlex.quote(str(tmp_path / mount)))
+    script = script.replace('exec sudo -E -u pawflow "$@"', 'exec "$@"')
+    setup = (
+        "chronyd() { :; }\nchown() { :; }\nusermod() { :; }\n"
+        "groupmod() { :; }\ngroupadd() { :; }\n"
+        "id() { printf '1001\\n'; }\n"
+        "getent() { printf 'pawflow:x:1001:\\n'; }\n"
+    )
+    for _ in range(2):
+        subprocess.run(
+            ["bash", "-c", setup + script, "init.sh", "/usr/bin/true"],
+            env={"PATH": "/usr/bin:/bin", "HOME": str(relay_home),
+                 "PAWFLOW_CHROMIUM_USER_DATA_DIR": str(profiles[-1])},
+            cwd=tmp_path, check=True, capture_output=True, text=True, timeout=5,
+        )
+        assert not cache.exists(), "the startup cleanup must actually run"
+        for path, expected in sentinels.items():
+            assert path.is_file(), f"startup removed browser data: {path}"
+            assert path.read_bytes() == expected
 
 
 def test_installer_api_advertises_relay_image_profile_step():

@@ -3,7 +3,7 @@
 PawFlow relay lifecycle is separate from PawFlow clients.
 
 - Webchat, PawCode, VS Code, and API clients open conversations and send messages.
-- Server relays are created and started from the webchat resource panel.
+- Server physical relays are configured and connected from Webchat **Settings > Server relays**.
 - Client relays are started by the standalone PawFlow Relay client on the machine that owns the files or desktop.
 
 This separation keeps PawCode and the VS Code extension equivalent to the webchat: they do not create, start, stop, or own relays.
@@ -16,13 +16,147 @@ container at `/workspace`:
 - user scope: `data/runtime/relay/<user_id>`
 - conversation scope: `data/runtime/relay/<user_id>/<conversation_id>`
 
-Only one managed server relay is allowed for each global/user/conversation
-workspace scope. Relay service ids are also unique across scopes because the
-reverse WebSocket route is global (`/ws/relay/<service_id>`). Managed server
-relays cannot be moved between scopes; create a new relay in the target scope
-and uninstall the old relay explicitly when its workspace is no longer needed.
+These existing workspace locations are retained during migration. Additional
+logical directories receive separate storage under
+`data/runtime/relay_workspaces/<scope-and-service-digest>`. Physical groups can
+contain multiple logical relays, with service IDs unique across scopes because
+the reverse WebSocket route is global (`/ws/relay/<service_id>`). Managed groups
+cannot change owners or scopes. Their physical names are editable; existing
+logical service IDs and conversation bindings remain unchanged.
 
 Server-side relay sessions track in-flight reverse filesystem requests per WebSocket connection. When a relay disconnects or is removed from the pool, those pending request tasks are cancelled so stale connections cannot retain writers, loops, or queued FUSE work.
+
+## Reusing a relay and sharing a physical container
+
+A relay can be linked to several conversations. In Webchat, use
+**Resources > Relays > Link Relay**, or run `/relay link <relay_id>` and
+`/relay default <relay_id>` in each conversation. These links reuse the same
+relay endpoint and the same workspace.
+
+The standalone client configuration now represents one physical relay with
+1..N logical workspace shares. Relay Desktop displays the physical parent and
+its logical children. Select the parent to configure its complete directory
+list, connect all children or disconnect all children. Selecting a logical
+relay displays its published name, directory and permissions and links back to
+its parent's configuration; it has no independent connection controls.
+
+Existing single-directory installations retain their logical service ID,
+permissions, persistent HOME volume and Chromium profile. New logical names
+are the service names published in PawFlow. Published names must be unique
+without regard to letter case. Physical managers are not usable relay services
+and do not appear in conversation relay inventories.
+
+The [multi-workspace relay plan](MULTI_WORKSPACE_RELAY_DESKTOP_IMPLEMENTATION_PLAN.md)
+records the remaining supervisor, isolation, placement, migration, and UI work.
+The delivered **Active Desktops** inventory and `/desktop` lifecycle commands
+operate on the current runtime and do not enable physical consolidation.
+
+The launch decision of 2026-09-15 defines one physical relay as one common
+Docker container with 1..N logical relays, for both server-managed relays and
+Relay Desktop. One connect or disconnect operation on the physical relay
+connects or disconnects its complete logical-relay group. Logical relays have
+no independent connect/disconnect controls. Each must expose its own directory
+at literal `/workspace` in the common container. The directory list is fixed
+at startup: changing it restarts the Docker container and disconnects then
+reconnects every logical relay in the group. There is no hot addition.
+`manager.plan_workspaces(physical_id, names)` validates and snapshots the named
+shares without starting services, mounting filesystems or changing saved
+configuration. Its immutable plan retains logical IDs, permissions and existing
+HOME volume names. The standalone `start`, `cleanup` and `verify` commands target
+a physical name. Single-directory groups retain the existing worker path;
+multi-directory groups use the static namespace supervisor. Real grouped
+mount, FUSE, network and desktop acceptance remains a release requirement.
+
+The Webchat admin server-relay API returns both the logical inventory (`relays`)
+and its management hierarchy (`physicals`). On load, legacy `MyWorkspace` receives
+a separately named `MyWorkspace (physical)` parent while retaining its service
+ID, credentials, permissions, workspace path, HOME volume and conversation
+bindings. Reading/migrating configuration does not replace a connected worker.
+The parent reports connected, partially connected or disconnected children.
+
+**Settings > Server relays** provides the physical name, complete directory list,
+per-logical read/write mode and permissions, and group connect/disconnect/reconnect
+controls. New server directories are allocated automatically. Saving validates
+the complete configuration before stopping an existing group. A connected group
+is restarted with all selected children; a stopped group remains stopped. Stops
+and directory removal retain stored files and HOME/Chromium. Readding a removed
+logical ID to the same parent restores its previous paths and credentials.
+
+The server stores each complete physical configuration in one atomic document
+under `data/runtime/relay_physicals`, with encrypted credentials including those
+of retired members. Per-service files are recoverable logical projections; the
+parent wins over stale files after an interrupted save. Revision checks reject
+an outdated directory form. Explicit stop intent is persisted before container
+cleanup, so a child retry cannot bring the group back after a stop. All children
+share the 15-second reconnect grace and 60-second spawn cooldown; connections
+must remain stable for 5 seconds to reset outage tracking.
+
+Admin actions `admin_server_physical_get`, `save`, `start`, `stop`, `restart`,
+`delete` and `operation` take the physical ID and scope. Lifecycle actions return
+HTTP 202 with an operation ID; the operation endpoint reports completion or
+failure, and Webchat keeps failed forms available for correction. Logical
+permission switches persist through the parent. Generic logical edit, rename,
+enable, disable, uninstall and reconnect paths cannot bypass the group manager.
+Group deletion retains storage and a record preventing stale logical definitions
+from reappearing. The grouped bootstrap pivots into the private root and detaches
+the original root before application startup. A nested user/mount namespace
+retains mapped UID/GID ownership while limiting root capabilities to that
+logical view and locking inherited read-only mounts; each worker has a private
+init process to reap orphan descendants. See the Linux
+[mount namespace restrictions](https://man7.org/linux/man-pages/man7/mount_namespaces.7.html)
+for the kernel rules this design relies on. Real grouped mount, FUSE, network and desktop acceptance is
+still required before release; source and mocked lifecycle tests alone do not
+establish runtime isolation.
+
+The `Physical Runtime Acceptance` workflow runs the first kernel validation stage
+on a disposable GitHub-hosted Ubuntu runner. It builds the project's minimal relay
+image, including the required `tini`, `slirp4netns` and `util-linux` packages, and
+runs `tests/physical_runtime_probe.py` inside a dedicated container. Two synthetic
+shares exercise literal `/workspace`, separate namespace identities, readonly and
+trusted-code remount refusal, sibling credential visibility, executable files,
+symlinks, DNS and HOME/profile sentinels. Worker failure and explicit supervisor
+stop must remove every observed descendant, verified with PID and creation time.
+The evidence artifact retains the exact image metadata, logs and scenario results.
+This first stage does not establish real server/WebSocket/FUSE/desktop or
+Windows/WSL acceptance; those remain separate release requirements.
+
+Configure a standalone group from the CLI:
+
+```bash
+pawflow-relay physical save laptop --server prod \
+  --workspace Code ~/src/project --workspace Docs ~/Documents --read-only Docs
+pawflow-relay physical list
+pawflow-relay start laptop
+pawflow-relay verify laptop
+pawflow-relay cleanup laptop
+```
+
+`physical save` replaces the complete directory list and requires the group to
+be stopped. `--config-stdin` accepts a JSON object containing `server`,
+`docker_image` and `workspaces`, including each workspace's permissions and
+existing `relay_id`. Add `--validate-only` to validate without saving or stopping.
+Prevalidation and `manager.plan_workspaces()` normalize legacy records in memory
+without persisting migration or changing the saved file, including on failure.
+Relay Desktop validates first, stops a running group, saves, then restarts the
+physical relay. Failed validation leaves the running group intact; failed
+cleanup prevents saving; a failed save restarts the previous saved configuration.
+Deleting a physical configuration retains its directories and persistent HOME.
+
+Each logical relay's authenticated host helper checks its own permissions before
+dispatch. Local filesystem and HTTP operations require `allow_local`; commands,
+terminals, code-server and CLI login additionally require `allow_exec`. Desktop
+and screen actions use `allow_remote_desktop`, and service tunnels use
+`allow_service_tunnels`, independently of the local shell grant. An explicit host
+grant retains access to host paths outside the share; it does not provide sibling
+workspace confinement on the host.
+
+For standalone multi-directory groups, failure to start a host helper or Windows
+WSL bridge, or its later exit, retires the complete container attempt. All group
+helpers, tracked connections and local terminals are cleaned before retry. Retry
+delays grow from 1 second to a maximum of 60 seconds, and an explicit stop prevents
+another attempt. The single-directory path retains its healthy helper across
+container reconnects. Unit tests cover injected failures and real temporary
+listener cleanup; live Windows/WSL and grouped kernel acceptance remain required.
 
 ## Admin-controlled server-local execution
 
@@ -177,6 +311,14 @@ service is uninstalled best-effort and Docker containers whose names belong to
 that workspace relay id are removed. This cleanup is independent from Python
 signal handling so Windows process termination cannot leave the relay container
 running after the desktop app exits.
+
+Client-owned container names use a SHA-256 digest of the complete relay ID.
+Cleanup validates the complete generated name before removing a candidate;
+relays sharing a username or the first twelve characters of their IDs cannot
+remove each other's containers. Historical names based on truncated IDs are
+ambiguous and are not selected by this orphan cleanup. A running launcher can
+still stop the exact container name it retained. Named HOME volumes, including
+Chromium profiles, are not removed by container cleanup.
 
 Run it from a checkout:
 

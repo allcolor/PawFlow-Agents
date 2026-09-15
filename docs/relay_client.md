@@ -102,7 +102,12 @@ from reappearing. The grouped bootstrap pivots into the private root and detache
 the original root before application startup. A nested user/mount namespace
 retains mapped UID/GID ownership while limiting root capabilities to that
 logical view and locking inherited read-only mounts; each worker has a private
-init process to reap orphan descendants. See the Linux
+init process to reap orphan descendants. Before application startup, the
+privileged parent writes both [identity maps](https://man7.org/linux/man-pages/man7/user_namespaces.7.html)
+directly into its unreaped child's
+proc files. The child waits for explicit confirmation, and a mapping failure
+kills and reaps it. This preserves all parent-visible ranges without depending
+on `newuidmap`/`newgidmap` or subordinate-ID delegation files. See the Linux
 [mount namespace restrictions](https://man7.org/linux/man-pages/man7/mount_namespaces.7.html)
 for the kernel rules this design relies on. Grouped Docker launches load the
 bundled `pawflow_relay/physical-seccomp.json`: Moby's default seccomp profile pinned

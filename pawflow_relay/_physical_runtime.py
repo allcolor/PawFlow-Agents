@@ -108,26 +108,69 @@ def enter_root(root: Path) -> None:
     os.rmdir("/.physical-old-root")
 
 
-def private_command(command: list[str]) -> list[str]:
-    """Keep sudo/FUSE inside a child user namespace with locked inherited mounts.
-
-    Identity maps preserve workspace and HOME ownership, including remapped
-    Docker daemons. The child gains no capabilities in the supervisor's user
-    namespace; inherited read-only mounts cannot be made writable there.
-    """
-    result = [
+def private_command(control_fd: int) -> list[str]:
+    """Create the restricted view, then wait for privileged parent ID mapping."""
+    return [
         "unshare", "--user", "--mount", "--pid", "--fork",
         "--kill-child=SIGKILL", "--mount-proc", "--setgroups=allow",
+        sys.executable, "-I", "-u", SCRIPT, "--private-fd", str(control_fd),
     ]
+
+
+def identity_maps() -> dict[str, str]:
+    """Preserve every parent-visible ID range, including remapped Docker IDs."""
+    result = {}
     for kind in ("uid", "gid"):
         mappings = Path(f"/proc/self/{kind}_map").read_text(encoding="ascii").splitlines()
         if not mappings:
             raise ValueError("The physical runtime requires mapped user and group IDs")
-        flag = "--map-users" if kind == "uid" else "--map-groups"
+        lines = []
         for mapping in mappings:
             inner, _outer, count = map(int, mapping.split())
-            result.append(f"{flag}={inner}:{inner}:{count}")
-    return [*result, "/usr/bin/tini", "--", "/usr/local/bin/init.sh", *command]
+            lines.append(f"{inner} {inner} {count}\n")
+        result[kind] = "".join(lines)
+    return result
+
+
+def private_init(control_fd: int) -> None:
+    """Execute the image init only after both ID maps have been installed."""
+    with socket.socket(fileno=control_fd) as control:
+        control.settimeout(30)
+        control.sendall(b"user-ready")
+        command = json.loads(control.recv(1024 * 1024))
+    os.execv("/usr/bin/tini", ["/usr/bin/tini", "--", "/usr/local/bin/init.sh", *command])
+
+
+def run_private(command: list[str], environment: dict[str, str]) -> int:
+    """Map the owned child's IDs directly with the parent's SETUID/SETGID rights.
+
+    No subordinate-ID helpers or delegation files are needed. The application
+    gets capabilities only in its child user namespace and inherits locked
+    read-only mounts. Keep the unshare process unreaped until mapping finishes,
+    so its PID cannot be reused while addressing its proc mapping files.
+    """
+    mappings = identity_maps()
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    process = None
+    try:
+        parent.settimeout(30)
+        process = subprocess.Popen(  # nosec B603
+            private_command(child.fileno()), env=environment,
+            pass_fds=(child.fileno(),), close_fds=True)
+        child.close()
+        if parent.recv(16) != b"user-ready":
+            raise RuntimeError("Private worker exited before user namespace mapping")
+        for kind, mapping in mappings.items():
+            Path(f"/proc/{process.pid}/{kind}_map").write_text(mapping, encoding="ascii")
+        parent.sendall(json.dumps(command).encode("utf-8"))
+        parent.close()
+        return process.wait()
+    finally:
+        child.close()
+        parent.close()
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)
 
 
 def worker(control_fd: int) -> int:
@@ -150,11 +193,9 @@ def worker(control_fd: int) -> int:
     environment["HOME"] = "/home/pawflow"
     environment["USER"] = "pawflow"
     environment["PYTHONPATH"] = "/opt/pawflow:/workspace/.pylib"
-    command = private_command(export["command"])
     # The image entrypoint retains its UID/HOME initialization inside the
     # restricted user namespace. Its private PID 1 reaps daemonized children.
-    child = subprocess.Popen(command, env=environment, close_fds=True)  # nosec B603
-    return child.wait()
+    return run_private(export["command"], environment)
 
 
 def namespace_command(control_fd: int) -> list[str]:
@@ -251,10 +292,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--worker-fd", type=int)
+    mode.add_argument("--private-fd", type=int)
     mode.add_argument("--config-file")
     args = parser.parse_args()
     if args.worker_fd is not None:
         return worker(args.worker_fd)
+    if args.private_fd is not None:
+        private_init(args.private_fd)
+        return 0
     stop = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_args: stop.set())

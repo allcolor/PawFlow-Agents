@@ -515,3 +515,153 @@ def test_cli_verifies_all_children_and_rejects_a_logical_lifecycle_target(config
     for action in ("verify", "start", "cleanup"):
         assert manager_cli.main(["--json", action, "Code"]) == 1
         assert "Unknown physical relay" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("had_runtime", [False, True])
+def test_failed_cleanup_remains_retryable_after_child_removes_lock(config, monkeypatch, had_runtime):
+    physical = physical_config.save_physical(
+        "Laptop", "server", "relay:test", [entry(config, "Code")])
+    relay_id = physical["physical_id"]
+    lock = manager._workspace_runtime_lock_path(relay_id)
+    if had_runtime:
+        lock.parent.mkdir(parents=True)
+        lock.write_text(json.dumps({"pid": 424242}), encoding="utf-8")
+    monkeypatch.setattr(manager, "get_server", lambda _name: {
+        "url": "https://fixture.invalid", "session_token": "fixture-session",
+    })
+    calls = []
+
+    def terminate(_id):
+        if manager._read_runtime_lock(lock).get("pid"):
+            lock.unlink()
+            return True
+        return False
+
+    def cleanup(_id):
+        raise RuntimeError("Docker unavailable")
+
+    monkeypatch.setattr(manager, "_terminate_workspace_runtime_lock", terminate)
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", cleanup)
+    monkeypatch.setattr(manager, "api_call", lambda *a, **k: calls.append(k["body"]) or {})
+    with pytest.raises(RuntimeError, match="Docker unavailable"):
+        manager.stop_workspace_runtime("Laptop")
+    pending = physical_config.get_physical("Laptop")
+    assert pending["running"] is False
+    assert pending["cleanup_pending"] is True
+    with pytest.raises(ValueError, match="Clean up"):
+        physical_config.require_stopped(pending)
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", lambda _id: 0)
+    result = manager.stop_workspace_runtime("Laptop")
+    assert result["service_uninstalled"] is had_runtime
+    assert calls == ([{"action": "service_uninstall", "service_id": relay_id}] if had_runtime else [])
+    assert not lock.exists()
+    assert not physical_config.get_physical("Laptop")["cleanup_pending"]
+
+
+def test_cli_start_settles_pending_cleanup_before_launch(config, monkeypatch):
+    physical = physical_config.save_physical(
+        "Laptop", "server", "relay:test", [entry(config, "Code")])
+    lock = manager._workspace_runtime_lock_path(physical["physical_id"])
+    lock.parent.mkdir(parents=True)
+    lock.write_text(json.dumps({"pid": 0}), encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(manager, "get_server", lambda _name: {
+        "url": "https://fixture.invalid", "username": "fixture", "session_token": "fixture-session",
+    })
+    monkeypatch.setattr(manager, "api_call", lambda *a, **k: calls.append("unregister") or {})
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", lambda _id: calls.append("cleanup") or 0)
+
+    class Relay:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            calls.append("start")
+
+        def wait(self):
+            pass
+
+        def stop(self):
+            calls.append("stop")
+
+    monkeypatch.setattr("pawflow_relay.thread.RelayThread", Relay)
+    manager.start_workspace("Laptop")
+    assert calls == ["cleanup", "unregister", "start", "stop"]
+    assert not lock.exists()
+
+
+@pytest.mark.parametrize("observed_during_cleanup", [False, True])
+def test_failed_unregistration_retains_cleanup_for_retry(config, monkeypatch, observed_during_cleanup):
+    physical = physical_config.save_physical(
+        "Laptop", "server", "relay:test", [entry(config, "Code")])
+    lock = manager._workspace_runtime_lock_path(physical["physical_id"])
+    lock.parent.mkdir(parents=True)
+    lock.write_text(json.dumps({"pid": 0, "had_runtime": not observed_during_cleanup}), encoding="utf-8")
+    monkeypatch.setattr(manager, "get_server", lambda _name: {
+        "url": "https://fixture.invalid", "session_token": "fixture-session",
+    })
+    monkeypatch.setattr(
+        "pawflow_relay.thread.cleanup_relay_containers", lambda _id: int(observed_during_cleanup))
+
+    def fail_unregister(*args, **kwargs):
+        raise RuntimeError("Server unavailable")
+
+    monkeypatch.setattr(manager, "api_call", fail_unregister)
+    with pytest.raises(RuntimeError, match="Server unavailable"):
+        manager.stop_workspace_runtime("Laptop")
+    assert physical_config.get_physical("Laptop")["cleanup_pending"]
+    assert manager._read_runtime_lock(lock)["had_runtime"] is True
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", lambda _id: 0)
+    monkeypatch.setattr(manager, "api_call", lambda *a, **k: {})
+    assert manager.stop_workspace_runtime("Laptop")["service_uninstalled"]
+    assert not lock.exists()
+
+
+def test_failed_removal_retains_observation_even_if_another_process_later_cleans_it(config, monkeypatch):
+    from pawflow_relay._thread_base import RelayContainerCleanupError
+
+    physical = physical_config.save_physical(
+        "Laptop", "server", "relay:test", [entry(config, "Code")])
+    lock = manager._workspace_runtime_lock_path(physical["physical_id"])
+    monkeypatch.setattr(manager, "get_server", lambda _name: {
+        "url": "https://fixture.invalid", "session_token": "fixture-session",
+    })
+
+    def fail_cleanup(_id):
+        raise RelayContainerCleanupError("container still present")
+
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", fail_cleanup)
+    with pytest.raises(RelayContainerCleanupError):
+        manager.stop_workspace_runtime("Laptop")
+    assert manager._read_runtime_lock(lock)["had_runtime"] is True
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", lambda _id: 0)
+    calls = []
+    monkeypatch.setattr(manager, "api_call", lambda *a, **k: calls.append(k["body"]) or {})
+    assert manager.stop_workspace_runtime("Laptop")["service_uninstalled"]
+    assert len(calls) == 1
+    assert not lock.exists()
+
+
+@pytest.mark.parametrize("response", ["absent", "denied", "other_absent"])
+def test_cleanup_distinguishes_already_absent_service_from_json_errors(config, monkeypatch, response):
+    physical = physical_config.save_physical(
+        "Laptop", "server", "relay:test", [entry(config, "Code")])
+    relay_id = physical["physical_id"]
+    lock = manager._workspace_runtime_lock_path(relay_id)
+    lock.parent.mkdir(parents=True)
+    lock.write_text(json.dumps({"pid": 0}), encoding="utf-8")
+    monkeypatch.setattr(manager, "get_server", lambda _name: {
+        "url": "https://fixture.invalid", "session_token": "fixture-session",
+    })
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", lambda _id: 0)
+    error = (f"Service '{relay_id}' not found." if response == "absent"
+             else "Service 'another-relay' not found." if response == "other_absent"
+             else "Operation refused")
+    monkeypatch.setattr(manager, "api_call", lambda *a, **k: {"error": error})
+    if response == "absent":
+        assert manager.stop_workspace_runtime("Laptop")["service_uninstalled"]
+        assert not lock.exists()
+    else:
+        with pytest.raises(RuntimeError):
+            manager.stop_workspace_runtime("Laptop")
+        assert physical_config.get_physical("Laptop")["cleanup_pending"]

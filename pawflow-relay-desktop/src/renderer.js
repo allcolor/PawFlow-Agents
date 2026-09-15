@@ -96,7 +96,7 @@ function renderTree() {
     const running = state.running.has(physical.name);
     workspaceRoot.appendChild(treeItem({
       type: 'physical', name: physical.name, label: physical.name,
-      meta: `${physical.workspaces.length} logical · ${running ? 'running' : 'stopped'}`,
+      meta: `${physical.workspaces.length} logical · ${running ? 'running' : physical.cleanup_pending ? 'cleanup needed' : 'stopped'}`,
       ok: running, run: running,
     }));
     for (const share of physical.workspaces) {
@@ -321,7 +321,7 @@ function renderPhysicalPanel(physical) {
         <button type="submit" class="button primary">${running ? 'Save and restart all' : 'Save'}</button>
         <button type="button" id="cancelWorkspaceBtn" class="button ghost">Cancel</button>
         ${physical ? `<button type="button" id="startRelayBtn" class="button secondary" ${running ? 'disabled' : ''}>Connect all</button>
-          <button type="button" id="stopRelayBtn" class="button secondary" ${running ? '' : 'disabled'}>Disconnect all</button>
+          <button type="button" id="stopRelayBtn" class="button secondary" ${running || physical.cleanup_pending ? '' : 'disabled'}>${physical.cleanup_pending ? 'Retry cleanup' : 'Disconnect all'}</button>
           <button type="button" id="deleteRelayBtn" class="button danger">Delete physical relay</button>` : ''}
       </div>
     </form>`;
@@ -665,6 +665,7 @@ async function stopRelay(name) {
     await refresh();
     setSelected('physical', name);
   } catch (err) {
+    await refresh();
     toast(err.message, true);
   }
 }

@@ -114,13 +114,13 @@ def _host_abs_path(raw_path: str, root_dir: str) -> str:
     return str(target)
 
 
-def _kill_relay_containers(relay_id: str) -> int:
+def _owned_relay_container_ids(relay_id: str) -> list[str]:
     prefix = _relay_container_prefix(relay_id)
     owned_name = re.compile(re.escape(prefix) + r"-relay-[0-9a-f]{8}")
     try:
         result = subprocess.run(  # nosec B603
             docker_cmd() + [
-                "ps", "-a", "--filter", f"name={prefix}",
+                "ps", "-a", "--no-trunc", "--filter", f"name={prefix}",
                 "--format", "{{.ID}}\t{{.Names}}",
             ],
             capture_output=True, text=True, timeout=10, check=False)
@@ -128,21 +128,39 @@ def _kill_relay_containers(relay_id: str) -> int:
         raise RuntimeError("Unable to list relay containers") from exc
     if result.returncode != 0:
         raise RuntimeError("Unable to list relay containers")
-    killed = 0
+    owned = []
     for line in result.stdout.strip().splitlines():
         container_id, separator, name = line.partition("\t")
         # Docker's name filter is a broad candidate search, not ownership.
         # Old truncated names cannot identify a workspace and are left alone.
         if not separator or not owned_name.fullmatch(name):
             continue
+        owned.append(container_id)
+    return owned
+
+
+class RelayContainerCleanupError(RuntimeError):
+    """Cleanup failed after at least one owned container was observed."""
+
+
+def _kill_relay_containers(relay_id: str) -> int:
+    killed = 0
+    for container_id in _owned_relay_container_ids(relay_id):
         try:
             removed = subprocess.run(  # nosec B603
                 docker_cmd() + ["rm", "-f", container_id],
                 capture_output=True, timeout=10, check=False)
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise RuntimeError(f"Unable to remove relay container '{container_id}'") from exc
-        if removed.returncode != 0:
-            raise RuntimeError(f"Unable to remove relay container '{container_id}'")
+            removed_ok = removed.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            removed_ok = False
+        # A dying launcher can finish its own removal after our initial list.
+        if not removed_ok:
+            try:
+                remaining = _owned_relay_container_ids(relay_id)
+            except RuntimeError as exc:
+                raise RelayContainerCleanupError(str(exc)) from exc
+            if container_id in remaining:
+                raise RelayContainerCleanupError(f"Unable to remove relay container '{container_id}'")
         killed += 1
     return killed
 

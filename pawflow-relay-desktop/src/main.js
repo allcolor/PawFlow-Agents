@@ -12,6 +12,7 @@ if (process.platform === 'win32') {
 }
 
 const runningRelays = new Map();
+const startingRelays = new Map();
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
@@ -582,13 +583,23 @@ function loginServer(name) {
   });
 }
 
-async function startRelay(name) {
+function startRelay(name) {
+  if (startingRelays.has(name)) return startingRelays.get(name);
+  const operation = startRelayProcess(name).finally(() => startingRelays.delete(name));
+  startingRelays.set(name, operation);
+  return operation;
+}
+
+async function startRelayProcess(name) {
   const state = await getRelayState();
   if (!(state.physicals || []).some(physical => physical.name === name)) {
     throw new Error('Select a physical relay to connect its complete group.');
   }
   if (runningPhysicalNames(state).has(name)) {
     return { ok: true, alreadyRunning: true };
+  }
+  if (state.physicals.find(physical => physical.name === name).cleanup_pending) {
+    await stopRelay(name);
   }
   const relay = relayClientCommand(['start', name]);
   const proc = spawn(relay.command, relay.args, {
@@ -619,10 +630,13 @@ async function stopRelay(name) {
   const proc = entry && entry.proc;
   if (!proc) {
     const state = await getRelayState();
-    if (!(state.physicals || []).some(physical => physical.name === name)) {
+    const physical = (state.physicals || []).find(physical => physical.name === name);
+    if (!physical) {
       throw new Error('Select a physical relay to disconnect its complete group.');
     }
-    if (!runningPhysicalNames(state).has(name)) return { ok: true, alreadyStopped: true };
+    if (!runningPhysicalNames(state).has(name) && !physical.cleanup_pending) {
+      return { ok: true, alreadyStopped: true };
+    }
   }
   if (entry) entry.stopRequested = true;
   // Let the backend observe the runtime lock before the child removes it.
@@ -631,6 +645,7 @@ async function stopRelay(name) {
     appendLog(name, `[relay] runtime cleanup: ${JSON.stringify(cleanup)}\n`);
   } catch (err) {
     appendLog(name, `[relay] runtime cleanup failed: ${err.message}\n`);
+    refreshTrayMenu();
     throw err;
   }
   if (entry && proc && proc.exitCode === null && proc.signalCode === null) {
@@ -649,6 +664,7 @@ async function stopRelay(name) {
         appendLog(name, `[relay] process kill failed: ${err.message}\n`);
       }
       if (!await waitForProcessExit(proc, 2000)) {
+        refreshTrayMenu();
         throw new Error('Relay launcher did not exit after the stop request.');
       }
     }
@@ -661,6 +677,7 @@ async function stopRelay(name) {
       appendLog(name, `[relay] runtime cleanup: ${JSON.stringify(cleanup)}\n`);
     } catch (err) {
       appendLog(name, `[relay] runtime cleanup failed: ${err.message}\n`);
+      refreshTrayMenu();
       throw err;
     }
   }
@@ -714,12 +731,12 @@ async function refreshTrayMenu() {
   const relayItems = (state.physicals || []).length
     ? (state.physicals || []).map(workspace => {
         const active = running.has(workspace.name);
-        const status = active ? ' (running)' : '';
+        const status = active ? ' (running)' : workspace.cleanup_pending ? ' (cleanup needed)' : '';
         return {
           label: `${workspace.name}${status} · ${workspace.workspaces.length} logical`,
           submenu: [
             { label: 'Connect all', enabled: !active, click: () => startRelay(workspace.name).catch(err => appendLog(workspace.name, `${err.message}\n`)) },
-            { label: 'Disconnect all', enabled: active, click: () => stopRelay(workspace.name).catch(err => appendLog(workspace.name, `${err.message}\n`)) },
+            { label: workspace.cleanup_pending ? 'Retry cleanup' : 'Disconnect all', enabled: active || workspace.cleanup_pending, click: () => stopRelay(workspace.name).catch(err => appendLog(workspace.name, `${err.message}\n`)) },
             { label: 'Open GUI', click: showMainWindow },
           ],
         };
@@ -810,7 +827,7 @@ ipcMain.handle('relay:save-physical', async (_event, input) => {
     ? physical.physical_id === input.physicalId : physical.name === input.name);
   const previousName = previous ? previous.name : input.name;
   const wasRunning = runningPhysicalNames(state).has(previousName);
-  if (wasRunning) await stopRelay(previousName);
+  if (wasRunning || previous?.cleanup_pending) await stopRelay(previousName);
   let result;
   try {
     result = await runRelayClientJson(args, definition);
@@ -824,7 +841,8 @@ ipcMain.handle('relay:save-physical', async (_event, input) => {
 });
 
 ipcMain.handle('relay:delete-physical', async (_event, name) => {
-  if (runningPhysicalNames(await getRelayState()).has(name)) await stopRelay(name);
+  const state = await getRelayState();
+  if (runningPhysicalNames(state).has(name) || state.physicals?.some(physical => physical.name === name && physical.cleanup_pending)) await stopRelay(name);
   const result = await runRelayClientJson(['physical', 'delete', name || '']);
   refreshTrayMenu();
   return result;

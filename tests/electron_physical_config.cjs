@@ -202,6 +202,31 @@ async function main() {
       'preserve existing workspace');
     await screenshot('reopen-singleton');
   }
+  const pendingLock = python(['-c',
+    "import json; from pawflow_relay.manager import _workspace_runtime_lock_path; "
+    + "print(json.dumps(str(_workspace_runtime_lock_path('fs_fixture_legacy'))))"]);
+  fs.mkdirSync(path.dirname(pendingLock), { recursive: true });
+  fs.writeFileSync(pendingLock, JSON.stringify({ pid: 0, had_runtime: true }));
+  await run(async name => {
+    const { check, until, clickName } = window.acceptance;
+    await refresh();
+    clickName(name);
+    const button = document.querySelector('#stopRelayBtn');
+    check(!button.disabled && button.textContent === 'Retry cleanup', 'Missing cleanup retry control');
+    check(document.querySelector('#workspaceTree').textContent.includes('cleanup needed'), 'Missing cleanup state');
+    button.click();
+    await until(() => document.querySelector('#toast').textContent.includes('Unable to list relay containers'));
+    await until(() => document.querySelector('#stopRelayBtn') !== button);
+    check(!document.querySelector('#stopRelayBtn').disabled, 'Failed cleanup disabled retry');
+    document.querySelector('#stopRelayBtn').scrollIntoView({ block: 'center' });
+  }, renamedPhysical);
+  assert.ok(fs.existsSync(pendingLock), 'Failed cleanup discarded its retry state');
+  await screenshot(phase + '-cleanup-needed');
+  fs.unlinkSync(pendingLock);
+  await run(async () => {
+    await refresh();
+    window.acceptance.check(document.querySelector('#stopRelayBtn').disabled, 'Idle parent offers cleanup');
+  });
   const running = await run(() => window.pawflowRelay.running());
   assert.deepEqual(running, []);
   fs.writeFileSync(path.join(output, phase + '-result.json'), JSON.stringify({
@@ -210,8 +235,8 @@ async function main() {
     logical_ids: Object.values(readConfig()).map(item => item.relay_id),
     home_volumes: homeVolumes(),
     checks: phase === 'edit'
-      ? ['migration', 'logical_controls', 'add_directory', 'permissions', 'cli_mode_preservation', 'physical_rename', 'invalid_path_atomicity']
-      : ['fresh_process_reload', 'remove_directory', 'nonempty_group', 'identity', 'workspace_sentinel'],
+      ? ['migration', 'logical_controls', 'add_directory', 'permissions', 'cli_mode_preservation', 'physical_rename', 'invalid_path_atomicity', 'cleanup_retry']
+      : ['fresh_process_reload', 'remove_directory', 'nonempty_group', 'identity', 'workspace_sentinel', 'cleanup_retry'],
     runtime_started: false,
   }, null, 2));
   clearTimeout(timer);

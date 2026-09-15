@@ -52,7 +52,7 @@ def test_cleanup_removes_only_exact_owned_names_even_with_broad_docker_results(m
     assert removed == ["owned"]
 
 
-def test_cleanup_reports_failed_container_removal(monkeypatch):
+def test_cleanup_reports_failed_removal_when_container_is_still_present(monkeypatch):
     relay_id = "fs_allcolor_d0bbacb3"
     name = base._make_relay_container_name(relay_id, "relay")
 
@@ -63,7 +63,7 @@ def test_cleanup_reports_failed_container_removal(monkeypatch):
 
     monkeypatch.setattr(base, "docker_cmd", lambda: ["docker"])
     monkeypatch.setattr(base.subprocess, "run", docker)
-    with pytest.raises(RuntimeError, match="remove.*container"):
+    with pytest.raises(base.RelayContainerCleanupError, match="remove.*container"):
         base.cleanup_relay_containers(relay_id)
 
 
@@ -84,3 +84,46 @@ def test_cleanup_reports_docker_failures(monkeypatch, operation, failure):
     monkeypatch.setattr(base.subprocess, "run", docker)
     with pytest.raises(RuntimeError, match="container"):
         base.cleanup_relay_containers(relay_id)
+
+
+@pytest.mark.parametrize("failure", ["exit", "timeout"])
+def test_cleanup_accepts_concurrent_removal_only_after_confirming_absence(monkeypatch, failure):
+    relay_id = "cleanup-fixture"
+    name = base._make_relay_container_name(relay_id, "relay")
+    neighbour = base._make_relay_container_name("neighbour", "relay")
+    calls = []
+
+    def docker(args, **kwargs):
+        calls.append(args[1])
+        if args[1] == "ps":
+            rows = "neighbour\t" + neighbour
+            if calls.count("ps") == 1:
+                rows += "\nowned\t" + name
+            return SimpleNamespace(returncode=0, stdout=rows)
+        assert args[-1] == "owned"
+        if failure == "timeout":
+            raise base.subprocess.TimeoutExpired(args, 10)
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(base, "docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr(base.subprocess, "run", docker)
+    assert base.cleanup_relay_containers(relay_id) == 1
+    assert calls == ["ps", "rm", "ps"]
+
+
+def test_cleanup_does_not_accept_failed_absence_verification(monkeypatch):
+    relay_id = "cleanup-fixture"
+    name = base._make_relay_container_name(relay_id, "relay")
+    calls = []
+
+    def docker(args, **kwargs):
+        calls.append(args[1])
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=0, stdout="owned\t" + name)
+        return SimpleNamespace(returncode=1, stdout="")
+
+    monkeypatch.setattr(base, "docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr(base.subprocess, "run", docker)
+    with pytest.raises(RuntimeError, match="list.*containers"):
+        base.cleanup_relay_containers(relay_id)
+    assert calls == ["ps", "rm", "ps"]

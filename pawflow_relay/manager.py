@@ -496,37 +496,52 @@ def delete_workspace(name: str) -> Dict[str, Any]:
 def stop_workspace_runtime(name: str) -> Dict[str, Any]:
     """Stop one physical relay and all its logical connections.
 
-    This is used by the desktop app after stopping its launcher process. On
+    This is used by the desktop app before stopping its launcher wrapper. On
     Windows, Electron can terminate the child process without letting Python run
     `RelayThread.stop()`, so Docker containers must be cleaned independently.
     """
+    from pawflow_relay._thread_base import RelayContainerCleanupError
     from pawflow_relay.physical_config import get_physical
     physical = get_physical(name)
     server = get_server(physical["server"])
     relay_id = physical["physical_id"]
-    had_runtime_lock = _workspace_runtime_lock_path(relay_id).exists()
-    runtime_process_terminated = _terminate_workspace_runtime_lock(relay_id)
-    runtime = _read_runtime_lock(_workspace_runtime_lock_path(relay_id))
-    pid = int(runtime.get("pid") or 0)
-    if pid and _process_is_running(pid):
-        raise RuntimeError(f"Physical relay '{name}' launcher is still running (pid {pid})")
-    from pawflow_relay.thread import cleanup_relay_containers
-    containers_removed = cleanup_relay_containers(relay_id)
-    had_runtime = had_runtime_lock or runtime_process_terminated or containers_removed > 0
-    service_uninstalled = had_runtime and bool(server.get("session_token"))
-    if service_uninstalled:
-        for share in physical["workspaces"]:
-            try:
-                api_call(
+    lock_path = _workspace_runtime_lock_path(relay_id)
+    previous = _read_runtime_lock(lock_path)
+    had_runtime = lock_path.exists() and bool(previous.get("had_runtime", True))
+    try:
+        runtime_process_terminated = _terminate_workspace_runtime_lock(relay_id)
+        had_runtime = had_runtime or runtime_process_terminated
+        runtime = _read_runtime_lock(lock_path)
+        pid = int(runtime.get("pid") or 0)
+        if pid and _process_is_running(pid):
+            raise RuntimeError(f"Physical relay '{name}' launcher is still running (pid {pid})")
+        from pawflow_relay.thread import cleanup_relay_containers
+        containers_removed = cleanup_relay_containers(relay_id)
+        had_runtime = had_runtime or containers_removed > 0
+        service_uninstalled = had_runtime and bool(server.get("session_token"))
+        if service_uninstalled:
+            for share in physical["workspaces"]:
+                response = api_call(
                     server["url"], "POST", "/api/ui",
                     body={"action": "service_uninstall", "service_id": share["relay_id"]},
                     session_token=server.get("session_token", ""),
                     gateway_cookie=server.get("gateway_cookie", ""),
                     gateway_key=server.get("gateway_key", ""),
                 )
-            except Exception:
-                service_uninstalled = False
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                error = response.get("error")
+                if error and error != f"Service '{share['relay_id']}' not found.":
+                    raise RuntimeError(f"Unable to unregister relay '{share['relay_id']}': {error}")
+    except Exception as exc:
+        # The child may already have removed its lock. Retain retry state under
+        # the config transaction without inventing evidence of a running relay.
+        had_runtime = had_runtime or isinstance(exc, RelayContainerCleanupError)
+        if not lock_path.exists() or not _read_runtime_lock(lock_path).get("pid"):
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path.write_text(json.dumps({
+                "pid": 0, "relay_id": relay_id, "workspace": name,
+                "created_at": _now(), "had_runtime": had_runtime,
+            }), encoding="utf-8")
+        raise
     runtime_lock_removed = _remove_workspace_runtime_lock(relay_id, only_stale=False)
     return {
         "workspace": name,
@@ -568,6 +583,8 @@ def start_workspace(name: str):
     with ExitStack() as runtime:
         with _workspace_config_lock():
             physical = get_physical(name)
+            if physical["cleanup_pending"]:
+                stop_workspace_runtime(name)
             share = physical["workspaces"][0]
             server = get_server(physical["server"])
             token = server.get("session_token", "")

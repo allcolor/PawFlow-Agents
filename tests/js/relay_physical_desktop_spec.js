@@ -52,6 +52,11 @@ function harness(failAt = '', externalRunning = false, backendStopsProcess = fal
     cli: async (args, stdin) => {
       const operation = args.includes('--validate-only') ? 'validate' : args[0] === 'cleanup' ? 'cleanup' : 'save';
       calls.push(operation);
+      if (failAt === 'cleanup-once' && operation === 'cleanup' && calls.filter(c => c === 'cleanup').length === 1) {
+        physical.running = false;
+        physical.cleanup_pending = true;
+        throw new Error('cleanup failed');
+      }
       if (failAt === operation) throw new Error(operation + ' failed');
       if (operation !== 'cleanup') {
         const config = JSON.parse(stdin);
@@ -62,6 +67,7 @@ function harness(failAt = '', externalRunning = false, backendStopsProcess = fal
       }
       if (operation === 'cleanup') {
         physical.running = false;
+        physical.cleanup_pending = false;
         if (backendStopsProcess) {
           for (const proc of processes) {
             assert.equal(proc.exitCode, null, 'Desktop killed the child before backend cleanup');
@@ -80,7 +86,7 @@ function harness(failAt = '', externalRunning = false, backendStopsProcess = fal
     runRelayClientJson = cli;
   `, context);
   return {
-    calls, processes,
+    calls, processes, physical,
     invoke: (channel, input) => handlers.get('relay:' + channel)(null, input),
     config: {
       name: 'Laptop', physicalId: 'ExistingPhysical', server: 'Server', dockerImage: 'relay:test',
@@ -192,4 +198,37 @@ test('backend observes the live child before graceful stop removes its runtime l
   await h.invoke('stop', 'Laptop');
   assert.deepEqual(h.calls, ['cleanup']);
   assert.equal(h.processes[0].exitCode, 0);
+});
+
+test('a failed cleanup can be retried after the launcher has exited', async () => {
+  const h = harness('cleanup-once', true);
+  await assert.rejects(h.invoke('stop', 'Laptop'), /cleanup failed/);
+  assert.deepEqual(Array.from(await h.invoke('running')), []);
+  assert.equal(h.physical.cleanup_pending, true);
+  await h.invoke('stop', 'Laptop');
+  assert.deepEqual(h.calls, ['cleanup', 'cleanup']);
+  assert.equal(h.physical.cleanup_pending, false);
+});
+
+test('connecting settles pending cleanup before starting a new launcher', async () => {
+  const h = harness();
+  h.physical.cleanup_pending = true;
+  await h.invoke('start', 'Laptop');
+  assert.deepEqual(h.calls, ['cleanup', 'start:Laptop']);
+});
+
+test('saving a parent with pending cleanup settles it and keeps the parent stopped', async () => {
+  const h = harness();
+  h.physical.cleanup_pending = true;
+  await h.invoke('save-physical', h.config);
+  assert.deepEqual(h.calls, ['validate', 'cleanup', 'save']);
+  assert.equal(h.processes.length, 0);
+});
+
+test('overlapping connects with pending cleanup create one launcher', async () => {
+  const h = harness();
+  h.physical.cleanup_pending = true;
+  await Promise.all([h.invoke('start', 'Laptop'), h.invoke('start', 'Laptop')]);
+  assert.equal(h.processes.length, 1);
+  assert.equal(h.calls.filter(call => call === 'cleanup').length, 1);
 });

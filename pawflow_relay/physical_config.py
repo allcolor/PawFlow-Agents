@@ -27,6 +27,8 @@ def load_workspaces() -> dict:
 
 
 def _groups(records: dict) -> list[dict]:
+    from pawflow_relay import manager
+
     groups = {}
     for share in records.values():
         name = share["physical_name"]
@@ -39,6 +41,7 @@ def _groups(records: dict) -> list[dict]:
             raise ValueError("Physical relay identities must be distinct and consistent")
         ids.add(physical_id)
         plan = plan_physical_relay(physical_id, members)
+        running = is_running(physical_id)
         result.append({
             "name": name,
             "physical_id": physical_id,
@@ -46,7 +49,8 @@ def _groups(records: dict) -> list[dict]:
             "docker_image": plan.docker_image,
             "revision": plan.revision,
             "workspaces": sorted(members, key=lambda share: share["name"]),
-            "running": is_running(physical_id),
+            "running": running,
+            "cleanup_pending": not running and manager._workspace_runtime_lock_path(physical_id).exists(),
         })
     return result
 
@@ -71,10 +75,14 @@ def is_running(physical_id: str) -> bool:
 
 
 def require_stopped(physical: dict) -> None:
+    from pawflow_relay import manager
+
     if is_running(physical["physical_id"]):
         raise ValueError(
             f"Stop physical relay '{physical['name']}' before changing its directories; "
             "restart it afterwards to reconnect the complete group")
+    if manager._workspace_runtime_lock_path(physical["physical_id"]).exists():
+        raise ValueError(f"Clean up physical relay '{physical['name']}' before changing its directories")
 
 
 @_workspace_config_lock()

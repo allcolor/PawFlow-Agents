@@ -231,13 +231,22 @@ Runtime status includes launcher locks created by the CLI, so Desktop displays
 and controls externally started groups as well as its own processes. A running
 parent rename stops the old name and starts the new name; a failed save restores
 the old name. Disconnecting an idle parent in Desktop performs no cleanup.
-CLI cleanup unregisters services only when a runtime lock or owned containers
-were present, and performs container cleanup before server unregistration.
+CLI cleanup unregisters services only when a runtime was observed, and performs
+container cleanup before server unregistration.
 Desktop invokes this backend stop while the launcher lock still exists, allowing
 the backend to retry unregistration after a graceful child shutdown. If a launcher
 is still alive or Docker cannot list or remove its containers, cleanup fails
 without removing the runtime lock or unregistering services. Saving and restarting
-remain blocked by that failure.
+remain blocked by that failure. If a concurrent launcher already removed a
+container, a failed Docker removal is accepted only after a successful fresh
+listing confirms that container is gone.
+An incomplete cleanup remains visible as `cleanup_pending`, even if the child
+already removed its launcher lock. Desktop displays **Retry cleanup**, and
+connect/save/delete settle that cleanup first; saving a stopped parent keeps it
+stopped. CLI startup also settles pending cleanup before launching. Retry state
+alone does not count as evidence that a runtime existed.
+Unregistration retries accept an already absent service; other server errors
+retain the pending cleanup instead of reporting success.
 
 Each logical relay's authenticated host helper checks its own permissions before
 dispatch. Local filesystem and HTTP operations require `allow_local`; commands,

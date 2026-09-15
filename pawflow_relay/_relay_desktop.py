@@ -431,10 +431,15 @@ def _start_desktop_locked(state, msg):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
             _s.bind(("", 0))
             _novnc_port = _s.getsockname()[1]
+    _log_d = None
+    _started = False
+    _previous_display = os.environ.get("DISPLAY")
     try:
         import time as _time_mod
         _log_d = open("/tmp/desktop.log", "w")  # nosec B108 - relay-local desktop log.
         _procs = []
+        # Own each child as soon as it starts so any later failure can roll back.
+        state.desktop_procs = _procs
 
         # Desktop runs as current user (pawflow via Dockerfile USER)
         _desktop_user = os.environ.get("USER", "pawflow")
@@ -545,7 +550,6 @@ def _start_desktop_locked(state, msg):
              f"0.0.0.0:{_novnc_port}", f"localhost:{_vnc_port}"],
             stdout=_log_d, stderr=_log_d)
         _procs.append(_p_novnc)
-        state.desktop_procs = _procs
         state.desktop_essential_procs = [_p_xvfb, _p_vnc, _p_novnc]
         state.desktop_vnc_port = _vnc_port
         state.desktop_novnc_port = _novnc_port
@@ -566,11 +570,11 @@ def _start_desktop_locked(state, msg):
                 break
             _time_mod.sleep(0.2)
         if not _novnc_ready:
-            desktop_cleanup(state, "noVNC failed to become ready")
             return {"ok": False, "error": "noVNC failed to become ready"}
 
         start_desktop_watchdog(state, _procs)
         sys.stderr.write(f"[FSRelay] Desktop started: display={_display} vnc={_vnc_port} novnc={_novnc_port} audio={_audio_port} res={_resolution}\n")
+        _started = True
         return {"ok": True, "data": {
             "vnc_port": _vnc_port, "novnc_port": _novnc_port,
             "audio_port": _audio_port,
@@ -582,6 +586,14 @@ def _start_desktop_locked(state, msg):
         return {"ok": False, "error": f"Desktop dependency not installed: {e}"}
     except Exception as e:
         return {"ok": False, "error": f"Failed to start desktop: {e}"}
+    finally:
+        if not _started:
+            _desktop_cleanup_locked(state, "startup failed")
+            if _previous_display is not None:
+                os.environ["DISPLAY"] = _previous_display
+        if _log_d is not None:
+            # Children own their inherited descriptors after Popen returns.
+            _log_d.close()
 
 
 def stop_desktop(state, msg=None):

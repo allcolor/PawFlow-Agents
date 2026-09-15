@@ -10,6 +10,8 @@ import base64
 import threading
 import types
 
+import pytest
+
 
 from pawflow_relay import _relay_desktop as dt
 
@@ -238,6 +240,152 @@ def test_start_desktop_idempotent_when_healthy(monkeypatch):
     # The healthy branch reports the EXISTING session, never a new one.
     assert res["data"]["session_id"] == "sess-live"
     assert res["data"]["started_at"] == 1234.5
+
+
+@pytest.mark.parametrize("failed_command", [
+    "log", "Xvfb", "dbus-daemon", "startxfce4", "x11vnc", "websockify",
+    "readiness", "watchdog", None,
+])
+@pytest.mark.parametrize("error_type", [FileNotFoundError, OSError])
+@pytest.mark.parametrize("previous_display", [None, ":17"])
+def test_desktop_startup_releases_owned_resources(
+        monkeypatch, tmp_path, failed_command, error_type, previous_display):
+    """Every launch boundary must roll back, including an early dependency error."""
+    import io
+    import shutil
+
+    procs = []
+    log = io.StringIO()
+    other = _state()
+    other.desktop_procs = [FakeProc(True)]
+    other.desktop_session_id = "other-session"
+
+    def launch(args, **kwargs):
+        assert kwargs["stdout"] is log
+        if args[0] == failed_command:
+            raise error_type("test launch failure")
+        proc = FakeProc(not (
+            failed_command == "readiness" and args[0] == "websockify"))
+        procs.append(proc)
+        return proc
+
+    def open_log(*args, **kwargs):
+        if failed_command == "log":
+            raise error_type("test log failure")
+        return log
+
+    def start_watchdog(*args):
+        if failed_command == "watchdog":
+            raise error_type("test watchdog failure")
+
+    monkeypatch.setattr(dt, "open", open_log, raising=False)
+    monkeypatch.setattr(dt.subprocess, "Popen", launch)
+    monkeypatch.setattr(dt, "novnc_http_ready", lambda *a, **k: True)
+    monkeypatch.setattr(dt, "start_desktop_watchdog", start_watchdog)
+    monkeypatch.setattr(shutil, "which", lambda _n: None)
+    monkeypatch.setattr(dt.time, "sleep", lambda _s: None)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    if previous_display is None:
+        monkeypatch.delenv("DISPLAY", raising=False)
+    else:
+        monkeypatch.setenv("DISPLAY", previous_display)
+    monkeypatch.delenv("PAWFLOW_DESKTOP_NOVNC_PORT", raising=False)
+    state = _state()
+
+    result = dt.start_desktop(state, {
+        "display": 99, "vnc_port": 5901, "novnc_port": 6080,
+    })
+
+    assert result["ok"] is (failed_command is None)
+    assert other.desktop_session_id == "other-session"
+    assert other.desktop_procs[0].poll() is None
+    if failed_command is None:
+        assert state.desktop_procs == procs
+        assert all(proc.poll() is None for proc in procs)
+    else:
+        assert all(proc.poll() is not None for proc in procs)
+        assert state.desktop_procs is None
+        assert state.desktop_session_id is None
+        assert state.desktop_display is None
+        assert state.desktop_novnc_port is None
+        assert dt.os.environ.get("DISPLAY") == previous_display
+    if failed_command != "log":
+        assert log.closed
+
+
+@pytest.mark.parametrize("startup_fails", [False, True])
+def test_desktop_status_waits_for_startup_transaction(monkeypatch, startup_fails):
+    """A status read cannot reconcile or destroy a partially launched Desktop."""
+    import io
+    import shutil
+
+    state = _state()
+    launch_paused = threading.Event()
+    finish_launch = threading.Event()
+    status_attempted = threading.Event()
+    status_finished = threading.Event()
+    results = {}
+    procs = []
+    lifecycle_lock = state.desktop_lifecycle_lock
+
+    class ObservedLock:
+        def __enter__(self):
+            if threading.current_thread().name == "test-desktop-status":
+                status_attempted.set()
+            lifecycle_lock.acquire()
+
+        def __exit__(self, *exc):
+            lifecycle_lock.release()
+
+    state.desktop_lifecycle_lock = ObservedLock()
+
+    def launch(args, **kwargs):
+        if args[0] == "dbus-daemon":
+            launch_paused.set()
+            assert finish_launch.wait(2)
+            if startup_fails:
+                raise OSError("test launch failure")
+        proc = FakeProc(True)
+        procs.append(proc)
+        return proc
+
+    def read_status():
+        results["status"] = dt.desktop_status(state)
+        status_finished.set()
+
+    monkeypatch.setattr(dt, "open", lambda *a, **k: io.StringIO(), raising=False)
+    monkeypatch.setattr(dt.subprocess, "Popen", launch)
+    monkeypatch.setattr(dt, "novnc_http_ready", lambda *a, **k: True)
+    monkeypatch.setattr(dt, "start_desktop_watchdog", lambda *a: None)
+    monkeypatch.setattr(shutil, "which", lambda _n: None)
+    monkeypatch.setattr(dt.time, "sleep", lambda _s: None)
+    monkeypatch.setenv("DISPLAY", ":17")
+    starter = threading.Thread(target=lambda: results.setdefault(
+        "start", dt.start_desktop(state, {"vnc_port": 5901, "novnc_port": 6080})))
+    reader = threading.Thread(target=read_status, name="test-desktop-status")
+    starter.start()
+    try:
+        assert launch_paused.wait(1)
+        assert len(state.desktop_procs) == 1
+        reader.start()
+        assert status_attempted.wait(1)
+        assert not status_finished.wait(0.1)
+        assert procs[0].poll() is None
+    finally:
+        finish_launch.set()
+        starter.join(2)
+        if reader.ident is not None:
+            reader.join(2)
+
+    assert not starter.is_alive() and not reader.is_alive()
+    assert results["start"]["ok"] is (not startup_fails)
+    assert results["status"]["data"]["running"] is (not startup_fails)
+    if startup_fails:
+        assert procs[0].terminated
+        assert results["status"]["data"]["session_id"] is None
+    else:
+        assert all(proc.poll() is None for proc in procs)
+        assert results["status"]["data"]["session_id"] == state.desktop_session_id
 
 
 def test_stop_desktop(monkeypatch):

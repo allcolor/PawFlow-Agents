@@ -1,0 +1,49 @@
+name: Android SDK release validation
+
+on:
+  push:
+    branches: ["codex/android-sdk-validation-276"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  android-apk:
+    name: Validate Android SDK and APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Test and build Android APK
+        working-directory: pawflow-android
+        run: |
+          ./gradlew --no-daemon lintDebug testDebugUnitTest assembleDebug \
+            -PpawflowVersion=1.0.0-beta.276 \
+            -PpawflowVersionCode=276
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-sdk-validation-276
+          path: |
+            pawflow-android/app/build/outputs/apk/debug/app-debug.apk
+            pawflow-android/app/build/reports/lint-results-debug.html
+            pawflow-android/app/build/test-results/testDebugUnitTest/*.xml
+          if-no-files-found: error

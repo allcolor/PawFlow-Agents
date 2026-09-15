@@ -116,6 +116,11 @@ def test_real_socket_fence_registration_and_inverse_fuse_reply():
                  "opcode": 2, "data": base64.b64encode(b"RFB 003.008\n").decode()}
         ws_send(client, json.dumps(event).encode())
         assert server.peers["alpha"][0].events.get(timeout=3) == event
+        for kind in ("desktop_audio_data", "desktop_audio_close"):
+            audio = {"type": kind, "session_id": "audio-alpha", "data": "YWJj"}
+            ws_send(client, json.dumps(audio).encode())
+            assert server.peers["alpha"][0].audio_events.get(timeout=3) == audio
+        assert server.peers["alpha"][0].events.empty()
 
 
 def test_invalid_registration_never_becomes_a_logical_peer():

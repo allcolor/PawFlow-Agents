@@ -102,6 +102,7 @@ class Peer:
         self.lock = threading.Lock()
         self.replies = queue.Queue()
         self.events = queue.Queue()
+        self.audio_events = queue.Queue()
         self.fs = FixtureFs(name)
 
     def send(self, message):
@@ -169,6 +170,8 @@ class Handler(socketserver.BaseRequestHandler):
                     peer.replies.put(msg)
                 elif msg.get("type") in ("desktop_ws_data", "desktop_ws_close"):
                     peer.events.put(msg)
+                elif msg.get("type") in ("desktop_audio_data", "desktop_audio_close"):
+                    peer.audio_events.put(msg)
                 elif msg.get("type") == "ping":
                     peer.send({"type": "pong"})
         except (ConnectionError, OSError):

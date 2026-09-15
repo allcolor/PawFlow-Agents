@@ -20,9 +20,11 @@ import uuid
 from pathlib import Path
 
 if __package__:
+    from tests import physical_audio_probe as audio
     from tests import physical_relay_probe as relay
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import physical_audio_probe as audio
     import physical_relay_probe as relay
 
 kernel = relay.kernel
@@ -177,6 +179,9 @@ def exercise(peers, round_number):
                           "browser": report, "browser_png_sha256": hashlib.sha256(image).hexdigest()}
     kernel.check(evidence["alpha"]["desktop"]["session_id"]
                  != evidence["beta"]["desktop"]["session_id"], "Desktop identity collision")
+    audio_reports = audio.exercise(peers, evidence, round_number)
+    for name, report in audio_reports.items():
+        evidence[name]["audio"] = report
     return evidence
 
 

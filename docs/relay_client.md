@@ -141,7 +141,7 @@ The fixture server supplies synthetic protocol replies; this does not validate
 the production server's authentication/storage handlers or Windows/WSL.
 
 The workflow's separate `desktop-runtime` job builds the base with the existing
-`desktop.runtime` and `browser.chromium` features. Two writable logical workers
+`desktop.runtime`, `desktop.audio` and `browser.chromium` features. Two writable logical workers
 start real Xvfb/XFCE/noVNC desktops using identical internal display and port
 numbers. Each must return a PNG screenshot and exchange the VNC protocol greeting
 through the production WebSocket bridge. Chromium runs visibly against a local
@@ -151,10 +151,15 @@ first contentful paint; a loaded DOM alone is insufficient screenshot evidence.
 The first round writes distinct
 persistent cookies and local storage; after a complete group stop and restart,
 the second round must recover both values from each worker's original HOME.
-Both shutdowns verify that all observed worker, helper and desktop descendants
-are gone. `physical-desktop-evidence` retains screenshots, runtime logs and
+In both rounds, the workers play distinct synthetic tones into their private
+PulseAudio null sinks. The production audio WebSocket tunnel returns Opus packets;
+the fixture decodes three seconds per relay and requires the intended frequency
+to exceed the sibling frequency by at least tenfold. Silence and crossed streams
+fail. Both shutdowns verify that all observed worker, helper, audio and desktop
+descendants are gone. `physical-desktop-evidence` retains decoded WAV recordings,
+screenshots, runtime logs and
 `desktop-result.json`. This exercises Linux runtime components; the Relay Desktop
-application, production server integration, audio and Windows/WSL still require
+application, production server integration and Windows/WSL still require
 their own acceptance checks.
 
 Configure a standalone group from the CLI:

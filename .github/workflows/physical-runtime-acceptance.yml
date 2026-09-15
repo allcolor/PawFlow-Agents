@@ -85,8 +85,8 @@ jobs:
 
       - name: Generate the project desktop image
         run: |
-          python3 scripts/generate-relay-image.py --profile client-minimal --feature desktop.runtime --feature browser.chromium --out "$RUNNER_TEMP/desktop-image" --image pawflow-desktop-acceptance:local
-          cp tests/physical_runtime_probe.py tests/physical_relay_probe.py tests/physical_desktop_probe.py "$RUNNER_TEMP/desktop-image/runtime/"
+          python3 scripts/generate-relay-image.py --profile client-minimal --feature desktop.runtime --feature desktop.audio --feature browser.chromium --out "$RUNNER_TEMP/desktop-image" --image pawflow-desktop-acceptance:local
+          cp tests/physical_runtime_probe.py tests/physical_relay_probe.py tests/physical_desktop_probe.py tests/physical_audio_probe.py "$RUNNER_TEMP/desktop-image/runtime/"
 
       - name: Build disposable desktop image
         run: docker build -t pawflow-desktop-acceptance:local "$RUNNER_TEMP/desktop-image"

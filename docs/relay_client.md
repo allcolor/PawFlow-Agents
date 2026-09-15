@@ -26,6 +26,15 @@ logical service IDs and conversation bindings remain unchanged.
 
 A WebSocket registration must provide the token and logical relay ID belonging to its `/ws/relay/<service_id>` endpoint. A mismatched or missing identity is refused before connection hooks run. Rejected tokens and incomplete fence handshakes do not trigger relay-disconnect hooks or recovery bookkeeping for an existing logical relay.
 
+The disposable production-server acceptance uses `HTTPListenerService`,
+`RelayService`, real session authentication and the actual sessions, FileStore
+and skills handlers. Two synthetic users read distinct bytes at the same
+session paths; foreign files, forged user arguments and traversal attempts must
+be refused across reconnects. Its mounted CI stage repeats the storage checks
+through the real grouped workers and FUSE, verifies that raw server data is
+hidden, and checks complete supervisor cleanup. It uses fresh private data and
+never starts or reconfigures an installed PawFlow server.
+
 Server-side relay sessions track in-flight reverse filesystem requests per WebSocket connection. When a relay disconnects or is removed from the pool, those pending request tasks are cancelled so stale connections cannot retain writers, loops, or queued FUSE work.
 
 ## Reusing a relay and sharing a physical container

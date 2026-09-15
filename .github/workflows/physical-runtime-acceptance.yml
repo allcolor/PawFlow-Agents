@@ -66,6 +66,29 @@ jobs:
             --entrypoint /usr/bin/tini pawflow-static-acceptance:local \
             -- python3 -I /opt/pawflow/physical_relay_probe.py
 
+      - name: Build disposable production server test image
+        run: docker build -t pawflow-server-acceptance:local -f tests/physical_server.Dockerfile .
+
+      - name: Exercise production authentication and storage with mounted workers
+        run: |
+          docker run --rm --name pawflow-server-acceptance \
+            --cpus 2 --memory 2g --memory-swap 2g --pids-limit 512 \
+            --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+            --device /dev/fuse --device /dev/net/tun \
+            --security-opt apparmor=unconfined \
+            --security-opt seccomp=pawflow_relay/physical-seccomp.json \
+            --volume /run/pawflow-rootfs \
+            --mount type=bind,source="$RUNNER_TEMP/physical-image/runtime",target=/opt/pawflow,readonly \
+            --mount type=bind,source="$PWD",target=/opt/pawflow-server,readonly \
+            --mount type=bind,source="$PWD/acceptance-output",target=/acceptance-output \
+            --env PAWFLOW_DISPOSABLE_ACCEPTANCE=1 \
+            --env PYTHONPATH=/opt/pawflow-server \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            --entrypoint /usr/bin/tini pawflow-server-acceptance:local \
+            -- python3 -m tests.physical_server_probe \
+               --state-dir /run/pawflow-server-data --mounted \
+            2>&1 | tee acceptance-output/server-listener.log
+
       - name: Retain acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

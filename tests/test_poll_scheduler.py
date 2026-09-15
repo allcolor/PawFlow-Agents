@@ -76,6 +76,34 @@ def test_previous_poll_batch_cannot_be_replayed(scheduler):
     assert scheduler.reschedule_due([(entry, entry["key"], 0)]) == 0
 
 
+@pytest.mark.parametrize("change", ["none", "cancel", "conversation", "replace", "next_poll"])
+def test_claimed_delivery_retry_respects_intervening_changes(scheduler, change):
+    entry = _due(scheduler)
+    assert scheduler.claim_due([entry]) == [entry]
+    assert scheduler.claim_due([entry]) == []
+    if change == "cancel":
+        assert scheduler.cancel(entry["key"]) is False
+    elif change == "conversation":
+        assert scheduler.cancel_for_conversation("c") == 0
+    elif change == "replace":
+        scheduler.schedule("c", time.time() + 60, key=entry["key"], reason="replacement")
+    elif change == "next_poll":
+        assert scheduler.get_due() == []
+    assert scheduler.reschedule_due([(entry, entry["key"], 10)]) == int(change == "none")
+    if change == "replace":
+        assert scheduler.get(entry["key"])["reason"] == "replacement"
+
+
+def test_cancelling_delivered_loop_still_removes_its_next_occurrence(scheduler):
+    key = scheduler.schedule_loop("c", 60, prompt="loop", user_id="u")
+    scheduler._schedules[key]["recheck_at"] = time.time() - 1
+    entry = scheduler.get_due()[0]
+    assert scheduler.claim_due([entry]) == [entry]
+    assert scheduler.cancel(key) is True
+    assert scheduler.list_all() == []
+    assert scheduler.reschedule_due([(entry, key, 10)]) == 0
+
+
 @pytest.mark.parametrize("by_prefix", [False, True])
 def test_cancellation_also_covers_a_not_yet_created_retry_key(scheduler, by_prefix):
     entry = _due(scheduler, key="c::external")

@@ -313,9 +313,8 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         # Source 1: PollScheduler — persistent scheduled rechecks
         # Map cid -> list of reasons for scheduled wakeups (non-thought)
         scheduled_reasons: Dict[str, List[str]] = {}
-        # Keep the consumed entries too.  Active-turn handling must distinguish
-        # a one-shot continuation (already satisfied by that active turn) from
-        # pending work that really needs a later retry.
+        # Keep the consumed entries until their wake is delivered or deferred.
+        # Being active does not mean an agent has received a due continuation.
         scheduled_entries: Dict[str, List[Dict]] = {}
         # Thought entries are processed individually (each agent gets its own loop)
         thought_entries: List[Dict] = []
@@ -370,6 +369,7 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                 for entry in entries
             ]
             retries = []
+            active_wakes = []
             with self._active_lock:
                 conversation_active = conversation_id in self._active_conversations
                 deferred_entries = []  # (target_agent, entry)
@@ -386,20 +386,12 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                         # work still waits for the conversation to be idle.
                         runnable.append((target_agent, entry))
                         continue
-                    if ("::continuation::" in entry_key
-                            or "[continuation]" in reason):
-                        # schedule_continuation is a one-shot handoff after
-                        # the current response. If its target agent is still
-                        # active when it fires, that turn is the resumed work.
-                        # Re-keying it as ::pending:: created an immortal
-                        # 10-second loop and duplicated two log lines on every
-                        # poll pass. An active different agent does not satisfy
-                        # this handoff and must not consume it.
-                        logger.info(
-                            "[poller] Continuation already satisfied by "
-                            "active agent %s/%s; acknowledging %s",
-                            conversation_id[:8], target_agent or "default",
-                            entry_key)
+                    if target_agent and ("::continuation::" in entry_key
+                                         or "[continuation]" in reason
+                                         or reason.startswith("[scheduled:")):
+                        # Explicit reminders carry work, unlike pending-queue
+                        # nudges. Deliver their plan to the active agent once.
+                        active_wakes.append((target_agent, entry))
                         continue
                     deferred_entries.append((target_agent, entry))
                 for target_agent, entry in deferred_entries:
@@ -439,6 +431,15 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                         for entry in run_entries
                     ]
 
+            for target_agent, entry in active_wakes:
+                try:
+                    self._queue_active_scheduled_wakeup(
+                        conversation_id, target_agent, entry)
+                except Exception:
+                    logger.exception("[poller] active wake delivery failed for %s/%s",
+                                     conversation_id[:8], target_agent)
+                    retries.append((entry, entry.get("key") or conversation_id, 10))
+
             # File I/O must never hold the global activity lock. The scheduler
             # validates the consumed-entry claims against intervening cancels.
             if retries:
@@ -457,6 +458,17 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             if conversation_id not in scheduled_ids:
                 if not self._is_eligible_for_poll(conversation_id, messages_data):
                     continue
+
+            # History loading may race cancellation/replacement. Begin delivery
+            # atomically before the first visible write or external handoff.
+            run_entries = scheduler.claim_due(scheduled_entries[conversation_id])
+            if not run_entries:
+                continue
+            scheduled_reasons[conversation_id] = [
+                self._tag_reason_for_agent(
+                    wake_agent, entry.get("reason", "scheduled recheck"))
+                for entry in run_entries
+            ]
 
             # An external_mcp agent is operated by its published client; its
             # wakes must never run through the internal LLM loop.

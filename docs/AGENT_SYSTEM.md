@@ -1281,14 +1281,22 @@ If a user sends a message while the agent is already running:
 - For Claude Code providers: the message is injected directly into the active session (preemption).
 - For API providers: the message is queued in memory (`_pending_user_msgs`). After the current turn completes, a `PollScheduler` delay triggers processing of queued messages.
 
-`schedule_continuation` wake-ups are agent-qualified one-shot handoffs. If one
-becomes due while its target agent is already running, that agent's active turn
-has satisfied the handoff and the poller acknowledges the entry without creating
-a `::pending::<hash>` retry. A different agent running in the same conversation
-does not satisfy or consume the continuation; the target agent is started
-concurrently. Other due work remains deferred normally. This keeps a continuation
-from recreating itself every ten seconds while preserving the safety net for
-queued user messages, tasks, plans, thoughts, and external wake-ups.
+`schedule_continuation` wake-ups are agent-qualified one-shot handoffs. When a
+continuation or explicit scheduled reminder becomes due during its target's turn,
+the poller persists it once and places it in that agent's pending queue. The active
+turn must receive its plan; activity alone does not satisfy the reminder. A wake
+arriving after final drain is rescued when the worker becomes idle. External MCP
+agents use their runtime router. Failed delivery retains the original schedule
+for retry. Before routing or writing, delivery atomically claims only due entries
+that remain valid after preparation, including history loading for idle agents.
+Cancellation succeeds while an entry is waiting. Once delivery has started,
+one-shot cancellation returns false; it cannot promise to retract an in-flight
+message. Cancellation or replacement still prevents a failed delivery from
+retrying. Replacing a schedule after this boundary schedules new work without
+retracting the delivery already started. No scheduler or global activity lock
+is held during delivery I/O. Force-stop cutoffs continue to fence pending messages.
+A different active agent does not consume the target's continuation; the idle
+target can start concurrently. Other due work remains deferred normally.
 
 The same per-agent availability applies to queued-delivery wakes: the stable
 `<cid>::pending::<agent>` key written by `wake_agent`, and the

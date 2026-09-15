@@ -49,6 +49,7 @@ class PollScheduler:
         # Only the most recent poll batch may put consumed entries back. Keep
         # the original objects as claims, invalidated by cancellation/replacement.
         self._due_entries: Dict[str, Dict[str, Any]] = {}
+        self._delivering_entries: Dict[str, Dict[str, Any]] = {}
         self._due_cancelled_keys: set[str] = set()
         self._due_cancel_filters: list = []
         self._load()
@@ -76,6 +77,7 @@ class PollScheduler:
         actual_key = key or conversation_id
         with self._lock:
             self._due_entries.pop(actual_key, None)
+            self._delivering_entries.pop(actual_key, None)
             self._schedules[actual_key] = {
                 "conversation_id": conversation_id,
                 "key": actual_key,
@@ -115,6 +117,7 @@ class PollScheduler:
         recheck_at = time.time() + interval_seconds
         with self._lock:
             self._due_entries.pop(loop_key, None)
+            self._delivering_entries.pop(loop_key, None)
             self._schedules[loop_key] = {
                 "conversation_id": conversation_id,
                 "key": loop_key,
@@ -131,11 +134,13 @@ class PollScheduler:
         return loop_key
 
     def cancel(self, key: str) -> bool:
-        """Cancel a scheduled recheck by key. Returns True if it existed."""
+        """Cancel a waiting recheck; delivery already started cannot be cancelled."""
         with self._lock:
-            if self._due_entries:
+            if self._due_entries or self._delivering_entries:
                 self._due_cancelled_keys.add(key)
             claimed = self._due_entries.pop(key, None)
+            # An in-flight delivery may finish, but must not retry after cancel.
+            self._delivering_entries.pop(key, None)
             if key in self._schedules:
                 del self._schedules[key]
                 self._save()
@@ -158,11 +163,13 @@ class PollScheduler:
             return 0
         with self._lock:
             removed = []
-            if self._due_entries:
+            cancelled = 0
+            if self._due_entries or self._delivering_entries:
                 self._due_cancel_filters.append((
                     conversation_id, tuple(key_prefixes or ()),
                     tuple(reason_prefixes or ())))
-            candidates = {**self._due_entries, **self._schedules}
+            candidates = {**self._delivering_entries, **self._due_entries,
+                          **self._schedules}
             for key, entry in candidates.items():
                 if entry.get("conversation_id") != conversation_id:
                     continue
@@ -175,13 +182,15 @@ class PollScheduler:
                     removed.append(key)
             disk_changed = False
             for key in removed:
+                cancelled += int(key in self._due_entries or key in self._schedules)
                 self._due_entries.pop(key, None)
+                self._delivering_entries.pop(key, None)
                 disk_changed = self._schedules.pop(key, None) is not None or disk_changed
             if disk_changed:
                 self._save()
         for key in removed:
             logger.info("[poll_scheduler] Cancelled: %s", key)
-        return len(removed)
+        return cancelled
 
     def list_loops(self, conversation_id: str = "") -> list:
         """List active recurring loops, optionally filtered by conversation."""
@@ -202,6 +211,7 @@ class PollScheduler:
         due: List[Dict[str, Any]] = []
         with self._lock:
             self._due_entries.clear()
+            self._delivering_entries.clear()
             self._due_cancelled_keys.clear()
             self._due_cancel_filters.clear()
             expired_keys = [
@@ -226,6 +236,23 @@ class PollScheduler:
                 self._save()
         return due
 
+    def claim_due(self, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Atomically begin delivery of entries that are still waiting.
+
+        This is the cancellation boundary, before any visible delivery effects.
+        I/O runs after releasing the lock. Failed deliveries may retry unless
+        cancellation, replacement or a new poll has since invalidated them.
+        """
+        claimed = []
+        with self._lock:
+            for entry in entries:
+                key = entry.get("key") or entry["conversation_id"]
+                if self._due_entries.get(key) is entry:
+                    self._due_entries.pop(key)
+                    self._delivering_entries[key] = entry
+                    claimed.append(entry)
+        return claimed
+
     def reschedule_due(self, retries: List[tuple[Dict[str, Any], str, float]]) -> int:
         """Persist one batch of (original due entry, target key, delay) retries.
 
@@ -238,9 +265,11 @@ class PollScheduler:
         with self._lock:
             for entry, key, delay in retries:
                 original_key = entry.get("key") or entry["conversation_id"]
-                if self._due_entries.get(original_key) is not entry:
+                if (self._due_entries.get(original_key) is not entry
+                        and self._delivering_entries.get(original_key) is not entry):
                     continue
-                self._due_entries.pop(original_key)
+                self._due_entries.pop(original_key, None)
+                self._delivering_entries.pop(original_key, None)
                 if key in self._due_cancelled_keys or any(
                         cid == entry["conversation_id"]
                         and (not prefixes or any(key.startswith(p) for p in prefixes))

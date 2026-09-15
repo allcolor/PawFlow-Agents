@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from typing import Dict, List, Optional
 
@@ -23,7 +24,7 @@ class _AgentPollCheckinMixin:
     @staticmethod
     def _persist_scheduled_wakeup(conversation_id: str, agent_name: str,
                                   content: str, user_id: str,
-                                  msg_id: str = "") -> Dict:
+                                  msg_id: str = "", timestamp: float = 0.0) -> Dict:
         """Persist and publish one visible boundary for an autonomous wake."""
         if not agent_name:
             raise ValueError("scheduled wakeup requires a target agent")
@@ -41,6 +42,7 @@ class _AgentPollCheckinMixin:
             "source": source,
             "msg_id": wake_id,
             "turn_id": wake_id,
+            **({"ts": timestamp} if timestamp else {}),
         }, conversation_id)
         event = {"type": "new_message", "data": {
             "role": "user",
@@ -60,6 +62,61 @@ class _AgentPollCheckinMixin:
             wait=True,
         )
         return message
+
+    def _queue_active_scheduled_wakeup(self, conversation_id: str,
+                                      agent_name: str, entry: dict) -> None:
+        """Deliver a due reminder without starting a second active worker.
+
+        The queue is consumed at iteration/final-drain boundaries. If the
+        worker has already passed its final drain, its post-idle check wakes
+        the queue; if it finished before enqueue, wake_agent does so here.
+        """
+        from core.conversation_store import ConversationStore
+        from core.pending_queue import PendingQueue
+        from core.poll_scheduler import PollScheduler
+        from tasks.ai.agent_loop import AgentLoopTask
+
+        created_at = time.time()
+        store = ConversationStore.instance()
+        cutoff = max(
+            float(store.get_extra(conversation_id, "last_force_stop_at") or 0),
+            float(store.get_extra(
+                conversation_id, f"last_force_stop_at:{agent_name.lower()}") or 0))
+        if cutoff and entry.get("created_at", created_at) <= cutoff:
+            return
+        scheduler = PollScheduler.instance()
+        if not scheduler.claim_due([entry]):
+            return
+        reason = self._tag_reason_for_agent(
+            agent_name, entry.get("reason") or "scheduled recheck")
+        if self._redirect_external_mcp_wake(conversation_id, [reason]):
+            return
+        user_id = entry.get("user_id") or ""
+        content = self._build_poll_checkin(
+            conversation_id, [reason], agent_name, False, False, False,
+            user_id=user_id)
+        content += (
+            "\n\nThis wake-up became due while your turn was active. "
+            "Its deadline has already passed; it is not a future continuation. "
+            "Address this reminder before stopping. If its work is still "
+            "waiting on an operation, schedule a new continuation before yielding."
+        )
+        message = self._persist_scheduled_wakeup(
+            conversation_id, agent_name, content, user_id, timestamp=created_at)
+        message["_already_persisted"] = True
+        if not PendingQueue.for_agent(conversation_id, agent_name).enqueue(
+                message, source="scheduled_wakeup"):
+            # A force stop may have fenced the message while it was being
+            # persisted. Cancellation is terminal, not a delivery error.
+            cutoff = max(
+                float(store.get_extra(conversation_id, "last_force_stop_at") or 0),
+                float(store.get_extra(
+                    conversation_id, f"last_force_stop_at:{agent_name.lower()}") or 0))
+            if created_at <= cutoff:
+                return
+            raise RuntimeError("scheduled wakeup could not be queued")
+        AgentLoopTask.wake_agent(
+            conversation_id, agent_name, user_id=user_id, delay=0.0)
 
     def _build_poll_context(self, conversation_id: str,
                             messages_data: List[Dict],
@@ -312,10 +369,10 @@ class _AgentPollCheckinMixin:
                 f"[System: Scheduled wake-up — {_now_str}]\n"
                 f"You are being woken up because of scheduled reminder(s):\n"
                 f"{reasons_text}\n\n"
-                "IMPORTANT: This is a NEW wake-up. Any similar work you see in the "
-                "conversation history above was done in a PREVIOUS session. You must "
-                "execute the scheduled task(s) NOW, fresh — do not skip them because "
-                "they appear to have been done before.\n\n"
+                "IMPORTANT: This reminder is due now, even if your turn was already "
+                "active. Use the current work state to address its plan; being active "
+                "does not by itself satisfy this wake-up. Do not announce this "
+                "expired deadline as a future continuation.\n\n"
                 "Act on these scheduled reasons using your tools.\n"
                 "Do NOT respond with [NO_PENDING_WORK] unless you have fully "
                 "addressed all scheduled reasons above IN THIS SESSION."

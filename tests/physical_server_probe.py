@@ -279,6 +279,11 @@ def mounted_acceptance(server):
     endpoint = "ws://" + server.address[0] + ":" + str(server.address[1])
     exports = relay.exports(endpoint)
     for export in exports:
+        # This storage/auth probe needs exec on both workers. The preceding
+        # kernel and relay probes retain the readonly workspace acceptance.
+        export["mode"] = "rw"
+        if "--readonly" in export["command"]:
+            export["command"].remove("--readonly")
         export["command"].extend(["--session-token", server.sessions[export["relay_id"]]])
     reports = []
     with (kernel.OUTPUT / "server-runtime.log").open("wb") as log:

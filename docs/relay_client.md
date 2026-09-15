@@ -35,6 +35,9 @@ through the real grouped workers and FUSE, verifies that raw server data is
 hidden, and checks complete supervisor cleanup. It uses fresh private data and
 never starts or reconfigures an installed PawFlow server.
 Mounted denials are checked using filesystem error numbers in the worker.
+This server-storage scenario uses two writable workspaces so both workers can
+execute the read probes; the preceding kernel and relay scenarios separately
+require the readonly worker to reject writes.
 The CI command preserves the process exit status while retaining its log;
 a failed probe cannot be reported as a successful validation.
 

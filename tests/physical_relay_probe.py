@@ -101,6 +101,7 @@ class Peer:
         self.name = name
         self.lock = threading.Lock()
         self.replies = queue.Queue()
+        self.events = queue.Queue()
         self.fs = FixtureFs(name)
 
     def send(self, message):
@@ -166,6 +167,8 @@ class Handler(socketserver.BaseRequestHandler):
                                **peer.fs.handle(msg["method"], msg.get("args", {}))})
                 elif msg.get("type") == "result":
                     peer.replies.put(msg)
+                elif msg.get("type") in ("desktop_ws_data", "desktop_ws_close"):
+                    peer.events.put(msg)
                 elif msg.get("type") == "ping":
                     peer.send({"type": "pong"})
         except (ConnectionError, OSError):

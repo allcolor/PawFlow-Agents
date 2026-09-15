@@ -138,8 +138,21 @@ command and retain its FUSE mount identity and HOME/profile sentinel across the
 reconnect. Shutdown must remove all observed worker/helper descendants.
 `relay-runtime.log` and `relay-result.json` retain this stage's evidence separately.
 The fixture server supplies synthetic protocol replies; this does not validate
-the production server's authentication/storage handlers, Desktop/Chromium startup
-or Windows/WSL. Those remain separate release requirements.
+the production server's authentication/storage handlers or Windows/WSL.
+
+The workflow's separate `desktop-runtime` job builds the base with the existing
+`desktop.runtime` and `browser.chromium` features. Two writable logical workers
+start real Xvfb/XFCE/noVNC desktops using identical internal display and port
+numbers. Each must return a PNG screenshot and exchange the VNC protocol greeting
+through the production WebSocket bridge. Chromium runs visibly against a local
+synthetic page in each private network namespace. The first round writes distinct
+persistent cookies and local storage; after a complete group stop and restart,
+the second round must recover both values from each worker's original HOME.
+Both shutdowns verify that all observed worker, helper and desktop descendants
+are gone. `physical-desktop-evidence` retains screenshots, runtime logs and
+`desktop-result.json`. This exercises Linux runtime components; the Relay Desktop
+application, production server integration, audio and Windows/WSL still require
+their own acceptance checks.
 
 Configure a standalone group from the CLI:
 

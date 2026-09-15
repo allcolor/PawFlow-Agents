@@ -73,3 +73,51 @@ jobs:
           name: physical-runtime-evidence
           path: acceptance-output
           if-no-files-found: error
+
+  desktop-runtime:
+    needs: static-runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Generate the project desktop image
+        run: |
+          python3 scripts/generate-relay-image.py --profile client-minimal --feature desktop.runtime --feature browser.chromium --out "$RUNNER_TEMP/desktop-image" --image pawflow-desktop-acceptance:local
+          cp tests/physical_runtime_probe.py tests/physical_relay_probe.py tests/physical_desktop_probe.py "$RUNNER_TEMP/desktop-image/runtime/"
+
+      - name: Build disposable desktop image
+        run: docker build -t pawflow-desktop-acceptance:local "$RUNNER_TEMP/desktop-image"
+
+      - name: Record desktop image and kernel
+        run: |
+          mkdir -p desktop-output
+          docker image inspect pawflow-desktop-acceptance:local > desktop-output/image.json
+          uname -a > desktop-output/kernel.txt
+          docker version > desktop-output/docker-version.txt
+          cp pawflow_relay/physical-seccomp.json desktop-output/seccomp.json
+
+      - name: Exercise isolated desktops and persistent Chromium profiles
+        run: |
+          docker run --rm --name pawflow-desktop-acceptance \
+            --cpus 2 --memory 3g --memory-swap 3g --pids-limit 768 \
+            --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+            --device /dev/fuse --device /dev/net/tun \
+            --security-opt apparmor=unconfined \
+            --security-opt seccomp=pawflow_relay/physical-seccomp.json \
+            --volume /run/pawflow-rootfs \
+            --mount type=bind,source="$RUNNER_TEMP/desktop-image/runtime",target=/opt/pawflow,readonly \
+            --mount type=bind,source="$PWD/desktop-output",target=/acceptance-output \
+            --env PAWFLOW_DISPOSABLE_ACCEPTANCE=1 \
+            --entrypoint /usr/bin/tini pawflow-desktop-acceptance:local \
+            -- python3 -I /opt/pawflow/physical_desktop_probe.py
+
+      - name: Retain desktop acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: physical-desktop-evidence
+          path: desktop-output
+          if-no-files-found: error

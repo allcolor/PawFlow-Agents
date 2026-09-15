@@ -112,6 +112,10 @@ def test_real_socket_fence_registration_and_inverse_fuse_reply():
         assert reply["data"]["st_size"] == len(b"alpha:sfs:sentinel-1")
         assert server.peers["alpha"][0].fs.calls == ["sfs.getattr"]
         assert server.peers["beta"] == []
+        event = {"type": "desktop_ws_data", "session_id": "vnc-alpha",
+                 "opcode": 2, "data": base64.b64encode(b"RFB 003.008\n").decode()}
+        ws_send(client, json.dumps(event).encode())
+        assert server.peers["alpha"][0].events.get(timeout=3) == event
 
 
 def test_invalid_registration_never_becomes_a_logical_peer():

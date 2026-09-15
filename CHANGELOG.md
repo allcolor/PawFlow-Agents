@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.277] — 2026-09-15
+
 ### Fixed
 
 - Relay startup skips recursive ownership repair of an already writable Windows

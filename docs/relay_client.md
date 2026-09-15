@@ -24,6 +24,8 @@ the reverse WebSocket route is global (`/ws/relay/<service_id>`). Managed groups
 cannot change owners or scopes. Their physical names are editable; existing
 logical service IDs and conversation bindings remain unchanged.
 
+A WebSocket registration must provide the token and logical relay ID belonging to its `/ws/relay/<service_id>` endpoint. A mismatched or missing identity is refused before connection hooks run. Rejected tokens and incomplete fence handshakes do not trigger relay-disconnect hooks or recovery bookkeeping for an existing logical relay.
+
 Server-side relay sessions track in-flight reverse filesystem requests per WebSocket connection. When a relay disconnects or is removed from the pool, those pending request tasks are cancelled so stale connections cannot retain writers, loops, or queued FUSE work.
 
 ## Reusing a relay and sharing a physical container

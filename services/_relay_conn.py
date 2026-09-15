@@ -394,6 +394,12 @@ class _RelayConnMixin:
                         {'type': 'error', 'message': 'Token mismatch'}).encode())
                 return
             relay_id = reg.get('relay_id', '')
+            if not relay_id or relay_id != service._service_id:
+                async with send_lock:
+                    await _ws_send_frame(writer, json.dumps({
+                        'type': 'error', 'message': 'Relay identity mismatch'
+                    }).encode())
+                return
             reg_info = reg.get('info', {})
             conn_state['relay_id'] = relay_id
             with self._relay_pool_lock:
@@ -503,16 +509,18 @@ class _RelayConnMixin:
                     conn_state.get('last_request_id', ''),
                     conn_state.get('last_action', ''), exc_info=True)
         finally:
-            try:
-                service._clear_relay(reader=reader)
-            except Exception as e:
-                logger.debug('_clear_relay failed: %s', e, exc_info=True)
-            service._record_managed_relay_disconnect(registered_at)
-            try:
-                from core.relay_key_integration import on_relay_disconnected
-                on_relay_disconnected(conn_state.get('relay_id') or service._service_id)
-            except Exception:
-                logger.debug('relay key disconnect hook failed', exc_info=True)
+            # A rejected registration never owned this relay's lifecycle.
+            if registered_at:
+                try:
+                    service._clear_relay(reader=reader)
+                except Exception as e:
+                    logger.debug('_clear_relay failed: %s', e, exc_info=True)
+                service._record_managed_relay_disconnect(registered_at)
+                try:
+                    from core.relay_key_integration import on_relay_disconnected
+                    on_relay_disconnected(service._service_id)
+                except Exception:
+                    logger.debug('relay key disconnect hook failed', exc_info=True)
             if relay_tasks:
                 tasks = list(relay_tasks)
                 for task in tasks:

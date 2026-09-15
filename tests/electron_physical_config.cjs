@@ -70,6 +70,20 @@ const timer = setTimeout(() => {
 const run = (fn, arg) => window.webContents.executeJavaScript(
   '(' + fn.toString() + ')(' + JSON.stringify(arg) + ')', true);
 const screenshot = async name => {
+  await run(async cleanup => {
+    await new Promise(resolve => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+    if (cleanup) {
+      const button = document.querySelector('#stopRelayBtn');
+      const bounds = button.getBoundingClientRect();
+      window.acceptance.check(!button.disabled && button.textContent === 'Retry cleanup'
+        && bounds.width > 0 && bounds.height > 0
+        && bounds.top >= 0 && bounds.bottom <= window.innerHeight
+        && bounds.left >= 0 && bounds.right <= window.innerWidth,
+      'Cleanup retry must be visible in the captured viewport');
+    }
+  }, name.endsWith('-cleanup-needed'));
   const captured = await window.webContents.capturePage();
   fs.writeFileSync(path.join(output, name + '.png'), captured.toPNG());
 };

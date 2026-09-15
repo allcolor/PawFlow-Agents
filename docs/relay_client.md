@@ -259,7 +259,10 @@ retrying; removing a lock manually does not establish that cleanup succeeded.
 and the Python runtime, including container cleanup. Paths containing spaces
 remain one argument. An unavailable explicit executable fails without falling
 back to a different Docker installation. Without an override, Python uses
-`docker` on Unix and `wsl docker` on Windows.
+`docker` on Unix and `wsl docker` on Windows. On Windows, bind-mount paths
+are still translated from drive paths such as `C:/shared` to `/mnt/c/shared`.
+An override must therefore target a Docker engine that accepts these WSL paths;
+selecting a native `docker.exe` does not enable native Windows bind-mount paths.
 
 Each logical relay's authenticated host helper checks its own permissions before
 dispatch. Local filesystem and HTTP operations require `allow_local`; commands,

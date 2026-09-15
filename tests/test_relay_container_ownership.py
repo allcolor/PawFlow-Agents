@@ -11,8 +11,7 @@ from pawflow_relay import _thread_base as base
 def test_cleanup_uses_configured_docker_on_each_platform(monkeypatch, platform, override):
     from pawflow_relay import utils
 
-    monkeypatch.setattr(utils, "os", SimpleNamespace(
-        name=platform, environ={"PAWFLOW_RELAY_DOCKER": override}))
+    monkeypatch.setenv("PAWFLOW_RELAY_DOCKER", override)
     expected = [override] if override else (["wsl", "docker"] if platform == "nt" else ["docker"])
     calls = []
 
@@ -22,8 +21,10 @@ def test_cleanup_uses_configured_docker_on_each_platform(monkeypatch, platform, 
         raise FileNotFoundError("Docker unavailable")
 
     monkeypatch.setattr(base.subprocess, "run", docker)
-    with pytest.raises(RuntimeError, match="Unable to list relay containers"):
-        base.cleanup_relay_containers("docker-command-fixture")
+    with monkeypatch.context() as platform_patch:
+        platform_patch.setattr(utils.os, "name", platform)
+        with pytest.raises(RuntimeError, match="Unable to list relay containers"):
+            base.cleanup_relay_containers("docker-command-fixture")
     assert len(calls) == 1
 
 

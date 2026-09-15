@@ -27,6 +27,11 @@ from pawflow_relay.utils import (
 class _RelayDockerMixin:
     """docker relay run loop."""
 
+    def _spawn_docker_process(self, command):
+        return subprocess.Popen(  # nosec B603
+            command, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
     def _stop_windows_host_bridge(self):
         """Stop the tracked WSL bridge process, if one is running."""
         proc = getattr(self, "_host_bridge_proc", None)
@@ -44,7 +49,8 @@ class _RelayDockerMixin:
             except (OSError, subprocess.TimeoutExpired):
                 try:
                     proc.kill()
-                except OSError:
+                    proc.wait(timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
                     logging.getLogger(__name__).debug(
                         "Failed to stop WSL host bridge", exc_info=True)
 
@@ -114,11 +120,11 @@ class _RelayDockerMixin:
             "WSL host-helper bridge did not become ready "
             f"(exit={return_code}): {details}")
 
-    def _run_docker_relay(self, tools_dir):
-        """Run the relay inside a Docker container with auto-restart."""
-        # Start host helper (TCP server for host-level commands)
-        host_helper_port = find_free_port()
-        self._host_helper_token = secrets.token_urlsafe(32)
+    def _prepare_docker_helpers(self, host_helper_port):
+        """Keep the singleton helper across container reconnects."""
+        helper = getattr(self, "_host_helper_thread", None)
+        if helper is not None and helper.is_alive():
+            return
         self._host_helper_error = None
         self._host_helper_ready = threading.Event()
         self._host_helper_thread = threading.Thread(
@@ -126,15 +132,20 @@ class _RelayDockerMixin:
             daemon=True, name="pawflow-host-helper")
         self._host_helper_thread.start()
         if not self._host_helper_ready.wait(timeout=5):
-            self._log(
-                "[Relay] FATAL: host helper did not become ready within 5s; "
-                "Docker relay will not start")
-            return
+            raise RuntimeError("Host helper did not become ready within 5s")
         if self._host_helper_error is not None:
-            self._log(
-                f"[Relay] FATAL: host helper failed to start: "
-                f"{self._host_helper_error}")
-            return
+            raise RuntimeError(f"Host helper failed to start: {self._host_helper_error}")
+
+    def _check_docker_helpers(self):
+        """Physical groups override this to fail the whole attempt."""
+
+    def _cleanup_docker_helpers(self):
+        """Physical groups override this to retire every attempt's helpers."""
+
+    def _run_docker_relay(self, tools_dir):
+        """Run the relay inside a Docker container with auto-restart."""
+        host_helper_port = find_free_port()
+        self._host_helper_token = secrets.token_urlsafe(32)
 
         import subprocess as _sp  # nosec B404
 
@@ -158,7 +169,8 @@ class _RelayDockerMixin:
                     "RelayThread.start() must run before _run_docker_relay. "
                     "Stopping restart loop.")
                 break
-            self._docker_container = _make_relay_container_name(self.relay_id, "relay")
+            self._docker_container = _make_relay_container_name(
+                getattr(self, "_physical_id", self.relay_id), "relay")
             from urllib.parse import urlparse as _up
             _parsed = _up(self.server_url)
             _scheme = 'wss' if _parsed.scheme == 'https' else 'ws'
@@ -333,8 +345,6 @@ class _RelayDockerMixin:
                         "Relay package mount is required for the Windows "
                         "host-helper bridge")
                 host_bridge_port = find_free_port()
-                self._start_windows_host_bridge(
-                    _project_root, host_bridge_port, host_helper_port, _sp)
                 host_helper_endpoint_port = host_bridge_port
 
             docker_run_cmd = docker_cmd() + [
@@ -418,13 +428,17 @@ class _RelayDockerMixin:
             _full_reconnect_requested = threading.Event()
             _service_reregister_requested = threading.Event()
             try:
+                self._prepare_docker_helpers(host_helper_port)
+                if self._stop_event.is_set():
+                    break
+                if os.name == "nt":
+                    self._start_windows_host_bridge(
+                        _project_root, host_bridge_port, host_helper_port, _sp)
                 # Merge stdout into stderr so we capture *everything* the
                 # container emits in a single reader. Python's print()
                 # defaults to stdout; anything written there would be lost
                 # if we only drained stderr.
-                self._docker_proc = _sp.Popen(  # nosec B603
-                    docker_run_cmd, stdin=_sp.DEVNULL,
-                    stdout=_sp.PIPE, stderr=_sp.STDOUT)
+                self._docker_proc = self._spawn_docker_process(docker_run_cmd)
 
                 def _read_relay_logs():
                     # Use the same sink as _log() — a file if log_file
@@ -464,6 +478,7 @@ class _RelayDockerMixin:
                         break
                     except _sp.TimeoutExpired:
                         pass
+                    self._check_docker_helpers()
                     if _full_reconnect_requested.is_set():
                         try:
                             self._docker_proc.kill()
@@ -534,6 +549,7 @@ class _RelayDockerMixin:
             except Exception as e:
                 self._log(f"[Relay] Docker error: {e}, retrying in {restart_delay}s")
             finally:
+                self._cleanup_docker_helpers()
                 if hasattr(self, '_docker_proc') and self._docker_proc:
                     try:
                         self._docker_proc.kill()

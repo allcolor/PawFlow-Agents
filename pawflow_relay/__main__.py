@@ -15,7 +15,7 @@ import signal
 import sys
 
 
-_MANAGER_COMMANDS = {"server", "workspace", "start", "status", "cleanup"}
+_MANAGER_COMMANDS = {"server", "workspace", "physical", "start", "status", "cleanup", "verify", "key"}
 
 
 def _first_command(argv):

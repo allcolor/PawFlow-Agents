@@ -254,6 +254,8 @@ class WorkspaceShare:
     relay_id: str = ""
     created_at: str = ""
     updated_at: str = ""
+    physical_name: str = ""
+    physical_id: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -333,7 +335,8 @@ def delete_server(name: str) -> Dict[str, Any]:
 
 
 def list_workspaces() -> List[Dict[str, Any]]:
-    return list(_load_json(_WORKSPACES_FILE).values())
+    from pawflow_relay.physical_config import load_workspaces
+    return list(load_workspaces().values())
 
 
 def verify_workspace_connected(name: str) -> Dict[str, Any]:
@@ -363,7 +366,8 @@ def verify_workspace_connected(name: str) -> Dict[str, Any]:
 
 
 def get_workspace(name: str) -> Dict[str, Any]:
-    workspaces = _load_json(_WORKSPACES_FILE)
+    from pawflow_relay.physical_config import load_workspaces
+    workspaces = load_workspaces()
     if name not in workspaces:
         raise ValueError(f"Unknown relay workspace '{name}'")
     return workspaces[name]
@@ -373,18 +377,33 @@ def add_workspace(name: str, server: str, path: str, mode: str = "rw",
                   docker_image: str = "", allow_local: bool = False,
                   allow_exec: bool = True,
                   allow_remote_desktop: bool = True,
-                  allow_service_tunnels: bool = False) -> Dict[str, Any]:
+                  allow_service_tunnels: bool = False,
+                  relay_name: str = "") -> Dict[str, Any]:
     if not name:
         raise ValueError("Workspace name is required")
     get_server(server)
     if mode not in _VALID_MODES:
         raise ValueError("Workspace mode must be 'rw' or 'ro'")
+    from pawflow_relay.physical_config import load_workspaces
+    from pawflow_relay.physical_plan import _identity
     resolved = str(Path(path).expanduser().resolve())
-    workspaces = _load_json(_WORKSPACES_FILE)
+    workspaces = load_workspaces()
     now = _now()
     previous = workspaces.get(name, {})
+    if previous:
+        from pawflow_relay.physical_config import get_physical, require_stopped
+        physical = get_physical(previous.get("physical_name") or name)
+        if len(physical["workspaces"]) != 1:
+            raise ValueError("Edit the complete physical relay configuration for a grouped workspace")
+        require_stopped(physical)
     username = get_server(server).get("username") or "client"
-    relay_id = previous.get("relay_id") or generate_relay_id(username, resolved)
+    if relay_name:
+        _identity(relay_name, "relay_name")
+    if previous and relay_name and relay_name != previous["relay_id"]:
+        raise ValueError("Existing logical relay identities must be retained")
+    relay_id = previous.get("relay_id") or relay_name or generate_relay_id(username, resolved)
+    if any(share["relay_id"] == relay_id for key, share in workspaces.items() if key != name):
+        raise ValueError("Logical relay name is already in use")
     share = WorkspaceShare(
         name=name,
         server=server,
@@ -400,6 +419,8 @@ def add_workspace(name: str, server: str, path: str, mode: str = "rw",
         relay_id=relay_id,
         created_at=previous.get("created_at", now),
         updated_at=now,
+        physical_name=previous.get("physical_name") or name,
+        physical_id=previous.get("physical_id") or relay_id,
     ).to_dict()
     workspaces[name] = share
     _save_json(_WORKSPACES_FILE, workspaces)
@@ -407,6 +428,12 @@ def add_workspace(name: str, server: str, path: str, mode: str = "rw",
 
 
 def delete_workspace(name: str) -> Dict[str, Any]:
+    from pawflow_relay.physical_config import get_physical, require_stopped
+    share = get_workspace(name)
+    physical = get_physical(share["physical_name"])
+    if len(physical["workspaces"]) != 1:
+        raise ValueError("Edit the complete physical relay configuration for a grouped workspace")
+    require_stopped(physical)
     workspaces = _load_json(_WORKSPACES_FILE)
     if name not in workspaces:
         raise ValueError(f"Unknown relay workspace '{name}'")
@@ -416,31 +443,32 @@ def delete_workspace(name: str) -> Dict[str, Any]:
 
 
 def stop_workspace_runtime(name: str) -> Dict[str, Any]:
-    """Best-effort cleanup for a workspace relay runtime.
+    """Stop one physical relay and all its logical connections.
 
     This is used by the desktop app after stopping its launcher process. On
     Windows, Electron can terminate the child process without letting Python run
     `RelayThread.stop()`, so Docker containers must be cleaned independently.
     """
-    share = get_workspace(name)
-    server = get_server(share["server"])
-    relay_id = share.get("relay_id") or generate_relay_id(
-        server.get("username") or "client", share["path"])
-    service_uninstalled = False
-    if server.get("session_token"):
-        try:
-            api_call(
-                server["url"], "POST", "/api/ui",
-                body={"action": "service_uninstall", "service_id": relay_id},
-                session_token=server.get("session_token", ""),
-                gateway_cookie=server.get("gateway_cookie", ""),
-                gateway_key=server.get("gateway_key", ""),
-            )
-            service_uninstalled = True
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-    from pawflow_relay.thread import cleanup_relay_containers
+    from pawflow_relay.physical_config import get_physical
+    physical = get_physical(name)
+    server = get_server(physical["server"])
+    relay_id = physical["physical_id"]
     runtime_process_terminated = _terminate_workspace_runtime_lock(relay_id)
+    service_uninstalled = bool(server.get("session_token"))
+    if service_uninstalled:
+        for share in physical["workspaces"]:
+            try:
+                api_call(
+                    server["url"], "POST", "/api/ui",
+                    body={"action": "service_uninstall", "service_id": share["relay_id"]},
+                    session_token=server.get("session_token", ""),
+                    gateway_cookie=server.get("gateway_cookie", ""),
+                    gateway_key=server.get("gateway_key", ""),
+                )
+            except Exception:
+                service_uninstalled = False
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+    from pawflow_relay.thread import cleanup_relay_containers
     containers_removed = cleanup_relay_containers(relay_id)
     runtime_lock_removed = _remove_workspace_runtime_lock(relay_id, only_stale=False)
     return {
@@ -453,12 +481,35 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
     }
 
 
+def plan_workspaces(physical_id: str, names: list[str]):
+    """Validate and snapshot a complete physical relay's configured directories."""
+    from pawflow_relay.physical_config import load_workspaces
+    from pawflow_relay.physical_plan import plan_physical_relay
+
+    if (not isinstance(names, (list, tuple)) or not names
+            or any(not isinstance(name, str) or not name for name in names)
+            or len(set(names)) != len(names)):
+        raise ValueError("Workspace names must be an explicit nonempty distinct list")
+    workspaces = load_workspaces(persist_migration=False)
+    for name in names:
+        if name not in workspaces:
+            raise ValueError(f"Unknown relay workspace '{name}'")
+    shares = [workspaces[name] for name in names]
+    plan = plan_physical_relay(physical_id, shares)
+    for export in plan.exports:
+        if not Path(export.root_source).is_dir():
+            raise ValueError(f"Workspace '{export.name}' is not an existing directory")
+    return plan
+
+
 def start_workspace(name: str):
-    """Start a configured workspace relay and block until interrupted."""
+    """Start a physical relay's complete group and block until interrupted."""
+    from pawflow_relay.physical_config import get_physical
     from pawflow_relay.thread import RelayThread
 
-    share = get_workspace(name)
-    server = get_server(share["server"])
+    physical = get_physical(name)
+    share = physical["workspaces"][0]
+    server = get_server(physical["server"])
     token = server.get("session_token", "")
     username = server.get("username", "")
     if not token or not username:
@@ -466,7 +517,11 @@ def start_workspace(name: str):
             f"Server '{share['server']}' is not logged in. Run: "
             f"pawflow-relay server login {share['server']}"
         )
-    relay = RelayThread(
+    if len(physical["workspaces"]) > 1:
+        from pawflow_relay.physical_thread import PhysicalRelayThread
+        relay = PhysicalRelayThread(physical, server)
+    else:
+        relay = RelayThread(
         server["url"], token, username, share["path"],
         relay_id=share.get("relay_id", ""),
         docker_image=share.get("docker_image", "") or "pawflow-relay-dev:latest",
@@ -477,8 +532,9 @@ def start_workspace(name: str):
         allow_local=bool(share.get("allow_local", False)),
         allow_service_tunnels=bool(share.get("allow_service_tunnels", False)),
         read_only=(share.get("mode") == "ro"),
-    )
-    with _workspace_runtime_lock(name, relay.relay_id):
+        )
+    relay._physical_id = physical["physical_id"]
+    with _workspace_runtime_lock(name, physical["physical_id"]):
         previous_handlers = {}
 
         def _request_stop(_sig, _frame):

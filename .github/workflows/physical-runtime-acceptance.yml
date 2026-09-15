@@ -97,6 +97,57 @@ jobs:
           path: acceptance-output
           if-no-files-found: error
 
+
+  desktop-application:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Install the application acceptance dependencies
+        shell: bash
+        run: |
+          python -m pip install keyring pytest
+          npm install --prefix "$RUNNER_TEMP/electron-acceptance" --no-save --package-lock=false electron@41.4.0
+      - name: Exercise real Electron configuration and module dispatch
+        shell: bash
+        run: |
+          mkdir -p desktop-app-output
+          python -m pytest tests/test_relay_cli_entrypoint.py --noconftest -q > desktop-app-output/entrypoint.log 2>&1
+          export PAWFLOW_DISPOSABLE_ACCEPTANCE=1
+          export PAWFLOW_DESKTOP_ACCEPTANCE_DIR="$RUNNER_TEMP/desktop-app-fixture"
+          export PAWFLOW_RELAY_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          electron="$(node -p 'require(process.env.RUNNER_TEMP + "/electron-acceptance/node_modules/electron")')"
+          for phase in edit reopen; do
+            export PAWFLOW_DESKTOP_ACCEPTANCE_PHASE="$phase"
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              xvfb-run -a "$electron" tests/electron_physical_config.cjs > "desktop-app-output/$phase.log" 2>&1
+            else
+              "$electron" tests/electron_physical_config.cjs > "desktop-app-output/$phase.log" 2>&1
+            fi
+          done
+      - name: Retain application acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: physical-desktop-app-${{ matrix.os }}
+          path: |
+            desktop-app-output
+            ${{ runner.temp }}/desktop-app-fixture/*-result.json
+            ${{ runner.temp }}/desktop-app-fixture/*.png
+          if-no-files-found: error
+
   desktop-runtime:
     needs: static-runtime
     runs-on: ubuntu-24.04

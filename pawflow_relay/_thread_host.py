@@ -28,6 +28,7 @@ class _RelayHostHelperMixin:
     def _run_host_helper(self, port: int):
         """TCP server on the host for commands that must run outside Docker."""
         srv = None
+        stop_event = getattr(self, "_host_helper_stop_event", self._stop_event)
         try:
             srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -38,6 +39,8 @@ class _RelayHostHelperMixin:
         except OSError as exc:
             self._host_helper_error = exc
             self._log(f"[Relay] Host helper failed to listen on port {port}: {exc}")
+            if srv is not None:
+                srv.close()
             return
         finally:
             ready = getattr(self, "_host_helper_ready", None)
@@ -45,7 +48,7 @@ class _RelayHostHelperMixin:
                 ready.set()
 
         try:
-            while not self._stop_event.is_set():
+            while not self._stop_event.is_set() and not stop_event.is_set():
                 try:
                     conn, _addr = srv.accept()
                 except socket.timeout:
@@ -65,6 +68,9 @@ class _RelayHostHelperMixin:
                         f"[Relay] Host helper accept failed: {exc}; stopping")
                     break
                 # Handle each connection in its own thread (terminal sessions are persistent)
+                connections = getattr(self, "_host_helper_connections", None)
+                if connections is not None:
+                    connections.add(conn)
                 threading.Thread(
                     target=self._handle_host_helper_conn_safe, args=(conn,),
                     daemon=True, name="host-helper-conn").start()
@@ -79,6 +85,9 @@ class _RelayHostHelperMixin:
         except Exception as e:
             self._log(f"[Relay] Host helper error: {e}")
         finally:
+            connections = getattr(self, "_host_helper_connections", None)
+            if connections is not None:
+                connections.discard(conn)
             if _close_conn is not False:
                 try:
                     conn.close()
@@ -110,6 +119,27 @@ class _RelayHostHelperMixin:
                 "type": "result", "data": {"ok": True},
             }) + "\n"
             conn.sendall(resp.encode("utf-8"))
+            return
+
+        if action.startswith("service_tunnel_"):
+            permitted = self.allow_service_tunnels
+            denial = "Service tunnels are disabled on this relay; requires allow_service_tunnels"
+        elif action in ("local_desktop_connect", "start_local_desktop",
+                        "stop_local_desktop", "local_screen_check") or action.startswith("screen_"):
+            permitted = self.allow_remote_desktop
+            denial = "Remote desktop is disabled; requires allow_remote_desktop"
+        elif action in ("open_local_terminal", "write_terminal", "resize_terminal",
+                        "close_terminal", "start_local_code_server", "exec", "exec_stream",
+                        "claude_auth_login", "codex_auth_login", "gemini_auth_login"):
+            permitted = self.allow_local and self.allow_exec
+            denial = "Host action requires allow_local and allow_exec"
+        else:
+            permitted = self.allow_local
+            denial = "Host action requires allow_local"
+        if not permitted:
+            conn.sendall((json.dumps({
+                "type": "error", "error": denial,
+            }) + "\n").encode("utf-8"))
             return
 
         if action == "local_desktop_connect":
@@ -240,8 +270,8 @@ class _RelayHostHelperMixin:
                     raise ValueError(f"Unknown action: {action}")
 
                 abs_path = _host_abs_path(req.get("path", "."), self.directory)
-                if action == "exec":
-                    result = handler(self.directory, abs_path, req, allow_exec=True)
+                if action in ("exec", "exec_stream"):
+                    result = handler(self.directory, abs_path, req, allow_exec=self.allow_exec)
                 else:
                     result = handler(self.directory, abs_path, req)
                 resp = json.dumps({"type": "result", "data": result}) + "\n"

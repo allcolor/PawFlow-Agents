@@ -56,6 +56,17 @@ its logical children. Select the parent to configure its complete directory
 list, connect all children or disconnect all children. Selecting a logical
 relay displays its published name, directory and permissions and links back to
 its parent's configuration; it has no independent connection controls.
+The module entry point (`python -m pawflow_relay`) routes `physical`, `verify`
+and `key` to the same manager used by the installed CLI and Relay Desktop.
+The disposable Electron configuration acceptance drives the actual renderer,
+preload IPC and Python CLI with a private configuration directory. It checks
+single-share migration, adding and removing directories, rejected invalid paths,
+permissions and identities after reopening. Docker is deliberately unavailable
+in this configuration test; grouped runtime acceptance is a separate gate.
+The fixture supplies an empty, non-writing credential backend and uses no login
+credentials. CLI saves preserve an existing workspace's mode when no mode is
+specified. Set `mode` explicitly through `--config-stdin` or Relay Desktop to
+change a readonly workspace back to read/write.
 
 Existing single-directory installations retain their logical service ID,
 permissions, persistent HOME volume and Chromium profile. New logical names

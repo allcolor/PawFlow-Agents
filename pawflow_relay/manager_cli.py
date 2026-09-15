@@ -19,6 +19,9 @@ from pawflow_relay.manager import (
     verify_workspace_connected,
 )
 from pawflow_relay.register import acquire_gateway_cookie
+from pawflow_relay.physical_config import (
+    delete_physical, get_physical, list_physicals, save_physical,
+)
 
 
 def _print_server(profile: dict) -> None:
@@ -49,7 +52,11 @@ def _print_result(args, value: dict | list) -> None:
         return
     if isinstance(value, list):
         for item in value:
-            if "url" in item:
+            if "physical_id" in item and "workspaces" in item:
+                print(f"{item['name']}\tserver={item['server']}\tlogical={len(item['workspaces'])}")
+                for workspace in item["workspaces"]:
+                    _print_workspace(workspace)
+            elif "url" in item:
                 _print_server(item)
             else:
                 _print_workspace(item)
@@ -110,6 +117,8 @@ def build_parser() -> argparse.ArgumentParser:
     workspace_add.add_argument("--path", required=True)
     workspace_add.add_argument("--mode", choices=["rw", "ro"], default="rw")
     workspace_add.add_argument("--docker-image", default="")
+    workspace_add.add_argument("--relay-name", default="",
+                               help="Explicit logical relay name visible in PawFlow")
     workspace_add.add_argument("--no-exec", action="store_true",
                                help="Disable command execution in the relay container")
     workspace_add.add_argument("--no-remote-desktop", action="store_true",
@@ -121,7 +130,23 @@ def build_parser() -> argparse.ArgumentParser:
     workspace_delete.add_argument("name")
     workspace_sub.add_parser("list", help="List configured workspace shares")
 
-    start = sub.add_parser("start", help="Start a configured workspace relay")
+    physical = sub.add_parser("physical", help="Configure physical relays and their logical workspaces")
+    physical_sub = physical.add_subparsers(dest="physical_command", required=True)
+    physical_sub.add_parser("list", help="List physical relays and their logical children")
+    physical_save = physical_sub.add_parser("save", help="Replace a stopped physical relay's complete directory list")
+    physical_save.add_argument("name")
+    physical_save.add_argument("--server")
+    physical_save.add_argument("--docker-image", default="")
+    physical_save.add_argument("--workspace", nargs=2, action="append", metavar=("NAME", "PATH"))
+    physical_save.add_argument("--read-only", action="append", default=[], metavar="NAME")
+    physical_save.add_argument("--config-stdin", action="store_true",
+                               help="Read server, docker_image and workspaces as JSON from stdin")
+    physical_save.add_argument("--validate-only", action="store_true",
+                               help="Validate the complete configuration without saving or stopping")
+    physical_delete = physical_sub.add_parser("delete", help="Delete a stopped physical relay's configuration")
+    physical_delete.add_argument("name")
+
+    start = sub.add_parser("start", help="Connect a physical relay and every logical relay in its group")
     start.add_argument("workspace")
     start.add_argument("--unlock-key", action="store_true",
                        help="Prompt for the relay key passphrase and serve it for "
@@ -129,9 +154,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="Show local relay client configuration status")
     verify = sub.add_parser(
-        "verify", help="Verify server-observed connectivity for a workspace relay")
+        "verify", help="Verify server-observed connectivity for a physical relay's complete group")
     verify.add_argument("workspace")
-    cleanup = sub.add_parser("cleanup", help="Cleanup a configured workspace relay runtime")
+    cleanup = sub.add_parser("cleanup", help="Disconnect a physical relay and every logical relay in its group")
     cleanup.add_argument("workspace")
 
     # Encryption key-relay custody: the relay keypair lives only on this host.
@@ -219,6 +244,28 @@ def main(argv=None) -> int:
                 _print_result(args, list_servers())
                 return 0
 
+        if args.command == "physical":
+            if args.physical_command == "list":
+                _print_result(args, list_physicals())
+            elif args.physical_command == "delete":
+                _print_result(args, delete_physical(args.name))
+            else:
+                if args.config_stdin:
+                    import json
+                    definition = json.load(sys.stdin)
+                else:
+                    definition = {
+                        "server": args.server, "docker_image": args.docker_image,
+                        "workspaces": [
+                            {"name": name, "path": path, **({"mode": "ro"} if name in args.read_only else {})}
+                            for name, path in (args.workspace or [])
+                        ],
+                    }
+                _print_result(args, save_physical(
+                    args.name, definition["server"], definition.get("docker_image", ""),
+                    definition["workspaces"], validate_only=args.validate_only))
+            return 0
+
         if args.command == "workspace":
             if args.workspace_command == "add":
                 _print_result(args, add_workspace(
@@ -231,6 +278,7 @@ def main(argv=None) -> int:
                     allow_exec=not args.no_exec,
                     allow_remote_desktop=not args.no_remote_desktop,
                     allow_service_tunnels=args.allow_service_tunnels,
+                    relay_name=args.relay_name,
                 ))
                 return 0
             if args.workspace_command == "delete":
@@ -257,11 +305,17 @@ def main(argv=None) -> int:
             return 0
 
         if args.command == "status":
-            _print_result(args, {"servers": list_servers(), "workspaces": list_workspaces()})
+            _print_result(args, {"servers": list_servers(), "workspaces": list_workspaces(),
+                                 "physicals": list_physicals()})
             return 0
 
         if args.command == "verify":
-            _print_result(args, verify_workspace_connected(args.workspace))
+            physical = get_physical(args.workspace)
+            results = [verify_workspace_connected(share["name"]) for share in physical["workspaces"]]
+            _print_result(args, results[0] if len(results) == 1 else {
+                "physical": physical["name"], "connected": all(r["connected"] for r in results),
+                "workspaces": results,
+            })
             return 0
 
         if args.command == "cleanup":

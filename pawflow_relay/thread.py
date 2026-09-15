@@ -266,7 +266,7 @@ class RelayThread(_RelayDockerMixin, _RelayHostHelperMixin):
             self._docker_proc = None
         # Kill orphans from this specific relay
         try:
-            _killed = _kill_relay_containers(self.relay_id)
+            _killed = _kill_relay_containers(getattr(self, "_physical_id", self.relay_id))
             if _killed:
                 self._log(f"[Relay] Cleaned {_killed} orphan container(s)")
         except Exception:

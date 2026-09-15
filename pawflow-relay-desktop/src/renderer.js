@@ -1,6 +1,7 @@
 const state = {
   servers: [],
   workspaces: [],
+  physicals: [],
   dockerImages: [],
   dockerError: '',
   imageCatalog: null,
@@ -33,6 +34,7 @@ async function refresh() {
   const data = await window.pawflowRelay.list();
   state.servers = data.servers || [];
   state.workspaces = data.workspaces || [];
+  state.physicals = data.physicals || [];
   state.running = new Set(await window.pawflowRelay.running());
   try {
     const dockerState = await window.pawflowRelay.listDockerImages();
@@ -56,7 +58,8 @@ async function refresh() {
   if (state.selected.name) {
     const exists = state.selected.type === 'server'
       ? state.servers.some(s => s.name === state.selected.name)
-      : state.workspaces.some(w => w.name === state.selected.name);
+      : (state.selected.type === 'physical' ? state.physicals : state.workspaces)
+        .some(item => item.name === state.selected.name);
     if (!exists) state.selected = { type: 'home', name: '' };
   }
   render();
@@ -86,19 +89,24 @@ function renderTree() {
     }));
   }
 
-  if (!state.workspaces.length) {
-    workspaceRoot.innerHTML = '<div class="empty-tree">No relay</div>';
+  if (!state.physicals.length) {
+    workspaceRoot.innerHTML = '<div class="empty-tree">No physical relay</div>';
   }
-  for (const share of state.workspaces) {
-    const running = state.running.has(share.name);
+  for (const physical of state.physicals) {
+    const running = state.running.has(physical.name);
     workspaceRoot.appendChild(treeItem({
-      type: 'workspace',
-      name: share.name,
-      label: share.name,
-      meta: running ? 'running' : `${share.server} / ${share.mode || 'rw'}`,
-      ok: running,
-      run: running,
+      type: 'physical', name: physical.name, label: physical.name,
+      meta: `${physical.workspaces.length} logical · ${running ? 'running' : 'stopped'}`,
+      ok: running, run: running,
     }));
+    for (const share of physical.workspaces) {
+      const child = treeItem({
+        type: 'workspace', name: share.name, label: share.relay_id,
+        meta: '/workspace', ok: running,
+      });
+      child.classList.add('logical-relay');
+      workspaceRoot.appendChild(child);
+    }
   }
 }
 
@@ -125,6 +133,10 @@ function isSelected(type, name) {
 }
 
 function renderPanel() {
+  if (state.selected.type === 'physical') {
+    const physical = state.physicals.find(item => item.name === state.selected.name);
+    if (physical) return renderPhysicalPanel(physical);
+  }
   if (state.selected.type === 'server') {
     const server = state.servers.find(s => s.name === state.selected.name);
     if (server) return renderServerPanel(server);
@@ -134,7 +146,7 @@ function renderPanel() {
     if (share) return renderWorkspacePanel(share);
   }
   if (state.selected.type === 'new-server') return renderServerPanel(null);
-  if (state.selected.type === 'new-workspace') return renderWorkspacePanel(null);
+  if (state.selected.type === 'new-workspace') return renderPhysicalPanel(null);
   if (state.selected.type === 'image-builder') return renderImageBuilderPanel();
   if (state.selected.type === 'relay-key') return renderRelayKeyPanel();
   renderHomePanel();
@@ -153,7 +165,8 @@ function renderHomePanel() {
       </div>
       <div class="info-list">
         <div class="info-row"><span>Servers</span><strong>${state.servers.length}</strong></div>
-        <div class="info-row"><span>Relays</span><strong>${state.workspaces.length}</strong></div>
+        <div class="info-row"><span>Physical relays</span><strong>${state.physicals.length}</strong></div>
+        <div class="info-row"><span>Logical relays</span><strong>${state.workspaces.length}</strong></div>
         <div class="info-row"><span>Running</span><strong>${state.running.size}</strong></div>
       </div>
       <div class="actions">
@@ -226,89 +239,101 @@ function serverInfo(server) {
 }
 
 function renderWorkspacePanel(share) {
-  const isNew = !share;
-  $('#panelTitle').textContent = isNew ? 'Add Relay' : share.name;
-  $('#panelSubtitle').textContent = isNew ? 'Share a local workspace through a PawFlow server.' : share.path;
-  const serverOptions = state.servers.map(server => {
-    const selected = server.name === share?.server ? 'selected' : '';
-    return `<option value="${escapeAttr(server.name)}" ${selected}>${escapeHtml(server.name)}</option>`;
-  }).join('');
-  const dockerOptions = dockerImageOptions(share?.docker_image || '');
-  const dockerStatus = state.dockerError
-    ? `<p class="field-note error">Docker unavailable: ${escapeHtml(state.dockerError)}</p>`
-    : '';
-  const running = share ? state.running.has(share.name) : false;
-  const title = isNew ? 'New relay' : 'Relay settings';
-  const help = isNew
-    ? 'Choose a server, local path, permissions, and relay image.'
-    : 'Edit the workspace share or control the relay process.';
-  const nameReadonly = isNew ? '' : 'readonly';
-  const rwSelected = (share?.mode || 'rw') === 'rw' ? 'selected' : '';
-  const roSelected = share?.mode === 'ro' ? 'selected' : '';
-  const allowExecChecked = share?.allow_exec === false ? '' : 'checked';
-  const allowRemoteDesktopChecked = share?.allow_remote_desktop === false ? '' : 'checked';
-  const allowLocalChecked = share?.allow_local ? 'checked' : '';
-  const allowServiceTunnelsChecked = share?.allow_service_tunnels ? 'checked' : '';
-  const startDisabled = running ? 'disabled' : '';
-  const stopDisabled = running ? '' : 'disabled';
-  const workspaceButtons = isNew ? '' : [
-    `<button type="button" id="startRelayBtn" class="button secondary" ${startDisabled}>Start</button>`,
-    `<button type="button" id="stopRelayBtn" class="button secondary" ${stopDisabled}>Stop</button>`,
-    '<button type="button" id="deleteRelayBtn" class="button danger">Delete Relay</button>',
-  ].join('');
+  $('#panelTitle').textContent = share.relay_id;
+  $('#panelSubtitle').textContent = 'Logical relay · available to conversations';
+  $('#detailPanel').innerHTML = `
+    <div class="card"><h2>${escapeHtml(share.relay_id)}</h2>
+      <p><code>/workspace</code> → ${escapeHtml(share.path)}</p>
+      <p>Physical relay: <strong>${escapeHtml(share.physical_name)}</strong></p>
+      <p>${share.mode === 'ro' ? 'Read-only' : 'Read/write'} · Exec ${share.allow_exec === false ? 'off' : 'on'}</p>
+      ${workspaceInfo(share, state.running.has(share.physical_name))}
+      <button id="configurePhysicalBtn">Configure physical relay</button>
+    </div>`;
+  $('#configurePhysicalBtn').addEventListener('click', () => setSelected('physical', share.physical_name));
+}
+
+function addLogicalRow(share = {}) {
+  const row = document.createElement('fieldset');
+  row.className = 'logical-config card';
+  row.innerHTML = `
+    <legend>Logical relay · /workspace</legend>
+    <input name="relay_id" type="hidden" value="${escapeAttr(share.relay_id || '')}">
+    <div class="form-grid">
+      <label>Name in PawFlow<input name="name" value="${escapeAttr(share.name || '')}"
+        ${share.relay_id ? 'readonly' : 'pattern="[A-Za-z0-9][A-Za-z0-9_.-]*"'} required></label>
+      <label>Mode<select name="mode"><option value="rw">Read/write</option>
+        <option value="ro" ${share.mode === 'ro' ? 'selected' : ''}>Read-only</option></select></label>
+      <label class="wide">Directory<div class="path-picker">
+        <input name="path" value="${escapeAttr(share.path || '')}" required>
+        <button class="button secondary browse-logical" type="button">Browse</button>
+      </div></label>
+    </div>
+    ${share.relay_id ? `<p class="field-note">Published name: ${escapeHtml(share.relay_id)}</p>` : ''}
+    <div class="toggle-grid">
+      <label class="toggle"><input name="allowExec" type="checkbox" ${share.allow_exec === false ? '' : 'checked'}><span></span><strong>Allow exec</strong></label>
+      <label class="toggle"><input name="allowRemoteDesktop" type="checkbox" ${share.allow_remote_desktop === false ? '' : 'checked'}><span></span><strong>Allow remote desktop</strong></label>
+      <label class="toggle"><input name="allowLocal" type="checkbox" ${share.allow_local ? 'checked' : ''}><span></span><strong>Allow local access</strong></label>
+      <label class="toggle"><input name="allowServiceTunnels" type="checkbox" ${share.allow_service_tunnels ? 'checked' : ''}><span></span><strong>Allow service tunnels (FRP)</strong></label>
+    </div>
+    <button class="button danger remove-logical" type="button">Remove directory</button>`;
+  row.querySelector('.browse-logical').addEventListener('click', async () => {
+    const field = row.querySelector('[name="path"]');
+    try {
+      const selected = await window.pawflowRelay.selectDirectory(field.value);
+      if (selected) field.value = selected;
+    } catch (err) { toast(err.message, true); }
+  });
+  row.querySelector('.remove-logical').addEventListener('click', () => {
+    if ($('#logicalRows').children.length === 1) {
+      toast('A physical relay must contain at least one logical relay.', true);
+      return;
+    }
+    row.remove();
+  });
+  $('#logicalRows').appendChild(row);
+}
+
+function renderPhysicalPanel(physical) {
+  const running = physical ? state.running.has(physical.name) : false;
+  $('#panelTitle').textContent = physical ? physical.name : 'Add Physical Relay';
+  $('#panelSubtitle').textContent = 'One connection for all logical relays in this group.';
+  const serverOptions = state.servers.map(server =>
+    `<option value="${escapeAttr(server.name)}" ${server.name === physical?.server ? 'selected' : ''}>${escapeHtml(server.name)}</option>`).join('');
   $('#detailPanel').innerHTML = `
     <form id="workspaceForm" class="card form-card">
-      <div class="card-head">
-        <div>
-          <h2>${title}</h2>
-          <p>${help}</p>
-        </div>
-      </div>
+      <h2>Physical relay</h2>
       <div class="form-grid">
-        <label>Name<input name="name" value="${escapeAttr(share?.name || '')}" ${nameReadonly} required /></label>
+        <label>Name<input name="name" value="${escapeAttr(physical?.name || '')}" ${physical ? 'readonly' : ''} required></label>
         <label>Server<select name="server" required>${serverOptions}</select></label>
-        <label class="wide">Path
-          <div class="path-picker">
-            <input name="path" value="${escapeAttr(share?.path || '')}" placeholder="/home/me/project or \\server\\share" required />
-            <button class="button secondary" type="button" id="browsePathBtn">Browse</button>
-          </div>
-        </label>
-        <label>Mode<select name="mode">
-          <option value="rw" ${rwSelected}>Read/write</option>
-          <option value="ro" ${roSelected}>Read-only</option>
-        </select></label>
-        <label>Docker image
-          <div class="image-picker">
-            <select name="dockerImage">${dockerOptions}</select>
-            <button class="button secondary" type="button" id="downloadImageBtn">Download</button>
-            <button class="button secondary" type="button" id="buildImageBtn">Build</button>
-          </div>
-          ${dockerStatus}
-        </label>
+        <label class="wide">Docker image<div class="image-picker">
+          <select name="dockerImage">${dockerImageOptions(physical?.docker_image || '')}</select>
+          <button type="button" id="downloadImageBtn" class="button secondary">Download</button>
+          <button type="button" id="buildImageBtn" class="button secondary">Build</button>
+        </div></label>
       </div>
-      <div class="toggle-grid">
-        <label class="toggle"><input name="allowExec" type="checkbox" ${allowExecChecked} /><span></span><strong>Allow exec</strong></label>
-        <label class="toggle"><input name="allowRemoteDesktop" type="checkbox" ${allowRemoteDesktopChecked} /><span></span><strong>Allow remote desktop</strong></label>
-        <label class="toggle"><input name="allowLocal" type="checkbox" ${allowLocalChecked} /><span></span><strong>Allow local access</strong></label>
-        <label class="toggle"><input name="allowServiceTunnels" type="checkbox" ${allowServiceTunnelsChecked} /><span></span><strong>Allow service tunnels (FRP)</strong></label>
-      </div>
-      ${workspaceInfo(share, running)}
+      ${state.dockerError ? `<p class="field-note error">Docker unavailable: ${escapeHtml(state.dockerError)}</p>` : ''}
+      <p>Only the logical relays below can be linked to conversations. Each has its own <code>/workspace</code>.</p>
+      <div id="logicalRows"></div>
+      <button type="button" id="addLogicalBtn" class="button secondary">Add directory</button>
+      <p class="field-note">Saving changes to a running physical relay restarts its Docker container and reconnects every logical relay in the group.</p>
       <div class="actions">
-        <button class="button primary" type="submit">Save</button>
-        <button class="button ghost" type="button" id="cancelWorkspaceBtn">Cancel</button>
-        ${workspaceButtons}
+        <button type="submit" class="button primary">${running ? 'Save and restart all' : 'Save'}</button>
+        <button type="button" id="cancelWorkspaceBtn" class="button ghost">Cancel</button>
+        ${physical ? `<button type="button" id="startRelayBtn" class="button secondary" ${running ? 'disabled' : ''}>Connect all</button>
+          <button type="button" id="stopRelayBtn" class="button secondary" ${running ? '' : 'disabled'}>Disconnect all</button>
+          <button type="button" id="deleteRelayBtn" class="button danger">Delete physical relay</button>` : ''}
       </div>
-    </form>
-  `;
+    </form>`;
+  for (const share of physical?.workspaces || [{}]) addLogicalRow(share);
   $('#workspaceForm').addEventListener('submit', saveWorkspace);
-  $('#browsePathBtn')?.addEventListener('click', browseWorkspacePath);
-  $('#downloadImageBtn')?.addEventListener('click', () => downloadRelayImageFromWorkspace());
-  $('#buildImageBtn')?.addEventListener('click', () => setSelected('image-builder'));
-  $('#cancelWorkspaceBtn')?.addEventListener('click', () => setSelected('home'));
-  if (share) {
-    $('#startRelayBtn')?.addEventListener('click', () => startRelay(share.name));
-    $('#stopRelayBtn')?.addEventListener('click', () => stopRelay(share.name));
-    $('#deleteRelayBtn')?.addEventListener('click', () => deleteWorkspace(share.name));
+  $('#addLogicalBtn').addEventListener('click', () => addLogicalRow());
+  $('#cancelWorkspaceBtn').addEventListener('click', () => setSelected('home'));
+  $('#downloadImageBtn').addEventListener('click', downloadRelayImageFromWorkspace);
+  $('#buildImageBtn').addEventListener('click', () => setSelected('image-builder'));
+  if (physical) {
+    $('#startRelayBtn').addEventListener('click', () => startRelay(physical.name));
+    $('#stopRelayBtn').addEventListener('click', () => stopRelay(physical.name));
+    $('#deleteRelayBtn').addEventListener('click', () => deleteWorkspace(physical.name));
   }
 }
 
@@ -520,18 +545,33 @@ async function saveServer(event) {
 async function saveWorkspace(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  const input = formData(form);
-  input.allowLocal = form.elements.allowLocal.checked;
-  input.allowExec = form.elements.allowExec.checked;
-  input.allowRemoteDesktop = form.elements.allowRemoteDesktop.checked;
-  input.allowServiceTunnels = form.elements.allowServiceTunnels.checked;
+  const submit = form.querySelector('[type="submit"]');
+  const input = {
+    name: form.querySelector(':scope > .form-grid [name="name"]').value,
+    server: form.elements.server.value,
+    dockerImage: form.elements.dockerImage.value,
+    workspaces: Array.from(form.querySelectorAll('.logical-config')).map(row => {
+      const field = name => row.querySelector(`[name="${name}"]`);
+      return {
+        name: field('name').value, relay_id: field('relay_id').value,
+        path: field('path').value, mode: field('mode').value,
+        allow_exec: field('allowExec').checked,
+        allow_remote_desktop: field('allowRemoteDesktop').checked,
+        allow_local: field('allowLocal').checked,
+        allow_service_tunnels: field('allowServiceTunnels').checked,
+      };
+    }),
+  };
+  submit.disabled = true;
   try {
-    const saved = await window.pawflowRelay.addWorkspace(input);
-    toast(`Saved relay ${saved.name}`);
+    const saved = await window.pawflowRelay.savePhysical(input);
+    toast(`Saved physical relay ${saved.name}`);
     await refresh();
-    setSelected('workspace', saved.name);
+    setSelected('physical', saved.name);
   } catch (err) {
     toast(err.message, true);
+  } finally {
+    submit.disabled = false;
   }
 }
 
@@ -572,22 +612,12 @@ async function downloadRelayImageFromWorkspace() {
     const result = await window.pawflowRelay.downloadRelayImage({ imageName });
     toast(`Downloaded image ${result.image}`);
     await refresh();
-    setSelected('workspace', form?.elements?.name?.value || state.selected?.name || '');
+    setSelected('physical', state.selected?.name || '');
   } catch (err) {
     toast(err.message, true);
   } finally {
     button.disabled = false;
     button.textContent = 'Download';
-  }
-}
-
-async function browseWorkspacePath() {
-  const field = document.querySelector('#workspaceForm input[name="path"]');
-  try {
-    const selected = await window.pawflowRelay.selectDirectory(field?.value || '');
-    if (selected && field) field.value = selected;
-  } catch (err) {
-    toast(err.message, true);
   }
 }
 
@@ -620,7 +650,7 @@ async function startRelay(name) {
     await window.pawflowRelay.start(name);
     toast(`Started ${name}`);
     await refresh();
-    setSelected('workspace', name);
+    setSelected('physical', name);
   } catch (err) {
     toast(err.message, true);
   }
@@ -631,17 +661,17 @@ async function stopRelay(name) {
     await window.pawflowRelay.stop(name);
     toast(`Stopped ${name}`);
     await refresh();
-    setSelected('workspace', name);
+    setSelected('physical', name);
   } catch (err) {
     toast(err.message, true);
   }
 }
 
 async function deleteWorkspace(name) {
-  if (!confirm(`Delete relay "${name}"?`)) return;
+  if (!confirm(`Delete physical relay "${name}" and all its logical relay configurations? Files and profiles are retained.`)) return;
   try {
     if (state.running.has(name)) await window.pawflowRelay.stop(name);
-    await window.pawflowRelay.deleteWorkspace(name);
+    await window.pawflowRelay.deletePhysical(name);
     toast(`Deleted relay ${name}`);
     await refresh();
   } catch (err) {
@@ -660,11 +690,15 @@ function showContextMenu(x, y, type, name) {
     items.push(['Edit', () => setSelected('server', name)]);
     items.push(['Login / Refresh Status', () => loginServer(name)]);
     items.push(['Delete Server', () => deleteServer(name), 'danger']);
-  } else if (type === 'workspace') {
+  } else if (type === 'physical') {
     const running = state.running.has(name);
-    items.push(['Edit', () => setSelected('workspace', name)]);
-    items.push([running ? 'Stop' : 'Start', () => running ? stopRelay(name) : startRelay(name)]);
-    items.push(['Delete Relay', () => deleteWorkspace(name), 'danger']);
+    items.push(['Configure physical relay', () => setSelected('physical', name)]);
+    items.push([running ? 'Disconnect all' : 'Connect all', () => running ? stopRelay(name) : startRelay(name)]);
+    items.push(['Delete physical relay', () => deleteWorkspace(name), 'danger']);
+  } else if (type === 'workspace') {
+    const share = state.workspaces.find(item => item.name === name);
+    items.push(['View logical relay', () => setSelected('workspace', name)]);
+    if (share) items.push(['Configure physical relay', () => setSelected('physical', share.physical_name)]);
   }
   menu.innerHTML = '';
   for (const [label, action, cls] of items) {

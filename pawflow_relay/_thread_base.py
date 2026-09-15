@@ -1,8 +1,9 @@
 """Shared module-level helpers/consts for the pawflow_relay thread split."""
 
+import hashlib
 import logging
-
 import os
+import re
 import secrets
 import shutil
 import subprocess  # nosec B404
@@ -12,7 +13,6 @@ from pathlib import Path
 from pawflow_relay.utils import (
     docker_cmd,
 )
-
 
 _RELAY_APPARMOR_PROFILE = "pawflow-relay"
 _relay_apparmor_resolved = None
@@ -51,7 +51,9 @@ def _relay_apparmor_security_opts(image: str) -> list:
 
 
 def _relay_container_prefix(relay_id: str) -> str:
-    return f"pf-{relay_id[:12].replace('.', '-').replace('_', '-')}"
+    if not isinstance(relay_id, str) or not relay_id:
+        raise ValueError("relay_id is required for container ownership")
+    return f"pf-{hashlib.sha256(relay_id.encode('utf-8')).hexdigest()}"
 
 
 def _make_relay_container_name(relay_id: str, purpose: str) -> str:
@@ -115,24 +117,29 @@ def _host_abs_path(raw_path: str, root_dir: str) -> str:
 
 def _kill_relay_containers(relay_id: str) -> int:
     prefix = _relay_container_prefix(relay_id)
+    owned_name = re.compile(re.escape(prefix) + r"-relay-[0-9a-f]{8}")
     try:
         result = subprocess.run(  # nosec B603
             docker_cmd() + [
                 "ps", "-a", "--filter", f"name={prefix}",
                 "--format", "{{.ID}}\t{{.Names}}",
             ],
-            capture_output=True, text=True, timeout=10)
+            capture_output=True, text=True, timeout=10, check=False)
     except Exception:
         return 0
     killed = 0
     for line in result.stdout.strip().splitlines():
-        if not line.strip():
+        container_id, separator, name = line.partition("\t")
+        # Docker's name filter is a broad candidate search, not ownership.
+        # Old truncated names cannot identify a workspace and are left alone.
+        if not separator or not owned_name.fullmatch(name):
             continue
-        container_id = line.split("\t", 1)[0]
         try:
-            subprocess.run(docker_cmd() + ["rm", "-f", container_id],  # nosec B603
-                           capture_output=True, timeout=10)
-            killed += 1
+            removed = subprocess.run(  # nosec B603
+                docker_cmd() + ["rm", "-f", container_id],
+                capture_output=True, timeout=10, check=False)
+            if removed.returncode == 0:
+                killed += 1
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return killed

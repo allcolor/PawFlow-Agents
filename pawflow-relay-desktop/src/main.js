@@ -575,7 +575,11 @@ function loginServer(name) {
   });
 }
 
-function startRelay(name) {
+async function startRelay(name) {
+  const state = await getRelayState();
+  if (!(state.physicals || []).some(physical => physical.name === name)) {
+    throw new Error('Select a physical relay to connect its complete group.');
+  }
   if (runningRelays.has(name)) {
     return { ok: true, alreadyRunning: true };
   }
@@ -633,6 +637,7 @@ async function stopRelay(name) {
     appendLog(name, `[relay] runtime cleanup: ${JSON.stringify(cleanup)}\n`);
   } catch (err) {
     appendLog(name, `[relay] runtime cleanup failed: ${err.message}\n`);
+    throw err;
   }
   refreshTrayMenu();
   return { ok: true, alreadyStopped: !proc };
@@ -681,15 +686,15 @@ async function refreshTrayMenu() {
         };
       })
     : [{ label: 'No server configured', enabled: false }];
-  const relayItems = (state.workspaces || []).length
-    ? (state.workspaces || []).map(workspace => {
+  const relayItems = (state.physicals || []).length
+    ? (state.physicals || []).map(workspace => {
         const active = running.has(workspace.name);
         const status = active ? ' (running)' : '';
         return {
-          label: `${workspace.name}${status}`,
+          label: `${workspace.name}${status} · ${workspace.workspaces.length} logical`,
           submenu: [
-            { label: 'Start', enabled: !active, click: () => startRelay(workspace.name) },
-            { label: 'Stop', enabled: active, click: () => stopRelay(workspace.name).catch(err => appendLog(workspace.name, `${err.message}\n`)) },
+            { label: 'Connect all', enabled: !active, click: () => startRelay(workspace.name).catch(err => appendLog(workspace.name, `${err.message}\n`)) },
+            { label: 'Disconnect all', enabled: active, click: () => stopRelay(workspace.name).catch(err => appendLog(workspace.name, `${err.message}\n`)) },
             { label: 'Open GUI', click: showMainWindow },
           ],
         };
@@ -766,25 +771,31 @@ ipcMain.handle('relay:login-server', async (_event, name) => {
   return result;
 });
 
-ipcMain.handle('relay:add-workspace', async (_event, input) => {
-  const args = [
-    'workspace', 'add', input.name || '',
-    '--server', input.server || '',
-    '--path', input.path || '',
-    '--mode', input.mode || 'rw',
-    '--docker-image', input.dockerImage || defaultRelayImageName(),
-  ];
-  if (Boolean(input.allowLocal)) args.push('--allow-local');
-  if (Boolean(input.allowServiceTunnels)) args.push('--allow-service-tunnels');
-  if (!Boolean(input.allowExec)) args.push('--no-exec');
-  if (input.allowRemoteDesktop === false) args.push('--no-remote-desktop');
-  const result = await runRelayClientJson(args);
+ipcMain.handle('relay:save-physical', async (_event, input) => {
+  const definition = JSON.stringify({
+    server: input.server,
+    docker_image: input.dockerImage || defaultRelayImageName(),
+    workspaces: input.workspaces,
+  });
+  const args = ['physical', 'save', input.name || '', '--config-stdin'];
+  await runRelayClientJson([...args, '--validate-only'], definition);
+  const wasRunning = runningRelays.has(input.name);
+  if (wasRunning) await stopRelay(input.name);
+  let result;
+  try {
+    result = await runRelayClientJson(args, definition);
+  } catch (err) {
+    if (wasRunning) await startRelay(input.name);
+    throw err;
+  }
+  if (wasRunning) await startRelay(input.name);
   refreshTrayMenu();
   return result;
 });
 
-ipcMain.handle('relay:delete-workspace', async (_event, name) => {
-  const result = await runRelayClientJson(['workspace', 'delete', name || '']);
+ipcMain.handle('relay:delete-physical', async (_event, name) => {
+  if (runningRelays.has(name)) await stopRelay(name);
+  const result = await runRelayClientJson(['physical', 'delete', name || '']);
   refreshTrayMenu();
   return result;
 });

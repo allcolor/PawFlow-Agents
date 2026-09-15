@@ -90,6 +90,9 @@ p { color: var(--muted); font-size: 12px; margin-top: 3px; }
 }
 .tree-item:hover { background: #111c33; }
 .tree-item.selected { background: #15223e; border-color: #2d65a4; }
+.tree-item.logical-relay { margin-left: 18px; width: calc(100% - 18px); }
+#logicalRows { display: grid; gap: 12px; margin: 16px 0; }
+.logical-config { min-width: 0; }
 .tree-item .dot { width: 8px; height: 8px; border-radius: 50%; background: #62718e; }
 .tree-item .dot.ok { background: var(--ok); }
 .tree-item .dot.run { background: #3ca4ff; box-shadow: 0 0 0 3px rgba(60,164,255,.15); }

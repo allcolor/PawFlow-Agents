@@ -217,7 +217,6 @@ import struct
 import subprocess
 import sys
 import termios
-import time
 
 rows = int(os.environ.get("PAWFLOW_TERM_ROWS", "30") or "30")
 cols = int(os.environ.get("PAWFLOW_TERM_COLS", "120") or "120")
@@ -244,11 +243,8 @@ proc = subprocess.Popen(
     env=env,
 )
 os.close(slave)
-time.sleep(0.1)
-try:
-    os.write(master, b"\x0c")
-except Exception:
-    pass
+# tmux paints the current pane on attach. Never type redraw keys into the CLI:
+# Ctrl+L clears Claude's fullscreen transcript view instead of refreshing it.
 stdin_fd = sys.stdin.fileno()
 stdout = sys.stdout.buffer
 try:
@@ -391,7 +387,6 @@ import struct
 import subprocess
 import sys
 import termios
-import time
 
 rows = int(os.environ.get("PAWFLOW_TERM_ROWS", "30") or "30")
 cols = int(os.environ.get("PAWFLOW_TERM_COLS", "120") or "120")
@@ -419,11 +414,7 @@ proc = subprocess.Popen(
     env=env,
 )
 os.close(slave)
-time.sleep(0.1)
-try:
-    os.write(master, b"\x0c")
-except Exception:
-    pass
+# tmux paints the current pane on attach; opening a viewer must not type keys.
 stdin_fd = sys.stdin.fileno()
 stdout = sys.stdout.buffer
 try:

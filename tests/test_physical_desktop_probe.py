@@ -48,7 +48,8 @@ def test_new_and_restarted_browser_profiles_have_distinct_expected_state():
 
 @pytest.mark.parametrize("painted", [True, False])
 def test_browser_capture_requires_visible_render_and_cleans_up_on_failure(monkeypatch, tmp_path, painted):
-    monkeypatch.setenv("PAWFLOW_DISPOSABLE_ACCEPTANCE", "1")
+    # This test mocks the browser and server; it must also isolate the container guard.
+    monkeypatch.setattr(probe.kernel, "require_disposable", MagicMock())
     profile = tmp_path / "profile"
     (profile / "Default").mkdir(parents=True)
     (profile / "Default/Preferences").write_text("{}")

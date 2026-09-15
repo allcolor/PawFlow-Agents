@@ -87,7 +87,7 @@ jobs:
             --entrypoint /usr/bin/tini pawflow-server-acceptance:local \
             -- python3 -m tests.physical_server_probe \
                --state-dir /run/pawflow-server-data --mounted \
-            2>&1 | tee acceptance-output/server-listener.log
+            > acceptance-output/server-listener.log 2>&1
 
       - name: Retain acceptance evidence
         if: always()

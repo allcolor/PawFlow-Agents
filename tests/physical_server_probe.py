@@ -18,6 +18,21 @@ from pathlib import Path
 
 from pawflow_relay.ws_frame import ws_recv, ws_send
 
+DENIED_READ_SCRIPT = """import errno, json, sys
+errors = []
+for path in sys.argv[1:]:
+    try:
+        with open(path, 'rb') as stream:
+            stream.read(1)
+    except OSError as error:
+        if error.errno not in (errno.ENOENT, errno.EACCES, errno.EPERM):
+            raise
+        errors.append(error.errno)
+    else:
+        raise RuntimeError('Foreign mounted file was readable')
+print(json.dumps(errors))
+"""
+
 
 def check(condition, message):
     if not condition:
@@ -285,18 +300,17 @@ def mounted_acceptance(server):
                             _request_timeout=15, _retry_on_disconnect=False)
                         check(result.get("sha256") == hashlib.sha256(expected).hexdigest(),
                               "Production mounted storage bytes mismatch")
-                    for tag, path in server.forbidden(name, generation).items():
-                        try:
-                            service._request(
-                                "hash_file", path=relay.MOUNTS[tag] + path,
-                                _request_timeout=15, _retry_on_disconnect=False)
-                        except Exception as error:  # noqa: BLE001 - validate the actual denial.
-                            check("not found" in str(error).lower()
-                                  or "no such" in str(error).lower()
-                                  or "permission" in str(error).lower(),
-                                  "Unexpected foreign-read failure: " + str(error))
-                        else:
-                            raise RuntimeError("Foreign mounted storage was accessible")
+                    forbidden = [relay.MOUNTS[tag] + path
+                                 for tag, path in server.forbidden(name, generation).items()]
+                    result = service._request(
+                        "exec", path="/workspace",
+                        argv=[sys.executable, "-c", DENIED_READ_SCRIPT, *forbidden],
+                        timeout=10, _request_timeout=15, _retry_on_disconnect=False)
+                    check(result.get("returncode") == 0,
+                          "Foreign read probe failed: " + str(result.get("stderr", "")))
+                    denials = json.loads(result["stdout"])
+                    check(len(denials) == 3 and all(code in (1, 2, 13) for code in denials),
+                          "Missing explicit filesystem denials")
                     result = service._request(
                         "exec", path="/workspace", argv=[
                             sys.executable, "-c",
@@ -304,7 +318,7 @@ def mounted_acceptance(server):
                              "assert not Path('/run/pawflow-server-data').exists()")],
                         timeout=10, _request_timeout=15, _retry_on_disconnect=False)
                     check(result.get("returncode") == 0, "Raw server data exposed to worker")
-                    report[name] = {"reads": 3, "foreign_denials": 3,
+                    report[name] = {"reads": 3, "foreign_denials": 3, "errno": denials,
                                     "owner": service._user_id}
                 reports.append(report)
                 if generation == 1:

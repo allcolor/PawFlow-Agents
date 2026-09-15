@@ -34,6 +34,9 @@ be refused across reconnects. Its mounted CI stage repeats the storage checks
 through the real grouped workers and FUSE, verifies that raw server data is
 hidden, and checks complete supervisor cleanup. It uses fresh private data and
 never starts or reconfigures an installed PawFlow server.
+Mounted denials are checked using filesystem error numbers in the worker.
+The CI command preserves the process exit status while retaining its log;
+a failed probe cannot be reported as a successful validation.
 
 Server-side relay sessions track in-flight reverse filesystem requests per WebSocket connection. When a relay disconnects or is removed from the pool, those pending request tasks are cancelled so stale connections cannot retain writers, loops, or queued FUSE work.
 

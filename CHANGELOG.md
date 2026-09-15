@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Relay startup skips recursive ownership repair of an already writable Windows
+  workspace on 9P/DrvFS, avoiding a full project traversal before the Python
+  worker starts. Linux and inaccessible-workspace repair paths are retained.
+- Relay image construction preserves the init script's `stat` format strings;
+  mount group lookup now uses the actual group ID instead of the literal `0`.
+
+### Upgrade notes
+
+- The corrected init script is shipped in relay images tagged `2026.09.16`.
+  Update the relay image and recreate its container to use the startup fix.
+  Existing HOME and Chromium profiles are preserved.
+
 ## [1.0.0-beta.276] — 2026-09-15
 
 ### Fixed

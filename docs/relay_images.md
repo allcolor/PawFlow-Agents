@@ -43,6 +43,25 @@ init process.
 The base must stay small, but it cannot drop Python, FUSE, or `ripgrep` without
 breaking relay functionality or its search performance contract.
 
+## Workspace permissions at startup
+
+The dev image and generated profiles check the filesystem type of each mount.
+For a Windows workspace exposed as `v9fs`, `9p`, or `drvfs`, startup skips
+recursive ownership repair when `pawflow` can already write to `/workspace`.
+It logs this decision before launching the Python worker. This avoids walking
+every file on the Windows drive before the `[FSRelay] BOOT` banner.
+
+Linux filesystems, unrecognized filesystem types, and workspaces that fail the
+write check keep the existing ownership repair. The other mountpoints and the
+dev image's HOME repair are unchanged. Root-directory group membership and
+permissions are still configured; a skipped workspace traversal preserves its
+existing per-file ownership and permissions.
+
+The embedded init script is emitted with a fixed `printf '%b'` format so runtime
+`stat` placeholders such as `%g` and `%T` survive image construction. These
+changes require a rebuilt relay image and take effect when a new container uses
+that image.
+
 ## Optional Features
 
 Optional features are individually selectable. The wizard should expose presets

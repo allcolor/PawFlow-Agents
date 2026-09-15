@@ -195,10 +195,7 @@ def test_server_minimal_build_script_targets_runtime_default_image():
     assert "PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE" in src
 
 
-@pytest.mark.skipif(os.name != "posix" or shutil.which("bash") is None,
-                    reason="relay init requires POSIX and bash")
-@pytest.mark.parametrize("profile", ["dev", "server-full", "server-minimal", "client-minimal"])
-def test_relay_init_preserves_chromium_profiles(tmp_path, profile):
+def _relay_init_script(profile):
     if profile == "dev":
         dockerfile = (ROOT / "docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
     else:
@@ -211,10 +208,17 @@ def test_relay_init_preserves_chromium_profiles(tmp_path, profile):
     tokens = shlex.split(line.removeprefix("RUN ").removeprefix("&& ").rstrip("\\").strip())
     assert tokens[0] == "printf"
     # Use printf itself to decode the exact script embedded in the image.
-    script = subprocess.run(
-        ["bash", "-c", 'printf "$1"', "printf", tokens[1]],
+    return subprocess.run(
+        ["bash", "-c", 'printf "$@"', "printf", *tokens[1:tokens.index(">")]],
         check=True, capture_output=True, text=True, timeout=5,
     ).stdout
+
+
+@pytest.mark.skipif(os.name != "posix" or shutil.which("bash") is None,
+                    reason="relay init requires POSIX and bash")
+@pytest.mark.parametrize("profile", ["dev", "server-full", "server-minimal", "client-minimal"])
+def test_relay_init_preserves_chromium_profiles(tmp_path, profile):
+    script = _relay_init_script(profile)
     relay_home = tmp_path / "home"
     profiles = [relay_home / name for name in (
         ".config/chromium", ".chromium-profile", "browser profiles/custom")]
@@ -251,6 +255,87 @@ def test_relay_init_preserves_chromium_profiles(tmp_path, profile):
         for path, expected in sentinels.items():
             assert path.is_file(), f"startup removed browser data: {path}"
             assert path.read_bytes() == expected
+
+
+def _run_relay_init(tmp_path, profile, filesystem, writable):
+    script = _relay_init_script(profile)
+    paths = {}
+    for name in ("home/pawflow", "workspace", "cc_sessions", "filestore", "skills"):
+        path = tmp_path / "mounted directories" / name
+        paths[name] = str(path)
+        script = script.replace("/" + name, shlex.quote(str(path)))
+    script = script.replace('exec sudo -E -u pawflow "$@"', 'exec "$@"')
+    setup = r"""
+chronyd() { :; }
+usermod() { :; }
+groupmod() { :; }
+groupadd() { :; }
+id() { printf '1001\n'; }
+chown() { printf 'chown'; printf ' <%s>' "$@"; printf '\n'; }
+getent() {
+    printf 'getent <%s>\n' "$*" >&2
+    printf 'mountgroup:x:2468:\n'
+}
+stat() {
+    if [ "$1" = -f ]; then
+        if [ "$PF_TEST_FS" = error ]; then return 1; fi
+        printf '%s\n' "$PF_TEST_FS"
+    elif [ "$1" = -c ] && [ "$2" = '%g' ]; then
+        printf '2468\n'
+    else
+        command stat "$@"
+    fi
+}
+sudo() {
+    if [ "$1" = -u ] && [ "$2" = pawflow ] &&
+       [ "$3" = test ] && [ "$4" = -w ]; then
+        [ "$PF_TEST_WRITABLE" = 1 ]
+    else
+        return 2
+    fi
+}
+"""
+    result = subprocess.run(
+        ["bash", "-c", setup + script, "init.sh", "/usr/bin/true"],
+        env={"PATH": "/usr/bin:/bin", "HOME": paths["home/pawflow"],
+             "PF_TEST_FS": filesystem, "PF_TEST_WRITABLE": str(int(writable))},
+        cwd=tmp_path, check=True, capture_output=True, text=True, timeout=5,
+    )
+    return result, paths
+
+
+@pytest.mark.skipif(os.name != "posix" or shutil.which("bash") is None,
+                    reason="relay init requires POSIX and bash")
+@pytest.mark.parametrize("profile", ["dev", "server-full", "server-minimal", "client-minimal"])
+@pytest.mark.parametrize(("filesystem", "writable", "skip_workspace"), [
+    ("v9fs", True, True),
+    ("9p", True, True),
+    ("drvfs", True, True),
+    ("v9fs", False, False),
+    ("ext2/ext3", True, False),
+    ("error", True, False),
+])
+def test_relay_init_bounds_windows_workspace_ownership(
+        tmp_path, profile, filesystem, writable, skip_workspace):
+    result, paths = _run_relay_init(tmp_path, profile, filesystem, writable)
+    recursive = [line for line in result.stdout.splitlines()
+                 if line.startswith("chown <-R>")]
+    workspace_calls = [line for line in recursive if f'<{paths["workspace"]}>' in line]
+    assert bool(workspace_calls) is not skip_workspace, result.stdout
+    # Skipping the workspace must not skip the other mountpoints or home repair.
+    for name in ("cc_sessions", "filestore", "skills"):
+        assert any(f"<{paths[name]}>" in line for line in recursive), result.stdout
+    if profile == "dev":
+        assert any(f'<{paths["home/pawflow"]}>' in line for line in recursive)
+
+
+@pytest.mark.skipif(os.name != "posix" or shutil.which("bash") is None,
+                    reason="relay init requires POSIX and bash")
+@pytest.mark.parametrize("profile", ["dev", "server-full", "server-minimal", "client-minimal"])
+def test_relay_init_looks_up_the_actual_mount_group(tmp_path, profile):
+    result, _ = _run_relay_init(tmp_path, profile, "ext2/ext3", True)
+    # This also catches printf consuming stat's %g while building the image.
+    assert result.stderr.count("getent <group 2468>") == 4, result.stderr
 
 
 def test_installer_api_advertises_relay_image_profile_step():

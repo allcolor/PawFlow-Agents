@@ -93,6 +93,13 @@ def browser_probe(name, round_number):
             page.evaluate("value => localStorage.setItem('physical_relay', value)", arg=name)
             context.add_cookies([{"name": "physical_relay", "value": name,
                                   "url": origin, "expires": time.time() + 3600}])
+            # Navigation and script completion do not establish a painted surface.
+            page.bring_to_front()
+            page.wait_for_function(
+                "document.visibilityState === 'visible' && "
+                "performance.getEntriesByName('first-contentful-paint').length > 0",
+                timeout=5000,
+            )
             image = page.screenshot()
             result = {"name": name, "round": round_number, "previous_state": state,
                       "profile": str(profile),

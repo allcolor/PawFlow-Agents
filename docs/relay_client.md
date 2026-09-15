@@ -145,7 +145,10 @@ The workflow's separate `desktop-runtime` job builds the base with the existing
 start real Xvfb/XFCE/noVNC desktops using identical internal display and port
 numbers. Each must return a PNG screenshot and exchange the VNC protocol greeting
 through the production WebSocket bridge. Chromium runs visibly against a local
-synthetic page in each private network namespace. The first round writes distinct
+synthetic page in each private network namespace. Before capturing the page, the
+probe brings it to the foreground and waits up to five seconds for a visible
+first contentful paint; a loaded DOM alone is insufficient screenshot evidence.
+The first round writes distinct
 persistent cookies and local storage; after a complete group stop and restart,
 the second round must recover both values from each worker's original HOME.
 Both shutdowns verify that all observed worker, helper and desktop descendants

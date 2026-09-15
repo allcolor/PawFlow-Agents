@@ -1,0 +1,83 @@
+name: Physical Windows WSL Acceptance
+
+on:
+  push:
+    branches: ["codex/physical-runtime-acceptance-*"]
+    paths:
+      - ".github/workflows/physical-wsl-acceptance.yml"
+      - "tests/physical_wsl_probe.py"
+      - "tests/physical_runtime_probe.py"
+      - "tests/physical_relay_probe.py"
+      - "pawflow_relay/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-wsl-runtime:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Import a dedicated Ubuntu distribution into WSL2
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $fixture = Join-Path $env:RUNNER_TEMP 'pawflow wsl acceptance'
+          New-Item -ItemType Directory -Path $fixture | Out-Null
+          $output = Join-Path $fixture 'output'
+          New-Item -ItemType Directory -Path $output | Out-Null
+          "PAWFLOW_WSL_OUTPUT=$output" >> $env:GITHUB_ENV
+          wsl --version > "$output/wsl-version.log"
+          wsl --status > "$output/wsl-status.log"
+          $archive = Join-Path $fixture 'ubuntu-base.tar.gz'
+          Invoke-WebRequest -Uri 'https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-amd64.tar.gz' -OutFile $archive
+          $digest = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -ne 'e77b6f10c2590cef872b33ee9f635a0e3fd1f57fb074c0e52b5c7f56147a0c86') {
+            throw 'Ubuntu Base digest mismatch'
+          }
+          $digest > "$output/ubuntu-base.sha256"
+          wsl --import PawFlowAcceptance "$fixture/distro" $archive --version 2
+          'PAWFLOW_WSL_IMPORTED=1' >> $env:GITHUB_ENV
+          wsl --set-default PawFlowAcceptance
+          wsl --list --verbose > "$output/wsl-distributions.log"
+      - name: Install Docker inside the dedicated WSL distribution
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          wsl --distribution PawFlowAcceptance --user root --exec env DEBIAN_FRONTEND=noninteractive apt-get update
+          wsl --distribution PawFlowAcceptance --user root --exec env DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io python3 ca-certificates
+          wsl --distribution PawFlowAcceptance --user root --exec service docker start
+          wsl --distribution PawFlowAcceptance --user root --exec docker version > "$env:PAWFLOW_WSL_OUTPUT/docker-version.log"
+      - name: Exercise native Windows dispatch and real grouped WSL workers
+        env:
+          PAWFLOW_DISPOSABLE_ACCEPTANCE: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -m tests.physical_wsl_probe 2>&1 | Tee-Object -FilePath "$env:PAWFLOW_WSL_OUTPUT/driver.log"
+      - name: Retain WSL acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: physical-windows-wsl-evidence
+          path: |
+            ${{ runner.temp }}/pawflow wsl acceptance/output/*.log
+            ${{ runner.temp }}/pawflow wsl acceptance/output/*.json
+            ${{ runner.temp }}/pawflow wsl acceptance/output/*.sha256
+          if-no-files-found: error
+      - name: Remove the dedicated acceptance distribution
+        if: always() && env.PAWFLOW_WSL_IMPORTED == '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          wsl --unregister PawFlowAcceptance

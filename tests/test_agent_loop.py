@@ -2366,18 +2366,22 @@ class TestRandomThought(unittest.TestCase):
         assert sched.get("conv1::thought::assistant") is not None
         assert sched.get("conv1::task::t_123") is not None
 
-    def test_active_conversation_acknowledges_continuation_without_retry_loop(self):
-        """A fired one-shot continuation is complete when its turn is active.
+    def test_active_conversation_receives_continuation_without_retry_loop(self):
+        """A fired one-shot continuation reaches its active agent exactly once.
 
         It must not be converted to ``::pending::<hash>`` every ten seconds.
         Unrelated pending work due in the same poll is still rescheduled.
         """
         from core.poll_scheduler import PollScheduler
+        from core.conversation_store import ConversationStore
+        from core.pending_queue import PendingQueue
         import threading
         import time
 
         scheduler = PollScheduler.instance()
         cid = "active_continuation"
+        ConversationStore.instance().save(
+            cid, [{"role": "assistant", "content": "working"}], user_id="testuser")
         task = self._make_task()
         task._last_task_watchdog = time.time()
         task._last_thought_watchdog = time.time()
@@ -2396,13 +2400,21 @@ class TestRandomThought(unittest.TestCase):
         scheduler.schedule(
             cid, time.time() - 1,
             key=f"{cid}::continuation::deadbeef",
-            reason="[scheduled:assistant] [continuation] finish the fix")
+            reason="[scheduled:assistant] [continuation] finish the fix",
+            user_id="testuser")
         scheduler.schedule(
             cid, time.time() - 1,
             key=f"{cid}::external-wakeup",
             reason="check an external job")
 
-        task._poll_once()
+        with patch.object(task, "_redirect_external_mcp_wake", return_value=False), \
+                patch.object(AgentLoopTask, "wake_agent"):
+            task._poll_once()
+
+        messages = PendingQueue.for_agent(cid, "assistant").drain()
+        assert len(messages) == 1
+        assert "[continuation] finish the fix" in messages[0]["content"]
+        assert messages[0]["_already_persisted"] is True
 
         remaining = [
             entry for entry in scheduler.list_all()

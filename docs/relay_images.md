@@ -25,6 +25,9 @@ not a development language preset; it is the minimum runtime PawFlow needs:
 - Python runtime for `pawflow_relay_launcher.py` and relay workers
 - FUSE support for server session and FileStore mounts
 - `pyfuse3` and `trio`
+- `defusedxml` for the HTTP action module's XML parser; this module loads with
+  the filesystem action registry, so the dependency is required even for basic
+  file operations and cannot depend on an optional development profile
 - `rclone` for conversation-linked remote filesystem mounts under `/remote`
 - `/workspace`, `/cc_sessions`, `/filestore`, and `/opt/pawflow` mountpoints
 - basic network/TLS and shell tools, including `ripgrep` for relay-backed search

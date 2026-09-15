@@ -79,7 +79,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        hypothesis tox nox \
        mypy ruff black isort bandit pylint flake8 \
        pyright types-requests types-pyyaml \
-       requests httpx aiohttp websockets grpcio grpcio-tools \
+       requests httpx aiohttp websockets grpcio grpcio-tools defusedxml \
        pydantic fastapi uvicorn flask django starlette \
        sqlalchemy alembic psycopg2-binary pymongo redis asyncpg \
        pillow numpy pandas matplotlib scipy scikit-learn \

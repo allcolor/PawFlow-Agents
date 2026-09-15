@@ -17,7 +17,7 @@
         "vim-tiny", "nano", "procps", "psmisc", "lsof", "iproute2", "iputils-ping", "dnsutils", "netcat-openbsd",
         "file", "less", "fuse3", "libfuse3-dev", "cryfs", "build-essential", "pkg-config", "chrony", "slirp4netns", "util-linux", "tini"
       ],
-      "pip": ["pyfuse3", "trio", "websockets", "requests", "certifi"],
+      "pip": ["pyfuse3", "trio", "websockets", "requests", "certifi", "defusedxml"],
       "env": {
         "PYTHONPATH": "/opt/pawflow:/workspace/.pylib"
       },

@@ -107,7 +107,9 @@ The debug APK is written to
 `pawflow-android/app/build/outputs/apk/debug/app-debug.apk`.
 
 Release tags run the same lint, unit-test, and debug-APK build in GitHub
-Actions. The tag supplies `pawflowVersion` and `pawflowVersionCode`; the
+Actions. SDK setup explicitly installs `platform-tools`; the action's default
+also requests the retired `tools` package, which current SDK repositories no
+longer provide. The tag supplies `pawflowVersion` and `pawflowVersionCode`; the
 result is published as `pawflow-android-<version>-debug.apk`. This beta
 artifact uses an Android debug signature because no stable Android release
 keystore is configured yet. A production or Play Store build must use a

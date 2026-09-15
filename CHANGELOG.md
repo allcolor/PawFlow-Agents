@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Android release builds explicitly install `platform-tools` instead of requesting
+  the retired SDK `tools` package during setup.
+
 ## [1.0.0-beta.275] — 2026-09-15
 
 ### Added

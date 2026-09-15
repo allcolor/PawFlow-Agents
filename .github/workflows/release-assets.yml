@@ -360,6 +360,8 @@ jobs:
           cache: gradle
 
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Resolve version
         shell: bash

@@ -127,8 +127,19 @@ trusted-code remount refusal, sibling credential visibility, executable files,
 symlinks, DNS and HOME/profile sentinels. Worker failure and explicit supervisor
 stop must remove every observed descendant, verified with PID and creation time.
 The evidence artifact retains the exact image metadata, logs and scenario results.
-This first stage does not establish real server/WebSocket/FUSE/desktop or
-Windows/WSL acceptance; those remain separate release requirements.
+A second disposable container runs `tests/physical_relay_probe.py` with the real
+relay launcher, command dispatcher and combined FUSE implementation. A synthetic
+WebSocket server validates the two logical registrations and serves distinct
+readonly fixtures for sessions, FileStore and skills. Both workers hash their
+own workspace and all three mounted fixtures, reject missing files and local
+host access, and repeat fresh FUSE reads after a forced WebSocket reconnect.
+The readonly worker must refuse writes. The writable worker must execute a
+command and retain its FUSE mount identity and HOME/profile sentinel across the
+reconnect. Shutdown must remove all observed worker/helper descendants.
+`relay-runtime.log` and `relay-result.json` retain this stage's evidence separately.
+The fixture server supplies synthetic protocol replies; this does not validate
+the production server's authentication/storage handlers, Desktop/Chromium startup
+or Windows/WSL. Those remain separate release requirements.
 
 Configure a standalone group from the CLI:
 

@@ -624,8 +624,16 @@ async function stopRelay(name) {
     }
     if (!runningPhysicalNames(state).has(name)) return { ok: true, alreadyStopped: true };
   }
-  if (entry && proc) {
-    entry.stopRequested = true;
+  if (entry) entry.stopRequested = true;
+  // Let the backend observe the runtime lock before the child removes it.
+  try {
+    const cleanup = await cleanupRelayRuntime(name);
+    appendLog(name, `[relay] runtime cleanup: ${JSON.stringify(cleanup)}\n`);
+  } catch (err) {
+    appendLog(name, `[relay] runtime cleanup failed: ${err.message}\n`);
+    throw err;
+  }
+  if (entry && proc && proc.exitCode === null && proc.signalCode === null) {
     appendLog(name, `[relay] stop requested\n`);
     try {
       proc.kill(process.platform === 'win32' ? 'SIGTERM' : 'SIGINT');
@@ -640,18 +648,21 @@ async function stopRelay(name) {
       } catch (err) {
         appendLog(name, `[relay] process kill failed: ${err.message}\n`);
       }
-      await waitForProcessExit(proc, 2000);
+      if (!await waitForProcessExit(proc, 2000)) {
+        throw new Error('Relay launcher did not exit after the stop request.');
+      }
     }
     if (runningRelays.get(name) === entry) {
       runningRelays.delete(name);
     }
-  }
-  try {
-    const cleanup = await cleanupRelayRuntime(name);
-    appendLog(name, `[relay] runtime cleanup: ${JSON.stringify(cleanup)}\n`);
-  } catch (err) {
-    appendLog(name, `[relay] runtime cleanup failed: ${err.message}\n`);
-    throw err;
+    // A launcher still starting during the first cleanup can leave a container.
+    try {
+      const cleanup = await cleanupRelayRuntime(name);
+      appendLog(name, `[relay] runtime cleanup: ${JSON.stringify(cleanup)}\n`);
+    } catch (err) {
+      appendLog(name, `[relay] runtime cleanup failed: ${err.message}\n`);
+      throw err;
+    }
   }
   refreshTrayMenu();
   return { ok: true, alreadyStopped: false };

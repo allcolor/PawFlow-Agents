@@ -61,8 +61,17 @@ def _workspace_config_lock():
         fd = os.open(home / "workspaces.lock", os.O_CREAT | os.O_RDWR, 0o600)
         try:
             if os.name == "nt":
+                import errno
                 import msvcrt
-                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                import time
+                while True:
+                    try:
+                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError as exc:
+                        if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                            raise
+                        time.sleep(0.1)
             else:
                 import fcntl
                 fcntl.flock(fd, fcntl.LOCK_EX)
@@ -497,6 +506,10 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
     relay_id = physical["physical_id"]
     had_runtime_lock = _workspace_runtime_lock_path(relay_id).exists()
     runtime_process_terminated = _terminate_workspace_runtime_lock(relay_id)
+    runtime = _read_runtime_lock(_workspace_runtime_lock_path(relay_id))
+    pid = int(runtime.get("pid") or 0)
+    if pid and _process_is_running(pid):
+        raise RuntimeError(f"Physical relay '{name}' launcher is still running (pid {pid})")
     from pawflow_relay.thread import cleanup_relay_containers
     containers_removed = cleanup_relay_containers(relay_id)
     had_runtime = had_runtime_lock or runtime_process_terminated or containers_removed > 0

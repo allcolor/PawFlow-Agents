@@ -19,7 +19,7 @@ def _mutation(home, job, entered, release, attempted, done, result):
     def save(filename, records):
         if release is not None and filename == manager._WORKSPACES_FILE:
             entered.set()
-            if not release.wait(10):
+            if not release.wait(30):
                 raise TimeoutError("The test did not release the paused writer")
         original_save(filename, records)
 
@@ -67,7 +67,7 @@ def _mutation(home, job, entered, release, attempted, done, result):
         done.set()
 
 
-def _overlap(home, first, second):
+def _overlap(home, first, second, hold_seconds=0.5):
     ctx = multiprocessing.get_context("spawn")
     entered, release = ctx.Event(), ctx.Event()
     attempted, done = ctx.Event(), ctx.Event()
@@ -86,7 +86,7 @@ def _overlap(home, first, second):
         assert attempted.wait(10), "Second process did not attempt its operation"
         # Without a transaction, the second operation completes against the old
         # snapshot while the first writer is paused. With a lock it must wait.
-        early_completion = done.wait(0.5)
+        early_completion = done.wait(hold_seconds)
     finally:
         release.set()
         for worker in workers:
@@ -154,3 +154,60 @@ def test_start_waits_for_save_and_uses_the_committed_directory(config):
     )
     assert values[1] == after["path"]
     assert not early, "Runtime acquisition bypassed the workspace transaction"
+
+
+def test_windows_transaction_waits_beyond_ten_seconds(config):
+    import os
+
+    if os.name != "nt":
+        pytest.skip("Requires the Windows byte-range lock")
+    home, root = config
+    alpha, beta = _entry(root, "Alpha"), _entry(root, "Beta")
+    early, _ = _overlap(
+        home,
+        {"operation": "save", "name": "Alpha", "workspaces": [alpha]},
+        {"operation": "save", "name": "Beta", "workspaces": [beta]},
+        hold_seconds=11,
+    )
+    assert not early
+    assert set(manager._load_json(manager._WORKSPACES_FILE)) == {"Alpha", "Beta"}
+
+
+@pytest.mark.parametrize("failure", ["contention", "invalid_fd"])
+def test_windows_lock_retries_only_contention(config, monkeypatch, failure):
+    import errno
+    import os
+    import sys
+    import time
+    from types import SimpleNamespace
+
+    calls, pauses = [], []
+    fake = SimpleNamespace(LK_LOCK=1, LK_NBLCK=2, LK_UNLCK=0)
+
+    def locking(fd, mode, length):
+        calls.append(mode)
+        assert length == 1
+        if mode == fake.LK_UNLCK:
+            return
+        if failure == "invalid_fd":
+            raise OSError(errno.EBADF, "invalid descriptor")
+        if len(calls) <= 12:
+            raise OSError(errno.EACCES, "lock busy")
+
+    fake.locking = locking
+    monkeypatch.setitem(sys.modules, "msvcrt", fake)
+    monkeypatch.setattr(manager, "os", SimpleNamespace(
+        name="nt", environ=os.environ, open=os.open, close=os.close,
+        O_CREAT=os.O_CREAT, O_RDWR=os.O_RDWR,
+    ))
+    monkeypatch.setattr(time, "sleep", pauses.append)
+    if failure == "invalid_fd":
+        with pytest.raises(OSError) as caught, manager._workspace_config_lock():
+            pytest.fail("Entered transaction with invalid descriptor")
+        assert caught.value.errno == errno.EBADF
+        assert pauses == []
+    else:
+        with manager._workspace_config_lock(), manager._workspace_config_lock():
+            assert len(calls) == 13
+        assert calls == [fake.LK_NBLCK] * 13 + [fake.LK_UNLCK]
+        assert len(pauses) == 12

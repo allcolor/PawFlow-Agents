@@ -1,7 +1,6 @@
 """Shared module-level helpers/consts for the pawflow_relay thread split."""
 
 import hashlib
-import logging
 import os
 import re
 import secrets
@@ -125,8 +124,10 @@ def _kill_relay_containers(relay_id: str) -> int:
                 "--format", "{{.ID}}\t{{.Names}}",
             ],
             capture_output=True, text=True, timeout=10, check=False)
-    except Exception:
-        return 0
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("Unable to list relay containers") from exc
+    if result.returncode != 0:
+        raise RuntimeError("Unable to list relay containers")
     killed = 0
     for line in result.stdout.strip().splitlines():
         container_id, separator, name = line.partition("\t")
@@ -138,10 +139,11 @@ def _kill_relay_containers(relay_id: str) -> int:
             removed = subprocess.run(  # nosec B603
                 docker_cmd() + ["rm", "-f", container_id],
                 capture_output=True, timeout=10, check=False)
-            if removed.returncode == 0:
-                killed += 1
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"Unable to remove relay container '{container_id}'") from exc
+        if removed.returncode != 0:
+            raise RuntimeError(f"Unable to remove relay container '{container_id}'")
+        killed += 1
     return killed
 
 

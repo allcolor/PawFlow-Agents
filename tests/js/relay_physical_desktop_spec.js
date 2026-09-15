@@ -11,7 +11,7 @@ const { test } = require('node:test');
 const root = path.resolve(__dirname, '../..');
 const source = fs.readFileSync(path.join(root, 'pawflow-relay-desktop/src/main.js'), 'utf8');
 
-function harness(failAt = '', externalRunning = false) {
+function harness(failAt = '', externalRunning = false, backendStopsProcess = false) {
   const handlers = new Map();
   const calls = [];
   const processes = [];
@@ -33,6 +33,7 @@ function harness(failAt = '', externalRunning = false) {
         proc.stdout = new EventEmitter();
         proc.stderr = new EventEmitter();
         proc.exitCode = null;
+        proc.signalCode = null;
         proc.kill = signal => {
           calls.push('kill:' + signal);
           proc.exitCode = 0;
@@ -59,7 +60,16 @@ function harness(failAt = '', externalRunning = false) {
         assert.equal(config.workspaces.length, 2);
         if (operation === 'save') physical.name = args[2];
       }
-      if (operation === 'cleanup') physical.running = false;
+      if (operation === 'cleanup') {
+        physical.running = false;
+        if (backendStopsProcess) {
+          for (const proc of processes) {
+            assert.equal(proc.exitCode, null, 'Desktop killed the child before backend cleanup');
+            proc.exitCode = 0;
+            proc.emit('close', 0);
+          }
+        }
+      }
       return { ok: true, already_stopped: false };
     },
   });
@@ -109,7 +119,7 @@ test('saving a running group validates, stops, saves and starts the parent', asy
   await h.invoke('start', 'Laptop');
   h.calls.length = 0;
   await h.invoke('save-physical', h.config);
-  assert.deepEqual(h.calls, ['validate', 'kill:SIGINT', 'cleanup', 'save', 'start:Laptop']);
+  assert.deepEqual(h.calls, ['validate', 'cleanup', 'kill:SIGINT', 'cleanup', 'save', 'start:Laptop']);
   assert.equal(h.processes.length, 2);
   assert.equal(h.processes[0].exitCode, 0);
 });
@@ -119,7 +129,7 @@ test('failed runtime cleanup prevents saving and restarting', async () => {
   await h.invoke('start', 'Laptop');
   h.calls.length = 0;
   await assert.rejects(h.invoke('save-physical', h.config), /cleanup failed/);
-  assert.deepEqual(h.calls, ['validate', 'kill:SIGINT', 'cleanup']);
+  assert.deepEqual(h.calls, ['validate', 'cleanup']);
   assert.equal(h.processes.length, 1);
 });
 
@@ -128,7 +138,7 @@ test('failed persistence restarts the original saved group', async () => {
   await h.invoke('start', 'Laptop');
   h.calls.length = 0;
   await assert.rejects(h.invoke('save-physical', h.config), /save failed/);
-  assert.deepEqual(h.calls, ['validate', 'kill:SIGINT', 'cleanup', 'save', 'start:Laptop']);
+  assert.deepEqual(h.calls, ['validate', 'cleanup', 'kill:SIGINT', 'cleanup', 'save', 'start:Laptop']);
 });
 
 test('saving a stopped group does not implicitly connect it', async () => {
@@ -163,7 +173,7 @@ test('renaming a running parent stops its old name and starts its new name', asy
   await h.invoke('start', 'Laptop');
   h.calls.length = 0;
   await h.invoke('save-physical', { ...h.config, name: 'Renamed' });
-  assert.deepEqual(h.calls, ['validate', 'kill:SIGINT', 'cleanup', 'save', 'start:Renamed']);
+  assert.deepEqual(h.calls, ['validate', 'cleanup', 'kill:SIGINT', 'cleanup', 'save', 'start:Renamed']);
   assert.deepEqual(Array.from(await h.invoke('running')), ['Renamed']);
 });
 
@@ -172,5 +182,14 @@ test('failed rename restarts the saved parent under its old name', async () => {
   await h.invoke('start', 'Laptop');
   h.calls.length = 0;
   await assert.rejects(h.invoke('save-physical', { ...h.config, name: 'Renamed' }), /save failed/);
-  assert.deepEqual(h.calls, ['validate', 'kill:SIGINT', 'cleanup', 'save', 'start:Laptop']);
+  assert.deepEqual(h.calls, ['validate', 'cleanup', 'kill:SIGINT', 'cleanup', 'save', 'start:Laptop']);
+});
+
+test('backend observes the live child before graceful stop removes its runtime lock', async () => {
+  const h = harness('', false, true);
+  await h.invoke('start', 'Laptop');
+  h.calls.length = 0;
+  await h.invoke('stop', 'Laptop');
+  assert.deepEqual(h.calls, ['cleanup']);
+  assert.equal(h.processes[0].exitCode, 0);
 });

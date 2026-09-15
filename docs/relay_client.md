@@ -217,6 +217,8 @@ validation, the stopped-runtime check and atomic replacement. Group startup take
 its configuration snapshot and runtime lock within the same transaction, so it
 cannot launch an obsolete directory list during a save. The lock is shared by
 Desktop, physical commands and the single-directory workspace commands.
+On Windows, contention waits until the current transaction releases its lock,
+including stops that take longer than ten seconds; other lock errors propagate.
 An implicit CLI rename that reuses a removed member's directory is rejected.
 Supply its existing `relay_id` through `--config-stdin` to retain the identity,
 permissions and HOME, or explicitly remove and then add a replacement. An
@@ -231,6 +233,11 @@ parent rename stops the old name and starts the new name; a failed save restores
 the old name. Disconnecting an idle parent in Desktop performs no cleanup.
 CLI cleanup unregisters services only when a runtime lock or owned containers
 were present, and performs container cleanup before server unregistration.
+Desktop invokes this backend stop while the launcher lock still exists, allowing
+the backend to retry unregistration after a graceful child shutdown. If a launcher
+is still alive or Docker cannot list or remove its containers, cleanup fails
+without removing the runtime lock or unregistering services. Saving and restarting
+remain blocked by that failure.
 
 Each logical relay's authenticated host helper checks its own permissions before
 dispatch. Local filesystem and HTTP operations require `allow_local`; commands,

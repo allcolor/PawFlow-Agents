@@ -433,6 +433,68 @@ def test_cleanup_failure_leaves_server_registration_intact(config, monkeypatch):
     assert calls == []
 
 
+def test_graceful_stop_retries_unregistration_after_child_removed_runtime(config, monkeypatch):
+    physical = physical_config.save_physical(
+        "Laptop", "server", "relay:test", [entry(config, "Code")])
+    relay_id = physical["physical_id"]
+    lock = manager._workspace_runtime_lock_path(relay_id)
+    lock.parent.mkdir(parents=True)
+    lock.write_text(json.dumps({"pid": 424242}), encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(manager, "get_server", lambda _name: {
+        "url": "https://fixture.invalid", "session_token": "fixture-session",
+    })
+
+    def stop(_id):
+        lock.unlink()
+        return True
+
+    monkeypatch.setattr(manager, "_terminate_workspace_runtime_lock", stop)
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", lambda _id: 0)
+    monkeypatch.setattr(manager, "api_call", lambda *a, **k: calls.append(k["body"]) or {})
+    result = manager.stop_workspace_runtime("Laptop")
+    assert result["service_uninstalled"]
+    assert calls == [{"action": "service_uninstall", "service_id": relay_id}]
+
+
+@pytest.mark.parametrize("failure", ["list", "remove", "launcher"])
+def test_failed_runtime_stop_retains_lock_and_registration(config, monkeypatch, failure):
+    from types import SimpleNamespace
+
+    from pawflow_relay import _thread_base as base
+
+    physical = physical_config.save_physical(
+        "Laptop", "server", "relay:test", [entry(config, "Code")])
+    relay_id = physical["physical_id"]
+    lock = manager._workspace_runtime_lock_path(relay_id)
+    lock.parent.mkdir(parents=True)
+    lock.write_text(json.dumps({"pid": 424242}), encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(manager, "get_server", lambda _name: {
+        "url": "https://fixture.invalid", "session_token": "fixture-session",
+    })
+    monkeypatch.setattr(manager, "_terminate_workspace_runtime_lock", lambda _id: False)
+    monkeypatch.setattr(manager, "_process_is_running", lambda _pid: failure == "launcher")
+    monkeypatch.setattr(manager, "api_call", lambda *a, **k: calls.append("uninstall"))
+    name = base._make_relay_container_name(relay_id, "relay")
+
+    def docker(args, **kwargs):
+        calls.append(args[1])
+        if args[1] == "ps":
+            return SimpleNamespace(
+                returncode=1 if failure == "list" else 0, stdout="owned\t" + name)
+        return SimpleNamespace(returncode=1 if failure == "remove" else 0)
+
+    monkeypatch.setattr(base, "docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr(base.subprocess, "run", docker)
+    with pytest.raises(RuntimeError):
+        manager.stop_workspace_runtime("Laptop")
+    assert lock.exists()
+    assert "uninstall" not in calls
+    if failure == "launcher":
+        assert calls == []
+
+
 def test_cli_verifies_all_children_and_rejects_a_logical_lifecycle_target(config, capsys, monkeypatch):
     from pawflow_relay import manager_cli
 

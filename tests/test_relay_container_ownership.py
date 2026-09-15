@@ -6,6 +6,27 @@ import pytest
 from pawflow_relay import _thread_base as base
 
 
+@pytest.mark.parametrize("platform", ["posix", "nt"])
+@pytest.mark.parametrize("override", ["", "/custom runtime/docker"])
+def test_cleanup_uses_configured_docker_on_each_platform(monkeypatch, platform, override):
+    from pawflow_relay import utils
+
+    monkeypatch.setattr(utils, "os", SimpleNamespace(
+        name=platform, environ={"PAWFLOW_RELAY_DOCKER": override}))
+    expected = [override] if override else (["wsl", "docker"] if platform == "nt" else ["docker"])
+    calls = []
+
+    def docker(args, **kwargs):
+        calls.append(args)
+        assert args[:len(expected)] == expected
+        raise FileNotFoundError("Docker unavailable")
+
+    monkeypatch.setattr(base.subprocess, "run", docker)
+    with pytest.raises(RuntimeError, match="Unable to list relay containers"):
+        base.cleanup_relay_containers("docker-command-fixture")
+    assert len(calls) == 1
+
+
 @pytest.mark.parametrize("left,right", [
     ("fs_allcolor_d0bbacb3", "fs_allcolor_6c7334fb"),
     ("fs_client_12345678", "fs_client_12349999"),

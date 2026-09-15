@@ -518,7 +518,11 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
         from pawflow_relay.thread import cleanup_relay_containers
         containers_removed = cleanup_relay_containers(relay_id)
         had_runtime = had_runtime or containers_removed > 0
-        service_uninstalled = had_runtime and bool(server.get("session_token"))
+        if had_runtime and not server.get("session_token"):
+            raise ValueError(
+                f"Server '{physical['server']}' is not logged in. Run: "
+                f"pawflow-relay server login {physical['server']}, then retry cleanup")
+        service_uninstalled = had_runtime
         if service_uninstalled:
             for share in physical["workspaces"]:
                 response = api_call(

@@ -9,7 +9,10 @@ from pathlib import Path
 
 
 def docker_cmd():
-    """Return the docker command prefix (handles Windows WSL)."""
+    """Return the configured Docker executable or platform command prefix."""
+    override = os.environ.get("PAWFLOW_RELAY_DOCKER", "")
+    if override:
+        return [override]
     if os.name == "nt":
         return ["wsl", "docker"]
     return ["docker"]

@@ -617,6 +617,33 @@ def test_failed_unregistration_retains_cleanup_for_retry(config, monkeypatch, ob
     assert not lock.exists()
 
 
+@pytest.mark.parametrize("observed_during_cleanup", [False, True])
+def test_cleanup_without_login_retains_group_unregistration(config, monkeypatch, observed_during_cleanup):
+    physical = physical_config.save_physical(
+        "Laptop", "server", "relay:test", [entry(config, "Code"), entry(config, "Docs")])
+    lock = manager._workspace_runtime_lock_path(physical["physical_id"])
+    if not observed_during_cleanup:
+        lock.parent.mkdir(parents=True)
+        lock.write_text(json.dumps({"pid": 0, "had_runtime": True}), encoding="utf-8")
+    monkeypatch.setattr(
+        "pawflow_relay.thread.cleanup_relay_containers", lambda _id: int(observed_during_cleanup))
+    calls = []
+    monkeypatch.setattr(manager, "api_call", lambda *a, **k: calls.append(k["body"]) or {})
+    with pytest.raises(ValueError, match="not logged in"):
+        manager.stop_workspace_runtime("Laptop")
+    assert calls == []
+    assert manager._read_runtime_lock(lock)["had_runtime"] is True
+    assert physical_config.get_physical("Laptop")["cleanup_pending"]
+    monkeypatch.setattr(manager, "get_server", lambda _name: {
+        "url": "https://fixture.invalid", "session_token": "fixture-session",
+    })
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", lambda _id: 0)
+    assert manager.stop_workspace_runtime("Laptop")["service_uninstalled"]
+    assert calls == [{"action": "service_uninstall", "service_id": share["relay_id"]}
+                     for share in physical["workspaces"]]
+    assert not lock.exists()
+
+
 def test_failed_removal_retains_observation_even_if_another_process_later_cleans_it(config, monkeypatch):
     from pawflow_relay._thread_base import RelayContainerCleanupError
 

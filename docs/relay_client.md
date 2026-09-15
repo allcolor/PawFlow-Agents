@@ -246,7 +246,20 @@ connect/save/delete settle that cleanup first; saving a stopped parent keeps it
 stopped. CLI startup also settles pending cleanup before launching. Retry state
 alone does not count as evidence that a runtime existed.
 Unregistration retries accept an already absent service; other server errors
-retain the pending cleanup instead of reporting success.
+retain the pending cleanup instead of reporting success. If a runtime was
+observed but the server account is logged out, local container cleanup still
+runs and the service unregistration remains pending. Log in with
+`pawflow-relay server login <server>`, then retry `pawflow-relay cleanup <physical>`.
+A server outage also keeps cleanup pending; restore connectivity before retrying.
+CLI `physical delete` and `workspace delete` require this explicit cleanup first.
+If Docker is unavailable, restore the configured Docker command or daemon before
+retrying; removing a lock manually does not establish that cleanup succeeded.
+
+`PAWFLOW_RELAY_DOCKER` selects one Docker executable path for both Relay Desktop
+and the Python runtime, including container cleanup. Paths containing spaces
+remain one argument. An unavailable explicit executable fails without falling
+back to a different Docker installation. Without an override, Python uses
+`docker` on Unix and `wsl docker` on Windows.
 
 Each logical relay's authenticated host helper checks its own permissions before
 dispatch. Local filesystem and HTTP operations require `allow_local`; commands,

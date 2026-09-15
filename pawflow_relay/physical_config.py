@@ -1,31 +1,28 @@
 """Physical relay configuration over the existing workspace records.
 
 A physical relay always contains at least one logical workspace. Legacy shares
-are migrated in one atomic file replacement without changing their identities,
-permissions, credentials or persistent HOME volume names.
+are normalized in memory and persisted with the next configuration mutation,
+without changing identities, permissions, credentials or HOME volume names.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from pawflow_relay.manager import _workspace_config_lock
 from pawflow_relay.physical_plan import plan_physical_relay
 
 
-def load_workspaces(*, persist_migration: bool = True) -> dict:
+def load_workspaces() -> dict:
     from pawflow_relay import manager
 
     records = manager._load_json(manager._WORKSPACES_FILE)
-    changed = False
     for name, share in records.items():
         if "physical_name" not in share and "physical_id" not in share:
             share["physical_name"] = name
             share["physical_id"] = share["relay_id"]
-            changed = True
         if not share.get("physical_name") or not share.get("physical_id"):
             raise ValueError(f"Workspace '{name}' has incomplete physical relay ownership")
-    if changed and persist_migration:
-        manager._save_json(manager._WORKSPACES_FILE, records)
     return records
 
 
@@ -75,6 +72,7 @@ def require_stopped(physical: dict) -> None:
             "restart it afterwards to reconnect the complete group")
 
 
+@_workspace_config_lock()
 def save_physical(name: str, server: str, docker_image: str,
                   workspaces: list[dict], *, validate_only: bool = False) -> dict:
     """Replace one stopped physical relay's complete directory configuration."""
@@ -85,12 +83,20 @@ def save_physical(name: str, server: str, docker_image: str,
     if not isinstance(workspaces, list) or not workspaces:
         raise ValueError("A physical relay requires at least one logical workspace")
     manager.get_server(server)
-    records = load_workspaces(persist_migration=not validate_only)
+    records = load_workspaces()
     existing = next((p for p in _groups(records) if p["name"] == name), None)
     if existing and not validate_only:
         require_stopped(existing)
     now = manager._now()
     members = []
+    requested_names = {
+        entry.get("name") for entry in workspaces
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+    }
+    removed = [
+        share for share in records.values()
+        if share["physical_name"] == name and share["name"] not in requested_names
+    ]
     for entry in workspaces:
         if not isinstance(entry, dict):
             raise ValueError("Each workspace must be a configuration object")  # noqa: TRY004 - config validation
@@ -98,6 +104,10 @@ def save_physical(name: str, server: str, docker_image: str,
         if not isinstance(logical_name, str) or not logical_name.strip():
             raise ValueError("Logical relay name is required")
         previous = records.get(logical_name, {})
+        if not previous and entry.get("relay_id"):
+            previous = next((
+                share for share in removed if share["relay_id"] == entry["relay_id"]
+            ), {})
         if previous and previous["physical_name"] != name:
             raise ValueError(f"Workspace '{logical_name}' belongs to another physical relay")
         relay_id = entry.get("relay_id") or previous.get("relay_id") or logical_name
@@ -109,6 +119,13 @@ def save_physical(name: str, server: str, docker_image: str,
         directory = Path(raw_path).expanduser().resolve()
         if not directory.is_dir():
             raise ValueError(f"Workspace '{logical_name}' is not an existing directory")
+        if not previous and not entry.get("relay_id") and any(
+            Path(share["path"]).expanduser().resolve() == directory for share in removed
+        ):
+            raise ValueError(
+                "Reusing a removed workspace's path requires an explicit relay_id; "
+                "retain its identity to rename it, or remove it in a separate save"
+            )
         share = {
             **previous,
             "name": logical_name,
@@ -144,6 +161,7 @@ def save_physical(name: str, server: str, docker_image: str,
     return next(p for p in physicals if p["name"] == name)
 
 
+@_workspace_config_lock()
 def delete_physical(name: str) -> dict:
     """Remove a stopped group's configuration, retaining its data and HOME."""
     from pawflow_relay import manager

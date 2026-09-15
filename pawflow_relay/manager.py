@@ -8,7 +8,7 @@ and local workspace shares, then starts relay processes on demand.
 from __future__ import annotations
 import logging
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +17,7 @@ import json
 import os
 import re
 import signal
+import threading
 
 from pawflow_relay.utils import api_call, generate_relay_id
 from pawflow_relay import credential_store
@@ -25,6 +26,8 @@ from pawflow_relay import credential_store
 _SERVERS_FILE = "servers.json"
 _WORKSPACES_FILE = "workspaces.json"
 _VALID_MODES = {"rw", "ro"}
+_CONFIG_MUTEX = threading.RLock()
+_CONFIG_STATE = threading.local()
 
 
 def _now() -> str:
@@ -39,6 +42,41 @@ def relay_home() -> Path:
     if os.name == "nt" and os.environ.get("APPDATA"):
         return Path(os.environ["APPDATA"]) / "PawFlow" / "relay"
     return Path.home() / ".pawflow" / "relay"
+
+
+@contextmanager
+def _workspace_config_lock():
+    """Serialize complete workspace transactions across threads and processes.
+
+    Keep a stable lock file beside workspaces.json: replacing the JSON file must
+    not replace the lock. Nested calls in one thread reuse its operating-system
+    lock, which is released even if validation or persistence raises.
+    """
+    with _CONFIG_MUTEX:
+        if getattr(_CONFIG_STATE, "held", False):
+            yield
+            return
+        home = relay_home()
+        home.mkdir(parents=True, exist_ok=True)
+        fd = os.open(home / "workspaces.lock", os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            _CONFIG_STATE.held = True
+            try:
+                yield
+            finally:
+                _CONFIG_STATE.held = False
+                if os.name == "nt":
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def _runtime_dir() -> Path:
@@ -314,6 +352,7 @@ def update_server_auth(name: str, *, gateway_cookie: str = "",
     return _public_server(profile)
 
 
+@_workspace_config_lock()
 def delete_server(name: str) -> Dict[str, Any]:
     """Delete a server profile and all workspace shares attached to it."""
     servers = _load_server_records()
@@ -373,6 +412,7 @@ def get_workspace(name: str) -> Dict[str, Any]:
     return workspaces[name]
 
 
+@_workspace_config_lock()
 def add_workspace(name: str, server: str, path: str, mode: str = "rw",
                   docker_image: str = "", allow_local: bool = False,
                   allow_exec: bool = True,
@@ -427,6 +467,7 @@ def add_workspace(name: str, server: str, path: str, mode: str = "rw",
     return share
 
 
+@_workspace_config_lock()
 def delete_workspace(name: str) -> Dict[str, Any]:
     from pawflow_relay.physical_config import get_physical, require_stopped
     share = get_workspace(name)
@@ -490,7 +531,7 @@ def plan_workspaces(physical_id: str, names: list[str]):
             or any(not isinstance(name, str) or not name for name in names)
             or len(set(names)) != len(names)):
         raise ValueError("Workspace names must be an explicit nonempty distinct list")
-    workspaces = load_workspaces(persist_migration=False)
+    workspaces = load_workspaces()
     for name in names:
         if name not in workspaces:
             raise ValueError(f"Unknown relay workspace '{name}'")
@@ -507,34 +548,36 @@ def start_workspace(name: str):
     from pawflow_relay.physical_config import get_physical
     from pawflow_relay.thread import RelayThread
 
-    physical = get_physical(name)
-    share = physical["workspaces"][0]
-    server = get_server(physical["server"])
-    token = server.get("session_token", "")
-    username = server.get("username", "")
-    if not token or not username:
-        raise ValueError(
-            f"Server '{share['server']}' is not logged in. Run: "
-            f"pawflow-relay server login {share['server']}"
-        )
-    if len(physical["workspaces"]) > 1:
-        from pawflow_relay.physical_thread import PhysicalRelayThread
-        relay = PhysicalRelayThread(physical, server)
-    else:
-        relay = RelayThread(
-        server["url"], token, username, share["path"],
-        relay_id=share.get("relay_id", ""),
-        docker_image=share.get("docker_image", "") or "pawflow-relay-dev:latest",
-        gateway_cookie=server.get("gateway_cookie", ""),
-        gateway_key=server.get("gateway_key", ""),
-        allow_exec=bool(share.get("allow_exec", True)),
-        allow_remote_desktop=bool(share.get("allow_remote_desktop", True)),
-        allow_local=bool(share.get("allow_local", False)),
-        allow_service_tunnels=bool(share.get("allow_service_tunnels", False)),
-        read_only=(share.get("mode") == "ro"),
-        )
-    relay._physical_id = physical["physical_id"]
-    with _workspace_runtime_lock(name, physical["physical_id"]):
+    with ExitStack() as runtime:
+        with _workspace_config_lock():
+            physical = get_physical(name)
+            share = physical["workspaces"][0]
+            server = get_server(physical["server"])
+            token = server.get("session_token", "")
+            username = server.get("username", "")
+            if not token or not username:
+                raise ValueError(
+                    f"Server '{share['server']}' is not logged in. Run: "
+                    f"pawflow-relay server login {share['server']}"
+                )
+            if len(physical["workspaces"]) > 1:
+                from pawflow_relay.physical_thread import PhysicalRelayThread
+                relay = PhysicalRelayThread(physical, server)
+            else:
+                relay = RelayThread(
+                    server["url"], token, username, share["path"],
+                    relay_id=share.get("relay_id", ""),
+                    docker_image=share.get("docker_image", "") or "pawflow-relay-dev:latest",
+                    gateway_cookie=server.get("gateway_cookie", ""),
+                    gateway_key=server.get("gateway_key", ""),
+                    allow_exec=bool(share.get("allow_exec", True)),
+                    allow_remote_desktop=bool(share.get("allow_remote_desktop", True)),
+                    allow_local=bool(share.get("allow_local", False)),
+                    allow_service_tunnels=bool(share.get("allow_service_tunnels", False)),
+                    read_only=(share.get("mode") == "ro"),
+                )
+            relay._physical_id = physical["physical_id"]
+            runtime.enter_context(_workspace_runtime_lock(name, physical["physical_id"]))
         previous_handlers = {}
 
         def _request_stop(_sig, _frame):

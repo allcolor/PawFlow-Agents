@@ -44,7 +44,7 @@ def test_legacy_share_migration_retains_every_original_field(config):
     assert plan.exports[0].workspace_target == "/workspace"
     assert plan.exports[0].home_volume == "pawflow_home_fs_alice_1234"
     stored = manager._load_json(manager._WORKSPACES_FILE)
-    assert stored["MyWorkspace"]["physical_name"] == "MyWorkspace"
+    assert stored == {"MyWorkspace": original}
     assert physical_config.list_physicals() == [physical]
 
 
@@ -226,6 +226,77 @@ def test_cli_saves_complete_group_and_status_keeps_logical_inventory(config, cap
     status = json.loads(capsys.readouterr().out)
     assert {w["relay_id"] for w in status["workspaces"]} == {"Code", "Docs"}
     assert [p["name"] for p in status["physicals"]] == ["Laptop"]
+
+
+@pytest.mark.parametrize("validate_only", [False, True])
+def test_implicit_rename_reusing_removed_path_is_rejected(config, validate_only):
+    first = entry(config, "Code")
+    first.update(relay_id="ExistingCode", mode="ro", allow_exec=False)
+    physical_config.save_physical("Laptop", "server", "relay:test", [first])
+    path = manager.relay_home() / manager._WORKSPACES_FILE
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="relay_id"):
+        physical_config.save_physical("Laptop", "server", "relay:test", [
+            {"name": "Renamed", "path": first["path"]},
+        ], validate_only=validate_only)
+    assert path.read_bytes() == before
+
+
+def test_explicit_rename_preserves_identity_permissions_and_home(config):
+    first = entry(config, "Code")
+    first.update(relay_id="ExistingCode", mode="ro", allow_exec=False)
+    saved = physical_config.save_physical("Laptop", "server", "relay:test", [first])
+    renamed = physical_config.save_physical("Laptop", "server", "relay:test", [
+        {"name": "Renamed", "relay_id": "ExistingCode", "path": first["path"]},
+    ])
+    assert renamed["physical_id"] == saved["physical_id"]
+    logical = renamed["workspaces"][0]
+    assert logical["mode"] == "ro"
+    assert logical["allow_exec"] is False
+    assert logical["created_at"] == saved["workspaces"][0]["created_at"]
+    assert plan_physical_relay(renamed["physical_id"], [logical]).exports[0].home_volume == (
+        "pawflow_home_ExistingCode")
+
+
+@pytest.mark.parametrize("explicit_identity", [False, True])
+def test_explicit_replacement_or_later_add_can_reuse_removed_path(config, explicit_identity):
+    first, retained = entry(config, "Code"), entry(config, "Docs")
+    physical_config.save_physical("Laptop", "server", "relay:test", [first, retained])
+    replacement = {"name": "Replacement", "path": first["path"]}
+    if explicit_identity:
+        replacement["relay_id"] = "NewIdentity"
+    else:
+        physical_config.save_physical("Laptop", "server", "relay:test", [retained])
+    saved = physical_config.save_physical(
+        "Laptop", "server", "relay:test", [retained, replacement])
+    assert {w["relay_id"] for w in saved["workspaces"]} == {
+        "Docs", "NewIdentity" if explicit_identity else "Replacement",
+    }
+
+
+def test_read_commands_leave_legacy_configuration_unchanged(config, capsys, monkeypatch):
+    from pawflow_relay import manager_cli
+
+    legacy = {**entry(config, "Code"), "relay_id": "ExistingCode",
+              "server": "server", "docker_image": "relay:test", "mode": "ro"}
+    manager._save_json(manager._WORKSPACES_FILE, {"Code": legacy})
+    path = manager.relay_home() / manager._WORKSPACES_FILE
+    before = path.read_bytes()
+    monkeypatch.setattr(manager_cli, "list_servers", list)
+    for args in (["physical", "list"], ["workspace", "list"], ["status"]):
+        assert manager_cli.main(["--json", *args]) == 0
+        capsys.readouterr()
+        assert path.read_bytes() == before
+    assert not (manager.relay_home() / "workspaces.lock").exists()
+
+
+def test_cli_requires_server_without_config_stdin(config, capsys):
+    from pawflow_relay import manager_cli
+
+    with pytest.raises(SystemExit) as exc:
+        manager_cli.main(["physical", "save", "Laptop", "--workspace", "Code", str(config)])
+    assert exc.value.code == 2
+    assert "requires --server unless --config-stdin" in capsys.readouterr().err
 
 
 def test_cli_omitted_mode_preserves_readonly(config, capsys):

@@ -120,7 +120,7 @@ async function main() {
   if (phase === 'edit') {
     const migrated = readConfig()[legacy.name];
     for (const [key, value] of Object.entries(legacy)) assert.equal(migrated[key], value, key);
-    assert.equal(migrated.physical_id, legacy.relay_id);
+    assert.deepEqual(migrated, legacy, 'Reading the legacy group must not write migration');
     await run(async directory => {
       const { check, save } = window.acceptance;
       const original = document.querySelector('.logical-config');
@@ -141,6 +141,7 @@ async function main() {
     }
     assert.equal(saved.PublishedDocs.relay_id, 'PublishedDocs');
     assert.equal(saved.PublishedDocs.physical_id, legacy.relay_id);
+    assert.equal(saved[legacy.name].physical_id, legacy.relay_id);
     assert.equal(saved.PublishedDocs.allow_exec, false);
     assert.equal(saved.PublishedDocs.allow_remote_desktop, false);
     assert.equal(saved.PublishedDocs.mode, 'ro');

@@ -254,6 +254,8 @@ def main(argv=None) -> int:
                     import json
                     definition = json.load(sys.stdin)
                 else:
+                    if not args.server:
+                        parser.error("physical save requires --server unless --config-stdin is used")
                     definition = {
                         "server": args.server, "docker_image": args.docker_image,
                         "workspaces": [

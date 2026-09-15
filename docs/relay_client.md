@@ -205,8 +205,18 @@ pawflow-relay cleanup laptop
 be stopped. `--config-stdin` accepts a JSON object containing `server`,
 `docker_image` and `workspaces`, including each workspace's permissions and
 existing `relay_id`. Add `--validate-only` to validate without saving or stopping.
-Prevalidation and `manager.plan_workspaces()` normalize legacy records in memory
-without persisting migration or changing the saved file, including on failure.
+Read commands, prevalidation and `manager.plan_workspaces()` normalize legacy
+records in memory. The next successful configuration mutation persists migration;
+reading or rejecting a configuration leaves the saved file unchanged.
+Workspace mutations hold one exclusive operating-system lock across reading,
+validation, the stopped-runtime check and atomic replacement. Group startup takes
+its configuration snapshot and runtime lock within the same transaction, so it
+cannot launch an obsolete directory list during a save. The lock is shared by
+Desktop, physical commands and the single-directory workspace commands.
+An implicit CLI rename that reuses a removed member's directory is rejected.
+Supply its existing `relay_id` through `--config-stdin` to retain the identity,
+permissions and HOME, or explicitly remove and then add a replacement. An
+explicit new `relay_id` also identifies an intentional replacement.
 Relay Desktop validates first, stops a running group, saves, then restarts the
 physical relay. Failed validation leaves the running group intact; failed
 cleanup prevents saving; a failed save restarts the previous saved configuration.

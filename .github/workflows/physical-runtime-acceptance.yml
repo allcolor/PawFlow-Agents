@@ -120,11 +120,17 @@ jobs:
         run: |
           python -m pip install keyring pytest
           npm install --prefix "$RUNNER_TEMP/electron-acceptance" --no-save --package-lock=false electron@41.4.0
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sandbox="$RUNNER_TEMP/electron-acceptance/node_modules/electron/dist/chrome-sandbox"
+            sudo chown root:root "$sandbox"
+            sudo chmod 4755 "$sandbox"
+          fi
       - name: Exercise real Electron configuration and module dispatch
         shell: bash
         run: |
           mkdir -p desktop-app-output
           python -m pytest tests/test_relay_cli_entrypoint.py --noconftest -q > desktop-app-output/entrypoint.log 2>&1
+          python -m pytest tests/test_relay_physical_config.py tests/test_relay_config_transactions.py --noconftest -q > desktop-app-output/configuration.log 2>&1
           export PAWFLOW_DISPOSABLE_ACCEPTANCE=1
           export PAWFLOW_DESKTOP_ACCEPTANCE_DIR="$RUNNER_TEMP/desktop-app-fixture"
           export PAWFLOW_RELAY_PYTHON="$(python -c 'import sys; print(sys.executable)')"

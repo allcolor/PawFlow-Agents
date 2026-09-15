@@ -55,8 +55,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           wsl --distribution PawFlowAcceptance --user root --exec env DEBIAN_FRONTEND=noninteractive apt-get update
-          wsl --distribution PawFlowAcceptance --user root --exec env DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io python3 ca-certificates
-          wsl --distribution PawFlowAcceptance --user root --exec service docker start
+          wsl --distribution PawFlowAcceptance --user root --exec env DEBIAN_FRONTEND=noninteractive apt-get install -y systemd systemd-sysv docker.io docker-buildx python3 ca-certificates
+          wsl --distribution PawFlowAcceptance --user root --exec python3 -c "from pathlib import Path; Path('/etc/wsl.conf').write_text('[boot]' + chr(10) + 'systemd=true' + chr(10))"
+          wsl --terminate PawFlowAcceptance
+          wsl --distribution PawFlowAcceptance --user root --exec systemctl start docker
           wsl --distribution PawFlowAcceptance --user root --exec docker version > "$env:PAWFLOW_WSL_OUTPUT/docker-version.log"
       - name: Exercise native Windows dispatch and real grouped WSL workers
         env:
@@ -65,6 +67,11 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           python -m tests.physical_wsl_probe 2>&1 | Tee-Object -FilePath "$env:PAWFLOW_WSL_OUTPUT/driver.log"
+      - name: Collect Docker service diagnostics
+        if: always() && env.PAWFLOW_WSL_IMPORTED == '1'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          wsl --distribution PawFlowAcceptance --user root --exec journalctl --unit docker --no-pager > "$env:PAWFLOW_WSL_OUTPUT/docker-service.log"
       - name: Retain WSL acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

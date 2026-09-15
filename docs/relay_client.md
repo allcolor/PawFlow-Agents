@@ -279,11 +279,11 @@ delays grow from 1 second to a maximum of 60 seconds, and an explicit stop preve
 another attempt. The single-directory path retains its healthy helper across
 container reconnects. Unit tests cover injected failures and real temporary
 listener cleanup. The `Physical Windows WSL Acceptance` workflow imports a
-dedicated Ubuntu distribution on a disposable Windows runner and launches the
-real grouped kernel and relay/FUSE probes through native Python and `wsl docker`,
-including translated Windows bind paths containing spaces. It retains separate
-reports for these checks; the native physical-client host-helper lifecycle is
-an additional acceptance requirement.
+dedicated Ubuntu distribution with systemd and Docker on a disposable Windows
+runner. It launches the real grouped kernel and relay/FUSE probes through native
+Python and `wsl docker`, including translated Windows bind paths containing
+spaces. It retains separate reports for these checks; the native physical-client
+host-helper lifecycle is an additional acceptance requirement.
 
 ## Admin-controlled server-local execution
 

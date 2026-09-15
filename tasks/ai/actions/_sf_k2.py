@@ -163,6 +163,7 @@ def _handle_sf_k2(self, action, body, store, user_id, flowfile, _helpers):
             if not svc_def:
                 flowfile.set_content(json.dumps({"error": f"Service '{svc_id}' not found."}).encode())
                 return [flowfile]
+            registry._require_independent_service(svc_def)
             if svc_def.service_type == "relay" and (svc_def.config or {}).get("server_managed"):
                 from core.server_relay_manager import ServerRelayManager
                 ServerRelayManager.get_instance().cleanup_service_relay(svc_def.config or {})
@@ -548,6 +549,7 @@ def _handle_sf_k2(self, action, body, store, user_id, flowfile, _helpers):
             registry = ServiceRegistry.get_instance()
             scope_id = _service_scope_id(scope, user_id, conv_id)
             svc_def = registry.get_definition(scope, scope_id, sid)
+            registry._require_independent_service(svc_def)
             if svc_def and svc_def.service_type == "relay" and (svc_def.config or {}).get("server_managed"):
                 from core.server_relay_manager import ServerRelayManager
                 ServerRelayManager.get_instance().cleanup_service_relay(svc_def.config or {})

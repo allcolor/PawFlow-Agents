@@ -1132,9 +1132,22 @@ def test_install_multiple_llm_services_and_linked_summarizer(tmp_path, monkeypat
         ServiceRegistry.reset()
 
 
-def test_install_relay_server_generates_token_server_side(monkeypatch):
+@pytest.mark.parametrize("connected", [True, False])
+def test_install_relay_server_generates_token_server_side(monkeypatch, tmp_path, connected):
+    from core import server_physical_config
+    from core.server_physical_relay import ServerPhysicalRelayManager
+
     ServiceRegistry.reset()
     calls = []
+    monkeypatch.setattr(server_physical_config, "_root", lambda: tmp_path / "physicals")
+    monkeypatch.setattr("core.service_registry._user_services_dir",
+                        lambda: tmp_path / "user_services")
+
+    def submit(_manager, operation, scope, scope_id, physical_id, **_kwargs):
+        calls.append((operation, scope, scope_id, physical_id))
+        return {"accepted": True}
+
+    monkeypatch.setattr(ServerPhysicalRelayManager, "submit", submit)
 
     class FakeServerRelayManager:
         @classmethod
@@ -1150,23 +1163,11 @@ def test_install_relay_server_generates_token_server_side(monkeypatch):
                 "server_user_id": user_id,
             }
 
-        def spawn_service_relay(
-                self, relay_id, token, *, scope, scope_id, user_id,
-                kind="workspace", internal_token="",
-                allow_service_tunnels=False):
-            calls.append({
-                "relay_id": relay_id,
-                "token": token,
-                "scope": scope,
-                "scope_id": scope_id,
-                "user_id": user_id,
-                "kind": kind,
-                "allow_service_tunnels": allow_service_tunnels,
-            })
-            return {"relay_id": relay_id}
+        def spawn_service_relay(self, *_args, **_kwargs):
+            pytest.fail("installation must start the canonical physical group")
 
     monkeypatch.setattr("core.server_relay_manager.ServerRelayManager", FakeServerRelayManager)
-    monkeypatch.setattr("tasks.ai.actions.service_flow._wait_for_service_connected", lambda *args, **kwargs: True)
+    monkeypatch.setattr("tasks.ai.actions.service_flow._wait_for_service_connected", lambda *args, **kwargs: connected)
 
     class FakeListener:
         _port = 19990
@@ -1175,37 +1176,46 @@ def test_install_relay_server_generates_token_server_side(monkeypatch):
         def register_route(self, *_args, **_kwargs):
             return None
 
+        def unregister_routes(self, *_args, **_kwargs):
+            return None
+
     monkeypatch.setattr(
         "services.http_listener_service.HTTPListenerService.all_instances",
         staticmethod(lambda: {19990: FakeListener()}),
     )
 
     try:
-        service_id = ib._install_relay_server({
+        payload = {
             "relay_server": {
                 "enabled": True,
                 "service_id": "workspace_relay",
                 "scope": "user",
             }
-        }, "alice")
+        }
+        if connected:
+            assert ib._install_relay_server(payload, "alice") == "workspace_relay"
+        else:
+            with pytest.raises(RuntimeError, match="did not connect"):
+                ib._install_relay_server(payload, "alice")
 
         reg = ServiceRegistry.get_instance()
         sdef = reg.get_definition("user", "alice", "workspace_relay")
 
-        assert service_id == "workspace_relay"
         assert sdef is not None
         assert sdef.service_type == "relay"
         assert sdef.config["server_managed"] is True
         assert sdef.config["token"]
-        assert calls == [{
-            "relay_id": "workspace_relay",
-            "token": sdef.config["token"],
-            "scope": "user",
-            "scope_id": "alice",
-            "user_id": "alice",
-            "kind": "workspace",
-            "allow_service_tunnels": False,
-        }]
+        physical_id = sdef.config["server_physical_id"]
+        assert calls == [("autostart", "user", "alice", physical_id)]
+        group, = server_physical_config.load_groups("user", "alice")
+        assert group["physical_id"] == physical_id
+        assert group["deleted"] is False
+        assert group["user_id"] == "alice"
+        member, = group["members"]
+        assert member["service_id"] == "workspace_relay"
+        assert member["config"]["token"] == sdef.config["token"]
+        assert not member["config"].get("allow_service_tunnels", False)
+        assert not member["config"].get("server_local_exec", False)
     finally:
         ServiceRegistry.reset()
 

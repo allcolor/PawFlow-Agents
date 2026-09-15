@@ -315,6 +315,7 @@ class ServerRelayManager:
         internal_token: str = "",
         allow_service_tunnels: bool = False,
         replace: bool = False,
+        physical: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Start or reuse a managed container for an installed relay service."""
         kind = _validate_kind(kind)
@@ -332,9 +333,15 @@ class ServerRelayManager:
         home_volume = f"pawflow_home_{relay_id}"
         volume = _relay_volume_name(relay_id, kind)
         runtime_dir = _relay_runtime_dir_for_scope(scope, user_id, scope_id, kind)
+        physical_config = physical["members"][0]["config"] if physical else {}
+        if physical:
+            container_name = physical["container_name"]
+            home_volume = physical_config["server_home_volume"]
+            runtime_dir = Path(physical_config["server_workspace_dir"])
         runtime_dir.mkdir(parents=True, exist_ok=True)
         _chown_for_host_runner(runtime_dir)
-        runtime_host_dir = _relay_runtime_host_dir(runtime_dir)
+        runtime_host_dir = (physical_config.get("server_workspace_host_dir")
+                            or _relay_runtime_host_dir(runtime_dir))
         host_ip = get_host_ip()
 
         from services.http_listener_service import HTTPListenerService
@@ -347,13 +354,18 @@ class ServerRelayManager:
         main_port = _main_listener._port
 
         relay_image = kind_cfg["image"]
-        relay_workspace = _cfg("server_relay_workspace")
+        relay_workspace = "/workspace" if physical else _cfg("server_relay_workspace")
         relay_cpus = kind_cfg["cpus"]
         relay_memory = kind_cfg["memory"]
 
         _TOOLS_IN_CONTAINER = "/opt/pawflow"
         _SCRIPT_IN_CONTAINER = f"{_TOOLS_IN_CONTAINER}/pawflow_relay_launcher.py"
-        code_dir = _prepare_relay_code_dir(runtime_dir)
+        code_runtime_dir = runtime_dir
+        if physical:
+            from core._server_physical_launch import runtime_directory
+            code_runtime_dir = runtime_directory(physical)
+            code_runtime_dir.mkdir(parents=True, exist_ok=True)
+        code_dir = _prepare_relay_code_dir(code_runtime_dir)
         code_host_dir = _relay_runtime_host_dir(code_dir)
 
         ws_url_for_container = _managed_relay_ws_url(
@@ -364,7 +376,8 @@ class ServerRelayManager:
             "--name", container_name,
             "--init",
             "--env", "TINI_SUBREAPER=1",
-            "--volume", f"{runtime_host_dir}:{relay_workspace}",
+            "--volume", f"{runtime_host_dir}:{relay_workspace}" + (
+                ":ro" if physical_config.get("mode") == "readonly" else ""),
             "--volume", f"{home_volume}:/home/pawflow",
             "--volume", f"{code_host_dir}:{_TOOLS_IN_CONTAINER}:ro",
             "--add-host", "host.docker.internal:host-gateway",
@@ -379,7 +392,8 @@ class ServerRelayManager:
             "--env", f"PAWFLOW_RELAY_DIR={relay_workspace}",
             "--env", f"PAWFLOW_RUN_UID={os.environ.get('PAWFLOW_RUN_UID', '')}",
             "--env", f"PAWFLOW_RUN_GID={os.environ.get('PAWFLOW_RUN_GID', '')}",
-            "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
+            "--env", "PAWFLOW_RELAY_ALLOW_EXEC=" + (
+                "1" if physical_config.get("allow_exec", True) else "0"),
             "--env", "PAWFLOW_RELAY_INSECURE=1",
             "--env", f"PAWFLOW_INTERNAL_TOKEN={internal_token}",
             "--env", "PAWFLOW_SERVER_MOUNT=/cc_sessions",
@@ -414,6 +428,9 @@ class ServerRelayManager:
         if allow_service_tunnels:
             docker_run_args.append("--allow-service-tunnels")
         cmd = docker_cmd() + ["run"] + docker_run_args
+        if physical and len(physical["members"]) > 1:
+            from core._server_physical_launch import group_command
+            cmd = group_command(cmd, relay_image, physical)
         # The command carries relay and internal-auth tokens in --env values.
         # Logging it exposes live credentials; the container identity is enough
         # to correlate spawn failures with Docker diagnostics.

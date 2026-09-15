@@ -96,6 +96,14 @@ def _managed_server_relays():
                 continue
             relays.append({
                 "service_id": service_id,
+                "physical_id": config.get("server_physical_id") or service_id,
+                "physical_name": config.get("server_physical_name") or f"{service_id} (physical)",
+                "physical_revision": config.get("server_physical_revision"),
+                "physical_enabled": sdef.enabled,
+                "physical_configured": bool(config.get("server_physical_id")),
+                "workspace_dir": config.get("server_workspace_dir", ""),
+                "workspace": "/workspace",
+                "mode": config.get("mode", "readwrite"),
                 "scope": scope,
                 "scope_id": scope_id,
                 "owner_id": owner_id,
@@ -107,6 +115,38 @@ def _managed_server_relays():
                     config.get("allow_service_tunnels")),
             })
     return relays
+
+
+def _managed_server_physicals(relays):
+    """Project the management hierarchy without registering physical endpoints.
+
+    A legacy single-directory service is one logical child of its physical
+    manager. Reading this view leaves service IDs, configuration and bindings
+    unchanged. The scope is part of the key so ownership never crosses users.
+    """
+    groups = {}
+    for relay in relays:
+        key = (relay["scope"], relay["scope_id"], relay["physical_id"])
+        if key not in groups:
+            groups[key] = {
+                "physical_id": relay["physical_id"],
+                "name": relay["physical_name"],
+                "revision": relay.get("physical_revision"),
+                "enabled": relay.get("physical_enabled", True),
+                "configured": relay.get("physical_configured", False),
+                "scope": relay["scope"],
+                "scope_id": relay["scope_id"],
+                "owner_id": relay["owner_id"],
+                "conversation_id": relay["conversation_id"],
+                "conversation_title": relay["conversation_title"],
+                "logical_relays": [],
+            }
+        groups[key]["logical_relays"].append(relay)
+    for group in groups.values():
+        connected = [relay["connected"] for relay in group["logical_relays"]]
+        group["status"] = (
+            "connected" if all(connected) else "partial" if any(connected) else "disconnected")
+    return list(groups.values())
 
 
 def _set_global_param(key: str, value: Any):
@@ -501,11 +541,62 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
         _set_global_param(key, body.get("value", ""))
         return _json(flowfile, {"ok": True})
 
+    if action.startswith("admin_server_physical_"):
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        from core.server_physical_config import normalize_scope
+        from core.server_physical_relay import physical_manager
+        from core.service_registry import ServiceRegistry
+
+        operation = action.removeprefix("admin_server_physical_")
+        if operation not in {"get", "save", "start", "stop", "restart", "delete", "operation"}:
+            return _json(flowfile, {"error": "Unknown physical relay action"}, "400")
+        try:
+            scope, scope_id = normalize_scope(body.get("scope"), body.get("scope_id", ""))
+            registry = ServiceRegistry.get_instance()
+            registry.get_all(scope, scope_id)
+            manager = physical_manager(registry)
+            physical_id = body.get("physical_id", "")
+            if not isinstance(physical_id, str) or (
+                    not physical_id and operation not in {"save", "operation"}):
+                raise ValueError("physical_id is required")
+            if operation == "operation":
+                state = manager.operation(body.get("operation_id", ""))
+                if (state["scope"], state["scope_id"]) != (scope, scope_id):
+                    raise ValueError("Physical relay operation scope mismatch")
+                return _json(flowfile, state)
+            if operation == "get":
+                return _json(flowfile, manager.describe(scope, scope_id, physical_id))
+            if physical_id:
+                owner_id = manager._get(scope, scope_id, physical_id)["user_id"]
+            elif scope == "conv":
+                from core.admin_scope import conv_index
+                owner_id = conv_index().get(scope_id, {}).get("owner")
+                if not owner_id:
+                    raise ValueError("Conversation was not found")
+            elif scope == "user":
+                from core.security import SecurityManager
+                if scope_id not in {u["username"] for u in SecurityManager.get_instance().list_users()}:
+                    raise ValueError("User was not found")
+                owner_id = scope_id
+            else:
+                owner_id = ""
+            result = manager.submit(
+                operation, scope, scope_id, physical_id, body=body, user_id=owner_id)
+            return _json(flowfile, result, "202")
+        except (KeyError, ValueError) as exc:
+            return _json(flowfile, {"error": str(exc)}, "400")
+
     if action == "admin_server_relays_list":
         denied = _require_admin(flowfile)
         if denied:
             return denied
-        return _json(flowfile, {"relays": _managed_server_relays()})
+        relays = _managed_server_relays()
+        return _json(flowfile, {
+            "relays": relays,
+            "physicals": _managed_server_physicals(relays),
+        })
 
     if action == "admin_server_relay_local_exec_set":
         denied = _require_admin(flowfile)

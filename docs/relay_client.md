@@ -24,6 +24,10 @@ the reverse WebSocket route is global (`/ws/relay/<service_id>`). Managed groups
 cannot change owners or scopes. Their physical names are editable; existing
 logical service IDs and conversation bindings remain unchanged.
 
+First-run installation creates a physical parent for its server relay and starts
+that group. If connection times out, the group and its generated token remain
+available in **Settings > Server relays** for diagnosis and retry.
+
 A WebSocket registration must provide the token and logical relay ID belonging to its `/ws/relay/<service_id>` endpoint. A mismatched or missing identity is refused before connection hooks run. Rejected tokens and incomplete fence handshakes do not trigger relay-disconnect hooks or recovery bookkeeping for an existing logical relay.
 
 The disposable production-server acceptance uses `HTTPListenerService`,
@@ -109,13 +113,21 @@ the complete configuration before stopping an existing group. A connected group
 is restarted with all selected children; a stopped group remains stopped. Stops
 and directory removal retain stored files and HOME/Chromium. Readding a removed
 logical ID to the same parent restores its previous paths and credentials.
+The original letter case must be retained when readding that ID. Installing a
+managed workspace starts its canonical physical group with the saved permissions.
+If startup fails, the group remains available for retry from Server relays settings.
 
 The server stores each complete physical configuration in one atomic document
-under `data/runtime/relay_physicals`, with encrypted credentials including those
-of retired members. Per-service files are recoverable logical projections; the
+under `relay_physicals` in the configured runtime directory (by default,
+`data/runtime/relay_physicals`), with encrypted credentials including those of
+retired members. It follows the central runtime path so separate runtime stores
+remain isolated. Per-service files are recoverable logical projections; the
 parent wins over stale files after an interrupted save. Revision checks reject
 an outdated directory form. Explicit stop intent is persisted before container
 cleanup, so a child retry cannot bring the group back after a stop. All children
+remain manageable after failed deletion; the group is removed from the inventory
+only after container cleanup succeeds. Docker inspection errors fail the operation
+instead of being treated as proof that the container is absent. All children
 share the 15-second reconnect grace and 60-second spawn cooldown; connections
 must remain stable for 5 seconds to reset outage tracking.
 

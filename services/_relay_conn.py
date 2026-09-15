@@ -125,6 +125,8 @@ class _RelayConnMixin:
             self._start_managed_server_relay()
 
     def _start_managed_server_relay(self, *, replace: bool = False):
+        if self.config.get("server_physical_id"):
+            return self._submit_physical("autostart")
         token = str(self.config.get("token") or "")
         if not token:
             logger.warning("RelayService %s: managed relay has no token; cannot start container", self._service_id)
@@ -156,6 +158,14 @@ class _RelayConnMixin:
                          self._service_id, e, exc_info=True)
             raise
 
+    def _submit_physical(self, operation):
+        from core.server_physical_relay import physical_manager
+        manager = getattr(self, "_physical_relay_manager", None) or physical_manager()
+        result = manager.submit(
+            operation, self.config["server_scope"], self.config["server_scope_id"],
+            self.config["server_physical_id"])
+        return result["accepted"]
+
     def restart_managed_relay(self) -> bool:
         """Explicitly replace this PawFlow-managed relay container.
 
@@ -163,6 +173,8 @@ class _RelayConnMixin:
         workspace directory, home volume, service definition and bindings stay
         intact. Standalone relays are owned by Relay Desktop and are rejected.
         """
+        if self.config.get("server_physical_id"):
+            raise ValueError("Reconnect the physical relay from Server relays settings")
         if not self.config.get("server_managed"):
             raise ValueError(
                 f"Relay '{self._service_id}' is not a managed server relay")
@@ -190,6 +202,8 @@ class _RelayConnMixin:
 
         Returns True when a respawn was launched.
         """
+        if self.config.get("server_physical_id"):
+            return self._submit_physical("ensure")
         if not self.config.get("server_managed"):
             return False
         if self.is_connected():

@@ -533,12 +533,18 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
                         prepare_svc = svc_cls(config)
                         prepare_result = prepare_svc.prepare_install(reporter)
                     reporter.step("registering", "Registering service", progress=0.95)
-                    reg.install(scope, scope_id, service_id=svc_name,
-                                service_type=svc_type, config=config,
-                                description=description)
+                    installed_svc = reg.install(
+                        scope, scope_id, service_id=svc_name,
+                        service_type=svc_type, config=config,
+                        description=description)
                     if managed_server_relay:
                         live_svc = reg.get_live_instance(scope, scope_id, svc_name)
-                        if not getattr(live_svc, "_managed_container_started", False):
+                        physical_id = installed_svc.config.get("server_physical_id")
+                        if physical_id:
+                            from core.server_physical_relay import physical_manager
+                            reporter.step("starting", "Starting physical relay group", progress=0.98)
+                            physical_manager(reg).submit("autostart", scope, scope_id, physical_id)
+                        elif not getattr(live_svc, "_managed_container_started", False):
                             reporter.step("starting", "Starting managed server relay", progress=0.98)
                             try:
                                 server_relay_manager.spawn_service_relay(
@@ -558,7 +564,8 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
                                 raise
                         reporter.step("connecting", "Waiting for managed server relay connection", progress=0.99)
                         if not _wait_for_service_connected(reg, scope, scope_id, svc_name):
-                            reg.uninstall(scope, scope_id, svc_name)
+                            if not physical_id:
+                                reg.uninstall(scope, scope_id, svc_name)
                             raise RuntimeError(
                                 f"Managed server relay '{svc_name}' container started but did not connect. "
                                 f"Check Docker logs for {config.get('server_container_name', svc_name)}."

@@ -138,7 +138,8 @@ def private_init(control_fd: int) -> None:
         control.settimeout(30)
         control.sendall(b"user-ready")
         command = json.loads(control.recv(1024 * 1024))
-    os.execv("/usr/bin/tini", ["/usr/bin/tini", "--", "/usr/local/bin/init.sh", *command])
+    # Fixed image init; the owned parent supplies an argv list, never shell text.
+    os.execv("/usr/bin/tini", ["/usr/bin/tini", "--", "/usr/local/bin/init.sh", *command])  # nosec B606
 
 
 def run_private(command: list[str], environment: dict[str, str]) -> int:
@@ -257,7 +258,9 @@ def supervise(exports: list[dict], stop: threading.Event) -> int:
             netfd = _receive_namespace(control)
             ready_read, ready_write = os.pipe()
             try:
-                process = subprocess.Popen(  # nosec B603
+                # Resolve only through the supervisor image's trusted PATH;
+                # per-workspace environments are applied in private workers.
+                process = subprocess.Popen(  # nosec B603 B607
                     ["slirp4netns", "--configure", "--disable-host-loopback",
                      "--netns-type=path", f"--ready-fd={ready_write}",
                      f"/proc/self/fd/{netfd}", "tap0"],

@@ -63,8 +63,8 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "Open PawFlow Relay" in main
     assert "Relays" in main
     assert "Servers" in main
-    assert "Start" in main
-    assert "Stop" in main
+    assert "Connect all" in main
+    assert "Disconnect all" in main
     assert "Login" in main
     assert "showOpenDialog" in main
     assert "relay:select-directory" in main
@@ -118,21 +118,23 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "contextBridge.exposeInMainWorld('pawflowRelay'" in preload
     assert "ipcRenderer.invoke('relay:add-server'" in preload
     assert "ipcRenderer.invoke('relay:delete-server'" in preload
-    assert "ipcRenderer.invoke('relay:delete-workspace'" in preload
+    assert "ipcRenderer.invoke('relay:save-physical'" in preload
+    assert "ipcRenderer.invoke('relay:delete-physical'" in preload
     assert "ipcRenderer.invoke('relay:select-directory'" in preload
     assert "ipcRenderer.invoke('relay:docker-images'" in preload
     assert "ipcRenderer.invoke('relay:image-catalog'" in preload
     assert "ipcRenderer.invoke('relay:build-image'" in preload
     assert "ipcRenderer.invoke('relay:download-image'" in preload
     assert "relay:delete-server" in main
-    assert "relay:delete-workspace" in main
-    assert "window.pawflowRelay.addWorkspace" in renderer
+    assert "relay:save-physical" in main
+    assert "relay:delete-physical" in main
+    assert "window.pawflowRelay.savePhysical" in renderer
     assert "window.pawflowRelay.start" in renderer
     assert "window.pawflowRelay.deleteServer" in renderer
-    assert "window.pawflowRelay.deleteWorkspace" in renderer
+    assert "window.pawflowRelay.deletePhysical" in renderer
     assert "cancelServerBtn" in renderer
     assert "cancelWorkspaceBtn" in renderer
-    assert "browsePathBtn" in renderer
+    assert "browse-logical" in renderer
     assert "buildImageBtn" in renderer
     assert "downloadImageBtn" in renderer
     assert "Build Relay Image" in renderer
@@ -144,8 +146,9 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "allowExec" in renderer
     assert 'name="allowServiceTunnels"' in renderer
     assert "Allow service tunnels (FRP)" in renderer
-    assert "input.allowServiceTunnels = form.elements.allowServiceTunnels.checked" in renderer
-    assert "if (Boolean(input.allowServiceTunnels)) args.push('--allow-service-tunnels')" in main
+    assert "allow_service_tunnels: field('allowServiceTunnels').checked" in renderer
+    assert "workspaces: input.workspaces" in main
+    assert "['physical', 'save', input.name || '', '--config-stdin']" in main
     assert "allowRemoteDesktop" in renderer
     assert "Allow local access" in renderer
     assert "showContextMenu" in renderer

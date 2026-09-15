@@ -242,9 +242,21 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         self, service_id: str, scope: str, scope_id: str,
         config: Dict[str, Any],
         exclude_scope_id: str = "", exclude_service_id: str = "",
+        *, physical_group: bool = False,
     ) -> None:
         """Relays own global listener routes and managed workspace scopes."""
         managed = bool((config or {}).get("server_managed"))
+        if config.get("server_physical_id") and not physical_group:
+            raise ValueError("Configure logical relays through their physical relay")
+        from core.server_physical_config import stored_records
+        for record in stored_records():
+            if service_id.casefold() not in {key.casefold() for key in record["known_ids"]}:
+                continue
+            if physical_group and (
+                    record["scope"], record["scope_id"], record["physical_id"]) == (
+                    scope, self._resolve_scope_id(scope, scope_id), config["server_physical_id"]):
+                continue
+            raise ValueError("Logical relay name belongs to a physical configuration")
         target_scope = str((config or {}).get("server_scope") or scope or "user")
         target_scope_id = str((config or {}).get("server_scope_id") or scope_id or "")
         target_kind = str((config or {}).get("server_kind") or "workspace")
@@ -270,6 +282,8 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
                     other_kind = str(other_cfg.get("server_kind") or "workspace")
                     if (other_scope, other_scope_id, other_kind) == (
                             target_scope, target_scope_id, target_kind):
+                        if physical_group and target_kind == "workspace":
+                            continue
                         label = "conversation" if target_scope == "conv" else target_scope
                         raise ResourceConflictError(
                             f"Managed server relay for {label} scope "
@@ -278,6 +292,11 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
                             "relay is allowed per scope.")
 
     # ---- CRUD ----
+
+    @staticmethod
+    def _require_independent_service(svc_def):
+        if svc_def and svc_def.config.get("server_physical_id"):
+            raise ValueError("Manage this logical relay through its physical relay")
 
     def install(
         self,
@@ -360,6 +379,7 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
                 scope, service_id, sid[:8] if len(sid) > 8 else sid)
             return _existing_def
 
+        self._require_independent_service(_existing_def)
         svc_def = ServiceDef(
             service_id=service_id,
             service_type=service_type,
@@ -390,6 +410,11 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         with self._data_lock:
             self._definitions.setdefault(sid, {})[service_id] = svc_def
 
+        if (service_type == "relay" and _new_config.get("server_managed")
+                and _new_config.get("server_kind", "workspace") == "workspace"):
+            from core.server_physical_relay import physical_manager
+            physical_manager(self).adopt(scope, sid)
+            svc_def = self._definitions[sid][service_id]
         self._save(scope, sid)
 
         if enabled:
@@ -415,6 +440,7 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
             needs_disconnect = service_id in self._live_instances.get(sid, {})
 
         # Check with merged config (existing + new values)
+        self._require_independent_service(svc_def)
         merged = {**svc_def.config, **config}
         service_class = _resolve_service_class(
             svc_def.service_type, svc_def.config)
@@ -445,6 +471,12 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         sid = self._resolve_scope_id(scope, scope_id)
         self._ensure_loaded(scope, scope_id)
         value = bool(enabled)
+        svc_def = self.get_definition(scope, scope_id, service_id)
+        if svc_def and svc_def.config.get("server_physical_id"):
+            from core.server_physical_relay import physical_manager
+            return physical_manager(self).set_permission(
+                scope, sid, svc_def.config["server_physical_id"], svc_def.service_id,
+                "server_local_exec", value)
         with self._data_lock:
             from core.identifier import resolve_identifier
             service_id = (resolve_identifier(
@@ -468,6 +500,12 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         sid = self._resolve_scope_id(scope, scope_id)
         self._ensure_loaded(scope, scope_id)
         value = bool(enabled)
+        svc_def = self.get_definition(scope, scope_id, service_id)
+        if svc_def and svc_def.config.get("server_physical_id"):
+            from core.server_physical_relay import physical_manager
+            return physical_manager(self).set_permission(
+                scope, sid, svc_def.config["server_physical_id"], svc_def.service_id,
+                "allow_service_tunnels", value)
         with self._data_lock:
             from core.identifier import resolve_identifier
             service_id = (resolve_identifier(
@@ -494,6 +532,7 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
             scope_defs = self._definitions.get(sid, {})
             old_id = resolve_identifier(scope_defs, old_id) or old_id
             svc_def = scope_defs.get(old_id)
+            self._require_independent_service(svc_def)
             if not svc_def:
                 raise KeyError(f"Service '{old_id}' not found (scope={scope}, id={sid[:8]})")
             conflicting_id = resolve_identifier(scope_defs, new_id)
@@ -534,6 +573,7 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
             svc_def = self._definitions.get(sid, {}).get(service_id)
             if not svc_def:
                 return
+            self._require_independent_service(svc_def)
             svc_def.enabled = True
         self._save(scope, sid)
         self._connect_one(sid, service_id)
@@ -548,6 +588,7 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
             svc_def = self._definitions.get(sid, {}).get(service_id)
             if not svc_def:
                 return
+            self._require_independent_service(svc_def)
             svc_def.enabled = False
         self._disconnect_one(sid, service_id)
         self._save(scope, sid)
@@ -560,6 +601,7 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
             from core.identifier import resolve_identifier
             service_id = (resolve_identifier(
                 self._definitions.get(sid, {}), service_id) or service_id)
+            self._require_independent_service(self._definitions.get(sid, {}).get(service_id))
         self._disconnect_one(sid, service_id)
         with self._data_lock:
             self._definitions.get(sid, {}).pop(service_id, None)
@@ -622,6 +664,14 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
                     raw = {}
                 if raw:
                     scopes.append((SCOPE_CONV, cid, uid, cid))
+        from core.server_physical_config import stored_records
+        seen = {(scope, sid) for scope, sid, _owner, _conv in scopes}
+        for record in stored_records():
+            pair = (record["scope"], record["scope_id"])
+            if not record["deleted"] and pair not in seen:
+                seen.add(pair)
+                scopes.append((*pair, record["user_id"],
+                               record["scope_id"] if record["scope"] == "conv" else ""))
         return scopes
 
     def get_live_instance(self, scope: str, scope_id: str,
@@ -754,6 +804,9 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
             lazy_config["_scope"] = svc_def.scope
             lazy_config["_scope_id"] = svc_def.scope_id
             svc_instance = svc_class(lazy_config)
+            if svc_def.config.get("server_physical_id"):
+                from core.server_physical_relay import physical_manager
+                svc_instance._physical_relay_manager = physical_manager(self)
             _t0 = time.monotonic()
             svc_instance.connect()
             logger.debug("[startup-timing] service %s connect call: %.1fms",
@@ -823,6 +876,9 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
                             to_check.append((sdef.scope, scope_id, svc_id, live))
 
         for scope, scope_id, svc_id, live in to_check:
+            if live.config.get("server_physical_id"):
+                live.ensure_managed_relay_alive()
+                continue
             try:
                 ok = live.ping()
             except Exception:

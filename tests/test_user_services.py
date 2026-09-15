@@ -14,6 +14,12 @@ register_all_tasks()
 SVC_TYPE = "cacheService"
 
 
+@pytest.fixture(autouse=True)
+def physical_configuration_root(tmp_path, monkeypatch):
+    """Canonical physical documents share the test's isolated service lifetime."""
+    monkeypatch.setattr("core.server_physical_config._root", lambda: tmp_path / "physicals")
+
+
 def _registry_fixture(tmp_path):
     """Shared setup: fresh ServiceRegistry with per-test temp storage.
 
@@ -994,7 +1000,10 @@ class TestAgentServiceActions:
             def spawn_service_relay(
                     self, relay_id, token, *, scope, scope_id, user_id,
                     kind="workspace", internal_token="",
-                    allow_service_tunnels=False):
+                    allow_service_tunnels=False, replace=False, physical=None):
+                assert physical is not None
+                assert physical["members"][0]["config"]["mode"] == "readonly"
+                assert physical["members"][0]["config"]["allow_exec"] is False
                 calls.append({
                     "relay_id": relay_id,
                     "token": token,
@@ -1025,6 +1034,8 @@ class TestAgentServiceActions:
             "config": {
                 "server_local_exec": True,
                 "allow_service_tunnels": True,
+                "mode": "readonly",
+                "allow_exec": False,
             },
         })
 
@@ -1165,7 +1176,7 @@ class TestAgentServiceActions:
         assert data["uninstalled"] is True
         assert self.reg.get_definition(self.SCOPE, "testuser", "mydb") is None
 
-    def test_service_uninstall_managed_relay_cleans_container_and_storage(self, monkeypatch):
+    def test_service_uninstall_logical_relay_preserves_group_and_storage(self, monkeypatch):
         calls = []
 
         class FakeServerRelayManager:
@@ -1176,6 +1187,9 @@ class TestAgentServiceActions:
             def cleanup_service_relay(self, config):
                 calls.append(dict(config))
                 return True
+
+            def service_relay_config(self, *_args, **_kwargs):
+                return {}
 
         monkeypatch.setattr("core.server_relay_manager.ServerRelayManager", FakeServerRelayManager)
         config = {
@@ -1197,11 +1211,11 @@ class TestAgentServiceActions:
         result = task._handle_action(ff)
         data = json.loads(result[0].get_content())
 
-        assert data["uninstalled"] is True
-        assert self.reg.get_definition(self.SCOPE, "testuser", "MyWorkspace") is None
-        assert calls == [config]
+        assert "physical" in data["error"]
+        assert self.reg.get_definition(self.SCOPE, "testuser", "MyWorkspace") is not None
+        assert calls == []
 
-    def test_delete_service_managed_relay_cleans_container_and_storage(self, monkeypatch):
+    def test_delete_logical_service_preserves_group_and_storage(self, monkeypatch):
         calls = []
 
         class FakeServerRelayManager:
@@ -1212,6 +1226,9 @@ class TestAgentServiceActions:
             def cleanup_service_relay(self, config):
                 calls.append(dict(config))
                 return True
+
+            def service_relay_config(self, *_args, **_kwargs):
+                return {}
 
         monkeypatch.setattr("core.server_relay_manager.ServerRelayManager", FakeServerRelayManager)
         config = {
@@ -1231,9 +1248,9 @@ class TestAgentServiceActions:
         result = task._handle_action(ff)
         data = json.loads(result[0].get_content())
 
-        assert data["ok"] is True
-        assert self.reg.get_definition(self.SCOPE, "testuser", "MyWorkspace") is None
-        assert calls == [config]
+        assert "physical" in data["error"]
+        assert self.reg.get_definition(self.SCOPE, "testuser", "MyWorkspace") is not None
+        assert calls == []
 
     def test_service_uninstall_not_found(self):
         from tasks.ai.agent_loop import AgentLoopTask

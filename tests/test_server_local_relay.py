@@ -241,6 +241,10 @@ def test_admin_api_lists_and_toggles_only_managed_relays(monkeypatch):
     assert [relay["service_id"] for relay in payload["relays"]] == ["Managed"]
     assert payload["relays"][0]["server_local_exec"] is False
     assert payload["relays"][0]["allow_service_tunnels"] is False
+    assert payload["physicals"][0]["name"] == "Managed (physical)"
+    assert payload["physicals"][0]["logical_relays"] == payload["relays"]
+    assert payload["physicals"][0]["status"] == "connected"
+    assert managed.config == {"server_managed": True}
 
     toggled = _handle_admin_settings(None, "admin_server_relay_local_exec_set", {
         "service_id": "Managed",
@@ -272,6 +276,49 @@ def test_non_admin_cannot_list_or_toggle_server_local_access():
         result = _handle_admin_settings(
             None, action, {}, None, "alice", _flowfile("user"))
         assert result[0].get_attribute("http.response.status") == "403"
+
+
+def test_server_physical_hierarchy_keeps_owners_separate_and_configuration_intact(monkeypatch):
+    from copy import deepcopy
+
+    from tasks.ai.actions.admin_settings import _handle_admin_settings
+
+    registry = ServiceRegistry()
+    registry._loaded.update({"alice", "bob"})
+    for owner, names in (("alice", ["Code", "Docs"]), ("bob", ["BobCode"])):
+        registry._definitions[owner] = {
+            name: ServiceDef(name, "relay", scope="user", scope_id=owner, config={
+                "server_managed": True, "server_physical_id": "same-label",
+                "server_physical_name": "Machine", "server_workspace_dir": f"/data/{owner}/{name}",
+                "token": "private-test-token", "server_home_volume": f"home_{name}",
+            }) for name in names
+        }
+    before = deepcopy(registry._definitions)
+    monkeypatch.setattr(ServiceRegistry, "get_instance", lambda: registry)
+    monkeypatch.setattr(registry, "iter_all_scopes", lambda **_kwargs: [
+        ("user", "alice", "alice", ""), ("user", "bob", "bob", "")])
+    monkeypatch.setattr(registry, "is_connected", lambda scope, owner, name: name == "Code")
+    monkeypatch.setattr("core.admin_scope.conv_index", dict)
+    response = _handle_admin_settings(None, "admin_server_relays_list", {}, None, "admin", _flowfile())
+    payload = json.loads(response[0].get_content())
+    assert len(payload["physicals"]) == 2
+    alice, bob = payload["physicals"]
+    assert [r["service_id"] for r in alice["logical_relays"]] == ["Code", "Docs"]
+    assert [r["service_id"] for r in bob["logical_relays"]] == ["BobCode"]
+    assert alice["status"] == "partial"
+    assert bob["status"] == "disconnected"
+    assert all(r["workspace"] == "/workspace" for r in payload["relays"])
+    assert "private-test-token" not in json.dumps(payload)
+    assert registry._definitions == before
+
+
+def test_server_physical_admin_javascript_behavior():
+    import subprocess
+
+    result = subprocess.run(
+        ["node", "--test", str(Path(__file__).parent / "js/server_physical_admin_spec.js")],
+        capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(

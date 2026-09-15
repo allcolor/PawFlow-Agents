@@ -46,7 +46,15 @@ def _inspect_container(container_name: str) -> Optional[dict]:
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        return None
+        reason = result.stderr.strip()
+        if reason in {
+            f"Error: No such object: {container_name}",
+            f"Error response from daemon: No such container: {container_name}",
+        }:
+            return None
+        raise RuntimeError(
+            f"Failed to inspect relay container '{container_name}': "
+            f"{reason or 'Docker gave no reason'}")
     parts = result.stdout.strip().split("\t", 2)
     if len(parts) != 3:
         raise RuntimeError(
@@ -68,6 +76,28 @@ def _wait_until_container_gone(container_name: str) -> bool:
             return False
         time.sleep(min(_REMOVAL_POLL_SECONDS, remaining))
     return True
+
+
+def stop_managed_relay_container(container_name: str) -> bool:
+    """Remove only this server's exact managed container, retaining all volumes."""
+    lock, _ = _container_claim(container_name)
+    with lock:
+        existing = _inspect_container(container_name)
+        if existing is None:
+            return False
+        labels = existing["labels"]
+        if not (labels.get(PAWFLOW_SPAWNED_LABEL) == "1"
+                and labels.get(PAWFLOW_SERVER_LABEL) == get_server_id()
+                and labels.get(_KIND_LABEL) == _MANAGED_RELAY_KIND):
+            raise RuntimeError("Refusing to stop a container owned by another server")
+        result = subprocess.run(  # nosec B603
+            docker_cmd() + ["rm", "-f", str(existing["id"])],
+            capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to stop physical relay: {result.stderr.strip()}")
+        with _LOCKS_GUARD:
+            _GENERATIONS[container_name] = _GENERATIONS.get(container_name, 0) + 1
+        return True
 
 
 def start_managed_relay_container(

@@ -372,6 +372,8 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
                             "server_managed": bool(
                                 (_sdef.config or {}).get("server_managed"))
                             if _sdef is not None else False,
+                            "server_physical_id": (_sdef.config or {}).get("server_physical_id", "")
+                            if _sdef is not None else "",
                             "mcp_external": bool(
                                 (_sdef.config or {}).get("mcp_external"))
                             if _sdef is not None else False,

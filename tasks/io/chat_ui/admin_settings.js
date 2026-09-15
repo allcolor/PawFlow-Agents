@@ -51,35 +51,175 @@ function _adminOverlay(title, bodyHtml, buttonsHtml) {
   return bg;
 }
 
+function adminServerLogicalRow(r) {
+  return '<tr class="adm-logical-relay"><td style="padding:8px 8px 8px 20px;"><strong>'
+    + adminEsc(r.service_id) + '</strong><div style="font-size:11px;color:var(--pf-muted);">'
+    + '<code>/workspace</code>'
+    + (r.workspace_dir ? ' → ' + adminEsc(r.workspace_dir) : '')
+    + ' · ' + (r.mode === 'readonly' ? 'Read-only' : 'Read/write') + '</div></td>'
+    + '<td>' + (r.connected ? 'connected' : 'disconnected') + '</td>'
+    + '<td><label><input type="checkbox"' + (r.server_local_exec ? ' checked' : '')
+    + ' onchange=\'adminSetServerRelayLocalExec(this,' + adminJsArg(r.service_id) + ','
+    + adminJsArg(r.scope) + ',' + adminJsArg(r.scope_id) + ')\'>'
+    + ' Allow <code>local=true</code></label></td>'
+    + '<td><label><input type="checkbox"' + (r.allow_service_tunnels ? ' checked' : '')
+    + ' onchange=\'adminSetServerRelayServiceTunnels(this,' + adminJsArg(r.service_id) + ','
+    + adminJsArg(r.scope) + ',' + adminJsArg(r.scope_id) + ')\'> Allow tunnels (FRP)</label></td></tr>';
+}
+
+function adminServerPhysicalPanel(physical) {
+  var scope = physical.scope === 'conv'
+    ? 'conversation ' + (physical.conversation_title || physical.scope_id)
+    : (physical.scope === 'user' ? 'user ' + (physical.owner_id || physical.scope_id) : 'global');
+  var args = adminJsArg(physical.physical_id) + ',' + adminJsArg(physical.scope) + ',' + adminJsArg(physical.scope_id);
+  var controls = physical.configured
+    ? '<div style="display:flex;gap:8px;margin:8px 0;">'
+      + '<button onclick=\'adminEditPhysical(this,' + args + ')\'>Configure directories</button>'
+      + '<button onclick=\'adminRunPhysical(this,"start",' + args + ')\'>Connect group</button>'
+      + '<button onclick=\'adminRunPhysical(this,"stop",' + args + ')\'>Disconnect group</button>'
+      + '<button onclick=\'adminRunPhysical(this,"restart",' + args + ')\'>Reconnect group</button>'
+      + '</div><div class="adm-physical-result" role="status"></div>'
+    : '';
+  return '<section class="adm-physical-relay" data-physical-id="' + adminEsc(physical.physical_id)
+    + '" style="padding:12px;border:1px solid var(--pf-border);border-radius:6px;">'
+    + '<h4 style="margin:0;">' + adminEsc(physical.name) + '</h4>'
+    + '<p style="color:var(--pf-muted);font-size:12px;">Physical relay · '
+    + adminEsc(scope) + ' · ' + adminEsc(physical.status) + ' · '
+    + physical.logical_relays.length + ' logical relay(s)</p>'
+    + controls
+    + '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr>'
+    + '<th style="text-align:left;">Logical relay</th><th style="text-align:left;">Status</th>'
+    + '<th style="text-align:left;">Server-local execution</th><th style="text-align:left;">Service tunnels</th>'
+    + '</tr></thead><tbody>' + physical.logical_relays.map(adminServerLogicalRow).join('')
+    + '</tbody></table></section>';
+}
+
 function openAdminServerRelaysDialog() {
   if (!_isAdmin()) return;
   action$('admin_server_relays_list').subscribe(function(data) {
     if (data.error) { addMsg('error', data.error); return; }
-    var relays = data.relays || [];
-    var rows = relays.map(function(r) {
-      var scope = r.scope === 'conv'
-        ? 'conversation ' + (r.conversation_title || r.scope_id)
-        : (r.scope === 'user' ? 'user ' + (r.owner_id || r.scope_id) : 'global');
-      return '<tr><td><strong>' + adminEsc(r.service_id) + '</strong><div style="font-size:10px;color:var(--pf-muted);">'
-        + adminEsc(scope) + '</div></td><td>' + (r.connected ? '\u{1F7E2} connected' : '\u{1F534} disconnected') + '</td>'
-        + '<td><label style="display:flex;align-items:center;gap:7px;cursor:pointer;">'
-        + '<input type="checkbox"' + (r.server_local_exec ? ' checked' : '')
-        + ' onchange=\'adminSetServerRelayLocalExec(this,' + adminJsArg(r.service_id) + ','
-        + adminJsArg(r.scope) + ',' + adminJsArg(r.scope_id) + ')\'>'
-        + '<span>Allow <code>local=true</code></span></label></td>'
-        + '<td><label style="display:flex;align-items:center;gap:7px;cursor:pointer;">'
-        + '<input type="checkbox"' + (r.allow_service_tunnels ? ' checked' : '')
-        + ' onchange=\'adminSetServerRelayServiceTunnels(this,' + adminJsArg(r.service_id) + ','
-        + adminJsArg(r.scope) + ',' + adminJsArg(r.scope_id) + ')\'>'
-        + '<span>Allow tunnels (FRP)</span></label></td></tr>';
-    }).join('');
+    var physicals = data.physicals || [];
     var body = '<div style="padding:9px;border:1px solid var(--pf-danger);border-radius:6px;color:var(--pf-text);font-size:12px;line-height:1.5;">'
-      + '<strong>Privileged access.</strong> When enabled, agents using this relay can read files and run commands inside the PawFlow server container, including access to its Docker socket and logs. The setting is off by default and changes immediately without restarting the relay.</div>';
-    body += relays.length
-      ? '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr><th style="text-align:left;">Relay</th><th style="text-align:left;">Status</th><th style="text-align:left;">Server-local execution</th><th style="text-align:left;">Service tunnels</th></tr></thead><tbody>' + rows + '</tbody></table>'
+      + '<strong>Privileged access.</strong> When enabled, agents using this relay can read files and run commands inside the PawFlow server container, including access to its Docker socket and logs. The setting is off by default and changes immediately without restarting the relay.</div>'
+      + '<p>Only logical relays can be linked to conversations. Each logical relay has its own <code>/workspace</code>.</p>';
+    body += physicals.length
+      ? physicals.map(adminServerPhysicalPanel).join('')
       : '<div style="color:var(--pf-muted);">No managed server relay is installed.</div>';
-    _adminOverlay('Server relays', body, '');
+    var overlay = _adminOverlay('Server relays', body,
+      '<button onclick="adminEditPhysical(this,\'\',\'global\',\'\')">Add physical relay</button>');
+    overlay.classList.add('adm-server-relays-dialog');
   });
+}
+
+function adminPhysicalWorkspaceFields(r) {
+  r = r || {};
+  return '<fieldset class="adm-physical-directory" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">'
+    + '<label>Logical relay name <input class="adm-directory-id" required value="' + adminEsc(r.service_id || '')
+    + '"' + (r.service_id ? ' readonly' : '') + '></label>'
+    + '<label>Access <select class="adm-directory-mode"><option value="readwrite">Read/write</option>'
+    + '<option value="readonly"' + (r.mode === 'readonly' ? ' selected' : '') + '>Read-only</option></select></label>'
+    + '<label><input type="checkbox" class="adm-directory-exec"' + (r.allow_exec !== false ? ' checked' : '') + '> Run commands</label>'
+    + '<label><input type="checkbox" class="adm-directory-local"' + (r.server_local_exec ? ' checked' : '') + '> Server-local access</label>'
+    + '<label><input type="checkbox" class="adm-directory-tunnels"' + (r.allow_service_tunnels ? ' checked' : '') + '> Service tunnels</label>'
+    + '<span style="width:100%;font-size:12px;">/workspace'
+    + (r.workspace_dir ? ' → ' + adminEsc(r.workspace_dir) : ' · storage allocated by the server') + '</span>'
+    + '<button onclick="this.closest(\'.adm-physical-directory\').remove()">Remove from group</button></fieldset>';
+}
+
+function adminEditPhysical(button, physicalId, scope, scopeId) {
+  function render(record) {
+    var existing = !!record.physical_id;
+    var html = '<p>Each logical relay has a private <code>/workspace</code> and browser profile. '
+      + 'Saving a connected group restarts all its logical relays. Removing a directory keeps its stored files and profile.</p>'
+      + '<label>Physical relay name <input class="adm-physical-name" required value="' + adminEsc(record.name || '') + '"></label>'
+      + '<label>Scope <select class="adm-physical-scope"' + (existing ? ' disabled' : '') + '>'
+      + ['global', 'user', 'conv'].map(function(s) {
+        return '<option value="' + s + '"' + (record.scope === s ? ' selected' : '') + '>'
+          + (s === 'conv' ? 'Conversation' : s) + '</option>';
+      }).join('') + '</select></label>'
+      + '<label>User name or conversation ID (empty for global) <input class="adm-physical-owner" value="'
+      + adminEsc(record.scope === 'global' ? '' : record.scope_id || '') + '"' + (existing ? ' readonly' : '') + '></label>'
+      + '<div class="adm-physical-directories">' + (record.workspaces || [{}]).map(adminPhysicalWorkspaceFields).join('') + '</div>'
+      + '<button onclick="this.parentElement.querySelector(\'.adm-physical-directories\').insertAdjacentHTML(\'beforeend\',adminPhysicalWorkspaceFields({}))">Add directory</button>'
+      + '<p style="font-size:12px;">Server-local access grants access to the PawFlow server, including its Docker socket. Keep it disabled unless required.</p>'
+      + '<div class="adm-physical-result" role="status"></div>';
+    var overlay = _adminOverlay(existing ? 'Configure physical relay' : 'New physical relay', html,
+      '<button onclick="adminSavePhysical(this)">Save group</button>');
+    overlay._physicalRecord = record;
+  }
+  if (!physicalId) { render({ scope: scope, scope_id: scopeId, workspaces: [{}] }); return; }
+  action$('admin_server_physical_get', { physical_id: physicalId, scope: scope, scope_id: scopeId })
+    .subscribe(function(data) { if (data.error) addMsg('error', data.error); else render(data); });
+}
+
+function adminPhysicalPayload(overlay) {
+  var record = overlay._physicalRecord;
+  return {
+    physical_id: record.physical_id || '', revision: record.revision,
+    scope: overlay.querySelector('.adm-physical-scope').value,
+    scope_id: overlay.querySelector('.adm-physical-owner').value.trim(),
+    name: overlay.querySelector('.adm-physical-name').value.trim(),
+    workspaces: Array.from(overlay.querySelectorAll('.adm-physical-directory')).map(function(row) {
+      return {
+        service_id: row.querySelector('.adm-directory-id').value.trim(),
+        mode: row.querySelector('.adm-directory-mode').value,
+        allow_exec: row.querySelector('.adm-directory-exec').checked,
+        server_local_exec: row.querySelector('.adm-directory-local').checked,
+        allow_service_tunnels: row.querySelector('.adm-directory-tunnels').checked,
+      };
+    }),
+  };
+}
+
+function adminSavePhysical(button) {
+  var overlay = button.closest('.exec-overlay');
+  var payload = adminPhysicalPayload(overlay);
+  if (!payload.name || !payload.workspaces.length || payload.workspaces.some(function(r) { return !r.service_id; })) {
+    overlay.querySelector('.adm-physical-result').textContent = 'Enter a physical name and at least one named logical relay.';
+    return;
+  }
+  adminSubmitPhysical(button, 'save', payload);
+}
+
+function adminRunPhysical(button, operation, physicalId, scope, scopeId) {
+  adminSubmitPhysical(button, operation, { physical_id: physicalId, scope: scope, scope_id: scopeId });
+}
+
+function adminSubmitPhysical(button, operation, payload) {
+  var overlay = button.closest('.exec-overlay');
+  var target = button.closest('.adm-physical-relay') || overlay;
+  var status = target.querySelector('.adm-physical-result');
+  var fields = Array.from(overlay.querySelectorAll('button:not(.exec-deny),input,select')).map(function(input) {
+    var disabled = input.disabled;
+    input.disabled = true;
+    return { input: input, disabled: disabled };
+  });
+  function failed(message) {
+    fields.forEach(function(f) { f.input.disabled = f.disabled; });
+    status.textContent = message;
+  }
+  function finished() {
+    overlay.remove();
+    var previous = document.querySelector('.adm-server-relays-dialog');
+    if (previous) previous.remove();
+    openAdminServerRelaysDialog();
+  }
+  function watch(operationId) {
+    if (overlay.isConnected === false) return;
+    action$('admin_server_physical_operation', {
+      physical_id: payload.physical_id, scope: payload.scope,
+      scope_id: payload.scope_id, operation_id: operationId,
+    }).subscribe(function(data) {
+      if (data.error || data.status === 'failed') { failed(data.error || 'Physical relay operation failed'); return; }
+      if (data.status === 'completed') { finished(); return; }
+      setTimeout(function() { watch(operationId); }, 1000);
+    }, function(error) { failed(String(error)); });
+  }
+  status.textContent = 'Applying group operation…';
+  action$('admin_server_physical_' + operation, payload).subscribe(function(data) {
+    if (data.error || !data.accepted) { failed(data.error || 'The group is already busy'); return; }
+    watch(data.operation_id);
+  }, function(error) { failed(String(error)); });
 }
 
 function adminSetServerRelayLocalExec(input, serviceId, scope, scopeId) {

@@ -137,7 +137,7 @@ def _install_relay_server(payload: Dict[str, Any], admin_username: str) -> str:
         user_id=admin_username,
         kind=str(config.get("server_kind") or "workspace"),
     ))
-    reg.install(
+    installed_svc = reg.install(
         scope=spec["scope"],
         scope_id=scope_id,
         service_id=service_id,
@@ -147,7 +147,8 @@ def _install_relay_server(payload: Dict[str, Any], admin_username: str) -> str:
         enabled=True,
     )
     if not _wait_for_service_connected(reg, scope, scope_id, service_id):
-        reg.uninstall(scope, scope_id, service_id)
+        if not installed_svc.config.get("server_physical_id"):
+            reg.uninstall(scope, scope_id, service_id)
         raise RuntimeError(
             f"Managed server relay '{service_id}' container started but did not connect. "
             f"Check Docker logs for {config.get('server_container_name', service_id)}.")

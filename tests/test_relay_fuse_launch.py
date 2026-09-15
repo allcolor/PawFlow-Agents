@@ -175,7 +175,7 @@ class RelayFuseLaunchTests(unittest.TestCase):
     def test_host_helper_executes_forwarded_filesystem_actions(self):
         src = "".join(q.read_text(encoding="utf-8") for q in sorted(Path("pawflow_relay").glob("*thread*.py")))
         self.assertIn('from fs_actions import ACTIONS as _FS_ACTIONS', src)
-        self.assertIn('handler(self.directory, abs_path, req, allow_exec=True)', src)
+        self.assertIn('handler(self.directory, abs_path, req, allow_exec=self.allow_exec)', src)
 
 
 if __name__ == '__main__':

@@ -426,6 +426,12 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+        if definition.config.get("server_physical_id"):
+            flowfile.set_content(json.dumps({
+                "error": "Reconnect the physical relay from Server relays settings",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         roles = flowfile.get_attribute("http.auth.roles") or ""
         if definition.scope == "global" and "admin" not in roles:
             flowfile.set_content(json.dumps({

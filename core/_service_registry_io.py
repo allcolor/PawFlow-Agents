@@ -115,8 +115,15 @@ class _ServiceRegistryIOMixin:
                 self._load_dir(scope_id, svc_dir, scope)
             elif scope == SCOPE_CONV:
                 self._load_conv(scope_id)
+            from core.server_physical_config import hydrate_scope
+            self._definitions[scope_id] = hydrate_scope(
+                scope, scope_id, self._definitions.get(scope_id, {}))
         except Exception as e:
             self._load_failed.add(scope_id)
+            # A corrupt canonical group must never fall back to stale children.
+            self._definitions[scope_id] = {
+                key: value for key, value in self._definitions.get(scope_id, {}).items()
+                if not value.config.get("server_managed")}
             logger.error(
                 "CRITICAL: Failed to load %s services (id=%s): %s — "
                 "registry is READ-ONLY for this scope until restart",

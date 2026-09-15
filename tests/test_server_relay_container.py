@@ -30,6 +30,39 @@ def _result(args, code=0, stdout="", stderr=""):
     return relay_container.subprocess.CompletedProcess(args, code, stdout, stderr)
 
 
+@pytest.mark.parametrize("reason", [
+    "Cannot connect to the Docker daemon",
+    "permission denied",
+    "",
+    "Error: No such object: another-container",
+])
+@pytest.mark.parametrize("operation", ["stop", "start"])
+def test_inspection_failure_never_reports_absence(monkeypatch, reason, operation):
+    calls = []
+
+    def run(args, **_kwargs):
+        calls.append(args)
+        return _result(args, code=1, stderr=reason)
+
+    monkeypatch.setattr(relay_container.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="inspect"):
+        if operation == "stop":
+            relay_container.stop_managed_relay_container("owned-container")
+        else:
+            relay_container.start_managed_relay_container("owned-container", ["docker", "run"])
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("reason", [
+    "Error: No such object: owned-container",
+    "Error response from daemon: No such container: owned-container",
+])
+def test_confirmed_missing_container_is_already_stopped(monkeypatch, reason):
+    monkeypatch.setattr(relay_container.subprocess, "run",
+                        lambda args, **_kw: _result(args, code=1, stderr=reason))
+    assert relay_container.stop_managed_relay_container("owned-container") is False
+
+
 def test_overlapping_starts_run_docker_once_and_reuse_the_winner(monkeypatch):
     state = {"container": None}
     first_run_started = threading.Event()

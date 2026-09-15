@@ -200,7 +200,19 @@ def test_windows_lock_retries_only_contention(config, monkeypatch, failure):
         name="nt", environ=os.environ, open=os.open, close=os.close,
         O_CREAT=os.O_CREAT, O_RDWR=os.O_RDWR,
     ))
-    monkeypatch.setattr(time, "sleep", pauses.append)
+    from threading import current_thread
+
+    test_thread = current_thread()
+    real_sleep = time.sleep
+
+    def sleep(seconds):
+        # Other suite threads retain their real delays and cannot pollute pauses.
+        if current_thread() is test_thread:
+            pauses.append(seconds)
+        else:
+            real_sleep(seconds)
+
+    monkeypatch.setattr(time, "sleep", sleep)
     if failure == "invalid_fd":
         with pytest.raises(OSError) as caught, manager._workspace_config_lock():
             pytest.fail("Entered transaction with invalid descriptor")

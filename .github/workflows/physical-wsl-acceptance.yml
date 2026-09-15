@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/physical-wsl-acceptance.yml"
       - "tests/physical_wsl_probe.py"
+      - "tests/physical_native_windows_probe.py"
+      - "tests/test_physical_native_windows_probe.py"
       - "tests/physical_runtime_probe.py"
       - "tests/physical_relay_probe.py"
       - "pawflow_relay/**"
@@ -67,6 +69,20 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           python -m tests.physical_wsl_probe 2>&1 | Tee-Object -FilePath "$env:PAWFLOW_WSL_OUTPUT/driver.log"
+      - name: Exercise the native physical client and host helper lifecycle
+        env:
+          PAWFLOW_DISPOSABLE_ACCEPTANCE: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -m pip install defusedxml
+          $python = (Get-Command python).Source
+          $rule = New-NetFirewallRule -DisplayName 'PawFlow native acceptance' -Direction Inbound -Action Allow -Program $python -Protocol TCP
+          try {
+            python -m tests.physical_native_windows_probe 2>&1 | Tee-Object -FilePath "$env:PAWFLOW_WSL_OUTPUT/native-client-driver.log"
+          } finally {
+            $rule | Remove-NetFirewallRule
+          }
       - name: Collect Docker service diagnostics
         if: always() && env.PAWFLOW_WSL_IMPORTED == '1'
         run: |

@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import json
 import os
-import pwd
 import signal
 import socket
 import subprocess
@@ -160,6 +159,8 @@ def run_acceptance():
     check(os.geteuid() == 0, "The disposable supervisor must start as root")
     check(not STAGING.exists(), "Acceptance staging must be fresh")
     OUTPUT.mkdir(exist_ok=True)
+    import pwd
+
     owner = pwd.getpwnam("pawflow")
     for name in ("alpha", "beta"):
         root = source(name)

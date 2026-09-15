@@ -282,8 +282,17 @@ listener cleanup. The `Physical Windows WSL Acceptance` workflow imports a
 dedicated Ubuntu distribution with systemd and Docker on a disposable Windows
 runner. It launches the real grouped kernel and relay/FUSE probes through native
 Python and `wsl docker`, including translated Windows bind paths containing
-spaces. It retains separate reports for these checks; the native physical-client
-host-helper lifecycle is an additional acceptance requirement.
+spaces. A separate native Python fixture starts the production
+`PhysicalRelayThread` against a synthetic HTTP/WebSocket server on that runner.
+It requires both logical registrations, per-workspace Windows filesystem
+forwarding, host execution permissions, distinct helper capabilities and FUSE
+reads. It then stops an exact helper and an exact WSL bridge, requiring complete
+group replacement after each failure, followed by an explicit stop/start. Private
+HOME/profile sentinels must survive all four connections. Each stopped group must
+leave no container, helper thread, bridge process or listening port. The runner
+temporarily permits inbound TCP only for its test Python executable and removes
+that firewall rule in a finally block. `native-client-result.json` is separate
+from the kernel/FUSE report; source checks alone do not satisfy this runtime gate.
 
 ## Admin-controlled server-local execution
 

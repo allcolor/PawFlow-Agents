@@ -274,14 +274,14 @@ def test_relay_manager_stop_workspace_runtime_uninstalls_and_cleans_docker(monke
     assert result["containers_removed"] == 2
     assert result["runtime_lock_removed"] is True
     assert not lock_path.exists()
-    assert calls[0][0:4] == (
+    assert calls[0] == ("cleanup", share["relay_id"])
+    assert calls[1][0:4] == (
         "https://pawflow.example", "POST", "/api/ui",
         {"action": "service_uninstall", "service_id": share["relay_id"]},
     )
-    assert calls[0][4]["session_token"] == "session"
-    assert calls[0][4]["gateway_cookie"] == "gw"
-    assert calls[0][4]["gateway_key"] == "k"
-    assert calls[1] == ("cleanup", share["relay_id"])
+    assert calls[1][4]["session_token"] == "session"
+    assert calls[1][4]["gateway_cookie"] == "gw"
+    assert calls[1][4]["gateway_key"] == "k"
 
 
 def test_relay_manager_stop_workspace_runtime_forces_live_runtime_lock(monkeypatch, tmp_path):
@@ -295,13 +295,11 @@ def test_relay_manager_stop_workspace_runtime_forces_live_runtime_lock(monkeypat
     lock_path = manager._workspace_runtime_lock_path(share["relay_id"])
     lock_path.parent.mkdir(parents=True)
     lock_path.write_text(json.dumps({"pid": 424242}), encoding="utf-8")
-    probes = {"count": 0}
     killed = []
 
     def fake_process_is_running(pid):
         assert pid == 424242
-        probes["count"] += 1
-        return probes["count"] == 1
+        return not killed
 
     monkeypatch.setattr(manager, "_process_is_running", fake_process_is_running)
     monkeypatch.setattr(manager.os, "kill", lambda pid, sig: killed.append((pid, sig)))

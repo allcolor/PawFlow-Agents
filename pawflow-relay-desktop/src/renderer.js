@@ -301,9 +301,10 @@ function renderPhysicalPanel(physical) {
     `<option value="${escapeAttr(server.name)}" ${server.name === physical?.server ? 'selected' : ''}>${escapeHtml(server.name)}</option>`).join('');
   $('#detailPanel').innerHTML = `
     <form id="workspaceForm" class="card form-card">
+      <input name="physicalId" type="hidden" value="${escapeAttr(physical?.physical_id || '')}">
       <h2>Physical relay</h2>
       <div class="form-grid">
-        <label>Name<input name="name" value="${escapeAttr(physical?.name || '')}" ${physical ? 'readonly' : ''} required></label>
+        <label>Name<input name="name" value="${escapeAttr(physical?.name || '')}" required></label>
         <label>Server<select name="server" required>${serverOptions}</select></label>
         <label class="wide">Docker image<div class="image-picker">
           <select name="dockerImage">${dockerImageOptions(physical?.docker_image || '')}</select>
@@ -548,6 +549,7 @@ async function saveWorkspace(event) {
   const submit = form.querySelector('[type="submit"]');
   const input = {
     name: form.querySelector(':scope > .form-grid [name="name"]').value,
+    physicalId: form.elements.physicalId.value,
     server: form.elements.server.value,
     dockerImage: form.elements.dockerImage.value,
     workspaces: Array.from(form.querySelectorAll('.logical-config')).map(row => {

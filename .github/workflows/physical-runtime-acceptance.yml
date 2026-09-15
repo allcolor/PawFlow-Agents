@@ -131,6 +131,7 @@ jobs:
           mkdir -p desktop-app-output
           python -m pytest tests/test_relay_cli_entrypoint.py --noconftest -q > desktop-app-output/entrypoint.log 2>&1
           python -m pytest tests/test_relay_physical_config.py tests/test_relay_config_transactions.py --noconftest -q > desktop-app-output/configuration.log 2>&1
+          node --test tests/js/relay_physical_desktop_spec.js > desktop-app-output/commands.log 2>&1
           export PAWFLOW_DISPOSABLE_ACCEPTANCE=1
           export PAWFLOW_DESKTOP_ACCEPTANCE_DIR="$RUNNER_TEMP/desktop-app-fixture"
           export PAWFLOW_RELAY_PYTHON="$(python -c 'import sys; print(sys.executable)')"

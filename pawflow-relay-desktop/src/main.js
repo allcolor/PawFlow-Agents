@@ -510,6 +510,13 @@ function getRelayState() {
   return runRelayClientJson(['status']);
 }
 
+function runningPhysicalNames(state) {
+  return new Set([
+    ...runningRelays.keys(),
+    ...(state.physicals || []).filter(physical => physical.running).map(physical => physical.name),
+  ]);
+}
+
 function waitForProcessExit(proc, timeoutMs) {
   return new Promise(resolve => {
     if (!proc || proc.exitCode !== null || proc.signalCode !== null) {
@@ -580,7 +587,7 @@ async function startRelay(name) {
   if (!(state.physicals || []).some(physical => physical.name === name)) {
     throw new Error('Select a physical relay to connect its complete group.');
   }
-  if (runningRelays.has(name)) {
+  if (runningPhysicalNames(state).has(name)) {
     return { ok: true, alreadyRunning: true };
   }
   const relay = relayClientCommand(['start', name]);
@@ -610,6 +617,13 @@ async function startRelay(name) {
 async function stopRelay(name) {
   const entry = runningRelays.get(name);
   const proc = entry && entry.proc;
+  if (!proc) {
+    const state = await getRelayState();
+    if (!(state.physicals || []).some(physical => physical.name === name)) {
+      throw new Error('Select a physical relay to disconnect its complete group.');
+    }
+    if (!runningPhysicalNames(state).has(name)) return { ok: true, alreadyStopped: true };
+  }
   if (entry && proc) {
     entry.stopRequested = true;
     appendLog(name, `[relay] stop requested\n`);
@@ -640,7 +654,7 @@ async function stopRelay(name) {
     throw err;
   }
   refreshTrayMenu();
-  return { ok: true, alreadyStopped: !proc };
+  return { ok: true, alreadyStopped: false };
 }
 
 async function stopAllRelays() {
@@ -673,7 +687,7 @@ async function refreshTrayMenu() {
   } catch (err) {
     appendLog('tray', `[tray] ${err.message}\n`);
   }
-  const running = new Set(runningRelays.keys());
+  const running = runningPhysicalNames(state);
   const serverItems = (state.servers || []).length
     ? (state.servers || []).map(server => {
         const status = server.logged_in ? ' (logged in)' : ' (login needed)';
@@ -773,19 +787,24 @@ ipcMain.handle('relay:login-server', async (_event, name) => {
 
 ipcMain.handle('relay:save-physical', async (_event, input) => {
   const definition = JSON.stringify({
+    physical_id: input.physicalId || undefined,
     server: input.server,
     docker_image: input.dockerImage || defaultRelayImageName(),
     workspaces: input.workspaces,
   });
   const args = ['physical', 'save', input.name || '', '--config-stdin'];
   await runRelayClientJson([...args, '--validate-only'], definition);
-  const wasRunning = runningRelays.has(input.name);
-  if (wasRunning) await stopRelay(input.name);
+  const state = await getRelayState();
+  const previous = (state.physicals || []).find(physical => input.physicalId
+    ? physical.physical_id === input.physicalId : physical.name === input.name);
+  const previousName = previous ? previous.name : input.name;
+  const wasRunning = runningPhysicalNames(state).has(previousName);
+  if (wasRunning) await stopRelay(previousName);
   let result;
   try {
     result = await runRelayClientJson(args, definition);
   } catch (err) {
-    if (wasRunning) await startRelay(input.name);
+    if (wasRunning) await startRelay(previousName);
     throw err;
   }
   if (wasRunning) await startRelay(input.name);
@@ -794,7 +813,7 @@ ipcMain.handle('relay:save-physical', async (_event, input) => {
 });
 
 ipcMain.handle('relay:delete-physical', async (_event, name) => {
-  if (runningRelays.has(name)) await stopRelay(name);
+  if (runningPhysicalNames(await getRelayState()).has(name)) await stopRelay(name);
   const result = await runRelayClientJson(['physical', 'delete', name || '']);
   refreshTrayMenu();
   return result;
@@ -805,7 +824,7 @@ ipcMain.handle('relay:start', async (_event, name) => startRelay(name));
 ipcMain.handle('relay:stop', async (_event, name) => stopRelay(name));
 
 ipcMain.handle('relay:running', async () => {
-  return Array.from(runningRelays.keys());
+  return Array.from(runningPhysicalNames(await getRelayState()));
 });
 
 ipcMain.handle('relay:select-directory', async (_event, currentPath) => {

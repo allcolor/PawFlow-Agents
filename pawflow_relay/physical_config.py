@@ -46,6 +46,7 @@ def _groups(records: dict) -> list[dict]:
             "docker_image": plan.docker_image,
             "revision": plan.revision,
             "workspaces": sorted(members, key=lambda share: share["name"]),
+            "running": is_running(physical_id),
         })
     return result
 
@@ -61,12 +62,16 @@ def get_physical(name: str) -> dict:
     raise ValueError(f"Unknown physical relay '{name}'")
 
 
-def require_stopped(physical: dict) -> None:
+def is_running(physical_id: str) -> bool:
     from pawflow_relay import manager
 
     lock = manager._read_runtime_lock(
-        manager._workspace_runtime_lock_path(physical["physical_id"]))
-    if manager._process_is_running(int(lock.get("pid") or 0)):
+        manager._workspace_runtime_lock_path(physical_id))
+    return manager._process_is_running(int(lock.get("pid") or 0))
+
+
+def require_stopped(physical: dict) -> None:
+    if is_running(physical["physical_id"]):
         raise ValueError(
             f"Stop physical relay '{physical['name']}' before changing its directories; "
             "restart it afterwards to reconnect the complete group")
@@ -74,7 +79,8 @@ def require_stopped(physical: dict) -> None:
 
 @_workspace_config_lock()
 def save_physical(name: str, server: str, docker_image: str,
-                  workspaces: list[dict], *, validate_only: bool = False) -> dict:
+                  workspaces: list[dict], *, validate_only: bool = False,
+                  physical_id: str | None = None) -> dict:
     """Replace one stopped physical relay's complete directory configuration."""
     from pawflow_relay import manager
 
@@ -84,7 +90,18 @@ def save_physical(name: str, server: str, docker_image: str,
         raise ValueError("A physical relay requires at least one logical workspace")
     manager.get_server(server)
     records = load_workspaces()
-    existing = next((p for p in _groups(records) if p["name"] == name), None)
+    physicals = _groups(records)
+    if physical_id is not None:
+        if not isinstance(physical_id, str) or not physical_id:
+            raise ValueError("An existing physical_id is required when renaming a physical relay")
+        existing = next((p for p in physicals if p["physical_id"] == physical_id), None)
+        if existing is None:
+            raise ValueError(f"Unknown physical relay identity '{physical_id}'")
+        if any(p["name"] == name and p["physical_id"] != physical_id for p in physicals):
+            raise ValueError(f"Physical relay name '{name}' is already in use")
+    else:
+        existing = next((p for p in physicals if p["name"] == name), None)
+    source_name = existing["name"] if existing else name
     if existing and not validate_only:
         require_stopped(existing)
     now = manager._now()
@@ -95,7 +112,7 @@ def save_physical(name: str, server: str, docker_image: str,
     }
     removed = [
         share for share in records.values()
-        if share["physical_name"] == name and share["name"] not in requested_names
+        if share["physical_name"] == source_name and share["name"] not in requested_names
     ]
     for entry in workspaces:
         if not isinstance(entry, dict):
@@ -108,7 +125,7 @@ def save_physical(name: str, server: str, docker_image: str,
             previous = next((
                 share for share in removed if share["relay_id"] == entry["relay_id"]
             ), {})
-        if previous and previous["physical_name"] != name:
+        if previous and previous["physical_name"] != source_name:
             raise ValueError(f"Workspace '{logical_name}' belongs to another physical relay")
         relay_id = entry.get("relay_id") or previous.get("relay_id") or logical_name
         if previous and relay_id != previous["relay_id"]:
@@ -149,7 +166,7 @@ def save_physical(name: str, server: str, docker_image: str,
     plan_physical_relay(physical_id, members)
     updated = {
         key: share for key, share in records.items()
-        if share["physical_name"] != name
+        if share["physical_name"] != source_name
     }
     updated.update({share["name"]: share for share in members})
     physicals = _groups(updated)

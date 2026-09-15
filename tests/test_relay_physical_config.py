@@ -332,6 +332,107 @@ def test_cli_json_preflight_preserves_permissions_and_saved_config(config, capsy
     assert {key: logical[key] for key in first} == first
 
 
+@pytest.mark.parametrize("validate_only", [False, True])
+def test_parent_rename_preserves_group_and_logical_identities(config, validate_only):
+    first, second = entry(config, "Code"), entry(config, "Docs")
+    first.update(relay_id="ExistingCode", mode="ro", allow_exec=False)
+    original = physical_config.save_physical("Laptop", "server", "relay:test", [first, second])
+    before = manager._load_json(manager._WORKSPACES_FILE)
+    renamed = physical_config.save_physical(
+        "Renamed laptop", "server", "relay:test", [first, second],
+        physical_id=original["physical_id"], validate_only=validate_only)
+    assert renamed["physical_id"] == original["physical_id"]
+    assert renamed["revision"] == original["revision"]
+    assert [e.home_volume for e in plan_physical_relay(
+        renamed["physical_id"], renamed["workspaces"]).exports] == [
+        e.home_volume for e in plan_physical_relay(
+            original["physical_id"], original["workspaces"]).exports]
+    assert {w["physical_name"] for w in renamed["workspaces"]} == {"Renamed laptop"}
+    assert renamed["workspaces"][0]["mode"] == "ro"
+    if validate_only:
+        assert manager._load_json(manager._WORKSPACES_FILE) == before
+    else:
+        assert [p["name"] for p in physical_config.list_physicals()] == ["Renamed laptop"]
+        assert {w["relay_id"] for w in manager.list_workspaces()} == {"ExistingCode", "Docs"}
+
+
+@pytest.mark.parametrize("target,id_value", [
+    ("Other", "ExistingCode"), ("Renamed", "missing"), ("Renamed", ""),
+])
+def test_invalid_parent_rename_is_atomic(config, target, id_value):
+    first = {**entry(config, "Code"), "relay_id": "ExistingCode"}
+    physical_config.save_physical("Laptop", "server", "relay:test", [first])
+    physical_config.save_physical("Other", "server", "relay:test", [entry(config, "Docs")])
+    before = manager._load_json(manager._WORKSPACES_FILE)
+    with pytest.raises(ValueError):
+        physical_config.save_physical(
+            target, "server", "relay:test", [first], physical_id=id_value)
+    assert manager._load_json(manager._WORKSPACES_FILE) == before
+
+
+def test_cli_can_rename_parent_with_stable_physical_id(config, capsys):
+    from pawflow_relay import manager_cli
+
+    first = {**entry(config, "Code"), "relay_id": "ExistingCode"}
+    original = physical_config.save_physical("Laptop", "server", "relay:test", [first])
+    assert manager_cli.main([
+        "--json", "physical", "save", "Renamed", "--physical-id", original["physical_id"],
+        "--server", "server", "--docker-image", "relay:test", "--workspace", "Code", first["path"],
+    ]) == 0
+    renamed = json.loads(capsys.readouterr().out)
+    assert renamed["physical_id"] == original["physical_id"]
+    assert [p["name"] for p in physical_config.list_physicals()] == ["Renamed"]
+
+
+def test_status_reports_external_runtime_and_rename_requires_stop(config, capsys, monkeypatch):
+    from pawflow_relay import manager_cli
+
+    first = entry(config, "Code")
+    physical = physical_config.save_physical("Laptop", "server", "relay:test", [first])
+    with manager._workspace_runtime_lock("Laptop", physical["physical_id"]):
+        monkeypatch.setattr(manager_cli, "list_servers", list)
+        assert manager_cli.main(["--json", "status"]) == 0
+        assert json.loads(capsys.readouterr().out)["physicals"][0]["running"] is True
+        with pytest.raises(ValueError, match="Stop physical relay"):
+            physical_config.save_physical(
+                "Renamed", "server", "relay:test", [first], physical_id=physical["physical_id"])
+    assert physical_config.get_physical("Laptop")["running"] is False
+
+
+@pytest.mark.parametrize("containers", [0, 2])
+def test_idle_cleanup_uninstalls_only_when_owned_runtime_exists(config, monkeypatch, containers):
+    physical = physical_config.save_physical(
+        "Laptop", "server", "relay:test", [entry(config, "Code")])
+    monkeypatch.setattr(manager, "get_server", lambda _name: {
+        "url": "https://fixture.invalid", "session_token": "fixture-session",
+    })
+    calls = []
+    monkeypatch.setattr(manager, "api_call", lambda *a, **k: calls.append(k["body"]) or {})
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", lambda _id: containers)
+    result = manager.stop_workspace_runtime("Laptop")
+    assert result["already_stopped"] is (containers == 0)
+    assert result["service_uninstalled"] is (containers > 0)
+    assert calls == ([{"action": "service_uninstall", "service_id": physical["workspaces"][0]["relay_id"]}]
+                     if containers else [])
+
+
+def test_cleanup_failure_leaves_server_registration_intact(config, monkeypatch):
+    physical_config.save_physical("Laptop", "server", "relay:test", [entry(config, "Code")])
+    monkeypatch.setattr(manager, "get_server", lambda _name: {
+        "url": "https://fixture.invalid", "session_token": "fixture-session",
+    })
+    calls = []
+    monkeypatch.setattr(manager, "api_call", lambda *a, **k: calls.append(k))
+
+    def fail_cleanup(_id):
+        raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", fail_cleanup)
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        manager.stop_workspace_runtime("Laptop")
+    assert calls == []
+
+
 def test_cli_verifies_all_children_and_rejects_a_logical_lifecycle_target(config, capsys, monkeypatch):
     from pawflow_relay import manager_cli
 

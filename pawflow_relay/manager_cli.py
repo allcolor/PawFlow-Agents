@@ -135,6 +135,8 @@ def build_parser() -> argparse.ArgumentParser:
     physical_sub.add_parser("list", help="List physical relays and their logical children")
     physical_save = physical_sub.add_parser("save", help="Replace a stopped physical relay's complete directory list")
     physical_save.add_argument("name")
+    physical_save.add_argument("--physical-id",
+                               help="Existing physical identity to retain when changing its name")
     physical_save.add_argument("--server")
     physical_save.add_argument("--docker-image", default="")
     physical_save.add_argument("--workspace", nargs=2, action="append", metavar=("NAME", "PATH"))
@@ -258,6 +260,7 @@ def main(argv=None) -> int:
                         parser.error("physical save requires --server unless --config-stdin is used")
                     definition = {
                         "server": args.server, "docker_image": args.docker_image,
+                        "physical_id": args.physical_id,
                         "workspaces": [
                             {"name": name, "path": path, **({"mode": "ro"} if name in args.read_only else {})}
                             for name, path in (args.workspace or [])
@@ -265,7 +268,8 @@ def main(argv=None) -> int:
                     }
                 _print_result(args, save_physical(
                     args.name, definition["server"], definition.get("docker_image", ""),
-                    definition["workspaces"], validate_only=args.validate_only))
+                    definition["workspaces"], validate_only=args.validate_only,
+                    physical_id=definition.get("physical_id")))
             return 0
 
         if args.command == "workspace":

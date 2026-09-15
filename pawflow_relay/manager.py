@@ -483,6 +483,7 @@ def delete_workspace(name: str) -> Dict[str, Any]:
     return removed
 
 
+@_workspace_config_lock()
 def stop_workspace_runtime(name: str) -> Dict[str, Any]:
     """Stop one physical relay and all its logical connections.
 
@@ -494,8 +495,12 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
     physical = get_physical(name)
     server = get_server(physical["server"])
     relay_id = physical["physical_id"]
+    had_runtime_lock = _workspace_runtime_lock_path(relay_id).exists()
     runtime_process_terminated = _terminate_workspace_runtime_lock(relay_id)
-    service_uninstalled = bool(server.get("session_token"))
+    from pawflow_relay.thread import cleanup_relay_containers
+    containers_removed = cleanup_relay_containers(relay_id)
+    had_runtime = had_runtime_lock or runtime_process_terminated or containers_removed > 0
+    service_uninstalled = had_runtime and bool(server.get("session_token"))
     if service_uninstalled:
         for share in physical["workspaces"]:
             try:
@@ -509,8 +514,6 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
             except Exception:
                 service_uninstalled = False
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-    from pawflow_relay.thread import cleanup_relay_containers
-    containers_removed = cleanup_relay_containers(relay_id)
     runtime_lock_removed = _remove_workspace_runtime_lock(relay_id, only_stale=False)
     return {
         "workspace": name,
@@ -519,6 +522,7 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
         "runtime_process_terminated": runtime_process_terminated,
         "containers_removed": containers_removed,
         "runtime_lock_removed": runtime_lock_removed,
+        "already_stopped": not had_runtime,
     }
 
 

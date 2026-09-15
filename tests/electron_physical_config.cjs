@@ -26,16 +26,17 @@ const legacy = {
   allow_remote_desktop: false, allow_service_tunnels: true,
   created_at: '2025-01-01T00:00:00Z', updated_at: '2025-02-01T00:00:00Z',
 };
+const renamedPhysical = 'Renamed physical';
 const readConfig = () => JSON.parse(fs.readFileSync(workspaceFile, 'utf8'));
 const python = args => JSON.parse(execFileSync(process.env.PAWFLOW_RELAY_PYTHON, args, {
   cwd: path.resolve(__dirname, '..'), env: process.env, encoding: 'utf8', timeout: 15000,
 }));
-const homeVolumes = () => python(['-c',
-  "import json; from pawflow_relay.physical_config import get_physical; "
+const homeVolumes = (name = renamedPhysical) => python(['-c',
+  "import json, sys; from pawflow_relay.physical_config import get_physical; "
   + "from pawflow_relay.physical_plan import plan_physical_relay; "
-  + "p = get_physical('Legacy share'); "
+  + "p = get_physical(sys.argv[1]); "
   + "print(json.dumps({e.relay_id: e.home_volume for e in "
-  + "plan_physical_relay(p['physical_id'], p['workspaces']).exports}))"]);
+  + "plan_physical_relay(p['physical_id'], p['workspaces']).exports}))", name]);
 if (phase === 'edit') {
   fs.mkdirSync(config, { recursive: true });
   assert.equal(fs.existsSync(workspaceFile), false, 'The fixture must be fresh');
@@ -80,7 +81,7 @@ async function main() {
   if (window.webContents.isLoadingMainFrame()) {
     await new Promise(resolve => window.webContents.once('did-finish-load', resolve));
   }
-  await run(async () => {
+  await run(async expectedPhysical => {
     const check = (value, message) => { if (!value) throw new Error(message); };
     const until = async predicate => {
       const deadline = Date.now() + 15000;
@@ -114,8 +115,8 @@ async function main() {
     clickName('fs_fixture_legacy');
     check(!document.querySelector('#startRelayBtn'), 'Logical relays must not expose connect controls');
     document.querySelector('#configurePhysicalBtn').click();
-    check(document.querySelector('#panelTitle').textContent === 'Legacy share', 'Missing physical form');
-  });
+    check(document.querySelector('#panelTitle').textContent === expectedPhysical, 'Missing physical form');
+  }, phase === 'edit' ? legacy.name : renamedPhysical);
 
   if (phase === 'edit') {
     const migrated = readConfig()[legacy.name];
@@ -151,6 +152,18 @@ async function main() {
       '--workspace', 'PublishedDocs', path.join(output, 'second directory')]);
     assert.equal(readConfig()[legacy.name].mode, 'ro');
     assert.equal(readConfig().PublishedDocs.mode, 'ro');
+    const originalHomes = homeVolumes(legacy.name);
+    await run(async name => {
+      const { check, save } = window.acceptance;
+      const field = document.querySelector('#workspaceForm > .form-grid [name="name"]');
+      check(!field.readOnly, 'The physical name must be editable');
+      field.value = name;
+      await save(2);
+      check(document.querySelector('#panelTitle').textContent === name, 'Parent name did not change');
+    }, renamedPhysical);
+    assert.deepEqual(homeVolumes(), originalHomes);
+    assert.deepEqual(Object.keys(readConfig()), Object.keys(saved));
+    assert.ok(Object.values(readConfig()).every(item => item.physical_name === renamedPhysical));
     const beforeInvalid = fs.readFileSync(workspaceFile, 'utf8');
     await run(async invalidPath => {
       const { check, save } = window.acceptance;
@@ -167,6 +180,7 @@ async function main() {
     assert.equal(saved[legacy.name].relay_id, legacy.relay_id);
     assert.equal(saved.PublishedDocs.relay_id, 'PublishedDocs');
     assert.equal(saved.PublishedDocs.mode, 'ro');
+    assert.ok(Object.values(saved).every(item => item.physical_name === renamedPhysical));
     const previous = JSON.parse(fs.readFileSync(path.join(output, 'edit-result.json'), 'utf8'));
     assert.deepEqual(homeVolumes(), previous.home_volumes);
     await run(async () => {
@@ -192,10 +206,11 @@ async function main() {
   assert.deepEqual(running, []);
   fs.writeFileSync(path.join(output, phase + '-result.json'), JSON.stringify({
     status: 'passed', phase, platform: process.platform, electron: process.versions.electron,
+    physical_name: renamedPhysical,
     logical_ids: Object.values(readConfig()).map(item => item.relay_id),
     home_volumes: homeVolumes(),
     checks: phase === 'edit'
-      ? ['migration', 'logical_controls', 'add_directory', 'permissions', 'cli_mode_preservation', 'invalid_path_atomicity']
+      ? ['migration', 'logical_controls', 'add_directory', 'permissions', 'cli_mode_preservation', 'physical_rename', 'invalid_path_atomicity']
       : ['fresh_process_reload', 'remove_directory', 'nonempty_group', 'identity', 'workspace_sentinel'],
     runtime_started: false,
   }, null, 2));

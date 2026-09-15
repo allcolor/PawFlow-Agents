@@ -11,7 +11,7 @@ const { test } = require('node:test');
 const root = path.resolve(__dirname, '../..');
 const source = fs.readFileSync(path.join(root, 'pawflow-relay-desktop/src/main.js'), 'utf8');
 
-function harness(failAt = '') {
+function harness(failAt = '', externalRunning = false) {
   const handlers = new Map();
   const calls = [];
   const processes = [];
@@ -20,7 +20,10 @@ function harness(failAt = '') {
     app: { isPackaged: false, whenReady: () => ({ then() {} }), on() {} },
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
   };
-  const physical = { name: 'Laptop', workspaces: [{ name: 'Code', relay_id: 'ExistingCode' }] };
+  const physical = {
+    name: 'Laptop', physical_id: 'ExistingPhysical', running: externalRunning,
+    workspaces: [{ name: 'Code', relay_id: 'ExistingCode' }],
+  };
   const context = vm.createContext({
     require: name => {
       if (name === 'electron') return electron;
@@ -51,10 +54,13 @@ function harness(failAt = '') {
       if (failAt === operation) throw new Error(operation + ' failed');
       if (operation !== 'cleanup') {
         const config = JSON.parse(stdin);
+        assert.equal(config.physical_id, 'ExistingPhysical');
         assert.equal(config.workspaces[0].relay_id, 'ExistingCode');
         assert.equal(config.workspaces.length, 2);
+        if (operation === 'save') physical.name = args[2];
       }
-      return { ok: true };
+      if (operation === 'cleanup') physical.running = false;
+      return { ok: true, already_stopped: false };
     },
   });
   vm.runInContext(source, context, { filename: 'main.js' });
@@ -67,7 +73,7 @@ function harness(failAt = '') {
     calls, processes,
     invoke: (channel, input) => handlers.get('relay:' + channel)(null, input),
     config: {
-      name: 'Laptop', server: 'Server', dockerImage: 'relay:test',
+      name: 'Laptop', physicalId: 'ExistingPhysical', server: 'Server', dockerImage: 'relay:test',
       workspaces: [
         { name: 'Code', relay_id: 'ExistingCode', path: '/code', mode: 'ro' },
         { name: 'Docs', path: '/docs', mode: 'rw' },
@@ -130,4 +136,41 @@ test('saving a stopped group does not implicitly connect it', async () => {
   await h.invoke('save-physical', h.config);
   assert.deepEqual(h.calls, ['validate', 'save']);
   assert.equal(h.processes.length, 0);
+});
+
+test('external CLI runtimes are visible and connect does not duplicate them', async () => {
+  const h = harness('', true);
+  assert.deepEqual(Array.from(await h.invoke('running')), ['Laptop']);
+  await h.invoke('start', 'Laptop');
+  assert.equal(h.processes.length, 0);
+});
+
+test('saving an external CLI runtime disconnects and restarts the whole parent', async () => {
+  const h = harness('', true);
+  await h.invoke('save-physical', h.config);
+  assert.deepEqual(h.calls, ['validate', 'cleanup', 'save', 'start:Laptop']);
+});
+
+test('disconnecting an idle parent performs no cleanup', async () => {
+  const h = harness();
+  const result = await h.invoke('stop', 'Laptop');
+  assert.equal(result.alreadyStopped, true);
+  assert.deepEqual(h.calls, []);
+});
+
+test('renaming a running parent stops its old name and starts its new name', async () => {
+  const h = harness();
+  await h.invoke('start', 'Laptop');
+  h.calls.length = 0;
+  await h.invoke('save-physical', { ...h.config, name: 'Renamed' });
+  assert.deepEqual(h.calls, ['validate', 'kill:SIGINT', 'cleanup', 'save', 'start:Renamed']);
+  assert.deepEqual(Array.from(await h.invoke('running')), ['Renamed']);
+});
+
+test('failed rename restarts the saved parent under its old name', async () => {
+  const h = harness('save');
+  await h.invoke('start', 'Laptop');
+  h.calls.length = 0;
+  await assert.rejects(h.invoke('save-physical', { ...h.config, name: 'Renamed' }), /save failed/);
+  assert.deepEqual(h.calls, ['validate', 'kill:SIGINT', 'cleanup', 'save', 'start:Laptop']);
 });

@@ -205,6 +205,10 @@ pawflow-relay cleanup laptop
 be stopped. `--config-stdin` accepts a JSON object containing `server`,
 `docker_image` and `workspaces`, including each workspace's permissions and
 existing `relay_id`. Add `--validate-only` to validate without saving or stopping.
+To rename a physical parent, supply its existing `physical_id` in that JSON or
+`--physical-id ID` alongside the new name. Relay Desktop retains this ID while
+you edit the name. The physical identity, logical identities, permissions and
+HOME volumes remain unchanged; an occupied parent name is rejected.
 Read commands, prevalidation and `manager.plan_workspaces()` normalize legacy
 records in memory. The next successful configuration mutation persists migration;
 reading or rejecting a configuration leaves the saved file unchanged.
@@ -221,6 +225,12 @@ Relay Desktop validates first, stops a running group, saves, then restarts the
 physical relay. Failed validation leaves the running group intact; failed
 cleanup prevents saving; a failed save restarts the previous saved configuration.
 Deleting a physical configuration retains its directories and persistent HOME.
+Runtime status includes launcher locks created by the CLI, so Desktop displays
+and controls externally started groups as well as its own processes. A running
+parent rename stops the old name and starts the new name; a failed save restores
+the old name. Disconnecting an idle parent in Desktop performs no cleanup.
+CLI cleanup unregisters services only when a runtime lock or owned containers
+were present, and performs container cleanup before server unregistration.
 
 Each logical relay's authenticated host helper checks its own permissions before
 dispatch. Local filesystem and HTTP operations require `allow_local`; commands,

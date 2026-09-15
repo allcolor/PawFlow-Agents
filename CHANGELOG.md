@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Physical relay groups on the server and in Relay Desktop/CLI share one Docker
+  container while each logical relay retains its own isolated `/workspace`,
+  permissions, desktop, audio, and persistent HOME/Chromium profile.
+- A physical relay connects or disconnects all its logical relays together.
+  Changing its directory list restarts the complete group; existing logical IDs,
+  saved permissions, and profiles survive migration and reconfiguration.
+
+### Fixed
+
+- Relay cleanup failures remain visible and retryable. Server installation
+  retains the physical configuration after a connection timeout, and configuration
+  storage follows the configured runtime directory.
+- Native Codex compaction during prompt submission is detected across readiness
+  and send races. Cleanup retires only the affected session and preserves a
+  concurrently created replacement; admitted compaction events survive turn end.
+- Scheduled reminders reach an already active agent. Atomic delivery claims
+  prevent cancelled or replaced reminders from being delivered or retried after
+  preparation, while cancellation accurately reports delivery already in progress.
+
 ## [1.0.0-beta.274] — 2026-09-07
 
 ### Upgrade notes

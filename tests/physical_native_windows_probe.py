@@ -200,6 +200,7 @@ def host_request(port, token, action):
 
 
 def exercise(peers, relay, generation):
+    before = snapshot(relay)
     evidence = {}
     for name, peer in peers.items():
         workspace = peer.command("hash_file", path="/workspace/sentinel")
@@ -214,24 +215,34 @@ def exercise(peers, relay, generation):
             check(local_exec.get("returncode") == 0 and local_exec["stdout"].strip() == "win32",
                   "Host command did not execute on native Windows")
         else:
-            check(local_exec.get("ok") is False, "Disabled host execution was accepted")
+            check(local_exec == {"ok": False,
+                                 "error": "Host action requires allow_local and allow_exec"},
+                  "Expected host execution permission denial: " + str(local_exec))
         for tag, mount in MOUNTS.items():
             result = peer.command("hash_file", path=mount + "/sentinel-1")
             expected_fuse = hashlib.sha256((name + ":" + tag + ":sentinel-1").encode()).hexdigest()
             check(result.get("sha256") == expected_fuse and tag + ".read" in peer.fs.calls,
                   "Native client FUSE traffic failed")
-        profile = "/home/pawflow/.chromium-profile/sentinel"
-        if generation == 1:
-            result = peer.command("write_file", path=profile, content="profile-" + name)
-            check(result.get("ok") is True, "Could not create private profile sentinel")
-        result = peer.command("hash_file", path=profile)
-        check(result.get("sha256") == hashlib.sha256(("profile-" + name).encode()).hexdigest(),
+        # The filesystem protocol intentionally cannot address private HOME paths.
+        # Inspect only this owned container's per-member mounts as the worker UID.
+        home = next(export.home_mount for export in relay.plan.exports if export.relay_id == name)
+        script = (
+            "import hashlib, sys\n"
+            "from pathlib import Path\n"
+            "profile = Path(sys.argv[1]) / '.chromium-profile/sentinel'\n"
+            "if sys.argv[2] == '1':\n"
+            "    profile.parent.mkdir(parents=True, exist_ok=True)\n"
+            "    profile.write_text(sys.argv[3], encoding='utf-8')\n"
+            "print(hashlib.sha256(profile.read_bytes()).hexdigest())\n"
+        )
+        digest = docker("exec", "--user", "1000:1000", before["container"],
+                        "python3", "-I", "-c", script, home, str(generation), "profile-" + name)
+        check(digest == hashlib.sha256(("profile-" + name).encode()).hexdigest(),
               "Profile was lost across physical restart")
         evidence[name] = {"root": peer.info["root"], "host_root": peer.info["host_root"],
                           "fuse_methods": sorted(set(peer.fs.calls)),
                           "host_filesystem": True, "host_exec": name == "alpha",
                           "profile": "profile-" + name}
-    before = snapshot(relay)
     for index, (_thread, _bridge, port, _bridge_port) in enumerate(before["owners"]):
         helper = relay if index == 0 else relay.members[1]
         sibling = relay.members[1] if index == 0 else relay

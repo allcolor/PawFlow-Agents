@@ -288,7 +288,11 @@ It requires both logical registrations, per-workspace Windows filesystem
 forwarding, host execution permissions, distinct helper capabilities and FUSE
 reads. It then stops an exact helper and an exact WSL bridge, requiring complete
 group replacement after each failure, followed by an explicit stop/start. Private
-HOME/profile sentinels must survive all four connections. Each stopped group must
+HOME/profile sentinels must survive all four connections. The fixture accesses
+the owned container's per-member HOME mounts as UID/GID 1000 to inspect these
+sentinels; filesystem protocol commands remain confined to their allowed paths.
+Execution denial requires the exact host permission error, so a broken connection
+cannot count as permission enforcement. Each stopped group must
 leave no container, helper thread, bridge process or listening port. The runner
 temporarily permits inbound TCP only for its test Python executable and removes
 that firewall rule in a finally block. `native-client-result.json` is separate

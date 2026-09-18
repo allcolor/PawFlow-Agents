@@ -66,7 +66,15 @@ class PawFlowError(Exception):
 
 class TaskError(PawFlowError):
     """Error while executing a task."""
-    pass
+
+    def __init__(self, *args, retryable: bool = True):
+        super().__init__(*args)
+        #: Whether running the same task again could succeed. The engine reads
+        #: this (`_continuous_exec_run`): a deterministic failure must stop the
+        #: task instead of looping. A build flow retried its sandbox refusal
+        #: ("Module 'os' is not allowed") 509 times, every three seconds, because
+        #: the refusal arrived as an ordinary TaskError.
+        self.retryable = retryable
 
 
 class ServiceError(PawFlowError):

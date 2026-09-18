@@ -485,7 +485,16 @@ class ExecuteScriptTask(BaseTask):
             return [flowfile]
 
         except ImportError as e:
-            raise TaskError(f"Blocked by sandbox: {e}")
+            # A sandbox refusal is deterministic: the same script in the same
+            # sandbox is refused every time, so retrying can only spam the log.
+            # Say it is not retryable -- the engine stops the task and shows the
+            # refusal once. Fix the script (use the injected fs/pawflow helpers)
+            # or run it with containerize=true, which is the documented escape.
+            raise TaskError(f"Blocked by sandbox: {e}", retryable=False)
+        except SyntaxError as e:
+            # Same reasoning: a script that does not parse will never parse.
+            raise TaskError(
+                f"Erreur de syntaxe dans le script: {str(e)}", retryable=False)
         except Exception as e:
             raise TaskError(f"Erreur lors de l'exécution du script: {str(e)}")
 
@@ -510,7 +519,12 @@ class ExecuteScriptTask(BaseTask):
                     "Set 'result' to modify the FlowFile content. "
                     "open() writes inside a FileStore sandbox. "
                     "Allowed modules: json, re, csv, datetime, math, io, "
-                    "requests, collections, itertools, hashlib, base64, etc."
+                    "requests, collections, itertools, hashlib, base64, etc. "
+                    "A refused import (os, sys, subprocess, ...) is a permanent "
+                    "failure, not a transient one: the task stops with that "
+                    "message instead of being retried. Use the injected fs/"
+                    "pawflow helpers, or set containerize=true to run the "
+                    "script as its own process with the full standard library."
                 ),
             },
             'script_engine': {

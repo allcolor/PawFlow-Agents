@@ -426,7 +426,14 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        if definition.config.get("server_physical_id"):
+        # A server-local relay is enrolled as a physical relay by the server
+        # itself: this conversation's MyWorkspace carries
+        # server_physical_id='MyWorkspace'. Refusing it there sent the user to
+        # Server relays settings for a relay the server runs and spawns, and
+        # restarting that managed relay is exactly the right action. Only a
+        # relay whose client runs elsewhere keeps the refusal.
+        if (definition.config.get("server_physical_id")
+                and not definition.config.get("server_local_exec")):
             flowfile.set_content(json.dumps({
                 "error": "Reconnect the physical relay from Server relays settings",
             }).encode())

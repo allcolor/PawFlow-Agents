@@ -398,6 +398,17 @@ class _CsAgentCtxMixin:
             self._validate_message(_m)
         lock = self._get_conv_lock(cid)
         with lock:
+            # A rewrite is a write: every persisted record carries its seq. The
+            # children built by _canonical_message_rows (thinking, tool_call)
+            # came out unstamped, and the context reader sorts rows by
+            # (ts, seq) -- a missing seq weighs 0, so each of those children
+            # read back in front of its own parent and was dropped as an
+            # orphan. Only seq is assigned here: the rest of the stamp is
+            # already on the row, and minting a ts would push an ephemeral
+            # system prompt (exempt from ts by design) behind the first user
+            # message.
+            from core.llm_client import _next_persisted_seq
+            clean = [{**r, "seq": _next_persisted_seq(cid)} for r in clean]
             if agent_name:
                 self._write_ctx_file(self._agent_ctx_path(cid, agent_name), clean, cid=cid)
             else:

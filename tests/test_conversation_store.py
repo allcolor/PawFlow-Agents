@@ -1161,6 +1161,34 @@ class TestAgentContext:
         assert len(loaded) == 1
         assert loaded[0]["content"] == "new"
 
+    def test_rewrite_stamps_seq_on_every_row(self, conv):
+        """A rewrite is a write: children must not come out unstamped.
+
+        The context reader sorts rows by (ts, seq), where a missing seq weighs
+        0 -- an unstamped thinking/tool_call child read back in front of its own
+        parent and was dropped, which is how assistant tool_use turns turned
+        into reasonless ones and a gateway refused the whole request.
+        """
+        store, cid, uid = conv
+        ctx = [{
+            "role": "assistant", "content": "looking", "msg_id": "a1",
+            "ts": 2.0, "thinking": "I must call the tool",
+            "thinking_signature": "sig",
+            "tool_calls": [{"id": "call_1", "name": "bash",
+                            "arguments": {"command": "ls"}}],
+        }]
+
+        assert store.save_agent_context(cid, "agent1", ctx) is True
+
+        rows = store.load_agent_context(cid, "agent1")
+        assert all(r.get("seq") for r in rows), rows
+        anchor = [r for r in rows if r["role"] == "assistant"][0]
+        children = [r for r in rows
+                    if r.get("parent_message_id") == anchor["msg_id"]]
+        assert {c["role"] for c in children} == {"thinking", "tool_call"}
+        # Same ts on purpose: the seq is what keeps a child behind its parent.
+        assert all(c["seq"] > anchor["seq"] for c in children)
+
     def test_save_on_nonexistent_conv_returns_false(self, store):
         assert store.save_agent_context("fake", "a", [_msg()]) is False
 

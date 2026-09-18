@@ -119,6 +119,7 @@ class AgentSerializationMixin:
         """
         messages = []
         by_msg_id: Dict[str, LLMMessage] = {}
+        children: Dict[str, List[Dict[str, Any]]] = {}
         for entry in data:
             if not include_display_only and entry.get("display_only"):
                 continue
@@ -139,28 +140,14 @@ class AgentSerializationMixin:
                     f"(msg_id={entry.get('msg_id')}, role={_role}) — "
                     f"producer bug, creation timestamp must be set at "
                     f"message creation.")
-            if _role == "thinking":
-                parent = by_msg_id.get(entry.get("parent_message_id", ""))
-                if parent is not None:
-                    parent.thinking = ((parent.thinking or "") +
-                                       ("\n" if parent.thinking and entry.get("content") else "") +
-                                       str(entry.get("content") or ""))
-                    if entry.get("thinking_signature"):
-                        parent.thinking_signature = entry.get("thinking_signature", "")
-                continue
-
-            if _role == "tool_call":
-                parent = by_msg_id.get(entry.get("parent_message_id", ""))
-                if parent is not None:
-                    tcid = entry.get("tool_call_id") or entry.get("tc_id") or ""
-                    parent.tool_calls = list(parent.tool_calls or [])
-                    parent.tool_calls.append(LLMToolCall(
-                        id=tcid,
-                        name=entry.get("tool_name") or entry.get("name") or entry.get("tool") or "",
-                        arguments=entry.get("arguments", {}) or {},
-                        timestamp=entry.get("ts", 0),
-                        tool_origin=entry.get("tool_origin", "") or "",
-                    ))
+            if _role in ("thinking", "tool_call"):
+                # Row order is not a contract. The agent-context reader sorts
+                # rows by (ts, seq), and a child persisted without a seq weighs
+                # 0 there -- it lands in front of its own parent and used to be
+                # dropped whole. Collect them here and attach below, once every
+                # parent exists.
+                children.setdefault(entry.get("parent_message_id") or "",
+                                    []).append(entry)
                 continue
 
             # A UUID identifies one logical message. Older streaming ingress
@@ -191,7 +178,42 @@ class AgentSerializationMixin:
             messages.append(msg)
             if msg.msg_id:
                 by_msg_id[msg.msg_id] = msg
+        self._attach_child_rows(by_msg_id, children)
         return messages
+
+    @staticmethod
+    def _attach_child_rows(by_msg_id: Dict[str, LLMMessage],
+                           children: Dict[str, List[Dict[str, Any]]]) -> None:
+        """Attach stored child rows (`thinking` / `tool_call`) to their parent.
+
+        A child whose parent is absent -- its turn was compacted away, or the
+        anchor row never landed -- has no home and is ignored, exactly as a
+        positional attach did. Children keep their stored order, so several
+        thinking rows of one turn still concatenate in write order.
+        """
+        for parent_id, rows in children.items():
+            parent = by_msg_id.get(parent_id)
+            if parent is None:
+                continue
+            for entry in rows:
+                if entry.get("role") == "thinking":
+                    parent.thinking = (
+                        (parent.thinking or "")
+                        + ("\n" if parent.thinking and entry.get("content") else "")
+                        + str(entry.get("content") or ""))
+                    if entry.get("thinking_signature"):
+                        parent.thinking_signature = entry.get("thinking_signature", "")
+                    continue
+                tcid = entry.get("tool_call_id") or entry.get("tc_id") or ""
+                parent.tool_calls = list(parent.tool_calls or [])
+                parent.tool_calls.append(LLMToolCall(
+                    id=tcid,
+                    name=(entry.get("tool_name") or entry.get("name")
+                          or entry.get("tool") or ""),
+                    arguments=entry.get("arguments", {}) or {},
+                    timestamp=entry.get("ts", 0),
+                    tool_origin=entry.get("tool_origin", "") or "",
+                ))
 
 
     @staticmethod

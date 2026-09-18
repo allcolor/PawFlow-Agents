@@ -54,6 +54,20 @@ so Transcript view shows its tool name and arguments even though the row's text
 `content` is intentionally empty. It omits the separate empty `assistant` anchor
 that only links those canonical child rows, matching the webchat timeline.
 
+Linked rows are not ordered rows: a reader must attach a `thinking` /
+`tool_call` child to its anchor whatever position the child holds in the stream.
+The context reader sorts rows by `(ts, seq)` because multi-producer writes land
+out of creation order, and `seq` is the on-disk line index -- so a child
+persisted without one weighs 0 in that sort and lands in front of its own
+parent. Every write path therefore stamps `seq`, full rewrites included
+(`save_agent_context`), and `_deserialize_messages` attaches children in a
+second pass instead of positionally. Live case (2026-09-18): 138 of 337 child
+rows of one agent context sorted ahead of their anchor, and a positional attach
+dropped every one of them -- which is how an assistant turn reached a
+thinking-mode gateway as `tool_use` without its thinking and the whole request
+was refused with "The content[].thinking in the thinking mode must be passed
+back to the API".
+
 Display traces use the same append-only rule as the rest of the transcript:
 `sub_agent_trace` is the visible anchor row, and later `trace_update` rows carry
 incremental trace entries/content. Readers merge those updates into the anchor

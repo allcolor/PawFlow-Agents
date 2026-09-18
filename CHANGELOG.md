@@ -30,6 +30,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   spawn/keystrokes/resize/close and the other interactive actions (desktop,
   code-server, website browser) now run on their own thread, so a terminal's
   latency no longer depends on the relay's batch load.
+- Keystrokes keep their order on a remote terminal. Each one is its own relay
+  command, and running them in parallel could deliver two close-together keys --
+  or the halves of a paste -- the wrong way round. Every terminal session now
+  has one FIFO for `write_terminal`/`resize_terminal`; they are deliberately not
+  run inline in the message loop, where a write to a full PTY would stall every
+  other command. Code-server and noVNC loading (`cs_ws_open`, `desktop_ws_open`,
+  `novnc_asset`) joined the interactive lane too, so opening a desktop or an
+  editor no longer waits behind tool runs either.
+- The relay command pool size is no longer a hard-coded four:
+  `PAWFLOW_RELAY_COMMAND_WORKERS` sets it, the worker reports the concurrency it
+  uses, and a command that waits more than a few seconds for a worker logs the
+  wait. A saturated pool used to be invisible -- four workers busy with agents'
+  tools, and an `open_terminal` waiting 188s with nothing to explain it.
 - The blocked-pane probe no longer kills a healthy interactive CLI turn, and the
   bare-429 counter no longer adds up transients. A pane that still shows the CLI
   working (`esc to interrupt`) is never read as blocked: a long local tool emits

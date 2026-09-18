@@ -58,6 +58,10 @@ The current core value is twofold:
 - Opening a terminal no longer waits for a free relay worker -- with the command
   pool saturated by four agents' tools it took up to 188s to appear.
   Interactive actions run on their own thread now.
+- Terminal keystrokes and resizes keep their order (one FIFO per session), the
+  code-server/noVNC open joined the interactive lane, and the relay's command
+  concurrency is the operator's `PAWFLOW_RELAY_COMMAND_WORKERS` -- with the wait
+  for a worker visible in the relay log instead of silent.
 - Capability tools re-share a FileStore reference in every form an agent may
   use, and say so when a reference cannot be shared publicly instead of handing
   an external provider an unfetchable URL.

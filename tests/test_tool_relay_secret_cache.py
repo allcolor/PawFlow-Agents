@@ -69,3 +69,11 @@ def test_secret_values_refresh_for_redaction(stubbed):
     values, names = ToolRelayService._cached_secret_values("u", "c")
     assert "sk-new" in values
     assert names["sk-new"] == "OPENAI"
+
+
+def test_the_redaction_marker_names_the_variable_without_a_shell_sigil():
+    """`$NAME` is only right in a POSIX shell; PowerShell and cmd differ."""
+    out = _trb._redact_secrets("token=sk-live", {"sk-live"}, {"sk-live": "OPENAI"})
+    assert "sk-live" not in out
+    assert "OPENAI environment variable" in out
+    assert "$OPENAI" not in out

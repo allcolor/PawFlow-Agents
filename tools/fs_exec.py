@@ -282,6 +282,10 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
     env["PYTHONIOENCODING"] = "utf-8"
     env["PAWFLOW_FS_ROOT"] = root_abs
     env["PATH"] = user_bin_path(env)
+    # Inject server-side secrets as environment variables (same as action_exec)
+    _extra_env = req.get("env")
+    if isinstance(_extra_env, dict):
+        env.update(_extra_env)
 
     # Build Popen args (same logic as action_exec for shell resolution)
     popen_kwargs = dict(
@@ -305,9 +309,13 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
             _container_shell = ["node", "-e", command]
         else:
             _container_shell = ["bash", "-c", command]
+        _docker_env_args = ["-e", "PYTHONIOENCODING=utf-8"]
+        if isinstance(_extra_env, dict):
+            for _ek, _ev in _extra_env.items():
+                _docker_env_args.extend(["-e", f"{_ek}={_ev}"])
         cmd = _docker_cmd() + [
             "exec", "-w", "/workspace",
-            "-e", "PYTHONIOENCODING=utf-8",
+        ] + _docker_env_args + [
             _relay_container,
         ] + _container_shell
         popen_kwargs["shell"] = False

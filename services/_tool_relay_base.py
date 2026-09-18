@@ -102,7 +102,10 @@ def _redact_secrets(text: str, secret_values: set,
     for val in secret_values:
         if val in text:
             _varname = _names.get(val, "")
-            _marker = f"<****Redacted — use ${_varname}****>" if _varname else "<****Redacted****>"
+            # Name the variable without a sigil: $NAME is only right in a
+            # POSIX shell ($env:NAME in PowerShell, %NAME% in cmd.exe).
+            _marker = (f"<****Redacted — use the {_varname} environment variable****>"
+                       if _varname else "<****Redacted****>")
             text = text.replace(val, _marker)
     return text
 

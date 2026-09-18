@@ -396,9 +396,15 @@ class BashHandler(BaseFsHandler):
                     timeout = self._resolve_timeout(arguments)
                     exec_command = self._maybe_rewrite_with_rtk(
                         svc, path, command, arguments, timeout)
+                    _exec_kwargs = {"shell": shell, "timeout": timeout}
+                    # Same secret env as the foreground path: a background
+                    # command must see the variables a foreground one sees.
+                    if arguments.get("_secret_env"):
+                        _exec_kwargs["env"] = arguments["_secret_env"]
                     result = svc.exec(
-                        path, exec_command, shell=shell, timeout=timeout,  # nosec B604 - explicit shell relay tool.
-                        local=bool(arguments.get("local", False)))
+                        path, exec_command,
+                        local=bool(arguments.get("local", False)),
+                        **_exec_kwargs)
                 else:
                     result = {"stdout": "Error: no relay", "returncode": 1}
                 output = result.get("stdout", "")

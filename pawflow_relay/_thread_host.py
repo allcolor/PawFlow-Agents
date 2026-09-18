@@ -526,6 +526,12 @@ class _RelayHostHelperMixin:
 
         session_id = f"local_term_{_uuid.uuid4().hex[:8]}"
 
+        # Same environment as a `bash` tool call on this host: the process
+        # environment plus the server-resolved variables and secrets.
+        env = os.environ.copy()
+        if isinstance(req.get("env"), dict):
+            env.update(req["env"])
+
         try:
             if sys.platform != "win32":
                 import pty as _pty_mod
@@ -535,7 +541,6 @@ class _RelayHostHelperMixin:
                 master, slave = _pty_mod.openpty()
                 winsize = struct.pack("HHHH", rows, cols, 0, 0)
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, winsize)
-                env = os.environ.copy()
                 env["TERM"] = "xterm-256color"
                 proc = _sp.Popen(  # nosec B603
                     [shell], stdin=slave, stdout=slave, stderr=slave,
@@ -567,6 +572,7 @@ class _RelayHostHelperMixin:
                     proc = _sp.Popen(  # nosec B603
                         [shell], stdin=_sp.PIPE, stdout=_sp.PIPE,
                         stderr=_sp.STDOUT, cwd=self.directory, bufsize=0,
+                        env=env,
                         creationflags=getattr(
                             _sp, "CREATE_NEW_PROCESS_GROUP", 0))
 
@@ -590,7 +596,7 @@ class _RelayHostHelperMixin:
                 else:
                     pty_proc = PtyProcess.spawn(
                         [shell], cwd=self.directory,
-                        dimensions=(rows, cols))
+                        dimensions=(rows, cols), env=env)
 
                     def _read():
                         pty_proc.fileobj.settimeout(0.1)

@@ -728,13 +728,13 @@ class _ToolRelayExecuteMixin:
                         agent_name=agent_name or "")
                 if _needs_env and _all_env:
                     # Inject as process env vars for shell tools
-                    if tool_name in {"bash", "execute_script"}:
+                    if tool_name in self._ENV_SECRET_TOOLS:
                         execution_arguments["_secret_env"] = _all_env
                     # Resolve $VAR / ${VAR} in string arguments
-                    # bash: skip 'command' (shell resolves $VAR itself)
+                    # bash/Monitor: skip 'command' (shell resolves $VAR itself)
                     # execute_script: skip 'code' (Python uses os.environ)
                     _skip = set()
-                    if tool_name == "bash":
+                    if tool_name in ("bash", "Monitor"):
                         _skip = {"command"}
                     elif tool_name == "execute_script":
                         _skip = {"code"}

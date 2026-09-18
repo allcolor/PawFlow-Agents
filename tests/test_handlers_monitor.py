@@ -67,6 +67,20 @@ class TestMonitorHandler(unittest.TestCase):
         with patch("core.handlers.bash.BashHandler", return_value=bash):
             return self.h.execute(arguments)
 
+    def test_execute_forwards_the_secret_env_to_bash(self):
+        """A monitored command sees the secrets a plain bash call sees."""
+        from services.tool_relay_service import ToolRelayService
+
+        assert "Monitor" in ToolRelayService._ENV_SECRET_TOOLS
+        bash = self._captured_bash("")
+        with patch("core.handlers.bash.BashHandler", return_value=bash):
+            self.h.execute({"command": "make deploy", "local": True,
+                            "_secret_env": {"API_TOKEN": "CANARY"}})
+        sent = bash.execute.call_args[0][0]
+        assert sent["_secret_env"] == {"API_TOKEN": "CANARY"}
+        assert sent["local"] is True
+        assert "CANARY" not in sent["command"]
+
     def test_execute_caps_timeout_to_max(self):
         bash = self._captured_bash("")
         with patch("core.handlers.bash.BashHandler", return_value=bash):

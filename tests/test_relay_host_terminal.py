@@ -65,7 +65,8 @@ def test_windows_local_terminal_falls_back_when_winpty_is_missing(
     helper._log = logs.append
     conn = _Connection()
 
-    helper._host_terminal_persistent(conn, {"cols": 100, "rows": 30})
+    helper._host_terminal_persistent(
+        conn, {"cols": 100, "rows": 30, "env": {"API_TOKEN": "CANARY"}})
 
     messages = [
         json.loads(line)
@@ -74,6 +75,9 @@ def test_windows_local_terminal_falls_back_when_winpty_is_missing(
     ]
     assert spawned["command"] == ["cmd.exe"]
     assert spawned["kwargs"]["stdin"] is subprocess.PIPE
+    # The host shell inherits the process env plus the server-resolved one.
+    assert spawned["kwargs"]["env"]["API_TOKEN"] == "CANARY"
+    assert "PATH" in spawned["kwargs"]["env"]
     assert messages[0]["type"] == "result"
     assert messages[0]["data"]["session_id"].startswith("local_term_")
     assert base64.b64decode(messages[1]["data"]["data"]) == (

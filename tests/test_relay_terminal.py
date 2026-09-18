@@ -84,6 +84,24 @@ def test_open_write_read_close_roundtrip(tmp_path):
     assert _wait(lambda: sink.has_exit(sid)), "no terminal_exit frame after close"
 
 
+def test_open_exposes_the_server_env_to_the_shell(tmp_path):
+    """The terminal sees the variables and secrets a bash tool call sees."""
+    sink = _Sink()
+    mgr = TerminalManager(str(tmp_path), sink)
+
+    sid = mgr.open(cols=80, rows=24, shell="/bin/sh",
+                   env={"PF_TERM_CANARY": "seen_in_pty"})
+    # The marker is assembled by the shell, so the echoed input line cannot
+    # satisfy the assertion on its own.
+    ok, _err = mgr.write(sid, _b64('echo "got=[$PF_TERM_CANARY]"\n'))
+    assert ok
+
+    assert _wait(lambda: b"got=[seen_in_pty]" in sink.terminal_data_text(sid)), (
+        "the PTY shell did not receive the server-side env"
+    )
+    mgr.close(sid)
+
+
 def test_write_to_unknown_session_errors():
     mgr = TerminalManager("/tmp", lambda _f: None)  # nosec B108
     ok, err = mgr.write("nope", _b64("x"))

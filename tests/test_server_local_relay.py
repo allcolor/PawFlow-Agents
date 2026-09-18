@@ -83,17 +83,28 @@ def test_terminal_handler_routes_server_local_session_through_pawflow(monkeypatc
         "services.terminal_proxy.register_terminal",
         lambda *args, **kwargs: registered.append((args, kwargs)) or "term-token")
     monkeypatch.setattr(_sf_k6, "_ensure_terminal_routes", lambda _ff: None)
+    resolved = []
+    monkeypatch.setattr(
+        "services.tool_relay_service.resolve_secrets_env",
+        lambda user_id, conv_id: resolved.append((user_id, conv_id))
+        or {"API_TOKEN": "CANARY"})
     flowfile = FlowFile(attributes={"auth.session_id": "login-1"})
     helpers = (lambda _relay_id: service,) + (None,) * 5
 
     _sf_k6._handle_sf_k6(None, "open_terminal", {
         "relay_id": "Managed", "local": True, "cols": 100, "rows": 30,
+        "conversation_id": "conv-1",
     }, None, "alice", flowfile, helpers)
 
+    # The terminal gets the variables and secrets a bash tool call gets in
+    # this conversation, as environment only: never in the action result.
+    assert resolved == [("alice", "conv-1")]
     assert service.calls == [("open_terminal", {
-        "cols": 100, "rows": 30, "local": True})]
+        "cols": 100, "rows": 30, "local": True,
+        "env": {"API_TOKEN": "CANARY"}})]
     assert registered[0][1]["server_local"] is True
     assert json.loads(flowfile.get_content())["token"] == "term-token"
+    assert b"CANARY" not in flowfile.get_content()
 
 
 def test_desktop_handler_proxies_server_local_novnc_on_loopback(monkeypatch):

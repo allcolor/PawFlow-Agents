@@ -145,6 +145,14 @@ Use PawFlow secret storage or environment variables for API keys. Never hard-cod
 
 The master key encrypts stored secrets with AEAD (AES-GCM). Resolution order: `PAWFLOW_SECRET_KEY_B64` (raw 32-byte key, preferred), `PAWFLOW_SECRET_KEY` (password, derived via scrypt), then the dev-only generated on-disk key file. When a password is used, the scrypt salt is per-install: a fresh install writes a random salt to `data/system/secret.salt` before the first secret is encrypted, so two installs sharing a password never share a key. Existing installs (no salt file) keep the legacy salt so secrets stay decryptable across upgrades. To pin a salt explicitly (e.g. password-based deployments that predate the salt file), set `PAWFLOW_SECRET_SALT_B64` to a base64 value of at least 16 bytes.
 
+### Secrets in shell tools
+
+For `bash`, `Monitor` and `execute_script`, the resolved variables and secrets travel as a private `_secret_env` argument and become environment variables of the executed process. They are never substituted into the command text. The same environment reaches every execution path: foreground and `run_in_background`, relay container and `local=true` host helper, `exec` and `exec_stream` (native and `docker exec`).
+
+The interactive terminal opened from the UI (relay container, server-local, and `local=true` host shell on Linux or Windows) receives the same environment for the requesting user and conversation. It is set on the shell process only: it is never part of the action result, and terminal output is not redacted, so `env` in that terminal shows the user their own values.
+
+The process reads them with its own shell's syntax: `$NAME` in POSIX shells, `$env:NAME` in PowerShell, `%NAME%` in `cmd.exe`. In PowerShell a bare `$NAME` is a PowerShell variable, not the environment variable, and expands to an empty string.
+
 ## Encryption at Rest
 
 Opt-in, per-conversation encryption at rest, independent of the master key above

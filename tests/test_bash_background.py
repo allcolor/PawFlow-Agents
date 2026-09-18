@@ -61,6 +61,40 @@ def test_background_bash_relay_returns_filestore_output_url(tmp_path):
     assert content_type == "text/plain"
 
 
+def test_background_bash_passes_the_secret_env_like_the_foreground(tmp_path):
+    """A background command must see the variables a foreground one sees."""
+    calls = []
+
+    class _Relay(FakeRelay):
+        def exec(self, path, command, **kwargs):
+            calls.append(kwargs)
+            return {"stdout": "done\n", "stderr": "", "returncode": 0}
+
+    handler = _handler_with_filestore(tmp_path)
+    handler.set_fs_service(_Relay())
+    secret_env = {"API_TOKEN": "CANARY"}
+
+    for background in (False, True):
+        result = handler.execute({
+            "relay": "fs_test",
+            "command": "echo ok",
+            "shell": "powershell",
+            "local": True,
+            "run_in_background": background,
+            "_secret_env": secret_env,
+        })
+        if background:
+            bg_id = re.search(r"id: (bg_[a-f0-9]+)", result).group(1)
+            BashHandler._bg_tasks[bg_id]["thread"].join(timeout=2)
+
+    assert len(calls) == 2
+    foreground, background = calls
+    assert foreground["env"] == secret_env
+    assert background["env"] == secret_env
+    assert background["local"] is True
+    assert background["shell"] == "powershell"
+
+
 def test_background_bash_uses_filestore_even_with_requested_workdir(tmp_path):
     handler = _handler_with_filestore(tmp_path)
     handler.set_fs_service(FakeRelay())

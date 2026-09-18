@@ -59,7 +59,9 @@ class ToolRelayService(
     _runtime_cache_lock = threading.RLock()
     _secret_env_cache: Dict[tuple, tuple[tuple, dict]] = {}
     _secret_values_cache: Dict[tuple, tuple[tuple, set, dict]] = {}
-    _ENV_SECRET_TOOLS = frozenset({"bash", "execute_script"})
+    # Tools that run a process and therefore receive `_secret_env`. Monitor
+    # runs its command through the bash handler, so it is one of them.
+    _ENV_SECRET_TOOLS = frozenset({"bash", "execute_script", "Monitor"})
     _SECRET_MUTATION_TOOLS = frozenset({
         "store_secret", "manage_package", "manage_resource", "delete_tool",
         "create_tool",

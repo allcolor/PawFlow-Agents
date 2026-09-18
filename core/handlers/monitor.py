@@ -287,6 +287,9 @@ class MonitorHandler(ToolHandler):
             bash_args["relay"] = relay
         if arguments.get("local", False):
             bash_args["local"] = True
+        # The monitored command sees the same secret env as a plain bash call.
+        if arguments.get("_secret_env"):
+            bash_args["_secret_env"] = arguments["_secret_env"]
 
         started_at = time.monotonic()
         try:

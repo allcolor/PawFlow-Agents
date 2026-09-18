@@ -124,6 +124,7 @@ def _h_open_terminal(ctx, msg, on_output=None):
             cols=msg.get("cols", 80),
             rows=msg.get("rows", 24),
             shell=msg.get("shell"),  # nosec B604 - terminal tool intentionally opens requested shell.
+            env=msg.get("env"),
         )
         return {"ok": True, "data": {"session_id": _sid}}
     except Exception as e:

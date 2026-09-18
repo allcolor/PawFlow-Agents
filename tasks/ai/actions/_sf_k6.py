@@ -84,6 +84,15 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
             terminal_kwargs = {"shell": shell} if shell else {}
             if _server_local:
                 terminal_kwargs["local"] = True
+            # The terminal is the user's own shell: it sees the variables and
+            # secrets a `bash` tool call sees in this conversation, as process
+            # environment (never echoed, never part of a command line).
+            from services.tool_relay_service import resolve_secrets_env
+            _term_conv = (body.get("conversation_id", "")
+                          or flowfile.get_attribute("http.conversation_id") or "")
+            _term_env = resolve_secrets_env(user_id, _term_conv)
+            if _term_env:
+                terminal_kwargs["env"] = _term_env
             result = svc._request(_term_action, cols=cols, rows=rows,
                                   **terminal_kwargs)
             session_id = result.get("session_id", "") if isinstance(result, dict) else str(result)

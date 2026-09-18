@@ -709,7 +709,7 @@ class _RelayFsOpsMixin:
         return self._request("exec", path, **kwargs)
 
     def exec_stream(self, path: str, command: str, timeout=None,
-                    shell: str = "", on_output=None):
+                    shell: str = "", on_output=None, env: dict = None):
         """Execute a command with streaming output via on_output(stream, data).
 
         Returns the final result dict (stdout, stderr, returncode).
@@ -718,6 +718,8 @@ class _RelayFsOpsMixin:
         kwargs = {"command": command, "timeout": timeout}
         if shell:
             kwargs["shell"] = shell
+        if env:
+            kwargs["env"] = env
         return self._request_stream("exec_stream", path, on_output=on_output, **kwargs)
 
     def http_fetch(self, url: str, method: str = "GET",

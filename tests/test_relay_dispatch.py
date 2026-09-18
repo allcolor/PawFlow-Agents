@@ -308,8 +308,9 @@ def test_open_and_list_terminal_via_manager():
         def __init__(self):
             self._sessions = {}
 
-        def open(self, cols=80, rows=24, shell=None):
+        def open(self, cols=80, rows=24, shell=None, env=None):
             self._sessions["t1"] = {"shell": shell or "/bin/sh"}
+            self.env = env
             return "t1"
 
         def list(self):
@@ -317,8 +318,11 @@ def test_open_and_list_terminal_via_manager():
 
     tm = FakeTM()
     ctx = _ctx(term_mgr=tm)
-    res = d.execute_command(ctx, {"action": "open_terminal", "shell": "/bin/bash"})
+    res = d.execute_command(ctx, {"action": "open_terminal", "shell": "/bin/bash",
+                                  "env": {"API_TOKEN": "CANARY"}})
     assert res == {"ok": True, "data": {"session_id": "t1"}}
+    # The server-resolved env reaches the terminal manager.
+    assert tm.env == {"API_TOKEN": "CANARY"}
     res2 = d.execute_command(ctx, {"action": "list_terminals"})
     assert res2 == {"ok": True, "data": {"sessions": [{"session_id": "t1", "shell": "/bin/bash"}]}}
 

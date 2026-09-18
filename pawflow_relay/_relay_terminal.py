@@ -43,8 +43,11 @@ class TerminalManager:
         self._lock = threading.RLock()
         self.sessions = {}  # session_id -> {master_fd, pid, reader, shell}
 
-    def open(self, cols=80, rows=24, shell=None):
+    def open(self, cols=80, rows=24, shell=None, env=None):
         """Fork a PTY running a shell; stream its output via send_frame.
+
+        ``env`` is the server-resolved variable/secret mapping: the shell sees
+        the same environment a ``bash`` tool call does.
 
         Returns the new session id.
         """
@@ -55,11 +58,13 @@ class TerminalManager:
 
         sid = _uuid.uuid4().hex[:12]
         _shell = shell or os.environ.get("SHELL", "/bin/bash")
+        _extra_env = env if isinstance(env, dict) else {}
 
         pid, master_fd = os.forkpty()
         if pid == 0:
             os.chdir(self._root_dir)
             env = os.environ.copy()
+            env.update(_extra_env)
             env["TERM"] = "xterm-256color"
             env["COLUMNS"] = str(cols)
             env["LINES"] = str(rows)

@@ -183,7 +183,9 @@ class _PACPhase3Mixin:
             "\n\nSECRETS: Secrets are available as environment variables ($VAR_NAME). "
             "NEVER print, log, echo, or display their values. "
             "NEVER include secret values in tool arguments, file contents, or messages. "
-            "Use variable references ($VAR_NAME) — the shell resolves them. "
+            "Use variable references — the shell resolves them, in ITS syntax: "
+            "$VAR_NAME in bash/sh, $env:VAR_NAME in PowerShell (a bare $VAR_NAME "
+            "is an empty PowerShell variable there), %VAR_NAME% in cmd.exe. "
             "Any leaked secret value in tool output will be automatically redacted."
         )
 

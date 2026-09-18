@@ -166,6 +166,28 @@ class TestStreamRetry:
         assert len(bodies) == 1
         assert "thinking" not in bodies[0]
 
+    def test_an_older_reasonless_turn_keeps_thinking(self, monkeypatch, caplog):
+        """Only the turn being continued is validated by the gateway.
+
+        Treating an older step that simply did not reason as evidence would
+        drop thinking from calls that would have honoured the contract.
+        """
+        messages = _reasoned_messages()
+        messages.insert(1, LLMMessage(
+            "assistant", "earlier", conversation_id="conv1",
+            tool_calls=[LLMToolCall(
+                id="call_0", name="bash", arguments={"command": "pwd"})]))
+        messages.insert(2, LLMMessage(
+            "tool", "out", conversation_id="conv1", tool_call_id="call_0"))
+
+        with caplog.at_level("WARNING"):
+            bodies, _ = _stream(
+                _client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch,
+                messages=messages)
+
+        assert bodies[0]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+        assert _missing_reports(caplog) == []
+
     def test_rejected_turn_is_retried_without_thinking(self, monkeypatch):
         bodies, response = _stream(
             _client(),

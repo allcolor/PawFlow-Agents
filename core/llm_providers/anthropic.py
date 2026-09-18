@@ -105,20 +105,24 @@ class LLMAnthropicMixin:
     def _report_missing_thinking(self, messages, conversation_id: str) -> bool:
         """True when a replayed tool_use turn carries no thinking.
 
-        A thinking-mode gateway validates the assistant turns it is handed
-        back and refuses the whole request when one of them shows tool calls
-        without the reasoning that produced them -- and a model is free not to
-        reason at all on a given step, so such a turn is permanent evidence
-        that this request cannot claim thinking mode. The turn ids are logged
-        once per conversation, because "which turn" is the useful answer; the
-        caller decides what to do with the verdict.
+        A thinking-mode gateway validates the assistant turn it is handed back
+        to continue -- the last one with tool calls -- and refuses the whole
+        request when that turn shows tool calls without the reasoning that
+        produced them. A model is free not to reason at all on a given step,
+        so such a turn is conclusive: this request cannot claim thinking mode.
+        Only that turn is inspected on purpose: older turns are not validated
+        the same way, and treating them as evidence would drop thinking from
+        turns that would have honoured it. The turn id is logged once per
+        conversation, because "which turn" is the useful answer.
         """
         key = str(conversation_id or "")
-        missing = [str(getattr(m, "msg_id", "") or "?")
-                   for m in messages
-                   if getattr(m, "role", "") == "assistant"
-                   and getattr(m, "tool_calls", None)
-                   and not getattr(m, "thinking", "")]
+        missing = []
+        for m in reversed(list(messages)):
+            if (getattr(m, "role", "") == "assistant"
+                    and getattr(m, "tool_calls", None)):
+                if not getattr(m, "thinking", ""):
+                    missing = [str(getattr(m, "msg_id", "") or "?")]
+                break
         if not missing:
             return False
         if not key or key not in _THINKING_MISSING_REPORTED:

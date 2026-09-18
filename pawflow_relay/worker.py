@@ -120,6 +120,7 @@ def _command_pool_workers() -> int:
     return value
 
 
+def _is_allowed_tmp_path(path: str) -> bool:
     """True when `path` is absolute and falls under a system temp dir."""
     if not path or not isinstance(path, str):
         return False

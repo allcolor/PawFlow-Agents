@@ -403,6 +403,21 @@ class LLMAnthropicMixin:
         """
         from core.llm_message_regroup import regroup_split_assistant_messages
         messages = regroup_split_assistant_messages(messages)
+        # Anthropic is as strict as OpenAI about tool pairing: every
+        # ``tool_result`` block must answer a ``tool_use`` block of the
+        # immediately preceding assistant message. A compaction that lands
+        # mid-turn re-adopts a context whose window dropped an assistant turn
+        # but kept one of its results, and the provider then rejects the whole
+        # call (400 "must have a corresponding tool_use block in the previous
+        # message"). Repair the sequence here, exactly as the OpenAI builder
+        # does, so the payload is valid by construction whatever assembled it.
+        from core.llm_tool_sequence import repair_tool_sequence
+        messages, _tool_seq_changed = repair_tool_sequence(
+            messages, conversation_id)
+        if _tool_seq_changed:
+            logger.warning(
+                "_build_anthropic_messages: repaired tool-call ordering for "
+                "strict provider sequence (conv=%s)", conversation_id)
         system_text = ""
         api_messages: List[Dict[str, Any]] = []
 

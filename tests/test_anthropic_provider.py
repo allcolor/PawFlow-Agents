@@ -531,3 +531,56 @@ def test_anthropic_concatenates_multiple_system_messages():
     assert system_text == (
         "Agent identity and rules.\n\n[Injected advisor reports]")
     assert [m["role"] for m in api_messages] == ["user"]
+
+
+def _anthropic_pairing(api_messages):
+    declared = [b["id"] for m in api_messages for b in m["content"]
+                if isinstance(b, dict) and b.get("type") == "tool_use"]
+    answered = [b["tool_use_id"] for m in api_messages for b in m["content"]
+                if isinstance(b, dict) and b.get("type") == "tool_result"]
+    return declared, answered
+
+
+def test_anthropic_drops_a_tool_result_whose_tool_use_was_compacted_away():
+    """Live 2026-09-18 23:28:19 (conv 80c37670, agent `assistant`): the
+    mid-turn auto-compaction kept a tool result after dropping the assistant
+    turn that held its tool_use, and the provider rejected the whole call with
+    400 "`tool_use_id` found in `tool_result` blocks ... must have a
+    corresponding `tool_use` block in the previous message"."""
+    client = LLMClient(provider="anthropic", config={"api_key": "test"})
+    messages = [
+        LLMMessage(role="user", content="inspect", conversation_id="conv-b"),
+        LLMMessage(role="assistant", content="",
+                   tool_calls=[LLMToolCall(
+                       id="call_00_kept", name="glob", arguments={})],
+                   conversation_id="conv-b"),
+        LLMMessage(role="tool", content="a.py", tool_call_id="call_00_kept",
+                   conversation_id="conv-b"),
+        LLMMessage(role="tool", content="orphaned output",
+                   tool_call_id="call_01_gone", conversation_id="conv-b"),
+    ]
+
+    _system, api_messages = client._build_anthropic_messages(
+        messages, user_id="u", conversation_id="conv-b")
+
+    declared, answered = _anthropic_pairing(api_messages)
+    assert answered == ["call_00_kept"]
+    assert set(answered) <= set(declared)
+
+
+def test_anthropic_answers_a_tool_use_left_without_a_result():
+    client = LLMClient(provider="anthropic", config={"api_key": "test"})
+    messages = [
+        LLMMessage(role="user", content="go", conversation_id="conv-c"),
+        LLMMessage(role="assistant", content="",
+                   tool_calls=[LLMToolCall(
+                       id="call_never_ran", name="bash", arguments={})],
+                   conversation_id="conv-c"),
+    ]
+
+    _system, api_messages = client._build_anthropic_messages(
+        messages, user_id="u", conversation_id="conv-c")
+
+    declared, answered = _anthropic_pairing(api_messages)
+    assert declared == ["call_never_ran"]
+    assert answered == ["call_never_ran"]

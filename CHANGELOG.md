@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A compaction that lands mid-turn no longer keeps a tool result whose owning
+  assistant turn it dropped. The window selection cuts by position, so it could
+  keep a `tool` result after removing the assistant message holding its
+  `tool_use`; the provider then rejected the *whole* call (`messages.79.content.1:
+  tool_use_id found in tool_result blocks ... must have a corresponding tool_use
+  block in the previous message`) and the turn was lost -- observed live on a
+  long conversation (conv `80c37670`, agent `assistant`, 23:28:19) right after an
+  auto-compaction. Two layers close it: the compacted snapshot is repaired before
+  it is persisted, and the Anthropic message builder repairs the sequence exactly
+  as the OpenAI one already did, so no assembly path can ship an orphan result.
 - Opening a terminal no longer queues behind long tool commands. The relay runs
   commands on a thread pool of a fixed size, so with four agents working
   through it every worker was busy and an `open_terminal` waited for one to

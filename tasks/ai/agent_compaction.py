@@ -578,9 +578,32 @@ class AgentCompactionMixin(
             return
         try:
             from core.conversation_store import ConversationStore
+            from core.llm_tool_sequence import repair_tool_sequence
             persisted = list(compacted)
             if persisted and persisted[0].role == "system":
                 persisted = persisted[1:]
+            # The window selection drops messages by position, so a kept tool
+            # result can outlive the assistant turn that owns its tool_call
+            # (and a kept tool_call can lose its result). Persisting that shape
+            # poisons every later turn: the provider rejects the whole call
+            # (400 "tool_result ... must have a corresponding tool_use block in
+            # the previous message"). Rebuild the pairing before the snapshot
+            # reaches the store.
+            _original = {id(m) for m in persisted}
+            persisted, _seq_repaired = repair_tool_sequence(
+                persisted, conversation_id)
+            if _seq_repaired:
+                # Keep the snapshot historical: the repair's synthetic
+                # "[Result unavailable]" rows make one provider call valid,
+                # they are not history. Persisting one would also stamp it with
+                # `now` and the (ts, seq) reader would sort it away from the
+                # assistant turn it answers. The unanswered tool_call that
+                # remains is repaired again at send time.
+                persisted = [m for m in persisted
+                             if m.role != "tool" or id(m) in _original]
+                logger.warning(
+                    "[compact] repaired tool-call pairing before persisting "
+                    "context for %s", conversation_id[:8])
             serialized = self._serialize_messages(persisted)
             ConversationStore.instance().save_agent_context(
                 conversation_id, agent_name, serialized,

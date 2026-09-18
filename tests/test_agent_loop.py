@@ -375,23 +375,33 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         client = LLMClient(provider="anthropic", config={"api_key": "test-key"})
         tc = LLMToolCall(id="tu_1", name="calc", arguments={"x": 5})
         msg = LLMMessage(role="assistant", content="Let me calculate.", tool_calls=[tc], conversation_id="test_conv")
+        # The builder now enforces the pairing the API requires: a call is
+        # always followed by its result, so the input carries the real one.
+        result = LLMMessage(role="tool", content="10", tool_call_id="tu_1", conversation_id="test_conv")
         _, api_msgs = client._build_anthropic_messages(
-            [msg], user_id="u", conversation_id="test_conv")
-        assert len(api_msgs) == 1
+            [msg, result], user_id="u", conversation_id="test_conv")
+        assert len(api_msgs) == 2
         content_blocks = api_msgs[0]["content"]
         assert content_blocks[0]["type"] == "text"
         assert content_blocks[0]["text"] == "Let me calculate."
         assert content_blocks[1]["type"] == "tool_use"
         assert content_blocks[1]["id"] == "tu_1"
         assert content_blocks[1]["name"] == "calc"
+        assert api_msgs[1]["content"][0]["tool_use_id"] == "tu_1"
 
     def test_anthropic_tool_result_message(self):
         client = LLMClient(provider="anthropic", config={"api_key": "test-key"})
         msg = LLMMessage(role="tool", content="result=10", tool_call_id="tu_1", conversation_id="test_conv")
+        # A result only reaches the provider behind the assistant turn that
+        # declared its call — an ownerless one is dropped (see
+        # test_anthropic_drops_a_tool_result_whose_tool_use_was_compacted_away).
+        call = LLMMessage(role="assistant", content="", tool_calls=[
+            LLMToolCall(id="tu_1", name="calc", arguments={})],
+            conversation_id="test_conv")
         _, api_msgs = client._build_anthropic_messages(
-            [msg], user_id="u", conversation_id="test_conv")
-        assert api_msgs[0]["role"] == "user"
-        content = api_msgs[0]["content"]
+            [call, msg], user_id="u", conversation_id="test_conv")
+        assert api_msgs[1]["role"] == "user"
+        content = api_msgs[1]["content"]
         assert content[0]["type"] == "tool_result"
         assert content[0]["tool_use_id"] == "tu_1"
         assert content[0]["content"] == "result=10"

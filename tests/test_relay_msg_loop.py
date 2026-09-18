@@ -94,12 +94,14 @@ def test_a_blocked_stream_send_does_not_stall_the_message_loop():
     loop keeps reading and the bytes still go out in order.
     """
     order = []
+    started = threading.Event()
     release = threading.Event()
 
     def _exec(msg, on_output=None):
         order.append(msg.get("action"))
         if msg.get("action") == "cs_ws_send":
-            assert release.wait(10), "the loop never reached the other command"
+            started.set()
+            assert release.wait(10), "the blocked send was never released"
         return {"data": {"ok": True}}
 
     s = ConnSession(_ctx([
@@ -120,7 +122,10 @@ def test_a_blocked_stream_send_does_not_stall_the_message_loop():
 
     assert "read_file" in order, (
         "a blocked stream send must not hold up the other commands")
-    assert order.index("cs_ws_send") < order.index("read_file")
+    # The frame is queued, not run inline: the loop may legitimately have read
+    # the next command before the stream worker picked the send up. What must
+    # hold is that the loop never waited for it, and that the send still runs.
+    assert started.wait(5), "the blocked stream send never ran"
 
 
 def test_a_command_runs_even_with_no_pool_configured():

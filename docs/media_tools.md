@@ -34,6 +34,13 @@ FileStore URL all resolve to the same file. Anything else (a CDN URL, a `data:`
 URI, a local path or a bare filename) is passed through untouched — and a local
 path is not fetchable by a remote provider.
 
+That pass-through is decided by ownership, not by shape: `/files/<id>` is also a
+path third-party CDNs use (Meshy serves `https://assets.meshy.ai/files/<task>/<name>`),
+so a URL is only re-shared when it is a native FileStore form (`fs://filestore/`,
+the host-less `/filestore/` mount) or its id is one FileStore actually holds.
+An unknown id needs no rewrite anyway -- there is nothing to share -- and
+rewriting one turned a working vendor URL into a dead `localhost:9090` link.
+
 This requires the agent `file_base_url` (or the service `public_callback_base_url`)
 to be a public HTTPS root such as `https://webchat.example.org`. When the base
 URL is `localhost`/private, no access flip is performed and the legacy

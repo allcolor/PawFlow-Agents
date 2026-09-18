@@ -42,12 +42,26 @@ _TAIL_LINES = 20
 #: prompt is. Anything higher up is history.
 _QUESTION_TAIL_LINES = 3
 
+#: The TUI prints this hint while it is *working*. A pane that shows it is not
+#: waiting for input, whatever else is on screen: the CLI is inside a tool run,
+#: and any rate-limit wording there is the model's prose, a path it is editing,
+#: or the status footer. A long local tool (pytest, a build) emits no event for
+#: minutes -- exactly the silence this probe reacts to -- so reading that pane as
+#: "rate limited" killed a healthy turn non-retryably while the CLI kept
+#: working. Mirrors ``_RUNNING_MARKERS`` in
+#: ``core.claude_code_interactive_pool``.
+_RUNNING_MARKERS = ("esc to interrupt",)
+
 _RATE_LIMIT_PATTERNS = (
     r"\b429\b",
     r"rate[ _-]?limit",
-    r"usage limit",
     r"too many requests",
     r"quota (?:exceeded|reached)",
+    # A limit that was REACHED: "you have reached your session usage limit",
+    # "Usage limit reached for 5 hour". The healthy status footer
+    # ("Approaching usage limit - resets at 5pm") carries no reached/exceeded,
+    # so the bare words are not a pattern of their own.
+    r"(?:reached|exceeded)[^\n]{0,40}limit",
     r"(?:session|weekly|daily|hourly) limit (?:reached|exceeded)",
     r"limit will reset",
 )
@@ -90,6 +104,12 @@ def detect_cli_blocker(pane: str) -> CliBlocker | None:
     """Return what the pane is waiting for, or None when it is not blocked."""
     tail = tail_lines(pane, _TAIL_LINES)
     if not tail:
+        return None
+    # A working CLI is never a blocked one: see _RUNNING_MARKERS. When the pane
+    # cannot say, stay silent -- this failure is not retryable, so guessing is
+    # worse than waiting one more probe window.
+    screen = "\n".join(tail).lower()
+    if any(marker in screen for marker in _RUNNING_MARKERS):
         return None
     ratelimited = _first_match(tail, _RATE_LIMIT_PATTERNS)
     if ratelimited:

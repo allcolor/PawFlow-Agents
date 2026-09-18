@@ -240,6 +240,7 @@ class _CCITurnCoordinator:
         self.pane_callback = pane_callback
         self._last_pane_probe_at = 0.0
         self._rate_limit_responses = 0
+        self._rate_limited_request_ids: set = set()
         self._response_status_by_request: dict[str, tuple] = {}
         self._first_event_at = 0.0
         self._first_model_content_at = 0.0
@@ -404,8 +405,13 @@ class _CCITurnCoordinator:
             self._response_status_by_request[request_id] = (
                 status, str(event.get("path") or ""))
         if status != "429":
+            # A served model request says the limit is not in force any more.
+            # Without this, three transients spread over a long turn added up to
+            # a dead end even though the CLI recovered from every one of them.
+            if status.startswith("2"):
+                self._rate_limit_responses = 0
             return
-        self._count_rate_limited_response(event.get("path", ""))
+        self._count_rate_limited_response(event.get("path", ""), request_id)
 
     def _note_ignored_response(self, event: dict) -> None:
         """Count a 429 carried by a response the proxy could not decode.
@@ -418,18 +424,29 @@ class _CCITurnCoordinator:
         remembered = self._response_status_by_request.get(request_id)
         if not remembered or remembered[0] != "429":
             return
-        self._count_rate_limited_response(event.get("path") or remembered[1])
+        self._count_rate_limited_response(
+            event.get("path") or remembered[1], request_id)
 
-    def _count_rate_limited_response(self, path: str) -> None:
+    def _count_rate_limited_response(self, path: str, request_id: str = "") -> None:
         """Fail the turn once the provider keeps rejecting with 429.
 
         The CLI retries a 429 by itself, which is exactly why the failure is
         invisible: the turn never ends, and the user only sees an agent that is
         "working". Past the threshold the turn fails with the real cause, on the
         non-retry path, so it reaches the conversation instead of looping.
+
+        One response is one failure: an undecodable body is reported twice, as
+        `response_start status=429` and then as `response_ignored`, and counting
+        both made the real threshold one short of what the message announced.
         """
         if not self._is_model_request_path(path):
             return
+        if request_id:
+            if request_id in self._rate_limited_request_ids:
+                return
+            if len(self._rate_limited_request_ids) > 64:
+                self._rate_limited_request_ids.clear()
+            self._rate_limited_request_ids.add(request_id)
         self._rate_limit_responses += 1
         logger.warning(
             "[cci-provider] session=%s observed %d/%d rate-limited model "

@@ -123,18 +123,49 @@ def test_a_429_on_a_side_endpoint_is_not_a_blocked_turn():
     assert coord._rate_limit_responses == 0
 
 
-def test_a_discarded_429_body_is_counted_through_its_status():
-    """The undecodable body carries no status; the paired start does."""
+def test_a_discarded_429_body_is_counted_once():
+    """The undecodable body carries no status; the paired start does.
+
+    That one response is reported twice (`response_start status=429`, then
+    `response_ignored`), and counting both put the real threshold one short of
+    what the failure message announced.
+    """
     coord = _CCITurnCoordinator(_EmptyService(), "sess")
     coord._remember_response_status(
         {"type": "response_start", "request_id": "r9", "status": "429",
          "path": "/v1/messages"})
     ignored = {"type": "response_ignored", "request_id": "r9",
                "reason": "unsupported_content_encoding"}
-    with pytest.raises(LLMCallError):
-        for _ in range(2):
-            coord._note_ignored_response(ignored)
-    assert coord._rate_limit_responses == 3
+    for _ in range(2):
+        coord._note_ignored_response(ignored)
+    assert coord._rate_limit_responses == 1
+
+
+def test_three_undecodable_429_responses_still_fail_the_turn():
+    coord = _CCITurnCoordinator(_EmptyService(), "sess")
+    with pytest.raises(LLMCallError) as info:
+        for index in range(3):
+            coord._remember_response_status(
+                {"type": "response_start", "request_id": f"r{index}",
+                 "status": "429", "path": "/v1/messages"})
+            coord._note_ignored_response(
+                {"type": "response_ignored", "request_id": f"r{index}",
+                 "reason": "unsupported_content_encoding"})
+    assert info.value.category == "rate_limited"
+
+
+def test_a_served_model_response_resets_the_streak():
+    """Transients the CLI recovered from must not add up to a dead end."""
+    coord = _CCITurnCoordinator(_EmptyService(), "sess")
+    for index in range(4):
+        coord._remember_response_status(
+            {"type": "response_start", "request_id": f"r{index}",
+             "status": "429", "path": "/v1/messages"})
+        assert coord._rate_limit_responses == 1
+        coord._remember_response_status(
+            {"type": "response_start", "request_id": f"ok{index}",
+             "status": "200", "path": "/v1/messages"})
+    assert coord._rate_limit_responses == 0
 
 
 def test_an_ignored_response_without_a_429_status_is_ignored():

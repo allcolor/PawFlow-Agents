@@ -67,6 +67,20 @@ def test_non_filestore_refs_pass_through(_store):
     assert share.public_url("") == ""
 
 
+def test_a_third_party_files_url_is_never_rewritten(_store):
+    """`/files/<id>` is also a CDN shape -- Meshy serves /files/<task>/<name>.
+
+    Rewriting such a URL against our own base turned a working link into a dead
+    one (http://localhost:9090/files/<task>) and warned about a file PawFlow
+    never held.
+    """
+    share = TemporaryPublicRefs(_PUBLIC, "u1")
+    for url in ("https://assets.meshy.ai/files/task123/output.glb",
+                "https://cdn.example.com/files/2024/model.glb?sig=abc",
+                "https://example.org/filestore/a/b/c.png"):
+        assert share.public_url(url) == url
+
+
 def test_service_that_reads_filestore_locally_is_untouched(_store):
     fid = _make_file(_store)
 

@@ -67,6 +67,31 @@ def _filestore_ref(url: str):
     return parts[0], (parts[1] if len(parts) > 1 else "")
 
 
+def _is_filestore_owned_ref(url: str, file_id: str) -> bool:
+    """True when ``url`` really names a file this FileStore holds.
+
+    ``/files/<id>`` is also a shape third-party CDNs use -- Meshy serves
+    ``https://assets.meshy.ai/files/<task>/<name>``, which ``_filestore_ref``
+    reads as the id ``<task>``. Rewriting such a URL against our own base turns
+    a working link into a dead one and warns about a file that was never ours,
+    so only a native FileStore form, or an id the store actually knows, is
+    re-shared. An unknown id needs no rewrite either way: there is nothing to
+    share.
+    """
+    raw = (url or "").strip()
+    if raw.startswith(_FS_PREFIX):
+        return True
+    if not urllib.parse.urlparse(raw).scheme and raw.startswith("/filestore/"):
+        # The relay mount form carries no host and is inherently ours.
+        return True
+    try:
+        from core.file_store import FileStore
+        return FileStore.instance().get_metadata(file_id) is not None
+    except Exception:
+        logger.debug("filestore lookup failed for %s", file_id, exc_info=True)
+        return False
+
+
 def _is_public_base(base_url: str) -> bool:
     """True when base_url is an internet-reachable HTTP(S) URL.
 
@@ -176,6 +201,8 @@ class TemporaryPublicRefs:
             return url
         file_id = _filestore_ref(url)[0]
         if not file_id:
+            return url
+        if not _is_filestore_owned_ref(url, file_id):
             return url
         base, is_public = self._effective_base(service)
         if is_public:

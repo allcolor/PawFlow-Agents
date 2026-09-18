@@ -636,7 +636,11 @@ class TestConversationStoreContext(unittest.TestCase):
         ctx = [{"role": "system", "content": "summary"}]
         assert store.save_context("c1", ctx) is True
         loaded = store.load_context("c1")
-        assert loaded == ctx
+        # The persisted row carries its stamp (see _stamp_line); the round-trip
+        # this test is about is the content.
+        _stamp = ("seq", "msg_id", "ts", "conversation_id", "user_id")
+        assert [{k: v for k, v in row.items() if k not in _stamp}
+                for row in loaded] == ctx
 
     def test_context_persists_to_disk(self):
         """Context survives singleton reset (disk reload)."""
@@ -648,7 +652,12 @@ class TestConversationStoreContext(unittest.TestCase):
         ConversationStore.reset()
         store2 = ConversationStore(store_dir=self._tmpdir)
         loaded = store2.load_context("c1")
-        assert loaded == ctx
+        # A rewrite stamps every persisted row (see _stamp_line); the content is
+        # what has to survive a reload, which is what this test is about.
+        _stamp = ("seq", "msg_id", "ts", "conversation_id", "user_id")
+        assert [{k: v for k, v in row.items() if k not in _stamp}
+                for row in loaded] == ctx
+        assert all(row.get("seq") for row in loaded)
 
     def test_backward_compat(self):
         """Conversations created via save() can be loaded and have no diverged context."""

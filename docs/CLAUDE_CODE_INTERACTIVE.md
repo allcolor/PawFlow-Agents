@@ -430,7 +430,7 @@ Timing controls are read once when the provider modules are imported:
   behavior).
 - A TUI that is blocked waiting for input is surfaced instead of waited on.
   The pane is the only place that says a turn cannot progress: a rate-limit
-  banner (`429`, `usage limit`, `limit will reset`) stops the CLI from issuing
+  banner (`429`, `reached ... limit`, `limit will reset`) stops the CLI from issuing
   requests, and a question or a model menu waits for a keystroke nobody sends.
   Both used to look like a silent but healthy turn - no event, no `Stop` hook,
   an agent stuck in Active Agents. After the same silence window as the
@@ -439,8 +439,14 @@ Timing controls are read once when the provider modules are imported:
   fails the turn with a non-retryable `LLMCallError` naming the pane line:
   `rate_limited` for a banner, `question` for a prompt. Question patterns must
   match one of the last three lines, so an answer that discusses a question, or
-  a plan with numbered steps, is not a false positive. Wired on the interactive
-  paths of Claude Code and Codex and on the managed MCP coordinator.
+  a plan with numbered steps, is not a false positive. A pane that still shows
+  the CLI working (`esc to interrupt`, mirroring `_RUNNING_MARKERS`) is never a
+  blocked one: a long local tool emits no event for minutes, so the probe reads
+  exactly the pane of a healthy turn, where rate-limit wording is the model's
+  prose, a path it is editing, or the status footer (`Approaching usage limit`
+  is not a banner either -- a reached limit names `reached`/`exceeded`). Wired
+  on the interactive paths of Claude Code and Codex and on the managed MCP
+  coordinator.
 - A model request answered with a bare `429` is reported instead of discarded.
   Its body is not decodable, so the proxy only emits `response_start
   status=429` and the CLI retries the same limit on its own: the turn never
@@ -448,6 +454,11 @@ Timing controls are read once when the provider modules are imported:
   request (a discarded body carries no status of its own), counted only for the
   model endpoint (`/v1/messages`, `/responses`), and the third one fails the
   turn as a non-retryable `rate_limited` error carrying `provider_status=429`.
+  One response is one failure -- that body is reported twice, as
+  `response_start status=429` then `response_ignored`, and counting both put the
+  real threshold one short of the announced one. A served model response resets
+  the streak: three transients spread over a long turn the CLI recovered from
+  are not a dead end.
 - `PAWFLOW_CCI_PASTE_SETTLE_SECONDS` sets the delay after `paste-buffer` and
   before the first `Enter`. Claude Code defaults to `0.2` seconds. Codex uses
   at most `0.2` seconds even when a larger inherited override is configured.

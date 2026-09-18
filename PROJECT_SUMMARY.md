@@ -17,19 +17,30 @@ The current core value is twofold:
    delegation, streaming.
 2. **Pipeline engine**: DAG execution over FlowFiles, task catalog, triggers, backpressure, checkpoints, crash recovery, provenance, and IO/data/control integrations.
 
-## Beta.269 implementation highlights
+## Beta.279 implementation highlights
 
-- Interactive session shutdown closes event readers and releases capture-owned
-  activity markers, so completed flash delegates no longer remain active or
-  restart captures after their containers have been removed.
-- Flash delegate inspection preserves the selected conversation agent and
-  composer target.
-- Sidebar context menus survive incoming-message auto-scroll and scrolling
-  inside the menu; scrolling the source panel or page still dismisses them.
-- The README provider table presents native ACP and OpenCode connectors,
-  external MCP and AG-UI agents, remote A2A targets, ACP registry imports,
-  Azure OpenAI and GitHub Copilot alongside the other supported providers.
-  Configuration guides remain linked from each connector.
+- An interactive CLI turn (Claude Code, Codex, and the managed MCP providers)
+  that stops because the provider rate-limited it or because the TUI is asking a
+  question now fails with the pane line that explains it, instead of polling
+  silently behind an agent that could not be stopped. A bare HTTP `429` whose
+  body the proxy cannot decode is counted and reported too, rather than
+  discarded while the CLI retried the same limit by itself.
+- A provider outage no longer ping-pongs through a delegate chain: a turn that
+  ended on a fatal LLM error is not delivered to its caller as a reply, so the
+  failure reaches the conversation once instead of every hop re-posting it.
+- An open LLM circuit breaker reports the provider failure that tripped it
+  (`last error` in the fast-fail message), never counts its own rejection as a
+  new provider failure, and waits out the announced cooldown -- cancellable by
+  Stop -- instead of failing the turn on the spot.
+- Capability tools re-share a FileStore reference in every form an agent may
+  use, and say so when a reference cannot be shared publicly instead of handing
+  an external provider an unfetchable URL.
+- Relay Desktop can complete a local stop with **Force cleanup**
+  (`pawflow-relay cleanup <physical> --force`) when only the server side of the
+  cleanup fails, reports the steps it skipped, and appends everything it logs
+  to `<app data>/logs/relay-desktop.log`. On Windows a terminated launcher is no
+  longer mistaken for a running one, so a stopped relay no longer keeps its
+  runtime lock until the file is deleted by hand and the desktop restarted.
 
 ## What lives in the repository
 

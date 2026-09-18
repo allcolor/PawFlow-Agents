@@ -847,15 +847,21 @@ the transcript has none to send -- thinking is its own row there -- and while
 Anthropic's own API tolerates that on an older turn, a thinking-mode gateway
 refuses the whole request: "The content[].thinking in the thinking mode must be
 passed back to the API". The reasoning cannot be reconstructed, so the request
-is retried once with thinking disabled (restoring the caller's temperature) and
-the verdict is remembered in `_THINKING_ECHO_REQUIRED_ENDPOINTS`, keyed by the
-configured base URL and model like its chat/completions twin. Later calls --
-streaming or not -- then stop enabling thinking for that endpoint instead of
-paying for the same refusal again.
-The turn that lost its reasoning is also named, once per conversation
-(`[anthropic] replayed tool_use turn(s) ... carry no thinking`): the loss
-happens when the history is rebuilt, not when the request is refused, so the
-message ids are the evidence that locates it.
+
+The contract is about the turn, not the row: a model is free not to reason at
+all on a given step, and that reasoning is then unrecoverable by construction.
+Measured on a live conversation, 38 of its 242 tool_use turns held no thinking
+-- and a thinking-mode gateway validates every one of them, refusing the whole
+request with "The content[].thinking in the thinking mode must be passed back
+to the API". The verdict is therefore taken *before* the body is built: when a
+replayed tool_use turn carries no thinking, or when
+`_THINKING_ECHO_REQUIRED_ENDPOINTS` already learned that this endpoint refuses
+such turns (keyed by configured base URL and model, like its chat/completions
+twin), the request is sent without thinking instead of paying for a refusal
+that is certain. A rejection that arrives anyway is retried once without
+thinking, restoring the caller's temperature. Because "which turn" is the
+answer that locates the loss, the turn ids are logged once per conversation
+(`[anthropic] replayed tool_use turn(s) ... carry no thinking`).
 
 ## Claude Code Providers
 

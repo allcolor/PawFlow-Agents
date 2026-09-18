@@ -108,10 +108,19 @@ def _messages():
     ]
 
 
-def _stream(client, responses, monkeypatch, model="deepseek-flash"):
+def _reasoned_messages():
+    """The same turn with its thinking still attached: the live tool loop."""
+    messages = _messages()
+    messages[1].thinking = "I must call the tool"
+    return messages
+
+
+def _stream(client, responses, monkeypatch, model="deepseek-flash",
+            messages=None):
     bodies = _scripted_transport(monkeypatch, responses)
     response = LLMAnthropicMixin._stream_anthropic(
-        client, _messages(), model, 0.5, 0, None, None, thinking_budget=1024,
+        client, messages or _messages(), model, 0.5, 0, None, None,
+        thinking_budget=1024,
         call_conversation_id="conv1")
     return bodies, response
 
@@ -135,19 +144,34 @@ class TestErrorDetection:
 
 class TestStreamRetry:
     def test_thinking_is_sent_without_a_verdict(self, monkeypatch):
-        bodies, response = _stream(_client(), [_ScriptedResponse(200, STREAM_OK)],
-                                   monkeypatch)
+        bodies, response = _stream(
+            _client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch,
+            messages=_reasoned_messages())
 
         assert response.content == "done"
         assert bodies[0]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
         assert bodies[0]["temperature"] == 1
+
+    def test_a_reasonless_tool_turn_never_enables_thinking(self, monkeypatch):
+        """The model did not reason on that step, so nothing can be replayed.
+
+        Asking for thinking anyway is a guaranteed refusal, so the request is
+        sent without it from the first attempt -- no 400 is paid, and the turn
+        still runs.
+        """
+        bodies, response = _stream(
+            _client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch)
+
+        assert response.content == "done"
+        assert len(bodies) == 1
+        assert "thinking" not in bodies[0]
 
     def test_rejected_turn_is_retried_without_thinking(self, monkeypatch):
         bodies, response = _stream(
             _client(),
             [_ScriptedResponse(400, UPSTREAM_ERROR.encode(), reason="Bad Request"),
              _ScriptedResponse(200, STREAM_OK)],
-            monkeypatch)
+            monkeypatch, messages=_reasoned_messages())
 
         assert response.content == "done"
         assert len(bodies) == 2
@@ -163,12 +187,12 @@ class TestStreamRetry:
             _ScriptedResponse(200, STREAM_OK),
         ])
         LLMAnthropicMixin._stream_anthropic(
-            _client(), _messages(), "deepseek-flash", 0.5, 0, None, None,
+            _client(), _reasoned_messages(), "deepseek-flash", 0.5, 0, None, None,
             thinking_budget=1024)
         # Each call runs on its own clone, so the verdict has to outlive the
         # client that learned it.
         LLMAnthropicMixin._stream_anthropic(
-            _client(), _messages(), "deepseek-flash", 0.5, 0, None, None,
+            _client(), _reasoned_messages(), "deepseek-flash", 0.5, 0, None, None,
             thinking_budget=1024)
 
         assert len(bodies) == 3
@@ -181,10 +205,10 @@ class TestStreamRetry:
             _ScriptedResponse(200, STREAM_OK),
         ])
         LLMAnthropicMixin._stream_anthropic(
-            _client(), _messages(), "deepseek-flash", 0.5, 0, None, None,
+            _client(), _reasoned_messages(), "deepseek-flash", 0.5, 0, None, None,
             thinking_budget=1024)
         LLMAnthropicMixin._stream_anthropic(
-            _client(), _messages(), "another-model", 0.5, 0, None, None,
+            _client(), _reasoned_messages(), "another-model", 0.5, 0, None, None,
             thinking_budget=1024)
 
         assert bodies[2]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
@@ -242,9 +266,25 @@ class TestNonStreaming:
             })
 
         client._complete_anthropic(
-            _messages(), "deepseek-flash", 0.5, 0, thinking_budget=1024)
+            _reasoned_messages(), "deepseek-flash", 0.5, 0,
+            thinking_budget=1024)
 
         assert posted[0]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+
+    def test_a_reasonless_tool_turn_skips_thinking(self):
+        client = _client()
+        posted = []
+        client._http_post = lambda path, body, headers: (
+            posted.append(body) or {
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            })
+
+        client._complete_anthropic(
+            _messages(), "deepseek-flash", 0.5, 0, thinking_budget=1024)
+
+        assert "thinking" not in posted[0]
+        assert posted[0]["temperature"] == 0.5
 
 
 class TestMissingThinkingReport:

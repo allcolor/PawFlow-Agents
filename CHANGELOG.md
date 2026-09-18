@@ -74,19 +74,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the announced cooldown (abort-aware, so Stop still cancels) before
   re-attempting instead of failing the turn on the spot. A provider usage limit
   used to reach the conversation only as a bare "circuit open" message.
-- An Anthropic-compatible thinking-mode gateway no longer fails a turn whose
-  replayed thinking blocks are missing. PawFlow sends an assistant turn's
-  `thinking` block back when the message still carries it, but a turn rebuilt
-  from the transcript (resume, wake, compaction) has none to send -- thinking is
-  its own row there -- and such a gateway answers 400 "The content[].thinking in
-  the thinking mode must be passed back to the API" for the whole turn, where
-  Anthropic's own API tolerates the older turn. The reasoning cannot be
-  reconstructed -- a model is free not to reason on a step, and a live
-  conversation held 38 tool_use turns out of 242 with none -- so the request is
-  now sent without thinking as soon as such a turn is in the history, or as
-  soon as the endpoint is known to refuse that shape, instead of paying for a
-  guaranteed refusal; a rejection that still arrives is retried once without
-  thinking. The turn ids are logged once per conversation.
+- An Anthropic-compatible thinking-mode gateway that answers 400 "The
+  content[].thinking in the thinking mode must be passed back to the API" no
+  longer fails the turn: the request is retried once without thinking,
+  restoring the caller's temperature, and the warning names the conversation
+  and the model. Thinking is still requested up front -- a turn whose model did
+  not reason on that step replayed fine in 38 of the 242 tool_use turns of the
+  conversation where this was observed -- and nothing is latched per endpoint,
+  so later turns keep their reasoning.
 
 ## [1.0.0-beta.278] — 2026-09-18
 

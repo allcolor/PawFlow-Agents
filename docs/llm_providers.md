@@ -852,6 +852,10 @@ the verdict is remembered in `_THINKING_ECHO_REQUIRED_ENDPOINTS`, keyed by the
 configured base URL and model like its chat/completions twin. Later calls --
 streaming or not -- then stop enabling thinking for that endpoint instead of
 paying for the same refusal again.
+The turn that lost its reasoning is also named, once per conversation
+(`[anthropic] replayed tool_use turn(s) ... carry no thinking`): the loss
+happens when the history is rebuilt, not when the request is refused, so the
+message ids are the evidence that locates it.
 
 ## Claude Code Providers
 

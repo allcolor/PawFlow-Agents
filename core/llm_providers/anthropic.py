@@ -21,6 +21,13 @@ _ANTHROPIC_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 #: ``openai._REASONING_ECHO_ENDPOINTS``.
 _THINKING_ECHO_REQUIRED_ENDPOINTS: set = set()
 
+#: Conversations already reported for a replayed tool_use turn that arrived
+#: without its thinking while thinking is enabled. The gateway contract is
+#: about the turns PawFlow hands back, so the useful evidence is never "the
+#: request failed" but "which turn lost its reasoning" -- reported once, not on
+#: every call of a resumed turn.
+_THINKING_MISSING_REPORTED: set = set()
+
 
 class LLMAnthropicMixin:
     """Anthropic provider methods: complete, stream, message building."""
@@ -95,6 +102,33 @@ class LLMAnthropicMixin:
         """Whether this endpoint already refused a turn without its thinking."""
         return self._thinking_echo_key(model) in _THINKING_ECHO_REQUIRED_ENDPOINTS
 
+    def _report_missing_thinking(self, messages, conversation_id: str) -> None:
+        """Name the replayed turn that lost its thinking before it is refused.
+
+        A tool_use turn must be handed back with the thinking it was produced
+        with; when the history is rebuilt without it, the request is refused by
+        any thinking-mode gateway. Retrying without thinking keeps the agent
+        working, but the loss itself happens earlier, so the turn's id is what
+        has to reach the log -- once per conversation, not once per call.
+        """
+        key = str(conversation_id or "")
+        if key and key in _THINKING_MISSING_REPORTED:
+            return
+        missing = [str(getattr(m, "msg_id", "") or "?")
+                   for m in messages
+                   if getattr(m, "role", "") == "assistant"
+                   and getattr(m, "tool_calls", None)
+                   and not getattr(m, "thinking", "")]
+        if not missing:
+            return
+        if key:
+            _THINKING_MISSING_REPORTED.add(key)
+        logger.warning(
+            "[anthropic] replayed tool_use turn(s) %s carry no thinking while "
+            "thinking is enabled (conversation=%s): a thinking-mode gateway "
+            "refuses that shape, and this is where the reasoning was lost",
+            ", ".join(missing[:5]), key[:8] or "-")
+
     def _stream_anthropic(self, messages, model, temperature, max_tokens, tools, callback, thinking_budget: int = 0, thinking_callback=None,
                            *, call_user_id: str = "", call_conversation_id: str = ""):
         """Anthropic streaming: reads SSE events from the API."""
@@ -108,6 +142,9 @@ class LLMAnthropicMixin:
             messages,
             user_id=call_user_id,
             conversation_id=call_conversation_id)
+
+        if thinking_budget > 0:
+            self._report_missing_thinking(messages, call_conversation_id)
 
         # Add cache_control breakpoints for KV cache optimization
         self._apply_anthropic_cache_control(api_messages)

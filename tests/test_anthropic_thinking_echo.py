@@ -17,7 +17,8 @@ import pytest
 from core._llm_types import LLMCallError, LLMMessage, LLMToolCall
 from core.llm_client import LLMClient
 from core.llm_providers.anthropic import (
-    LLMAnthropicMixin, _THINKING_ECHO_REQUIRED_ENDPOINTS)
+    LLMAnthropicMixin, _THINKING_ECHO_REQUIRED_ENDPOINTS,
+    _THINKING_MISSING_REPORTED)
 
 UPSTREAM_ERROR = (
     'LLM API error 400: {"error":{"message":"The content[].thinking in the '
@@ -88,8 +89,10 @@ def _client(**config):
 def _isolated_endpoint_registry():
     """The learned verdict is process-wide; no test may inherit another's."""
     _THINKING_ECHO_REQUIRED_ENDPOINTS.clear()
+    _THINKING_MISSING_REPORTED.clear()
     yield
     _THINKING_ECHO_REQUIRED_ENDPOINTS.clear()
+    _THINKING_MISSING_REPORTED.clear()
 
 
 def _messages():
@@ -108,8 +111,14 @@ def _messages():
 def _stream(client, responses, monkeypatch, model="deepseek-flash"):
     bodies = _scripted_transport(monkeypatch, responses)
     response = LLMAnthropicMixin._stream_anthropic(
-        client, _messages(), model, 0.5, 0, None, None, thinking_budget=1024)
+        client, _messages(), model, 0.5, 0, None, None, thinking_budget=1024,
+        call_conversation_id="conv1")
     return bodies, response
+
+
+def _missing_reports(caplog):
+    return [r.getMessage() for r in caplog.records
+            if "carry no thinking" in r.getMessage()]
 
 
 class TestErrorDetection:
@@ -236,3 +245,43 @@ class TestNonStreaming:
             _messages(), "deepseek-flash", 0.5, 0, thinking_budget=1024)
 
         assert posted[0]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+
+
+class TestMissingThinkingReport:
+    """The reasoning is lost earlier; the log has to name the turn."""
+
+    def test_a_tool_use_turn_without_thinking_is_reported(self, monkeypatch, caplog):
+        with caplog.at_level("WARNING"):
+            _stream(_client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch)
+
+        reports = _missing_reports(caplog)
+        assert reports and "conv1" in reports[0]
+
+    def test_the_turn_is_reported_once_per_conversation(self, monkeypatch, caplog):
+        with caplog.at_level("WARNING"):
+            _stream(_client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch)
+            _stream(_client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch)
+
+        assert len(_missing_reports(caplog)) == 1
+
+    def test_a_reasoned_turn_is_not_reported(self, monkeypatch, caplog):
+        messages = _messages()
+        messages[1].thinking = "I must call the tool"
+        _scripted_transport(monkeypatch, [_ScriptedResponse(200, STREAM_OK)])
+
+        with caplog.at_level("WARNING"):
+            LLMAnthropicMixin._stream_anthropic(
+                _client(), messages, "deepseek-flash", 0.5, 0, None, None,
+                thinking_budget=1024, call_conversation_id="conv1")
+
+        assert _missing_reports(caplog) == []
+
+    def test_the_check_is_off_without_a_thinking_budget(self, monkeypatch, caplog):
+        _scripted_transport(monkeypatch, [_ScriptedResponse(200, STREAM_OK)])
+
+        with caplog.at_level("WARNING"):
+            LLMAnthropicMixin._stream_anthropic(
+                _client(), _messages(), "deepseek-flash", 0.5, 0, None, None,
+                call_conversation_id="conv1")
+
+        assert _missing_reports(caplog) == []

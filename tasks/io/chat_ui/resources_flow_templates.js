@@ -368,15 +368,12 @@ function _showRelayInfoDialog(relayId, details, isDefault, bindingAgent) {
       + '</div>';
     // Per-agent toggles (from conversation agents)
     try {
-      var agentEls = document.querySelectorAll('#_ncAgentsSel [data-id], .res-agent-name');
-      // Simpler: get agents from resource panel
+      // Only the resource panel's agent rows: message bubbles carry
+      // data-agent-name too, one per message.
       var rpAgents = [];
-      document.querySelectorAll('[data-agent-name]').forEach(function(el) { rpAgents.push(el.dataset.agentName); });
-      if (!rpAgents.length) {
-        // Fallback: get from active_resources in cached data
-        var cachedAgents = window._lastResourceData && window._lastResourceData.agents;
-        if (cachedAgents) rpAgents = cachedAgents.filter(function(a) { return a.active; }).map(function(a) { return a.name; });
-      }
+      document.querySelectorAll('[data-resource-row^="agent:"][data-agent-name]').forEach(function(el) {
+        if (rpAgents.indexOf(el.dataset.agentName) === -1) rpAgents.push(el.dataset.agentName);
+      });
       rpAgents.forEach(function(agentName) {
         var aLocal = dl[agentName];
         var aLabel = aLocal === true ? t('local') : aLocal === false ? t('docker') : t('notSet');

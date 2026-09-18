@@ -133,6 +133,29 @@ def test_relay_info_dialog_reconnects_only_editable_managed_server_relays():
     assert "t('reconnectRelay')" in src
 
 
+def test_relay_info_dialog_lists_each_conversation_agent_once():
+    src = Path(
+        "tasks/io/chat_ui/resources_flow_templates.js").read_text(
+            encoding="utf-8")
+    dialog = src[src.index("function _showRelayInfoDialog"):
+                 src.index("function _reconnectServerRelay")]
+
+    # Message bubbles carry data-agent-name too: an unscoped query adds one
+    # toggle row per chat message.
+    assert "querySelectorAll('[data-agent-name]')" not in dialog
+    assert "[data-resource-row^=\"agent:\"][data-agent-name]" in dialog
+    assert "rpAgents.indexOf(el.dataset.agentName) === -1" in dialog
+
+
+def test_exec_dialog_scrolls_instead_of_overflowing_the_viewport():
+    css = Path("tasks/io/chat_ui/css/80_dialogs.css").read_text(encoding="utf-8")
+    rule = css[css.index(".exec-dialog {"):]
+    rule = rule[:rule.index("}")]
+
+    assert "max-height: 90vh" in rule
+    assert "overflow-y: auto" in rule
+
+
 def test_agent_attach_dialog_has_only_explicit_close_handlers():
     js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     start = js.index("async function showAddAgentToConvDialog")

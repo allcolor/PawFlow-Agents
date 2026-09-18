@@ -14,6 +14,14 @@ logger = logging.getLogger(__name__)
 _ANTHROPIC_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
+#: Endpoints (base_url, model) that rejected a thinking-enabled request because
+#: the assistant turns they were handed back did not carry their thinking
+#: blocks. Learned from the first 400 and reused process-wide, so later calls
+#: stop paying for it -- the Anthropic-compatible twin of
+#: ``openai._REASONING_ECHO_ENDPOINTS``.
+_THINKING_ECHO_REQUIRED_ENDPOINTS: set = set()
+
+
 class LLMAnthropicMixin:
     """Anthropic provider methods: complete, stream, message building."""
 
@@ -59,6 +67,34 @@ class LLMAnthropicMixin:
         elif tokens_in > 0:
             logger.info("Anthropic KV cache: MISS — %d input tokens, 0 cached", tokens_in)
 
+    @staticmethod
+    def _is_thinking_echo_required_error(error_text: str) -> bool:
+        """True when the endpoint refuses a turn missing its thinking blocks.
+
+        Thinking-mode gateways answer 400 with, for example, "The
+        content[].thinking in the thinking mode must be passed back to the
+        API". Both halves are required, so an unrelated 400 that merely
+        mentions the field is not mistaken for this contract -- the same guard
+        the chat/completions reasoning echo uses.
+        """
+        text = (error_text or "").lower()
+        return "thinking mode" in text and "must be passed back" in text
+
+    def _thinking_echo_key(self, model: str) -> tuple:
+        """Identify the endpoint without resolving its relay proxy form.
+
+        Reading ``self.base_url`` mints a fresh ephemeral relay token, and the
+        provider reads it exactly once per call, so the key uses the configured
+        template instead; a service without one falls back to its provider
+        name. Mirrors ``openai._reasoning_echo_key``.
+        """
+        return (str(self._cfg("base_url", "") or self.provider).rstrip("/"),
+                str(model or ""))
+
+    def _thinking_echo_required(self, model: str) -> bool:
+        """Whether this endpoint already refused a turn without its thinking."""
+        return self._thinking_echo_key(model) in _THINKING_ECHO_REQUIRED_ENDPOINTS
+
     def _stream_anthropic(self, messages, model, temperature, max_tokens, tools, callback, thinking_budget: int = 0, thinking_callback=None,
                            *, call_user_id: str = "", call_conversation_id: str = ""):
         """Anthropic streaming: reads SSE events from the API."""
@@ -91,8 +127,18 @@ class LLMAnthropicMixin:
         }
         self._apply_anthropic_effort(body)
         if thinking_budget > 0:
-            body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
-            body["temperature"] = 1  # Required by Anthropic when thinking is enabled
+            if self._thinking_echo_required(model):
+                # This endpoint already refused a replayed turn whose thinking
+                # blocks were missing (a resumed turn rebuilds its history from
+                # the transcript, where thinking is a separate row). Enabling
+                # thinking again would be refused identically, so the turn runs
+                # without it instead of failing.
+                logger.info(
+                    "Endpoint requires replayed thinking blocks; sending "
+                    "without thinking for model %s", model)
+            else:
+                body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+                body["temperature"] = 1  # Required by Anthropic when thinking is enabled
         _cache_ttl = int(self._cfg("anthropic_cache_ttl", 0))
         _cc = {"type": "ephemeral"}
         if _cache_ttl > 0:
@@ -140,11 +186,46 @@ class LLMAnthropicMixin:
 
             if response.status >= 400:
                 error_body = response.read().decode("utf-8")
-                from core.llm_failure_classifier import classify_http_error
-                raise classify_http_error(
-                    response.status, headers=dict(response.getheaders()),
-                    body=error_body, provider=getattr(self, "provider", ""),
-                    model=model)
+                if (thinking_budget > 0
+                        and self._is_thinking_echo_required_error(error_body)):
+                    # The endpoint validates the assistant turns it is handed
+                    # back: a turn that reasoned must carry its `thinking`
+                    # blocks again. PawFlow replays them when it still has them,
+                    # but a turn rebuilt from the transcript (resume, wake,
+                    # compaction) has none to send, and this gateway -- unlike
+                    # Anthropic's own API -- refuses the whole turn for it.
+                    # Remember the verdict for the endpoint and retry once
+                    # without thinking, which removes the contract entirely.
+                    logger.warning(
+                        "Endpoint rejected a replayed turn without its thinking "
+                        "blocks; retrying without thinking enabled")
+                    _THINKING_ECHO_REQUIRED_ENDPOINTS.add(
+                        self._thinking_echo_key(model))
+                    conn.close()
+                    if parsed.scheme == "https":
+                        conn = http.client.HTTPSConnection(host, port, timeout=self.timeout, context=ctx)
+                    else:
+                        conn = http.client.HTTPConnection(host, port, timeout=self.timeout)
+                    self._active_http_conn = conn
+                    body.pop("thinking", None)
+                    body["temperature"] = temperature
+                    json_body = json.dumps(body).encode("utf-8")
+                    headers["Content-Length"] = str(len(json_body))
+                    conn.request("POST", full_path, body=json_body, headers=headers)
+                    response = conn.getresponse()
+                    if response.status >= 400:
+                        error_body = response.read().decode("utf-8")
+                        from core.llm_failure_classifier import classify_http_error
+                        raise classify_http_error(
+                            response.status, headers=dict(response.getheaders()),
+                            body=error_body, provider=getattr(self, "provider", ""),
+                            model=model)
+                else:
+                    from core.llm_failure_classifier import classify_http_error
+                    raise classify_http_error(
+                        response.status, headers=dict(response.getheaders()),
+                        body=error_body, provider=getattr(self, "provider", ""),
+                        model=model)
 
             content_parts: List[str] = []
             tool_calls: list = []
@@ -661,8 +742,16 @@ class LLMAnthropicMixin:
         body: Dict[str, Any] = {"model": model, "messages": api_messages, "max_tokens": max_tokens if max_tokens > 0 else 64000, "temperature": temperature}
         self._apply_anthropic_effort(body)
         if thinking_budget > 0:
-            body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
-            body["temperature"] = 1  # Required by Anthropic when thinking is enabled
+            # A non-streaming call cannot pay for a rejection twice (the helper
+            # raises), so it simply honours a verdict the streaming path
+            # already learned for this endpoint.
+            if self._thinking_echo_required(model):
+                logger.info(
+                    "Endpoint requires replayed thinking blocks; sending "
+                    "without thinking for model %s", model)
+            else:
+                body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+                body["temperature"] = 1  # Required by Anthropic when thinking is enabled
         _cache_ttl = int(self._cfg("anthropic_cache_ttl", 0))
         _cc = {"type": "ephemeral"}
         if _cache_ttl > 0:

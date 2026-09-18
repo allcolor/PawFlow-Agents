@@ -840,6 +840,19 @@ detection is deliberately narrow: the body must mention both
 `reasoning_content` and `thinking mode`, so an unrelated 400 that happens to
 name the field is not mistaken for this contract.
 
+The Anthropic dialect has the mirror-image contract. `_build_anthropic_messages`
+replays an assistant turn's `thinking` block (with its signature) whenever the
+message still carries one, which covers the live tool loop. A turn rebuilt from
+the transcript has none to send -- thinking is its own row there -- and while
+Anthropic's own API tolerates that on an older turn, a thinking-mode gateway
+refuses the whole request: "The content[].thinking in the thinking mode must be
+passed back to the API". The reasoning cannot be reconstructed, so the request
+is retried once with thinking disabled (restoring the caller's temperature) and
+the verdict is remembered in `_THINKING_ECHO_REQUIRED_ENDPOINTS`, keyed by the
+configured base URL and model like its chat/completions twin. Later calls --
+streaming or not -- then stop enabling thinking for that endpoint instead of
+paying for the same refusal again.
+
 ## Claude Code Providers
 
 PawFlow has two Claude Code provider surfaces:

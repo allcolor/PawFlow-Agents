@@ -14,14 +14,6 @@ logger = logging.getLogger(__name__)
 _ANTHROPIC_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
-#: Conversations already reported for a replayed tool_use turn that arrived
-#: without its thinking while thinking is enabled. The gateway contract is
-#: about the turns PawFlow hands back, so the useful evidence is never "the
-#: request failed" but "which turn lost its reasoning" -- reported once, not on
-#: every call of a resumed turn.
-_THINKING_MISSING_REPORTED: set = set()
-
-
 class LLMAnthropicMixin:
     """Anthropic provider methods: complete, stream, message building."""
 
@@ -80,39 +72,6 @@ class LLMAnthropicMixin:
         text = (error_text or "").lower()
         return "thinking mode" in text and "must be passed back" in text
 
-    def _report_missing_thinking(self, messages, conversation_id: str) -> bool:
-        """True when a replayed tool_use turn carries no thinking.
-
-        A thinking-mode gateway validates the assistant turn it is handed back
-        to continue -- the last one with tool calls -- and refuses the whole
-        request when that turn shows tool calls without the reasoning that
-        produced them. A model is free not to reason at all on a given step,
-        so such a turn is conclusive: this request cannot claim thinking mode.
-        Only that turn is inspected on purpose: older turns are not validated
-        the same way, and treating them as evidence would drop thinking from
-        turns that would have honoured it. The turn id is logged once per
-        conversation, because "which turn" is the useful answer.
-        """
-        key = str(conversation_id or "")
-        missing = []
-        for m in reversed(list(messages)):
-            if (getattr(m, "role", "") == "assistant"
-                    and getattr(m, "tool_calls", None)):
-                if not getattr(m, "thinking", ""):
-                    missing = [str(getattr(m, "msg_id", "") or "?")]
-                break
-        if not missing:
-            return False
-        if not key or key not in _THINKING_MISSING_REPORTED:
-            if key:
-                _THINKING_MISSING_REPORTED.add(key)
-            logger.warning(
-                "[anthropic] replayed tool_use turn(s) %s carry no thinking "
-                "(conversation=%s): a thinking-mode gateway refuses that "
-                "shape, so this request runs without thinking",
-                ", ".join(missing[:5]), key[:8] or "-")
-        return True
-
     def _stream_anthropic(self, messages, model, temperature, max_tokens, tools, callback, thinking_budget: int = 0, thinking_callback=None,
                            *, call_user_id: str = "", call_conversation_id: str = ""):
         """Anthropic streaming: reads SSE events from the API."""
@@ -126,13 +85,6 @@ class LLMAnthropicMixin:
             messages,
             user_id=call_user_id,
             conversation_id=call_conversation_id)
-
-        # A model is free not to reason on a step; the gateway then refuses any
-        # request that claims thinking mode. Asking for it anyway would fail
-        # the turn, so the verdict is taken before the body is built.
-        thinking_available = bool(
-            thinking_budget > 0
-            and not self._report_missing_thinking(messages, call_conversation_id))
 
         # Add cache_control breakpoints for KV cache optimization
         self._apply_anthropic_cache_control(api_messages)
@@ -151,7 +103,7 @@ class LLMAnthropicMixin:
             "stream": True,
         }
         self._apply_anthropic_effort(body)
-        if thinking_available:
+        if thinking_budget > 0:
             body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
             body["temperature"] = 1  # Required by Anthropic when thinking is enabled
         _cache_ttl = int(self._cfg("anthropic_cache_ttl", 0))
@@ -213,8 +165,10 @@ class LLMAnthropicMixin:
                     # this request only: a turn whose reasoning is present keeps
                     # it, and nothing is disabled for the endpoint.
                     logger.warning(
-                        "Endpoint rejected a replayed turn without its thinking "
-                        "blocks; retrying without thinking enabled")
+                        "[anthropic] endpoint rejected a replayed turn without "
+                        "its thinking blocks (conversation=%s, model=%s); "
+                        "retrying once without thinking",
+                        (call_conversation_id or "-")[:8], model)
                     conn.close()
                     if parsed.scheme == "https":
                         conn = http.client.HTTPSConnection(host, port, timeout=self.timeout, context=ctx)
@@ -756,16 +710,8 @@ class LLMAnthropicMixin:
         body: Dict[str, Any] = {"model": model, "messages": api_messages, "max_tokens": max_tokens if max_tokens > 0 else 64000, "temperature": temperature}
         self._apply_anthropic_effort(body)
         if thinking_budget > 0:
-            # A non-streaming call cannot pay for a rejection twice (the helper
-            # raises), so it simply honours a verdict the streaming path
-            # already learned for this endpoint.
-            if self._report_missing_thinking(messages, call_conversation_id):
-                logger.info(
-                    "Endpoint requires replayed thinking blocks; sending "
-                    "without thinking for model %s", model)
-            else:
-                body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
-                body["temperature"] = 1  # Required by Anthropic when thinking is enabled
+            body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+            body["temperature"] = 1  # Required by Anthropic when thinking is enabled
         _cache_ttl = int(self._cfg("anthropic_cache_ttl", 0))
         _cc = {"type": "ephemeral"}
         if _cache_ttl > 0:

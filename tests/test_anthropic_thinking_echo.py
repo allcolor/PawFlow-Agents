@@ -1,13 +1,17 @@
-"""A thinking-mode gateway refuses a replayed turn without its thinking.
+"""A thinking-mode gateway may refuse a turn whose thinking blocks are missing.
 
-Observed on an Anthropic-compatible DeepSeek endpoint: the request that
-followed an assistant tool_use turn answered 400 "The content[].thinking in the
-thinking mode must be passed back to the API". PawFlow replays the thinking
-blocks when it still holds them, but a turn rebuilt from the transcript
-(resume, wake, compaction) has none to send -- thinking is its own row there --
-and this gateway, unlike Anthropic's own API, refuses the whole turn for it.
-The turn is now retried once without thinking, and the verdict is remembered
-for the endpoint so later calls never pay for it again.
+Observed once on an Anthropic-compatible DeepSeek endpoint: a request answered
+400 "The content[].thinking in the thinking mode must be passed back to the
+API". PawFlow replays an assistant turn's thinking whenever it still holds it,
+which covers the live tool loop, so this file pins down the net -- that refusal
+is retried once without thinking -- and nothing more.
+
+It deliberately does NOT disable thinking up front. Most turns of a long
+conversation have no reasoning to replay (a model is free not to reason on a
+given step: 38 of 242 tool_use turns in the conversation this was found in),
+and the gateway accepts those, since only one request out of hundreds ever
+failed. A blanket verdict would strip reasoning from turns that had nothing to
+do with it, which is a degradation, not a fix.
 """
 
 import json
@@ -16,8 +20,7 @@ import pytest
 
 from core._llm_types import LLMCallError, LLMMessage, LLMToolCall
 from core.llm_client import LLMClient
-from core.llm_providers.anthropic import (
-    LLMAnthropicMixin, _THINKING_MISSING_REPORTED)
+from core.llm_providers.anthropic import LLMAnthropicMixin
 
 UPSTREAM_ERROR = (
     'LLM API error 400: {"error":{"message":"The content[].thinking in the '
@@ -84,16 +87,8 @@ def _client(**config):
     return LLMClient(provider="anthropic", config=settings)
 
 
-@pytest.fixture(autouse=True)
-def _isolated_endpoint_registry():
-    """The learned verdict is process-wide; no test may inherit another's."""
-    _THINKING_MISSING_REPORTED.clear()
-    yield
-    _THINKING_MISSING_REPORTED.clear()
-
-
 def _messages():
-    """A reasoned tool-call turn whose thinking was lost to the transcript."""
+    """A tool-call turn replayed without any thinking, the common case."""
     return [
         LLMMessage("user", "go", conversation_id="conv1"),
         LLMMessage(
@@ -117,14 +112,8 @@ def _stream(client, responses, monkeypatch, model="deepseek-flash",
     bodies = _scripted_transport(monkeypatch, responses)
     response = LLMAnthropicMixin._stream_anthropic(
         client, messages or _messages(), model, 0.5, 0, None, None,
-        thinking_budget=1024,
-        call_conversation_id="conv1")
+        thinking_budget=1024, call_conversation_id="conv1")
     return bodies, response
-
-
-def _missing_reports(caplog):
-    return [r.getMessage() for r in caplog.records
-            if "carry no thinking" in r.getMessage()]
 
 
 class TestErrorDetection:
@@ -140,50 +129,15 @@ class TestErrorDetection:
 
 
 class TestStreamRetry:
-    def test_thinking_is_sent_without_a_verdict(self, monkeypatch):
-        bodies, response = _stream(
-            _client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch,
-            messages=_reasoned_messages())
-
-        assert response.content == "done"
-        assert bodies[0]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
-        assert bodies[0]["temperature"] == 1
-
-    def test_a_reasonless_tool_turn_never_enables_thinking(self, monkeypatch):
-        """The model did not reason on that step, so nothing can be replayed.
-
-        Asking for thinking anyway is a guaranteed refusal, so the request is
-        sent without it from the first attempt -- no 400 is paid, and the turn
-        still runs.
-        """
+    def test_thinking_is_enabled_from_the_first_attempt(self, monkeypatch):
+        """Reasoning or not, thinking is asked for; nothing is assumed."""
         bodies, response = _stream(
             _client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch)
 
         assert response.content == "done"
         assert len(bodies) == 1
-        assert "thinking" not in bodies[0]
-
-    def test_an_older_reasonless_turn_keeps_thinking(self, monkeypatch, caplog):
-        """Only the turn being continued is validated by the gateway.
-
-        Treating an older step that simply did not reason as evidence would
-        drop thinking from calls that would have honoured the contract.
-        """
-        messages = _reasoned_messages()
-        messages.insert(1, LLMMessage(
-            "assistant", "earlier", conversation_id="conv1",
-            tool_calls=[LLMToolCall(
-                id="call_0", name="bash", arguments={"command": "pwd"})]))
-        messages.insert(2, LLMMessage(
-            "tool", "out", conversation_id="conv1", tool_call_id="call_0"))
-
-        with caplog.at_level("WARNING"):
-            bodies, _ = _stream(
-                _client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch,
-                messages=messages)
-
         assert bodies[0]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
-        assert _missing_reports(caplog) == []
+        assert bodies[0]["temperature"] == 1
 
     def test_rejected_turn_is_retried_without_thinking(self, monkeypatch):
         bodies, response = _stream(
@@ -200,10 +154,10 @@ class TestStreamRetry:
         assert bodies[1]["temperature"] == 0.5
 
     def test_a_rejection_does_not_condemn_the_endpoint(self, monkeypatch):
-        """The contract is per request; one refusal must not disable thinking.
+        """The retry is a net for one request, never a per-endpoint verdict.
 
-        Latching it per endpoint would silently strip reasoning from every
-        later turn, including the ones whose replayed reasoning is intact.
+        Latching it would silently strip reasoning from every later turn,
+        including the ones whose replayed reasoning is intact.
         """
         bodies = _scripted_transport(monkeypatch, [
             _ScriptedResponse(400, UPSTREAM_ERROR.encode(), reason="Bad Request"),
@@ -248,22 +202,7 @@ class TestStreamRetry:
 
 
 class TestNonStreaming:
-    def test_without_a_verdict_thinking_is_still_sent(self):
-        client = _client()
-        posted = []
-        client._http_post = lambda path, body, headers: (
-            posted.append(body) or {
-                "content": [{"type": "text", "text": "ok"}],
-                "usage": {"input_tokens": 1, "output_tokens": 1},
-            })
-
-        client._complete_anthropic(
-            _reasoned_messages(), "deepseek-flash", 0.5, 0,
-            thinking_budget=1024)
-
-        assert posted[0]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
-
-    def test_a_reasonless_tool_turn_skips_thinking(self):
+    def test_thinking_is_enabled(self):
         client = _client()
         posted = []
         client._http_post = lambda path, body, headers: (
@@ -275,45 +214,20 @@ class TestNonStreaming:
         client._complete_anthropic(
             _messages(), "deepseek-flash", 0.5, 0, thinking_budget=1024)
 
+        assert posted[0]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+        assert posted[0]["temperature"] == 1
+
+    def test_no_budget_means_no_thinking(self):
+        client = _client()
+        posted = []
+        client._http_post = lambda path, body, headers: (
+            posted.append(body) or {
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            })
+
+        client._complete_anthropic(
+            _messages(), "deepseek-flash", 0.5, 0)
+
         assert "thinking" not in posted[0]
         assert posted[0]["temperature"] == 0.5
-
-
-class TestMissingThinkingReport:
-    """The reasoning is lost earlier; the log has to name the turn."""
-
-    def test_a_tool_use_turn_without_thinking_is_reported(self, monkeypatch, caplog):
-        with caplog.at_level("WARNING"):
-            _stream(_client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch)
-
-        reports = _missing_reports(caplog)
-        assert reports and "conv1" in reports[0]
-
-    def test_the_turn_is_reported_once_per_conversation(self, monkeypatch, caplog):
-        with caplog.at_level("WARNING"):
-            _stream(_client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch)
-            _stream(_client(), [_ScriptedResponse(200, STREAM_OK)], monkeypatch)
-
-        assert len(_missing_reports(caplog)) == 1
-
-    def test_a_reasoned_turn_is_not_reported(self, monkeypatch, caplog):
-        messages = _messages()
-        messages[1].thinking = "I must call the tool"
-        _scripted_transport(monkeypatch, [_ScriptedResponse(200, STREAM_OK)])
-
-        with caplog.at_level("WARNING"):
-            LLMAnthropicMixin._stream_anthropic(
-                _client(), messages, "deepseek-flash", 0.5, 0, None, None,
-                thinking_budget=1024, call_conversation_id="conv1")
-
-        assert _missing_reports(caplog) == []
-
-    def test_the_check_is_off_without_a_thinking_budget(self, monkeypatch, caplog):
-        _scripted_transport(monkeypatch, [_ScriptedResponse(200, STREAM_OK)])
-
-        with caplog.at_level("WARNING"):
-            LLMAnthropicMixin._stream_anthropic(
-                _client(), _messages(), "deepseek-flash", 0.5, 0, None, None,
-                call_conversation_id="conv1")
-
-        assert _missing_reports(caplog) == []

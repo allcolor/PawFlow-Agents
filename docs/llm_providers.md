@@ -841,23 +841,20 @@ detection is deliberately narrow: the body must mention both
 name the field is not mistaken for this contract.
 
 The Anthropic dialect has the mirror-image contract, and it is about the turn
-PawFlow hands back rather than about a stored row. `_build_anthropic_messages`
-replays an assistant turn's `thinking` block (with its signature) whenever the
-message still carries one, which covers the live tool loop. But a model is free
-not to reason at all on a given step, and that reasoning is then unrecoverable
-by construction: measured on a live conversation, 38 of its 242 tool_use turns
-held none. A thinking-mode gateway validates the turn it is asked to continue
--- the last assistant turn with tool calls -- and refuses the whole request
-with "The content[].thinking in the thinking mode must be passed back to the
-API". The verdict is therefore taken *before* the body is built, and only for
-that turn: when it carries no thinking, the request is sent without thinking
-instead of paying for a refusal that is certain. A rejection that arrives
-anyway is retried once without thinking, restoring the caller's temperature.
-Nothing is remembered per endpoint on purpose: the contract is per request, and
-a latched verdict would silently strip reasoning from later turns whose
-replayed reasoning is intact. Because "which turn" is the answer that locates
-the loss, the turn id is logged once per conversation
-(`[anthropic] replayed tool_use turn(s) ... carry no thinking`).
+PawFlow hands back. `_build_anthropic_messages` replays an assistant turn's
+`thinking` block (with its signature) whenever the message still carries one,
+which covers the live tool loop. A turn rebuilt from the transcript has none to
+send when the model did not reason on that step, and a gateway tolerates that:
+in the conversation where this was first seen, 38 of 242 tool_use turns carried
+no reasoning and exactly one request out of hundreds was ever refused. So
+thinking is still requested up front -- nothing is inferred from the shape of
+the history -- and that one refusal is handled on its own: the request is
+retried once without thinking, restoring the caller's temperature, and the
+warning names the conversation and the model
+(`[anthropic] endpoint rejected a replayed turn without its thinking blocks`).
+Nothing is remembered per endpoint on purpose: the refusal concerns one
+request, and a latched verdict would silently strip reasoning from later turns
+whose replayed reasoning is intact.
 
 ## Claude Code Providers
 

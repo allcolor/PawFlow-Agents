@@ -538,6 +538,14 @@ the circuit; permanent auth/config failures do not. After the configured failure
 threshold, calls fail fast until the cooldown expires, then one half-open call is
 allowed. A successful half-open call closes the circuit; a failed one reopens it.
 
+The fast-fail error carries the failure that opened the circuit, for example
+`LLM circuit open for openai/glm-5.3:cloud; retry in 55s; last error: LLM API
+error 429: ...`. The provider message that explains the outage — a session usage
+limit, say — therefore reaches the conversation instead of being replaced by the
+circuit message. A circuit rejection is never counted as a provider failure, and
+the request driver waits out the announced cooldown before re-attempting instead
+of failing the turn on the spot (the wait is abort-aware: Stop still cancels).
+
 Optional service fields:
 
 | Field | Default | Description |

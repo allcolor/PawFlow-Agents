@@ -16,6 +16,7 @@ import time
 from typing import Dict, Any, Optional
 
 from core.token_counter import count_messages_tokens
+from core.llm_failure_classifier import safe_error_message
 from core.llm_providers import (
     LLMCliSharedMixin,
     LLMOpenaiMixin,
@@ -607,6 +608,11 @@ class LLMClient(
         return any(marker in lower for marker in permanent_markers)
 
     @staticmethod
+    def _is_circuit_open_error(error_text: str) -> bool:
+        """True for our own fast-fail rejection, never for a provider failure."""
+        return "LLM circuit open for " in (error_text or "")
+
+    @staticmethod
     def _is_circuit_breaker_error(error_text: str) -> bool:
         if LLMClient._is_permanent_request_error(error_text):
             return False
@@ -641,8 +647,10 @@ class LLMClient(
             open_until = float(st.get("open_until", 0) or 0)
             if open_until > now:
                 remaining = int(open_until - now) + 1
+                cause = str(st.get("last_error") or "").strip()
+                detail = f"; last error: {cause}" if cause else ""
                 raise LLMClientError(
-                    f"LLM circuit open for {self.provider}/{model}; retry in {remaining}s")
+                    f"LLM circuit open for {self.provider}/{model}; retry in {remaining}s{detail}")
             if open_until and not st.get("half_open"):
                 st["half_open"] = True
                 logger.warning("LLM circuit half-open for %s/%s", self.provider, model)
@@ -655,12 +663,20 @@ class LLMClient(
             self._circuit_state.pop(key, None)
 
     def _circuit_after_failure(self, model: str, error_text: str) -> None:
+        if self._is_circuit_open_error(error_text):
+            # Our own rejection, not a provider failure: counting it would
+            # inflate the failure streak and nest the circuit message into the
+            # cause the next rejection reports.
+            return
         if not self._is_circuit_breaker_error(error_text):
             return
         key = self._circuit_key(model)
         with self._circuit_lock:
             st = self._circuit_state.setdefault(key, {"failures": 0, "open_until": 0.0, "half_open": False})
             st["failures"] = int(st.get("failures", 0) or 0) + 1
+            # Remember what tripped the circuit: the fast-fail message must
+            # report the provider failure instead of hiding it.
+            st["last_error"] = safe_error_message(error_text)
             if st.get("half_open") or st["failures"] >= self._circuit_threshold():
                 st["open_until"] = time.time() + self._circuit_cooldown_s()
                 st["half_open"] = False

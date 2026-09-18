@@ -70,6 +70,20 @@ class _LLMClientDriverMixin:
             raise AgentCancelled("LLM retry cancelled")
 
     @staticmethod
+    def _circuit_cooldown_seconds(error_text: str) -> float:
+        """Return the cooldown announced by an open-circuit error, else 0.0.
+
+        The circuit rejects a call before it reaches the provider, so the
+        cooldown it announces is the only wait that can succeed. Failing the
+        turn on the spot made every agent report a misleading "circuit open"
+        error instead of the provider failure that opened the circuit.
+        """
+        match = re.search(r"LLM circuit open for .*?retry in (\d+)s", error_text or "")
+        if not match:
+            return 0.0
+        return min(float(match.group(1)) + 0.5, MAX_AUTO_RETRY_DELAY_SECONDS)
+
+    @staticmethod
     def _redact_relay_proxy_url(url: str) -> str:
         """Hide relay proxy bearer tokens before writing URLs to logs."""
         return re.sub(r"(/relay-proxy/[^/]+/)[^/]+/", r"\1<token>/", url or "")
@@ -314,6 +328,14 @@ class _LLMClientDriverMixin:
                     if isinstance(last_error, LLMClientError):
                         raise last_error
                     raise LLMClientError(str(last_error))
+
+                circuit_wait = self._circuit_cooldown_seconds(err_str)
+                if circuit_wait and attempt < self.max_retries:
+                    logger.warning(
+                        "LLM circuit open for '%s'; waiting %.0fs for the cooldown "
+                        "(attempt %d/%d)", model, circuit_wait, attempt, self.max_retries)
+                    self._wait_for_retry(circuit_wait)
+                    continue
 
                 # Match HTTP codes as standalone tokens — plain substring
                 # matching fired false positives on captured CC PIDs like
@@ -728,6 +750,14 @@ class _LLMClientDriverMixin:
                     if isinstance(last_error, LLMClientError):
                         raise last_error
                     raise LLMClientError(str(last_error))
+
+                circuit_wait = self._circuit_cooldown_seconds(err_str)
+                if circuit_wait and attempt < self.max_retries:
+                    logger.warning(
+                        "LLM circuit open for '%s'; waiting %.0fs for the cooldown "
+                        "(attempt %d/%d)", model, circuit_wait, attempt, self.max_retries)
+                    self._wait_for_retry(circuit_wait)
+                    continue
 
                 # HTTP status codes matched as standalone tokens — plain
                 # substring matching was catastrophic: a captured CC

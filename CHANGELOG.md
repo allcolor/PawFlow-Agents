@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- An open LLM circuit breaker no longer hides the failure that tripped it: the
+  fast-fail error now carries the provider error (`LLM circuit open for ...;
+  retry in 55s; last error: LLM API error 429: ...`), a circuit rejection is
+  never counted as another provider failure, and the request driver waits out
+  the announced cooldown (abort-aware, so Stop still cancels) before
+  re-attempting instead of failing the turn on the spot. A provider usage limit
+  used to reach the conversation only as a bare "circuit open" message.
+
 ## [1.0.0-beta.278] — 2026-09-18
 
 ### Fixed

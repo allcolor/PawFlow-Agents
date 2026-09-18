@@ -42,6 +42,11 @@ The current core value is twofold:
   `ConnectionResetError` and `BrokenPipeError` now count as transport drops, and
   a truncated body runs through the truncated-stream branch, which empties the
   buffers first so a half answer is not sliced into the retry's output.
+- A context rewrite keeps the reasoning of the turns it rebuilds: the rows it
+  writes carry their `seq`, and the deserializer attaches `thinking`/`tool_call`
+  children in a second pass instead of trusting row order. 138 of the 337 child
+  rows of one live context sorted ahead of their anchor and vanished, which is
+  how a turn reached a thinking-mode gateway without its reasoning.
 - Capability tools re-share a FileStore reference in every form an agent may
   use, and say so when a reference cannot be shared publicly instead of handing
   an external provider an unfetchable URL.

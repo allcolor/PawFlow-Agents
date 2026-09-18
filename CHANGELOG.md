@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A context rewrite no longer strips the reasoning from the turns it rewrites,
+  and a reader no longer depends on row order. The rewrite stamped no `seq` on
+  the `thinking`/`tool_call` rows it rebuilt, while the context reader sorts rows
+  by `(ts, seq)` and a missing `seq` weighs 0 -- so each of those rows read back
+  *in front of* its own parent and was dropped. Measured on the affected
+  conversation: 138 of 337 child rows sorted ahead of their anchor and were
+  lost, which reached a thinking-mode gateway as `tool_use` turns without their
+  thinking and failed the whole request with 400 "The content[].thinking in the
+  thinking mode must be passed back to the API". The rewrite now stamps `seq`,
+  and `_deserialize_messages` attaches children in a second pass, so row order
+  can no longer lose them.
 - A response body truncated mid-stream is now retried instead of killing the
   turn. `IncompleteRead(2173 bytes read)` — raised by our own `http.client`
   streaming loop — matched no marker in the transport-drop classifier, so

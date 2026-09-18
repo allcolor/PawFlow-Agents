@@ -574,6 +574,14 @@ class _CCITurnCoordinator:
                             "clearing stale stop latch; turn continues",
                             self.session_token[:8])
                         self._stop_seen = False
+                        # The timestamp is part of the same stale latch: left
+                        # set, it keeps the liveness probe disabled for the rest
+                        # of a turn that is in fact still running, so a later
+                        # rate-limit banner or question on the pane -- the exact
+                        # case the probe exists for -- would go unnoticed and
+                        # the turn sit in Active Agents until something else
+                        # moved it.
+                        self._stop_seen_at = 0.0
                 continue
             if etype == "request_stop":
                 self._saw_proxy_event = True

@@ -38,6 +38,32 @@ def _probe_now(monkeypatch):
         "core.llm_providers._cci_turn._LIVENESS_PROBE_IDLE_SECONDS", 0.0)
 
 
+def test_a_new_request_after_stop_rearms_the_pane_probe(monkeypatch):
+    """The cleared Stop latch must clear its timestamp too.
+
+    The timestamp is what mutes the pane probe. Left set when a preempt starts a
+    new request, it kept the probe muted for the rest of a turn that was in fact
+    still running, so a later rate-limit banner or a question on the pane -- the
+    exact case the probe exists for -- went unnoticed.
+    """
+    _probe_now(monkeypatch)
+    stamps = []
+
+    def _pane():
+        stamps.append(coord._stop_seen_at)
+        return "● Reading files"
+
+    coord = _CCITurnCoordinator(_QueuedService([
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+        {"type": "request_start", "request_id": "r2", "path": "/v1/messages"},
+        {}, {}, {},
+    ]), "sess", pane_callback=_pane)
+    coord.run()
+
+    assert stamps, "the probe must read the pane again after the new request"
+    assert stamps[0] == 0.0
+
+
 def test_a_rate_limit_banner_in_the_pane_fails_the_turn(monkeypatch):
     _probe_now(monkeypatch)
     pane = ("Claude Code\n"

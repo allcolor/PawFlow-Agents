@@ -353,11 +353,23 @@ class _CCITurnCoordinator:
         """
         if self.pane_callback is None:
             return
-        if self._stop_seen or self._stop_seen_at:
+        if self._stop_seen:
             # The Stop hook already proved the CLI is not waiting for input, and
             # the final answer is the worst thing to lose: a reply that itself
             # discusses a 429 is twenty seconds of silence away from killing the
             # turn it belongs to.
+            #
+            # The latch alone, not its timestamp. ``_stop_seen_at`` keeps its own
+            # meaning -- when the Stop was seen -- because the post-Stop drain
+            # uses it to decide whether a response still owed should hold the
+            # turn, and to re-arm the latch once that response has completed.
+            # Gating the probe on it muted the pane for the rest of a turn that a
+            # preempt had started again: a rate-limit banner or a question
+            # appearing later -- the exact case this probe exists for -- went
+            # unnoticed and the turn sat in Active Agents. (Clearing the
+            # timestamp with the latch is not the fix either: it breaks the
+            # re-arm above, which test_stop_holds_for_the_delayed_final_response
+            # pins down.)
             return
         now = time.time()
         idle_since = self._last_event_at or started_at
@@ -574,14 +586,6 @@ class _CCITurnCoordinator:
                             "clearing stale stop latch; turn continues",
                             self.session_token[:8])
                         self._stop_seen = False
-                        # The timestamp is part of the same stale latch: left
-                        # set, it keeps the liveness probe disabled for the rest
-                        # of a turn that is in fact still running, so a later
-                        # rate-limit banner or question on the pane -- the exact
-                        # case the probe exists for -- would go unnoticed and
-                        # the turn sit in Active Agents until something else
-                        # moved it.
-                        self._stop_seen_at = 0.0
                 continue
             if etype == "request_stop":
                 self._saw_proxy_event = True

@@ -39,18 +39,24 @@ def _probe_now(monkeypatch):
 
 
 def test_a_new_request_after_stop_rearms_the_pane_probe(monkeypatch):
-    """The cleared Stop latch must clear its timestamp too.
+    """A cleared Stop latch must re-arm the pane probe.
 
-    The timestamp is what mutes the pane probe. Left set when a preempt starts a
-    new request, it kept the probe muted for the rest of a turn that was in fact
-    still running, so a later rate-limit banner or a question on the pane -- the
-    exact case the probe exists for -- went unnoticed.
+    The probe was muted while the latch stood *or* while its timestamp was set.
+    When a preempt started a new request the latch was cleared but the timestamp
+    stayed, so the probe stayed muted for the rest of a turn that was in fact
+    still running: a rate-limit banner or a question appearing later -- the exact
+    case the probe exists for -- went unnoticed.
+
+    The timestamp keeps its own meaning: the post-Stop drain uses it to decide
+    whether a response still owed should hold the turn, and to re-arm the latch
+    once it completed. Clearing it is therefore not the fix; the probe follows
+    the latch alone.
     """
     _probe_now(monkeypatch)
-    stamps = []
+    seen = []
 
     def _pane():
-        stamps.append(coord._stop_seen_at)
+        seen.append((coord._stop_seen, bool(coord._stop_seen_at)))
         return "● Reading files"
 
     coord = _CCITurnCoordinator(_QueuedService([
@@ -60,8 +66,10 @@ def test_a_new_request_after_stop_rearms_the_pane_probe(monkeypatch):
     ]), "sess", pane_callback=_pane)
     coord.run()
 
-    assert stamps, "the probe must read the pane again after the new request"
-    assert stamps[0] == 0.0
+    assert seen, "the probe must read the pane again after the new request"
+    assert seen[0][0] is False, "the cleared latch must not mute the probe"
+    assert seen[0][1] is True, (
+        "the timestamp keeps its meaning for the post-Stop drain")
 
 
 def test_a_rate_limit_banner_in_the_pane_fails_the_turn(monkeypatch):

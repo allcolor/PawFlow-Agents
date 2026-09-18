@@ -282,9 +282,17 @@ class ConnSession:
         rid = msg.get("request_id", "")
         if rid:
             ok = kill_inflight_proc(rid)
+            # "no-such-proc" is the ordinary outcome, not a failure: only the
+            # actions that spawn a process (exec, bash, docker exec, scripts)
+            # register one, so a read, a glob, a screen capture or a desktop
+            # action has nothing to kill — and a command that already finished
+            # unregisters itself in its finally block. Say which it is instead
+            # of leaving a bare 'no-such-proc' for the reader to decode.
             sys.stderr.write(
                 f"[FSRelay] cancel_request rid={rid} "
-                f"hit={'yes' if ok else 'no-such-proc'}\n")
+                + ("killed a running process\n" if ok else
+                   "nothing to kill: the command already finished, or it "
+                   "runs no process of its own\n"))
 
     def _handle_remote_mount_manifest(self, msg: dict):
         if self.remote_mount_mgr is None:

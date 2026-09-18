@@ -53,10 +53,14 @@ class Generate3DHandler(_CapabilityHandlerBase):
         if not svc:
             return f"Error: {err or 'no 3D generation service available'}"
         prompt = arguments.get("prompt", "") or ""
-        image_url = self._rewrite(arguments.get("image_url", "") or "", service=svc)
-        if not prompt and not image_url:
-            return "Error: provide `prompt` or `image_url`"
         try:
+            # Resolution touches FileStore and can fail (unrecognised reference
+            # form, missing file): keep it inside the guard so the tool returns
+            # an error instead of raising out of the handler.
+            image_url = self._rewrite(
+                arguments.get("image_url", "") or "", service=svc)
+            if not prompt and not image_url:
+                return "Error: provide `prompt` or `image_url`"
             kwargs = {k: v for k, v in arguments.items()
                       if k not in ("destination", "path", "prompt", "image_url", *_SERVICE_ARG_NAMES)}
             r = svc.generate_3d(prompt=prompt, image_url=image_url, **kwargs)

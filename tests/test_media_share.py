@@ -265,6 +265,40 @@ def test_capability_share_scope_isolated_between_concurrent_calls(monkeypatch):
     assert [share.restored for share in created] == [1, 1]
 
 
+@pytest.mark.parametrize("ref", [
+    "fs://filestore/{fid}/m.glb",
+    "/files/{fid}/m.glb",
+    "/filestore/{fid}/m.glb",
+    "/filestore/conv1/{fid}/m.glb",
+    "https://pawflow.example.org/files/{fid}/m.glb",
+])
+def test_every_filestore_form_is_shared(_store, ref):
+    """An agent may name the same file in any of these shapes.
+
+    Only the `fs://filestore/` prefix used to be recognised: a mount path, a
+    `/files/` path or an absolute FileStore URL was forwarded verbatim to the
+    provider, which cannot resolve it.
+    """
+    fid = _make_file(_store)
+    share = TemporaryPublicRefs(_PUBLIC, "u1")
+
+    url = share.public_url(ref.format(fid=fid))
+
+    assert url.startswith(f"{_PUBLIC}/files/{fid}")
+    assert "?k=" in url
+    assert _store.get_access_level(fid) == "gateway_key"
+
+
+def test_ref_without_a_filename_still_shares(_store):
+    fid = _make_file(_store)
+    share = TemporaryPublicRefs(_PUBLIC, "u1")
+
+    url = share.public_url(f"/files/{fid}")
+
+    assert url.startswith(f"{_PUBLIC}/files/{fid}")
+    assert "?k=" in url
+
+
 def test_is_public_base():
     assert _is_public_base("https://webchat.example.org") is True
     assert _is_public_base("https://1.2.3.4") is True

@@ -81,11 +81,11 @@ class Rig3DModelHandler(_CapabilityHandlerBase):
             return ("Error: the active 3D service does not support rigging "
                     "(use a Meshy or Tripo3D service)")
         task_id = str(arguments.get("task_id") or "").strip()
-        model_url = self._rewrite(
-            str(arguments.get("model_url") or "").strip(), service=svc)
-        if not task_id and not model_url:
-            return "Error: provide `task_id` or `model_url`"
         try:
+            model_url = self._rewrite(
+                str(arguments.get("model_url") or "").strip(), service=svc)
+            if not task_id and not model_url:
+                return "Error: provide `task_id` or `model_url`"
             kwargs = {k: v for k, v in arguments.items()
                       if k not in ("destination", "path", "task_id",
                                    "model_url", *_SERVICE_ARG_NAMES)}
@@ -198,16 +198,16 @@ class Retexture3DModelHandler(_CapabilityHandlerBase):
             return ("Error: the active 3D service does not support retexture "
                     "(use a Meshy or Tripo3D service)")
         task_id = str(arguments.get("task_id") or "").strip()
-        model_url = self._rewrite(
-            str(arguments.get("model_url") or "").strip(), service=svc)
-        image_url = self._rewrite(
-            str(arguments.get("image_url") or "").strip(), service=svc)
-        prompt = str(arguments.get("prompt") or "").strip()
-        if not task_id and not model_url:
-            return "Error: provide `task_id` or `model_url`"
-        if not prompt and not image_url:
-            return "Error: provide `prompt` or `image_url` (style)"
         try:
+            model_url = self._rewrite(
+                str(arguments.get("model_url") or "").strip(), service=svc)
+            image_url = self._rewrite(
+                str(arguments.get("image_url") or "").strip(), service=svc)
+            prompt = str(arguments.get("prompt") or "").strip()
+            if not task_id and not model_url:
+                return "Error: provide `task_id` or `model_url`"
+            if not prompt and not image_url:
+                return "Error: provide `prompt` or `image_url` (style)"
             kwargs = {k: v for k, v in arguments.items()
                       if k not in ("destination", "path", "task_id",
                                    "model_url", "prompt", "image_url",

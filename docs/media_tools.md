@@ -26,6 +26,14 @@ file **only for the duration of that one generation call**:
 - when the call returns — success or failure — the file's original access level
   is restored, so nothing stays publicly reachable beyond the generation.
 
+References are recognised in every FileStore form, not just the canonical one:
+`fs://filestore/<id>/<name>`, the relay mounts `/filestore/<id>/<name>` and
+`/filestore/<conv>/<id>/<name>`, the web forms `/files/<id>` and
+`/files/<id>/<name>`, and an absolute `http(s)://<host>/files/<id>[/<name>]`
+FileStore URL all resolve to the same file. Anything else (a CDN URL, a `data:`
+URI, a local path or a bare filename) is passed through untouched — and a local
+path is not fetchable by a remote provider.
+
 This requires the agent `file_base_url` (or the service `public_callback_base_url`)
 to be a public HTTPS root such as `https://webchat.example.org`. When the base
 URL is `localhost`/private, no access flip is performed and the legacy

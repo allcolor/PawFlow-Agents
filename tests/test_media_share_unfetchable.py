@@ -102,3 +102,36 @@ def test_handler_result_carries_the_unshareable_ref_warning(tmp_path):
         assert "no internet-reachable base URL" in result
     finally:
         FileStore._instance = None
+
+
+def test_generate_3d_reports_a_resolution_failure_instead_of_raising(
+        monkeypatch, tmp_path):
+    """Resolution failures must come back as a tool error.
+
+    The `_rewrite` calls used to sit outside the handlers' try blocks, so a
+    failure while resolving a reference escaped as an unhandled tool exception.
+    """
+    from core.handlers._capability_handlers import Generate3DHandler
+
+    store = _store(tmp_path)
+    try:
+        class _Service:
+            def generate_3d(self, **kwargs):
+                raise AssertionError("the vendor must not be called")
+
+        handler = Generate3DHandler()
+        handler.set_base_url(_LOCAL)
+        handler.set_user_id("u1")
+        handler._get_service = lambda arguments=None: (_Service(), "")
+
+        def _boom(self, url, service=None):
+            raise RuntimeError("unresolvable reference")
+
+        monkeypatch.setattr(_CapabilityHandlerBase, "_rewrite", _boom)
+
+        result = handler.execute({"image_url": "fs://filestore/deadbeefcafe/m.glb"})
+
+        assert result.startswith("Error generating 3D model:")
+        assert "unresolvable reference" in result
+    finally:
+        FileStore._instance = None

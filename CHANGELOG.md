@@ -14,6 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `http://localhost:9090` default, so `generate_3d` handed Meshy a URL it could
   never fetch and the vendor failed with an opaque error. The warning names the
   refs, the base used, and the two settings that fix it.
+- FileStore references are recognised in every form an agent may use, not only
+  the `fs://filestore/<id>/<name>` prefix: the relay mount forms
+  (`/filestore/<id>/<name>`, `/filestore/<conv>/<id>/<name>`), the web forms
+  (`/files/<id>`, `/files/<id>/<name>`) and an absolute FileStore URL are all
+  re-shared instead of being forwarded to the provider verbatim. Reference
+  resolution also runs inside the capability handlers' guarded block, so a
+  failure there reports a tool error instead of raising out of the handler.
 - A delegate turn that ended on a fatal LLM error is no longer delivered to its
   caller as a reply. The failed turn had no output, so the delegate wake fell
   back to the last persisted assistant message -- the error text itself -- and

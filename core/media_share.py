@@ -32,6 +32,41 @@ logger = logging.getLogger(__name__)
 _FS_PREFIX = "fs://filestore/"
 
 
+def _filestore_ref(url: str):
+    """Return ``(file_id, filename)`` for any FileStore reference form.
+
+    An agent or a tool can hand a reference in several shapes, all of which
+    name the same FileStore file: ``fs://filestore/<id>/<name>``, the relay
+    mount forms ``/filestore/<id>/<name>`` and
+    ``/filestore/<conv>/<id>/<name>``, the web forms ``/files/<id>`` and
+    ``/files/<id>/<name>``, and an absolute ``http(s)://<host>/files/<id>
+    [/<name>]`` FileStore URL. Anything else (a CDN URL, a ``data:`` URI, a
+    local path, a bare filename) returns ``("", "")`` and must be forwarded
+    untouched: only the FileStore-backed shapes can be re-shared.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return "", ""
+    if raw.startswith(_FS_PREFIX):
+        rest = raw[len(_FS_PREFIX):]
+    else:
+        parsed = urllib.parse.urlparse(raw)
+        path = parsed.path if parsed.scheme in ("http", "https") else raw
+        path = path.split("?", 1)[0]
+        if path.startswith("/filestore/"):
+            parts = [part for part in path[len("/filestore/"):].split("/") if part]
+            # /filestore/<conv>/<id>/<name> carries the conversation first
+            rest = "/".join(parts[1:]) if len(parts) > 2 else "/".join(parts)
+        elif path.startswith("/files/"):
+            rest = path[len("/files/"):]
+        else:
+            return "", ""
+    parts = [part for part in rest.split("/") if part]
+    if not parts:
+        return "", ""
+    return parts[0], (parts[1] if len(parts) > 1 else "")
+
+
 def _is_public_base(base_url: str) -> bool:
     """True when base_url is an internet-reachable HTTP(S) URL.
 
@@ -131,17 +166,15 @@ class TemporaryPublicRefs:
     def public_url(self, url: str, service=None) -> str:
         """Return a provider-fetchable URL for a reference input.
 
-        ``fs://filestore/<id>/<name>`` is flipped to a gateway-key share
-        URL when a public base URL is available (the handler base, or the
-        service ``public_callback_base_url`` as fallback); otherwise the
-        legacy HTTP form is returned. Non-FileStore refs and
-        ``ACCEPTS_FILESTORE_URLS`` services are returned unchanged.
+        A FileStore reference in any of its forms (see ``_filestore_ref``) is
+        flipped to a gateway-key share URL when a public base URL is available
+        (the handler base, or the service ``public_callback_base_url`` as
+        fallback); otherwise the legacy HTTP form is returned. Non-FileStore
+        refs and ``ACCEPTS_FILESTORE_URLS`` services are returned unchanged.
         """
-        if not url or not url.startswith(_FS_PREFIX):
-            return url
         if service is not None and getattr(service, "ACCEPTS_FILESTORE_URLS", False):
             return url
-        file_id = url[len(_FS_PREFIX):].split("/", 1)[0]
+        file_id = _filestore_ref(url)[0]
         if not file_id:
             return url
         base, is_public = self._effective_base(service)

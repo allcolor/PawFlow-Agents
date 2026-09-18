@@ -53,6 +53,16 @@ Stop interrupts a retry wait immediately and prevents another attempt or
 fallback call. Stateful interactive CLI providers keep their existing no-replay
 contract: PawFlow does not resubmit a prompt already consumed by the CLI.
 
+A response body that ends early counts as a transport drop, whichever layer
+noticed it: the SDK markers (`responseStreamDisconnected`, `stream disconnected
+before completion`) and the ones our own `http.client` streaming loops raise
+(`IncompleteRead`, `ChunkedEncodingError`, `Remote end closed connection`,
+`ConnectionResetError`, `BrokenPipeError`). A truncated body is retried through
+the truncated-stream branch: the buffers are emptied first, so a half answer
+already streamed is not sliced into the retry's output. Live case: a turn died
+on its first attempt with `IncompleteRead(2173 bytes read)` because no marker
+matched it.
+
 ### Direct API request identity
 
 Every outbound HTTP request owned by a direct LLM provider identifies itself as

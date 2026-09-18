@@ -726,6 +726,40 @@ class LLMClient(
             "websocket closed by server",
             "connection closed before completion",
             "connection reset by peer",
+            # Our own HTTP layer (http.client / urllib), not an SDK: a response
+            # body that ends early surfaces as one of these. Observed live as
+            # "IncompleteRead: IncompleteRead(2173 bytes read)", which matched
+            # nothing, so the turn died on its first attempt.
+            "incompleteread",
+            "incomplete read",
+            "chunkedencodingerror",
+            "connection broken",
+            "peer closed connection",
+            "remote end closed connection",
+        ))
+
+    @staticmethod
+    def _is_truncated_body_error(exc: BaseException) -> bool:
+        """True when a response body ended before the provider was done.
+
+        Distinct from `_is_transient_transport_error`, and used as such: a body
+        truncated mid-stream may already have delivered half an answer, so the
+        caller must drop what it captured before re-asking. That is why the
+        streaming loop routes this through its truncated-stream branch --
+        immediate retry with empty buffers -- instead of the generic retry.
+        """
+        import http.client as _http
+        if isinstance(exc, (_http.IncompleteRead, _http.RemoteDisconnected,
+                            ConnectionResetError, BrokenPipeError)):
+            return True
+        text = str(exc).lower()
+        return any(marker in text for marker in (
+            "incompleteread",
+            "incomplete read",
+            "chunkedencodingerror",
+            "connection broken",
+            "peer closed connection",
+            "remote end closed connection",
         ))
 
     def _report_tokens(self, response, messages):

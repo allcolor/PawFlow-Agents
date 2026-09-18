@@ -374,8 +374,9 @@ class _LLMClientDriverMixin:
                 # category is the only signal. See VALID_FINISH_REASONS in
                 # core/llm_providers/openai.py.
                 is_truncated_stream = (
-                    isinstance(e, LLMCallError)
-                    and e.category in TRUNCATED_STREAM_CATEGORIES)
+                    (isinstance(e, LLMCallError)
+                     and e.category in TRUNCATED_STREAM_CATEGORIES)
+                    or self._is_truncated_body_error(e))
                 retryable = (
                     (is_429 or is_529 or is_500 or is_transport_drop
                      or is_truncated_stream
@@ -841,7 +842,8 @@ class _LLMClientDriverMixin:
                     logger.warning(
                         "[stream] truncated stream (%s) after %d streamed chars "
                         "— retrying immediately (attempt %d/%d)",
-                        e.category, len(streamed_raw), attempt, self.max_retries)
+                        getattr(e, "category", None) or type(e).__name__,
+                        len(streamed_raw), attempt, self.max_retries)
                     streamed_raw = ""
                     streamed_visible = ""
                     continue

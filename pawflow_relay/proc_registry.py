@@ -94,3 +94,18 @@ def inflight_count() -> int:
     """Diagnostic hook — number of procs currently registered."""
     with _inflight_procs_lock:
         return len(_inflight_procs)
+
+
+def kill_all_inflight() -> int:
+    """Terminate every registered proc. Returns how many were killed.
+
+    The operator's lever, used when the relay is busy with calls that have no
+    reason to finish: the desktop app asks for it and the worker kills what is
+    registered right now. Each kill follows kill_inflight_proc's rule (SIGTERM
+    to the process group, then SIGKILL), and every entry is dropped whether or
+    not the signal landed, so the action's own thread unblocks and a repeat
+    request becomes a no-op.
+    """
+    with _inflight_procs_lock:
+        request_ids = list(_inflight_procs.keys())
+    return sum(1 for request_id in request_ids if kill_inflight_proc(request_id))

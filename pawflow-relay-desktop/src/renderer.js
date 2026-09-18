@@ -323,6 +323,8 @@ function renderPhysicalPanel(physical) {
         ${physical ? `<button type="button" id="startRelayBtn" class="button secondary" ${running ? 'disabled' : ''}>Connect all</button>
           <button type="button" id="stopRelayBtn" class="button secondary" ${running || physical.cleanup_pending ? '' : 'disabled'}>${physical.cleanup_pending ? 'Retry cleanup' : 'Disconnect all'}</button>
           ${physical.cleanup_pending ? '<button type="button" id="forceCleanupBtn" class="button secondary">Force cleanup</button>' : ''}
+          <button type="button" id="killInflightBtn" class="button secondary" ${running ? '' : 'disabled'}>Kill in-flight calls</button>
+          <button type="button" id="restartRelayBtn" class="button secondary">Restart relay</button>
           <button type="button" id="deleteRelayBtn" class="button danger">Delete physical relay</button>` : ''}
       </div>
     </form>`;
@@ -337,6 +339,8 @@ function renderPhysicalPanel(physical) {
     $('#stopRelayBtn').addEventListener('click', () => stopRelay(physical.name));
     const forceCleanupBtn = $('#forceCleanupBtn');
     if (forceCleanupBtn) forceCleanupBtn.addEventListener('click', () => forceCleanupRelay(physical.name));
+    $('#killInflightBtn').addEventListener('click', () => killInflightCalls(physical.name));
+    $('#restartRelayBtn').addEventListener('click', () => restartRelay(physical.name));
     $('#deleteRelayBtn').addEventListener('click', () => deleteWorkspace(physical.name));
   }
 }
@@ -681,6 +685,29 @@ async function forceCleanupRelay(name) {
     if (skipped.length) toast(`Skipped: ${skipped.join(' | ')}`);
     await refresh();
     setSelected('physical', name);
+  } catch (err) {
+    await refresh();
+    toast(err.message, true);
+  }
+}
+
+async function killInflightCalls(name) {
+  try {
+    const result = await window.pawflowRelay.killInflight(name);
+    toast(`Killed ${result.killed} in-flight call(s) on ${name}`);
+    await refresh();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function restartRelay(name) {
+  if (!confirm(`Restart "${name}" completely? Its Docker container is stopped and recreated, and every logical relay in the group reconnects.`)) return;
+  try {
+    toast(`Restarting ${name}...`);
+    await window.pawflowRelay.restart(name);
+    toast(`Relay ${name} restarted`);
+    await refresh();
   } catch (err) {
     await refresh();
     toast(err.message, true);

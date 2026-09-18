@@ -8,7 +8,22 @@ PawCode and the VS Code extension are PawFlow clients only. This desktop app own
 - login through the configured server/private gateway;
 - define local workspace shares;
 - start and stop relay processes;
+- kill every in-flight relay call, or restart the relay completely;
 - view relay logs.
+
+## Unblocking a Busy Relay
+
+Two buttons sit with the other physical-relay actions:
+
+- **Kill in-flight calls** stops the commands the relay is running right now.
+  The app cannot signal the worker on Windows, so it drops a `kill_inflight`
+  request file in the runtime root the worker shares with it; the worker polls
+  that file once a second, terminates each registered process (SIGTERM to the
+  process group, then SIGKILL) and writes the count to `kill_inflight.result`,
+  which the button reports back.
+- **Restart relay** stops the relay and starts it again, which removes and
+  recreates its Docker container and reconnects every logical relay in the
+  group. Use it when a call is stuck in a way a kill cannot reach.
 
 ## Run From Source
 

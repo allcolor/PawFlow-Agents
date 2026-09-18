@@ -381,6 +381,16 @@ The relay loop's last hard-coded deadline was `_DEAD_TIMEOUT = 90`, the silent
 socket after which it forces a reconnect. `PAWFLOW_RELAY_DEAD_TIMEOUT` sets it,
 and the value in force is printed when the worker connects.
 
+The worker also honours an operator kill request: Relay Desktop's **Kill
+in-flight calls** button writes `kill_inflight` into the runtime root
+(`PAWFLOW_RELAY_RUNTIME_ROOT`), the worker polls it once a second -- a file, not
+a signal, because Windows has no signal to send it -- terminates every process
+registered for a running request, and reports the count in
+`kill_inflight.result`. `kill_all_inflight()` in `pawflow_relay/proc_registry.py`
+does the killing and follows the same rule as the server's `cancel_request`:
+SIGTERM to the process group, then SIGKILL, and always drop the entry so the
+action's own thread unblocks.
+
 `open_terminal` is deliberately sent without a `_request_timeout`: the transport
 reads "no timeout" as waiting for the relay to answer, which is the right
 contract for an operation a person is watching. The waiting is kept sane by the

@@ -145,6 +145,54 @@ def _env_seconds(name: str, default: float) -> float:
     return value
 
 
+#: The desktop app asks for every in-flight call to be killed by creating this
+#: file in the runtime root the worker shares with it. It is the operator's
+#: lever when the relay is busy with calls that no longer have a reason to run.
+_OPERATOR_KILL_FILE = "kill_inflight"
+_OPERATOR_KILL_RESULT_FILE = "kill_inflight.result"
+
+
+def _operator_kill_path(filename: str = _OPERATOR_KILL_FILE):
+    """Where the desktop app leaves a request, or None when unconfigured."""
+    root = (os.environ.get("PAWFLOW_RELAY_RUNTIME_ROOT") or "").strip()
+    return (Path(root) / filename) if root else None
+
+
+def _watch_operator_kill(stop_event) -> None:
+    """Honour the desktop app's kill request while this relay runs.
+
+    Polling a file is what works on Windows, where the app cannot send the
+    worker a signal; one second of latency is nothing next to the calls the
+    operator is trying to stop. The result is written back so the button can
+    say what happened.
+    """
+    from pawflow_relay.proc_registry import kill_all_inflight
+
+    request = _operator_kill_path()
+    if request is None:
+        return
+    while not stop_event.wait(1.0):
+        try:
+            if not request.exists():
+                continue
+            request.unlink()
+        except OSError:
+            continue
+        try:
+            killed = kill_all_inflight()
+        except Exception as exc:  # the lever must never take the relay down
+            sys.stderr.write(f"[FSRelay] kill in-flight failed: {exc}\n")
+            continue
+        sys.stderr.write(
+            f"[FSRelay] Operator asked to kill in-flight calls: {killed} killed\n")
+        result = _operator_kill_path(_OPERATOR_KILL_RESULT_FILE)
+        if result is not None:
+            try:
+                result.write_text(str(killed), encoding="utf-8")
+            except OSError as exc:
+                sys.stderr.write(f"[FSRelay] kill result write failed: {exc}\n")
+
+
 def _is_allowed_tmp_path(path: str) -> bool:
     """True when `path` is absolute and falls under a system temp dir."""
     if not path or not isinstance(path, str):
@@ -459,9 +507,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _session.fence_highwaters.update(_initial_fence_highwaters)
             # Exposed for the reconnect handler's diagnostic logging below.
             _active_cmd_summary = _session.active_cmd_summary
+            # The operator's kill lever stays armed for the whole connection.
+            _kill_stop = _threading.Event()
+            _threading.Thread(
+                target=_watch_operator_kill, args=(_kill_stop,),
+                name="relay-operator-kill", daemon=True).start()
             try:
                 _disconnect_reason = _session.run()
             finally:
+                _kill_stop.set()
                 # Each terminal session FIFO parks one thread on get(). The
                 # connection is what owns them, so they stop with it instead of
                 # surviving into the next reconnect.

@@ -64,6 +64,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   callers got `Relay timeout for exec` while the relay was healthy, merely
   queued. `PAWFLOW_RELAY_COMMAND_WORKERS` sets a ceiling for operators who want
   one, and the wait for a worker is reported when they do.
+- Relay Desktop can kill every in-flight relay call and restart a relay
+  completely (its Docker container is stopped and recreated). A relay busy with
+  calls that no longer had a reason to run could not be unblocked from the app:
+  the worker polls a request file in the runtime root it shares with the app
+  (Windows has no signal to send it) and reports how many calls it killed.
 - A linked relay is described by what it is: live, defined but not connected, or
   not defined in this conversation's scope (it may belong to another
   conversation, so re-linking here is the action). The three states used to

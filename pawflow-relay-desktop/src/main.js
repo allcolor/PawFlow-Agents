@@ -580,6 +580,47 @@ function forceCleanupRelayRuntime(name) {
   return runRelayClientJson(['cleanup', name || '', '--force']);
 }
 
+// The operator's kill lever. A relay busy with calls that no longer have a
+// reason to run used to have no way out from the app, and the app cannot send
+// the worker a signal on Windows: it leaves a request file in the runtime root
+// the worker already shares with it, and the worker polls it once a second and
+// writes back how many calls it killed (see pawflow_relay/worker.py).
+async function killInflightCalls(name) {
+  const requestPath = path.join(runtimeRoot(), 'kill_inflight');
+  const resultPath = path.join(runtimeRoot(), 'kill_inflight.result');
+  try {
+    await fs.promises.rm(resultPath, { force: true });
+  } catch (err) {
+    appendLog(name, `[relay] kill result cleanup failed: ${err.message}\n`);
+  }
+  await fs.promises.writeFile(requestPath, `${name || ''}\n`, 'utf8');
+  appendLog(name, '[relay] asked the relay to kill every in-flight call\n');
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    let text;
+    try {
+      text = await fs.promises.readFile(resultPath, 'utf8');
+    } catch (err) {
+      continue;
+    }
+    const killed = Number.parseInt(text.trim(), 10);
+    const count = Number.isNaN(killed) ? 0 : killed;
+    appendLog(name, `[relay] killed ${count} in-flight call(s)\n`);
+    return { ok: true, killed: count };
+  }
+  throw new Error('The relay did not answer the kill request. Is it running?');
+}
+
+// Restart the relay completely: the ordinary stop removes its Docker container
+// from the runtime, and starting again recreates it.
+async function restartRelayRuntime(name) {
+  await stopRelay(name);
+  const started = await startRelay(name);
+  appendLog(name, '[relay] restarted (Docker container recreated)\n');
+  return { ok: true, restarted: true, ...started };
+}
+
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();
@@ -889,6 +930,10 @@ ipcMain.handle('relay:start', async (_event, name) => startRelay(name));
 
 ipcMain.handle('relay:stop', async (_event, name) => stopRelay(name));
 ipcMain.handle('relay:force-cleanup', async (_event, name) => forceCleanupRelayRuntime(name));
+
+ipcMain.handle('relay:kill-inflight', async (_event, name) => killInflightCalls(name));
+
+ipcMain.handle('relay:restart', async (_event, name) => restartRelayRuntime(name));
 
 ipcMain.handle('relay:running', async () => {
   return Array.from(runningPhysicalNames(await getRelayState()));

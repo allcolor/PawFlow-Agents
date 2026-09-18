@@ -128,10 +128,11 @@ class GroupReadOnlyToolRuntime:
                     handler.set_fs_service(service)
                 linked = self._linked_relays()
                 if linked and hasattr(handler, "set_available_services"):
-                    handler.set_available_services([
-                        {"id": item, "type": "relay", "root": "?"}
-                        for item in linked
-                    ])
+                    resolvable, stale = self._resolvable_relays(linked)
+                    handler.set_available_services(
+                        [{"id": item, "type": "relay", "root": "?"}
+                         for item in resolvable],
+                        stale_linked=stale)
             elif handler.name == "web_search" and hasattr(handler, "set_fs_resolver"):
                 handler.set_fs_resolver(self._resolve_scoped_service)
 
@@ -144,6 +145,30 @@ class GroupReadOnlyToolRuntime:
         if default and default not in linked:
             linked.append(default)
         return tuple(linked)
+
+    def _resolvable_relays(self, linked: tuple) -> tuple:
+        """Split linked relays into those with a definition and those without.
+
+        A binding can outlive its relay: this conversation kept 'Ultima7'
+        linked while no service with that name existed any more, so the tool
+        layer announced it as available and then answered every call naming it
+        with "filesystem not found: 'Ultima7'. Available: MyWorkspace,
+        Ultima7" -- listing the very name it had just rejected -- while the
+        Relay panel reported it as "not connected (def=missing)". What is
+        offered is now what resolves, and the rest is named as stale.
+        """
+        from core.handlers._fs_helpers import find_fs_service
+
+        resolvable: list = []
+        stale: list = []
+        for item in linked:
+            try:
+                found = find_fs_service(
+                    self.context.user_id, item, self.context.conversation_id)
+            except Exception:
+                found = None
+            (resolvable if found is not None else stale).append(item)
+        return tuple(resolvable), tuple(stale)
 
     def _default_relay_service(self):
         from core.relay_bindings import get_default

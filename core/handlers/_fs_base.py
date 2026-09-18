@@ -46,6 +46,7 @@ class BaseFsHandler(ToolHandler):
     def __init__(self):
         self._fs_service = None
         self._available_services = []
+        self._stale_linked = ()
         self._default_service_id = ""
         self._filesystem_scope_enforced = False
         self._user_id = ""
@@ -76,8 +77,12 @@ class BaseFsHandler(ToolHandler):
         self._checkpoint_id = checkpoint_id
 
     def set_available_services(self, services: List[Dict[str, Any]],
-                               default_service_id: str = ""):
+                               default_service_id: str = "",
+                               stale_linked: tuple = ()):
         self._available_services = services
+        # Linked relays with no definition left: named so a failed call can say
+        # why instead of listing them as available.
+        self._stale_linked = tuple(stale_linked or ())
         self._default_service_id = default_service_id or ""
         self._filesystem_scope_enforced = True
 
@@ -212,6 +217,17 @@ class BaseFsHandler(ToolHandler):
         available = self._available_services or []
         if fs_param:
             names = [s.get("id", "?") for s in available]
+            from core.identifier import identifiers_equal
+            stale = next((name for name in getattr(self, "_stale_linked", ())
+                          if identifiers_equal(name, fs_param)), "")
+            if stale:
+                why = (f"'{stale}' is linked to this conversation but no "
+                       "relay of that name is defined any more; re-link it "
+                       "in the Relay panel")
+                if names:
+                    return (f"Error: filesystem not found: '{fs_param}'. {why}. "
+                            f"Available: {', '.join(names)}")
+                return f"Error: filesystem not found: '{fs_param}'. {why}."
             if names:
                 return (f"Error: filesystem not found: '{fs_param}'. "
                         f"Available: {', '.join(names)}")

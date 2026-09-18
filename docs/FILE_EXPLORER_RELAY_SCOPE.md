@@ -42,6 +42,16 @@ foreign conversation does not grant access, and read-only collaborators cannot
 use mutation or command execution actions. No relay is auto-linked by the
 explorer.
 
+The allowlist only carries relays that resolve to a definition. A binding can
+outlive its relay: this conversation kept `Ultima7` linked with no relay of that
+name defined any more, and because the list was built from the bindings alone,
+every call naming it answered `filesystem not found: 'Ultima7'. Available:
+MyWorkspace, Ultima7` -- listing the very name it had just refused -- while the
+Relay panel reported the same relay as `not connected (def=missing)`. A stale
+binding no longer enters the allowlist, the scope stays enforced when nothing
+resolves, and naming it says the binding is stale and points at the Relay panel
+to re-link it.
+
 Relay uploads carry the same captured tile conversation through
 `uploadFileToRelay`. A batch retains its original service and directory even
 if focus or navigation changes while a file is transferring. Closing the

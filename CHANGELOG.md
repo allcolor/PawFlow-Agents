@@ -22,14 +22,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Opening a terminal on a relay that is not connected fails in seconds with the
-  reason instead of hanging the UI for minutes. The terminal transport action
-  was sent with no `_request_timeout`, and the transport treats "no timeout" as
-  an unbounded `Event.wait(None)` -- so a disconnected remote relay (or a stale
-  pool entry) held the background UI action executor until something unrelated
-  released it: measured 188s and 97s for a single `open_terminal`, while every
-  other UI action queued behind it. The open and close are now bounded, and a
-  timeout returns an error naming the relay and pointing at the Relays panel.
+- Opening a terminal no longer queues behind long tool commands. The relay runs
+  commands on a thread pool of a fixed size, so with four agents working
+  through it every worker was busy and an `open_terminal` waited for one to
+  free: measured 188s and 97s, both returning exactly when tool results landed
+  (the keystrokes of such a terminal would have queued the same way). Terminal
+  spawn/keystrokes/resize/close and the other interactive actions (desktop,
+  code-server, website browser) now run on their own thread, so a terminal's
+  latency no longer depends on the relay's batch load.
 - The blocked-pane probe no longer kills a healthy interactive CLI turn, and the
   bare-429 counter no longer adds up transients. A pane that still shows the CLI
   working (`esc to interrupt`) is never read as blocked: a long local tool emits

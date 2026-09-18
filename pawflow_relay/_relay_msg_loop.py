@@ -39,7 +39,7 @@ from pawflow_relay._relay_session import close_frame_info
 #: live relay, waiting exactly until tool results freed a worker. The server
 #: side sends these names (see ``tasks/ai/actions/_sf_k6.py``).
 _INTERACTIVE_ACTIONS = frozenset({
-    "open_terminal", "open_local_terminal", "close_terminal",
+    "open_terminal", "open_local_terminal",
     "list_terminals", "mcp_terminal_inject",
     "start_desktop", "stop_desktop", "desktop_status",
     "desktop_audio_open", "desktop_audio_close",
@@ -53,7 +53,11 @@ _INTERACTIVE_ACTIONS = frozenset({
 #: one after another in one FIFO per session -- not inline in the message loop,
 #: where an ``os.write`` to a full PTY or a forward to the host helper would
 #: stall every other command.
-_TERMINAL_IO_ACTIONS = frozenset({"write_terminal", "resize_terminal"})
+#: ``close_terminal`` is here too: it must not overtake the keystrokes still
+#: waiting for that session, or they reach a session that no longer exists. It
+#: takes its place in the same FIFO, and the FIFO is retired with it.
+_TERMINAL_IO_ACTIONS = frozenset({
+    "write_terminal", "resize_terminal", "close_terminal"})
 
 #: Log threshold for a command that had to wait for a worker. It is a diagnostic,
 #: not a limit: nothing is cancelled or refused when it is crossed.
@@ -109,6 +113,10 @@ class ConnSession:
         self.inflight_lock = threading.Lock()
         # One FIFO per terminal session, for keystrokes and resizes only.
         self._term_io_queues: dict = {}
+        # Sessions whose close went through the FIFO: a keystroke arriving after
+        # it is answered rather than queued behind the worker's sentinel, where
+        # it would never run and its request would never be answered.
+        self._closed_term_sessions: dict = {}
         self._term_io_lock = threading.Lock()
         # Run-fence high-waters (B1-O): armed by the server's
         # fence_snapshot BEFORE registration completes, raised by
@@ -356,8 +364,16 @@ class ConnSession:
             return
         if msg.get("action") in _TERMINAL_IO_ACTIONS:
             # Ordered, one session at a time: see _TERMINAL_IO_ACTIONS.
-            self._term_io_queue(str(msg.get("session_id") or "")).put(
+            session_id = str(msg.get("session_id") or "")
+            with self._term_io_lock:
+                closed = session_id in self._closed_term_sessions
+            if closed:
+                self._reply_closed_terminal(request_id, session_id)
+                return
+            self._term_io_queue(session_id).put(
                 (msg, request_id, self.sock, self.ws_frame_send))
+            if msg.get("action") == "close_terminal":
+                self._retire_term_io_queue(session_id)
             return
         self._submit_command(msg, request_id)
 
@@ -411,6 +427,55 @@ class ConnSession:
                     f"[FSRelay] terminal io command failed: {exc}\n")
             finally:
                 fifo.task_done()
+
+    def _retire_term_io_queue(self, session_id: str) -> None:
+        """Retire a session's FIFO once the close it queued has run.
+
+        Nothing used to stop these workers: one thread stayed parked on
+        ``get()`` for the life of the connection, and because ``ConnSession`` is
+        rebuilt at every reconnect, a fresh series started each time.
+        """
+        with self._term_io_lock:
+            fifo = self._term_io_queues.get(session_id)
+            self._closed_term_sessions[session_id] = True
+        if fifo is None:
+            return
+        threading.Thread(
+            target=self._retire_term_io_worker, args=(session_id, fifo),
+            name=f"relay-term-retire-{session_id[:8] or 'default'}",
+            daemon=True).start()
+
+    def _retire_term_io_worker(self, session_id: str,
+                              fifo: "queue.Queue") -> None:
+        fifo.join()  # the close, and everything queued before it, has run
+        fifo.put(None)  # stops _term_io_worker
+        with self._term_io_lock:
+            if self._term_io_queues.get(session_id) is fifo:
+                del self._term_io_queues[session_id]
+
+    def shutdown_term_io(self) -> None:
+        """Stop every session FIFO; call this when the connection ends."""
+        with self._term_io_lock:
+            queues = list(self._term_io_queues.items())
+            self._term_io_queues.clear()
+        for _session_id, fifo in queues:
+            fifo.put(None)
+
+    def _reply_closed_terminal(self, request_id: str, session_id: str) -> None:
+        """Answer a command aimed at a session that is already closed."""
+        try:
+            with self.send_lock:
+                self.ws_frame_send(self.sock, json.dumps({
+                    "type": "result",
+                    "request_id": request_id,
+                    "data": {"ok": False,
+                             "error": f"terminal session {session_id[:8]} is closed"},
+                }).encode("utf-8"))
+        except Exception as exc:
+            sys.stderr.write(
+                f"[FSRelay] closed-terminal reply failed: {exc}\n")
+        with self.inflight_lock:
+            self.inflight_cmds.pop(request_id, None)
 
     def _run_command_sync(self, msg: dict, request_id: str):
         # WebSocket sends and closes run inline (no pool or inflight tracking)

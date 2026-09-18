@@ -76,6 +76,71 @@ def test_close_frame_breaks_and_returns_reason():
     assert "code=1000" in reason
 
 
+def _wait_until(predicate, timeout=5.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
+
+def test_a_close_waits_for_the_keystrokes_queued_before_it():
+    """close_terminal used to run on a free thread and could overtake them."""
+    order = []
+
+    def _exec(msg, on_output=None):
+        order.append(msg.get("action"))
+        return {"data": {"ok": True}}
+
+    s = ConnSession(_ctx([
+        _cmd("write_terminal", "w1", session_id="t1", data="a"),
+        _cmd("write_terminal", "w2", session_id="t1", data="b"),
+        _cmd("close_terminal", "c1", session_id="t1"),
+        CLOSE,
+    ], execute_command=_exec))
+    s.run()
+
+    assert _wait_until(lambda: "close_terminal" in order)
+    assert order == ["write_terminal", "write_terminal", "close_terminal"]
+
+
+def test_closing_a_session_retires_its_fifo_and_its_thread():
+    """Nothing used to stop the worker, or drop it from the map."""
+    s = ConnSession(_ctx([
+        _cmd("write_terminal", "w1", session_id="t1", data="a"),
+        _cmd("close_terminal", "c1", session_id="t1"),
+        CLOSE,
+    ]))
+    s.run()
+
+    assert _wait_until(lambda: not s._term_io_queues)
+    assert s._term_io_queues == {}
+    assert _wait_until(
+        lambda: not any(t.name == "relay-term-io-t1" for t in threading.enumerate()))
+
+
+def test_a_keystroke_after_close_is_answered_instead_of_hanging():
+    sends = []
+    s = ConnSession(_ctx([
+        _cmd("close_terminal", "c1", session_id="t1"),
+        _cmd("write_terminal", "w1", session_id="t1", data="a"),
+        CLOSE,
+    ], _sends=sends))
+    s.run()
+
+    replies = [json.loads(f) for f, _op in sends if b'"type": "result"' in f]
+    late = [r for r in replies if r.get("request_id") == "w1"]
+    assert late, "the late keystroke must be answered, not queued behind the stop"
+    assert late[0]["data"]["ok"] is False
+    assert "closed" in late[0]["data"]["error"]
+    assert s.inflight_cmds == {}
+    s = ConnSession(_ctx([CLOSE]))
+    reason = s.run()
+    assert reason.startswith("server close frame")
+    assert "code=1000" in reason
+
+
 def test_timeout_sends_keepalive_ping_then_continues():
     sends = []
     s = ConnSession(_ctx([socket.timeout(), CLOSE], _sends=sends))

@@ -367,6 +367,17 @@ seconds for a worker says so on the relay log. Nothing else caps it, and an
 unusable value is reported rather than silently adjusted -- a cap the operator
 cannot see is how a saturated pool stayed invisible.
 
+`close_terminal` takes its place in the session's FIFO instead of running on a
+free thread, so it cannot overtake the keystrokes still queued for that session,
+and the FIFO's worker retires with the session: nothing used to stop it, so one
+thread stayed parked on `get()` for the life of the connection, and because the
+per-connection session is rebuilt on every reconnect, a fresh series began each
+time.
+
+The relay loop's last hard-coded deadline was `_DEAD_TIMEOUT = 90`, the silent
+socket after which it forces a reconnect. `PAWFLOW_RELAY_DEAD_TIMEOUT` sets it,
+and the value in force is printed when the worker connects.
+
 `open_terminal` is deliberately sent without a `_request_timeout`: the transport
 reads "no timeout" as waiting for the relay to answer, which is the right
 contract for an operation a person is watching. The waiting is kept sane by the

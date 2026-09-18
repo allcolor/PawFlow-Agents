@@ -120,6 +120,29 @@ def _command_pool_workers() -> int:
     return value
 
 
+#: How long the relay tolerates a silent socket before forcing a reconnect.
+#: A default, not a policy: ``PAWFLOW_RELAY_DEAD_TIMEOUT`` overrides it and the
+#: value in force is printed at startup.
+_DEFAULT_DEAD_TIMEOUT = 90.0
+
+
+def _env_seconds(name: str, default: float) -> float:
+    """Resolve a duration in seconds from the environment, reporting a bad one."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        sys.stderr.write(
+            f"[FSRelay] {name}={raw!r} is not a duration in seconds; "
+            f"using {default:g}\n")
+        return default
+    return value
+
+
 def _is_allowed_tmp_path(path: str) -> bool:
     """True when `path` is absolute and falls under a system temp dir."""
     if not path or not isinstance(path, str):
@@ -297,7 +320,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
             reconnect_delay = 1
             _KEEPALIVE_INTERVAL = 30
-            _DEAD_TIMEOUT = 90  # force reconnect if no data for this long
+            _DEAD_TIMEOUT = _env_seconds(
+                "PAWFLOW_RELAY_DEAD_TIMEOUT", _DEFAULT_DEAD_TIMEOUT)
+            sys.stderr.write(
+                f"[FSRelay] Reconnect if the socket is silent for "
+                f"{_DEAD_TIMEOUT:g}s (PAWFLOW_RELAY_DEAD_TIMEOUT)\n")
             sock.settimeout(_KEEPALIVE_INTERVAL)
             ws_sock_ref = [sock]  # mutable ref for _execute_command closures
             _last_activity = [time.time()]  # updated on any recv
@@ -425,7 +452,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _session.fence_highwaters.update(_initial_fence_highwaters)
             # Exposed for the reconnect handler's diagnostic logging below.
             _active_cmd_summary = _session.active_cmd_summary
-            _disconnect_reason = _session.run()
+            try:
+                _disconnect_reason = _session.run()
+            finally:
+                # Each terminal session FIFO parks one thread on get(). The
+                # connection is what owns them, so they stop with it instead of
+                # surviving into the next reconnect.
+                _session.shutdown_term_io()
 
         except KeyboardInterrupt:
             sys.stderr.write("\n[FSRelay] Shutting down.\n")

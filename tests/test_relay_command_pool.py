@@ -10,6 +10,20 @@ reports the wait -- no silent cap.
 from pawflow_relay import worker
 
 
+def test_the_silent_socket_timeout_is_the_operators_number(monkeypatch, capsys):
+    """The one deadline in the relay loop was a bare 90."""
+    monkeypatch.delenv("PAWFLOW_RELAY_DEAD_TIMEOUT", raising=False)
+    assert worker._env_seconds(
+        "PAWFLOW_RELAY_DEAD_TIMEOUT", worker._DEFAULT_DEAD_TIMEOUT) == 90.0
+
+    monkeypatch.setenv("PAWFLOW_RELAY_DEAD_TIMEOUT", "300")
+    assert worker._env_seconds("PAWFLOW_RELAY_DEAD_TIMEOUT", 90.0) == 300.0
+
+    monkeypatch.setenv("PAWFLOW_RELAY_DEAD_TIMEOUT", "soon")
+    assert worker._env_seconds("PAWFLOW_RELAY_DEAD_TIMEOUT", 90.0) == 90.0
+    assert "not a duration" in capsys.readouterr().err
+
+
 def test_the_default_concurrency_is_stated_not_hidden(monkeypatch):
     monkeypatch.delenv("PAWFLOW_RELAY_COMMAND_WORKERS", raising=False)
     assert worker._command_pool_workers() == worker._DEFAULT_COMMAND_WORKERS

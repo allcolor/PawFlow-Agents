@@ -11,6 +11,7 @@ import json
 import socket
 import struct
 import threading
+import time
 import types
 
 from pawflow_relay import _relay_msg_loop as ml
@@ -191,6 +192,38 @@ def test_command_normal_submits_to_pool_and_tracks_inflight():
     # Tracked as inflight at submit time (the pool worker would pop it).
     assert "p1" in s.inflight_cmds
     assert s.inflight_cmds["p1"]["action"] == "read_file"
+
+
+def test_an_interactive_action_never_waits_on_the_command_pool():
+    """A terminal open must not queue behind long tool runs.
+
+    The pool is a fixed number of workers, and the tool commands of a handful of
+    agents keep every one of them busy for minutes: on a live relay an
+    ``open_terminal`` queued behind them and took 188s and 97s, both returning
+    the moment tool results freed a worker. Interactive ops get their own
+    thread instead -- a lane that could still queue would only move the
+    starvation.
+    """
+    submitted = []
+
+    class _Pool:
+        def submit(self, fn, *args):
+            submitted.append(args[0].get("action"))
+
+    ran = []
+    s = ConnSession(_ctx(
+        [_cmd("open_terminal", request_id="t1"), CLOSE], pool=_Pool(),
+        execute_command=lambda _m, on_output=None: (
+            ran.append(_m["action"]) or {"data": {"ok": True}})))
+
+    s.run()
+
+    for _ in range(50):
+        if ran:
+            break
+        time.sleep(0.02)
+    assert ran == ["open_terminal"]
+    assert submitted == []          # never handed to the shared pool
 
 
 def test_run_command_executes_sends_result_and_clears_inflight():

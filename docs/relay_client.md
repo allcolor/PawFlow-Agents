@@ -345,14 +345,20 @@ picker for an enabled managed relay. In that case, local means the PawFlow
 server container; terminal I/O and the noVNC proxy remain bound to the normal
 authenticated browser-session routes.
 
-Opening a terminal is a bounded round-trip. The transport action is sent with
-`_request_timeout`, because `_request_once` waits on `Event.wait(timeout=None)`
-when the caller passes none -- an unbounded wait, not a long one. With a relay
-that is not connected (or left a stale pool entry) the UI action used to hold
-the background action executor for minutes without ever saying why: observed
-188s and 97s for one `open_terminal` on a disconnected remote relay, which also
-queued every other UI action behind it. The open now fails within the bound and
-names the reason, pointing at the Relays panel.
+Opening a terminal does not queue behind tool commands. The relay runs incoming
+commands on a thread pool of a fixed size, and a handful of agents running long
+tools keep every worker busy for minutes: an `open_terminal` then waited for a
+free worker -- measured 188s and 97s on a live relay, both returning the moment
+tool results landed, which is also why the keystrokes of a terminal opened that
+way would have queued. Interactive actions (terminal spawn, keystrokes, resize,
+close; desktop start/stop/status and audio; code-server; website browser) now
+run on their own thread, so their latency no longer depends on how much batch
+work the relay happens to be doing.
+
+`open_terminal` is deliberately sent without a `_request_timeout`: the transport
+reads "no timeout" as waiting for the relay to answer, which is the right
+contract for an operation a person is watching. The waiting is kept sane by the
+lane above, not by capping it.
 
 ## A managed container that dies is respawned
 

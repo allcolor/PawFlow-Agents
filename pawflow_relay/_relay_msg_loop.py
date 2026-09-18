@@ -20,14 +20,32 @@ stay in the worker module's scope, not this module's.
 """
 import json
 import socket
-import sys
 import threading
+import sys
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from pawflow_relay.proc_registry import kill_inflight_proc
 from pawflow_relay._relay_session import close_frame_info
+
+
+#: Actions a person is waiting on right now: opening a terminal, a keystroke, a
+#: resize, a desktop or code-server start. They run on their own thread instead
+#: of the shared command pool, because that pool is a fixed number of workers
+#: and a handful of agents running long tools keep every one of them busy for
+#: minutes -- a terminal open then queued behind them and took 188s and 97s on a
+#: live relay, waiting exactly until tool results freed a worker. The server
+#: side sends these names (see ``tasks/ai/actions/_sf_k6.py``).
+_INTERACTIVE_ACTIONS = frozenset({
+    "open_terminal", "open_local_terminal", "close_terminal",
+    "write_terminal", "resize_terminal", "list_terminals",
+    "mcp_terminal_inject",
+    "start_desktop", "stop_desktop", "desktop_status",
+    "desktop_audio_open", "desktop_audio_close",
+    "start_code_server", "stop_code_server",
+    "website_browser_start", "website_browser_stop",
+})
 
 
 @dataclass
@@ -308,6 +326,19 @@ class ConnSession:
                 "action": msg.get('action', '?'),
                 "ts": time.time(),
             }
+        # An interactive op runs on its own thread, never on the shared pool.
+        # That pool is a fixed number of workers, and the tool commands of a
+        # handful of agents keep every one of them busy for minutes: a terminal
+        # open then queued behind them and took 188s (and its keystrokes would
+        # have queued too). Spawning a PTY, writing a key and resizing are cheap
+        # and rare -- there is nothing to bound, and a lane that can still queue
+        # would only move the starvation.
+        if msg.get("action") in _INTERACTIVE_ACTIONS:
+            threading.Thread(
+                target=self._run_command,
+                args=(msg, request_id, self.sock, self.ws_frame_send),
+                name=f"relay-term-{request_id[:8]}", daemon=True).start()
+            return
         # Execute in thread pool for parallel command handling.
         self.pool.submit(
             self._run_command, msg, request_id, self.sock, self.ws_frame_send)

@@ -228,20 +228,30 @@ def test_host_desktop_tunnel_rejects_invalid_connection(
     assert not backend.handshake_request
 
 
-def test_desktop_commands_preserve_wire_order_under_pool_contention():
+def test_desktop_commands_preserve_wire_order_outside_the_pool():
+    """Desktop frames keep their order and no longer wait for a pool worker.
+
+    They were submitted to the shared command pool, which is why this test
+    existed: a busy pool delayed them, and the loop ran them inline to keep the
+    order -- which stalled every other command as soon as one viewer's socket
+    buffer filled up. Each stream now has its own FIFO: the order is kept, the
+    pool is not involved at all, and the message loop never waits.
+    """
     from pawflow_relay._relay_msg_loop import ConnSession
 
     session = object.__new__(ConnSession)
-    deferred = []
+    submitted = []
     executed = []
     session.pool = types.SimpleNamespace(
-        submit=lambda fn, *args: deferred.append((fn, args)))
+        submit=lambda fn, *args: submitted.append((fn, args)))
     session.inflight_lock = threading.Lock()
     session.inflight_cmds = {}
     session.send_lock = threading.Lock()
     session.socket_diag = {}
     session.sock = object()
     session.ws_frame_send = lambda *_args: None
+    session._term_io_lock = threading.Lock()
+    session._stream_io_queues = {}
     session._fence_refuses = lambda _msg: False
     session.execute_command = lambda msg, **_kwargs: (
         executed.append((msg["action"], msg.get("data"))) or {"ok": True})
@@ -252,12 +262,15 @@ def test_desktop_commands_preserve_wire_order_under_pool_contention():
     ]
     for index, command in enumerate(commands):
         session._handle_command({"request_id": str(index), **command})
-    for fn, args in reversed(deferred):
-        fn(*args)
+
+    deadline = time.time() + 5
+    while time.time() < deadline and len(executed) < 3:
+        time.sleep(0.01)
 
     assert executed == [("desktop_ws_send", "first"),
                         ("desktop_ws_send", "second"),
                         ("desktop_ws_close", None)]
+    assert submitted == [], "a viewer's frames must not wait for a pool worker"
 
 
 def test_desktop_ws_open_streams_data_with_opcode(backend):

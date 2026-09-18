@@ -103,12 +103,28 @@ def _process_is_running(pid: int) -> bool:
     if os.name == "nt":
         try:
             import ctypes
+            from ctypes import wintypes
+
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            handle = kernel32.OpenProcess(0x1000, False, int(pid))
-            if handle:
+            kernel32.OpenProcess.argtypes = [
+                wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.WaitForSingleObject.argtypes = [
+                wintypes.HANDLE, wintypes.DWORD]
+            kernel32.WaitForSingleObject.restype = wintypes.DWORD
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel32.CloseHandle.restype = wintypes.BOOL
+
+            handle = kernel32.OpenProcess(0x00100000, False, int(pid))  # SYNCHRONIZE
+            if not handle:
+                # Only ERROR_INVALID_PARAMETER proves this PID is absent.
+                return ctypes.get_last_error() != 87
+            try:
+                # An exited process can still have an open handle. Only
+                # WAIT_OBJECT_0 proves exit; timeout/failure retain the lock.
+                return kernel32.WaitForSingleObject(handle, 0) != 0
+            finally:
                 kernel32.CloseHandle(handle)
-                return True
-            return ctypes.get_last_error() == 5
         except Exception:
             return True
     try:

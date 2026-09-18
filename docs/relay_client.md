@@ -252,6 +252,12 @@ without removing the runtime lock or unregistering services. Saving and restarti
 remain blocked by that failure. If a concurrent launcher already removed a
 container, a failed Docker removal is accepted only after a successful fresh
 listing confirms that container is gone.
+On Windows, launcher liveness uses a zero-timeout process wait with pointer-sized
+handles. A terminated launcher is no longer reported as running even if another
+handle keeps its process object alive. Access-denied and indeterminate checks
+retain the lock; only a signaled process or an absent PID permits stale-lock
+removal. This check does not establish that Docker cleanup has finished, and it
+does not change the relay's startup or WebSocket health retry timing.
 An incomplete cleanup remains visible as `cleanup_pending`, even if the child
 already removed its launcher lock. Desktop displays **Retry cleanup**, and
 connect/save/delete settle that cleanup first; saving a stopped parent keeps it

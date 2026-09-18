@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Relay Desktop on Windows no longer stays blocked after stopping a relay. The
+  launcher liveness check asks the process itself whether it has exited
+  (`OpenProcess` for `SYNCHRONIZE` plus a zero-timeout `WaitForSingleObject`)
+  instead of inferring it from a handle, so a terminated launcher whose process
+  object another handle still holds is no longer reported as running. A physical
+  relay that could not be stopped kept its runtime lock and left the desktop
+  showing **Retry cleanup** until the lock file was deleted by hand and the
+  desktop restarted. Access-denied and indeterminate checks still retain the
+  lock, so a genuinely running launcher is never released.
 - A capability tool whose FileStore reference cannot be shared publicly now says
   so in its result instead of silently sending the provider an unfetchable URL.
   With no `file_base_url` on the tool relay the handlers fell back to the dead

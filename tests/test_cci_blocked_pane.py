@@ -7,6 +7,7 @@ ever explained why the turn could not end.
 """
 
 import time
+import threading
 
 import pytest
 
@@ -62,9 +63,19 @@ def test_a_new_request_after_stop_rearms_the_pane_probe(monkeypatch):
     coord = _CCITurnCoordinator(_QueuedService([
         {"type": "hook", "hook_event_name": "Stop", "input": {}},
         {"type": "request_start", "request_id": "r2", "path": "/v1/messages"},
-        {}, {}, {},
+        {},  # the idle gap the probe looks for
+        {"type": "request_stop", "request_id": "r2"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+        {},
     ]), "sess", pane_callback=_pane)
-    coord.run()
+
+    # A scripted queue that runs dry makes any coordinator loop forever, so the
+    # turn runs in its own thread and this test fails instead of hanging the
+    # whole suite (it did: the CI job sat at 14% until it was killed).
+    runner = threading.Thread(target=coord.run, daemon=True)
+    runner.start()
+    runner.join(15)
+    assert not runner.is_alive(), "the coordinator never finished the turn"
 
     assert seen, "the probe must read the pane again after the new request"
     assert seen[0][0] is False, "the cleared latch must not mute the probe"
@@ -227,6 +238,9 @@ def test_the_pane_is_not_probed_once_stop_was_seen(monkeypatch):
     coord = _CCITurnCoordinator(
         _EmptyService(), "sess",
         pane_callback=lambda: captured.append(1) or "the 429 retry worked")
+    # The Stop hook sets both, and the latch is what mutes the probe; the
+    # timestamp belongs to the post-Stop drain (see the re-arm test below).
+    coord._stop_seen = True
     coord._stop_seen_at = time.time()
     coord._probe_pane_blocker(time.time())  # must not raise
     assert captured == []

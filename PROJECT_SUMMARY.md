@@ -32,6 +32,11 @@ The current core value is twofold:
   (`last error` in the fast-fail message), never counts its own rejection as a
   new provider failure, and waits out the announced cooldown -- cancellable by
   Stop -- instead of failing the turn on the spot.
+- An Anthropic-compatible thinking-mode gateway that refuses a replayed turn
+  whose thinking blocks are missing -- a resumed turn has none left to send --
+  no longer wedges the agent: the request is retried once without thinking, and
+  the endpoint is remembered so later calls skip the refusal instead of
+  repeating it.
 - Capability tools re-share a FileStore reference in every form an agent may
   use, and say so when a reference cannot be shared publicly instead of handing
   an external provider an unfetchable URL.

@@ -345,6 +345,15 @@ picker for an enabled managed relay. In that case, local means the PawFlow
 server container; terminal I/O and the noVNC proxy remain bound to the normal
 authenticated browser-session routes.
 
+Opening a terminal is a bounded round-trip. The transport action is sent with
+`_request_timeout`, because `_request_once` waits on `Event.wait(timeout=None)`
+when the caller passes none -- an unbounded wait, not a long one. With a relay
+that is not connected (or left a stale pool entry) the UI action used to hold
+the background action executor for minutes without ever saying why: observed
+188s and 97s for one `open_terminal` on a disconnected remote relay, which also
+queued every other UI action behind it. The open now fails within the bound and
+names the reason, pointing at the Relays panel.
+
 ## A managed container that dies is respawned
 
 The container of a managed server relay is started once, from

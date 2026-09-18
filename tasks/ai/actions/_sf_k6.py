@@ -18,6 +18,17 @@ from tasks.ai.actions._sf_routes import (
 
 logger = logging.getLogger(__name__)
 
+#: A terminal transport op must answer quickly: the UI blocks on it with a
+#: spinner, and the relay round-trip is a PTY spawn, not a build. Without a
+#: bound, ``_request_once`` waits on ``Event.wait(timeout=None)`` -- forever --
+#: so a relay that is not connected (or left a stale pool entry) holds the UI
+#: action executor for minutes: observed 188s and 97s for one ``open_terminal``
+#: on a disconnected remote relay, which also queued every other UI action
+#: behind it (``list_cc_interactive_terminals`` waited 4s in the same queue).
+#: A timeout raises straight through ``_request`` -- it is not one of the
+#: retry-on-disconnect markers -- so the user gets the reason in one round.
+_TERMINAL_REQUEST_TIMEOUT = 20.0
+
 
 def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
     """service_flow cluster _sf_k6. Returns result or _UNHANDLED."""
@@ -86,6 +97,7 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
             if _server_local:
                 terminal_kwargs["local"] = True
             result = svc._request(_term_action, cols=cols, rows=rows,
+                                  _request_timeout=_TERMINAL_REQUEST_TIMEOUT,
                                   **terminal_kwargs)
             session_id = result.get("session_id", "") if isinstance(result, dict) else str(result)
 
@@ -108,7 +120,14 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
                 "relay_id": relay_id,
             }).encode())
         except Exception as e:
-            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            _msg = str(e)
+            if "Relay timeout" in _msg:
+                _msg = (
+                    f"{_msg} -- the relay did not answer within "
+                    f"{_TERMINAL_REQUEST_TIMEOUT:.0f}s, which normally means "
+                    "it is not connected. Check the Relays panel (or start the "
+                    "relay on that machine) and try again.")
+            flowfile.set_content(json.dumps({"error": _msg}).encode())
         return [flowfile]
 
     if action == "list_cc_interactive_terminals":
@@ -510,7 +529,8 @@ finally:
         try:
             svc = _find_relay_svc(relay_id)
             if svc:
-                svc._request("close_terminal", session_id=session_id)
+                svc._request("close_terminal", session_id=session_id,
+                             _request_timeout=_TERMINAL_REQUEST_TIMEOUT)
             from services.terminal_proxy import unregister_terminal
             unregister_terminal(session_id)
             flowfile.set_content(json.dumps({"ok": True}).encode())

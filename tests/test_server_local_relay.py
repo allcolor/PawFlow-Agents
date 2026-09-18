@@ -91,9 +91,39 @@ def test_terminal_handler_routes_server_local_session_through_pawflow(monkeypatc
     }, None, "alice", flowfile, helpers)
 
     assert service.calls == [("open_terminal", {
-        "cols": 100, "rows": 30, "local": True})]
+        "cols": 100, "rows": 30, "local": True,
+        "_request_timeout": _sf_k6._TERMINAL_REQUEST_TIMEOUT})]
     assert registered[0][1]["server_local"] is True
     assert json.loads(flowfile.get_content())["token"] == "term-token"
+
+
+def test_terminal_open_reports_a_relay_timeout_instead_of_hanging(monkeypatch):
+    """A relay that never answers must fail fast with an actionable reason.
+
+    ``_request_once`` waits on ``Event.wait(timeout=None)`` when the caller
+    passes no ``_request_timeout``: opening a terminal on a disconnected remote
+    relay then held the UI action executor for 188s and never showed why.
+    """
+    from tasks.ai.actions import _sf_k6
+
+    class Service:
+        config = {"server_managed": False}
+
+        def _request(self, action, **kwargs):
+            assert kwargs.get("_request_timeout"), (
+                "an unbounded wait hangs the UI action")
+            raise Exception(f"Relay timeout for {action} on Ultima7")
+
+    monkeypatch.setattr(_sf_k6, "_ensure_terminal_routes", lambda _ff: None)
+    flowfile = FlowFile(attributes={})
+    helpers = (lambda _relay_id: Service(),) + (None,) * 5
+
+    _sf_k6._handle_sf_k6(None, "open_terminal", {"relay_id": "Ultima7"},
+                         None, "alice", flowfile, helpers)
+
+    error = json.loads(flowfile.get_content())["error"]
+    assert "Relay timeout" in error
+    assert "not connected" in error
 
 
 def test_desktop_handler_proxies_server_local_novnc_on_loopback(monkeypatch):

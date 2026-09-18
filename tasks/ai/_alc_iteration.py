@@ -396,12 +396,13 @@ class _ALCIterationMixin:
 
         # No tools → final response (but wait for bg tasks first)
         if not st.response.tool_calls:
-            if _bg_mod.has_pending(st.conversation_id):
+            _bg_agent = st.ctx.get("active_agent_name", "") or ""
+            if _bg_mod.has_pending(st.conversation_id, _bg_agent):
                 logger.info("[agent:%s] waiting for background tasks before exit",
                             st.conversation_id[:8])
                 st.emitter.on_status("Waiting for background tasks...")
                 _bg_mod.wait_pending(
-                    st.conversation_id,
+                    st.conversation_id, _bg_agent,
                     cancel_check=st.emitter.check_cancelled)
                 _apply_bg_results(st.messages, st.conversation_id)
                 return _ALC_CONTINUE

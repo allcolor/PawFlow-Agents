@@ -257,18 +257,23 @@ def cancel(tc_id: str) -> bool:
     return True
 
 
-def has_pending(conversation_id: str) -> bool:
-    """Check if any bg tasks are still running for this conversation."""
+def has_pending(conversation_id: str, agent_name: str) -> bool:
+    """Check if this agent still has bg tasks running in this conversation.
+
+    Scoped to the owning agent: in a multi-agent conversation another agent's
+    background tool must never hold this agent's turn open.
+    """
     with _lock:
         return any(
-            t["conversation_id"] == conversation_id and t["status"] == "running"
+            t["conversation_id"] == conversation_id
+            and t["agent_name"] == agent_name and t["status"] == "running"
             for t in _backgrounded.values()
         )
 
 
-def wait_pending(conversation_id: str, timeout: Optional[float] = None,
-                 cancel_check=None) -> int:
-    """Wait for all pending bg tasks. Returns count completed.
+def wait_pending(conversation_id: str, agent_name: str,
+                 timeout: Optional[float] = None, cancel_check=None) -> int:
+    """Wait for this agent's pending bg tasks. Returns count completed.
 
     timeout: optional explicit maximum wait in seconds. When omitted, wait
     until every background task finishes or cancel_check raises.
@@ -282,7 +287,8 @@ def wait_pending(conversation_id: str, timeout: Optional[float] = None,
         with _lock:
             pending = [
                 tc_id for tc_id, t in _backgrounded.items()
-                if t["conversation_id"] == conversation_id and t["status"] == "running"
+                if t["conversation_id"] == conversation_id
+                and t["agent_name"] == agent_name and t["status"] == "running"
             ]
         if not pending:
             break

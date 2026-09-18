@@ -361,7 +361,52 @@ def test_agent_core_waits_for_background_without_default_timeout():
     src = agent_core_src()
 
     assert "wait_pending(conversation_id, timeout=120" not in src
-    assert "wait_pending(\n                    conversation_id,\n                    cancel_check=" in src  # reindented by split
+    assert "wait_pending(\n                    conversation_id, _bg_agent,\n                    cancel_check=" in src  # reindented by split
+
+
+def _running_task(tc_id, conversation_id, agent_name):
+    # Insert a running entry without the watcher thread register() starts.
+    bg._backgrounded[tc_id] = {
+        "future": None, "conversation_id": conversation_id,
+        "agent_name": agent_name, "tool_name": "run_tests",
+        "is_claude_code": False, "user_id": "", "started_at": time.time(),
+        "status": "running", "result": None,
+    }
+
+
+def test_has_pending_ignores_another_agents_background_task():
+    _reset_state()
+    _running_task("tc-assistant", "conv1", "assistant")
+
+    assert bg.has_pending("conv1", "assistant") is True
+    assert bg.has_pending("conv1", "claude") is False
+    assert bg.has_pending("conv2", "assistant") is False
+
+
+def test_wait_pending_does_not_wait_for_another_agents_task():
+    _reset_state()
+    _running_task("tc-assistant", "conv1", "assistant")
+
+    started = time.time()
+    assert bg.wait_pending("conv1", "claude") == 0
+    assert time.time() - started < 1.0
+    assert bg._backgrounded["tc-assistant"]["status"] == "running"
+
+
+def test_wait_pending_waits_for_the_agents_own_task():
+    _reset_state()
+    _running_task("tc-claude", "conv1", "claude")
+    _running_task("tc-assistant", "conv1", "assistant")
+
+    def _finish():
+        time.sleep(0.2)
+        with bg._lock:
+            bg._backgrounded["tc-claude"]["status"] = "completed"
+
+    threading.Thread(target=_finish, daemon=True).start()
+
+    assert bg.wait_pending("conv1", "claude") == 1
+    assert bg._backgrounded["tc-assistant"]["status"] == "running"
 
 
 def test_tool_relay_has_no_implicit_execution_timeout():

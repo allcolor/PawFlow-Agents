@@ -168,6 +168,36 @@ def test_a_served_model_response_resets_the_streak():
     assert coord._rate_limit_responses == 0
 
 
+def test_a_served_side_endpoint_does_not_reset_the_streak():
+    """Only a served *model* request clears the streak.
+
+    The proxy also observes side endpoints, and one of those answering 200
+    between two retries cleared the counter -- disarming the whole protection.
+    """
+    coord = _CCITurnCoordinator(_EmptyService(), "sess")
+    with pytest.raises(LLMCallError) as info:
+        for index in range(3):
+            coord._remember_response_status(
+                {"type": "response_start", "request_id": f"r{index}",
+                 "status": "429", "path": "/v1/messages"})
+            coord._remember_response_status(
+                {"type": "response_start", "request_id": f"m{index}",
+                 "status": "200", "path": "/api/claude_code/metrics"})
+    assert info.value.category == "rate_limited"
+
+
+def test_the_pane_is_not_probed_once_stop_was_seen(monkeypatch):
+    """The Stop hook already proves the CLI is not waiting for input."""
+    _probe_now(monkeypatch)
+    captured = []
+    coord = _CCITurnCoordinator(
+        _EmptyService(), "sess",
+        pane_callback=lambda: captured.append(1) or "the 429 retry worked")
+    coord._stop_seen_at = time.time()
+    coord._probe_pane_blocker(time.time())  # must not raise
+    assert captured == []
+
+
 def test_an_ignored_response_without_a_429_status_is_ignored():
     coord = _CCITurnCoordinator(_EmptyService(), "sess")
     coord._remember_response_status(

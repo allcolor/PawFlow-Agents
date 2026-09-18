@@ -353,6 +353,12 @@ class _CCITurnCoordinator:
         """
         if self.pane_callback is None:
             return
+        if self._stop_seen or self._stop_seen_at:
+            # The Stop hook already proved the CLI is not waiting for input, and
+            # the final answer is the worst thing to lose: a reply that itself
+            # discusses a 429 is twenty seconds of silence away from killing the
+            # turn it belongs to.
+            return
         now = time.time()
         idle_since = self._last_event_at or started_at
         if now - idle_since < _LIVENESS_PROBE_IDLE_SECONDS:
@@ -405,10 +411,15 @@ class _CCITurnCoordinator:
             self._response_status_by_request[request_id] = (
                 status, str(event.get("path") or ""))
         if status != "429":
-            # A served model request says the limit is not in force any more.
+            # A served MODEL request says the limit is not in force any more.
             # Without this, three transients spread over a long turn added up to
             # a dead end even though the CLI recovered from every one of them.
-            if status.startswith("2"):
+            # Only the model endpoint counts: the proxy also observes side
+            # endpoints (metrics, token counting), and a 200 there -- which
+            # arrives between two retries -- would clear the streak and disarm
+            # the protection entirely.
+            if (status.startswith("2")
+                    and self._is_model_request_path(event.get("path", ""))):
                 self._rate_limit_responses = 0
             return
         self._count_rate_limited_response(event.get("path", ""), request_id)

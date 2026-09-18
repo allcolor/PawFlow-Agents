@@ -458,7 +458,12 @@ Timing controls are read once when the provider modules are imported:
   `response_start status=429` then `response_ignored`, and counting both put the
   real threshold one short of the announced one. A served model response resets
   the streak: three transients spread over a long turn the CLI recovered from
-  are not a dead end.
+  are not a dead end. Only a served *model* request resets it -- the proxy also
+  observes side endpoints (metrics, token counting), and a 200 from one of those
+  between two retries would otherwise disarm the counter completely. The pane
+  probe, for its part, stays armed only until the `Stop` hook: after that the CLI
+  has proven it is not waiting for input, and a final answer that discusses a
+  `429` must not be twenty seconds away from killing its own turn.
 - `PAWFLOW_CCI_PASTE_SETTLE_SECONDS` sets the delay after `paste-buffer` and
   before the first `Enter`. Claude Code defaults to `0.2` seconds. Codex uses
   at most `0.2` seconds even when a larger inherited override is configured.

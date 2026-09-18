@@ -43,6 +43,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   uses, and a command that waits more than a few seconds for a worker logs the
   wait. A saturated pool used to be invisible -- four workers busy with agents'
   tools, and an `open_terminal` waiting 188s with nothing to explain it.
+- A relay that is still linked but has no definition left is no longer offered
+  as a usable target. The scope list handed to filesystem tools was built from
+  the conversation's bindings alone, so a binding that outlived its relay (this
+  conversation kept `Ultima7` linked with no relay of that name defined any
+  more) was announced as available and then rejected: `filesystem not found:
+  'Ultima7'. Available: MyWorkspace, Ultima7` -- listing the very name it had
+  just refused, while the Relay panel said `not connected (def=missing)`. What
+  is offered is now what resolves, and naming a stale one says so and points at
+  the Relay panel to re-link it.
 - The blocked-pane probe no longer kills a healthy interactive CLI turn, and the
   bare-429 counter no longer adds up transients. A pane that still shows the CLI
   working (`esc to interrupt`) is never read as blocked: a long local tool emits

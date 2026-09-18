@@ -62,6 +62,10 @@ The current core value is twofold:
   code-server/noVNC open joined the interactive lane, and the relay's command
   concurrency is the operator's `PAWFLOW_RELAY_COMMAND_WORKERS` -- with the wait
   for a worker visible in the relay log instead of silent.
+- Filesystem tools only offer relays that actually resolve: a linked relay whose
+  definition is gone (`Ultima7` here) used to be announced as available and then
+  rejected by name, contradicting the Relay panel's `def=missing`. Naming it now
+  says the binding is stale and to re-link it.
 - Capability tools re-share a FileStore reference in every form an agent may
   use, and say so when a reference cannot be shared publicly instead of handing
   an external provider an unfetchable URL.

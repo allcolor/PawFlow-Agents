@@ -50,7 +50,8 @@ The current core value is twofold:
 - The blocked-pane probe never kills a working CLI turn (a pane showing
   `esc to interrupt` wins), `Approaching usage limit` is no longer read as a
   banner, and the bare-429 counter counts one failure per response and resets on
-  a served one.
+  a served model request only -- never on a side endpoint, and the probe stops
+  once the `Stop` hook arrives.
 - Media sharing only re-shares FileStore-owned references, so a vendor CDN URL
   that merely contains `/files/` is forwarded instead of being rewritten into a
   dead local link.

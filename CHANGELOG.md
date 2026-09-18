@@ -33,7 +33,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   longer fails that turn non-retryably. The 429 counter now counts one failure
   per response (the proxy reports an undecodable body twice, which put the real
   threshold one short of the announced one) and resets on a served model
-  response, so three transients the CLI recovered from are not a dead end.
+  response, so three transients the CLI recovered from are not a dead end -- and
+  only a served *model* response resets it, since a side endpoint answering 200
+  between two retries used to disarm the counter. The pane probe stops once the
+  `Stop` hook was seen: the CLI has proven it is not waiting for input, and a
+  final answer discussing a `429` no longer kills its own turn.
 - Media sharing only re-shares FileStore-owned references. `/files/<id>` is also
   a path third-party CDNs use (Meshy serves `/files/<task>/<name>`), and the
   normalisation rewrote such a URL against the local base -- turning a working

@@ -30,6 +30,11 @@ This requires the agent `file_base_url` (or the service `public_callback_base_ur
 to be a public HTTPS root such as `https://webchat.example.org`. When the base
 URL is `localhost`/private, no access flip is performed and the legacy
 `<base>/files/<id>` form is returned (a public URL cannot be produced anyway).
+In that case the tool result ends with an explicit warning naming the refs, the
+base they were resolved against, and the two settings that fix it
+(`public_callback_base_url` on the service, `file_base_url` on the tool relay).
+Without it the vendor failed with an opaque error — Meshy, for instance, answers
+its asset proxy with a 403 — and nothing in the conversation said why.
 Providers that read FileStore locally (`ACCEPTS_FILESTORE_URLS`) keep the
 `fs://filestore/...` reference unchanged and are never flipped.
 

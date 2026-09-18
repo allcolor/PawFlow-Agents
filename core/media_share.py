@@ -79,6 +79,31 @@ class TemporaryPublicRefs:
         self._public = _is_public_base(self._base_url)
         # file_id -> previous access level (only files we actually flipped)
         self._restore: Dict[str, str] = {}
+        # Refs that ended up on a host an external provider cannot reach, plus
+        # the base they were resolved against and the provider they were for.
+        self._unreachable: Dict[str, str] = {}
+        self._unreachable_base = ""
+        self._provider = ""
+
+    def unfetchable_warning(self) -> str:
+        """Actionable note when a ref could not be shared publicly, else "".
+
+        The legacy URL returned for such a ref points at a host the provider
+        cannot reach, so the vendor fails with an opaque error (Meshy answers
+        its asset proxy with a 403). Surface the real cause in the tool result
+        instead of leaving the agent to guess.
+        """
+        if not self._unreachable:
+            return ""
+        refs = ", ".join(sorted(self._unreachable))
+        for_provider = f" {self._provider}" if self._provider else ""
+        return (
+            f"Warning: FileStore ref(s) {refs} could not be shared with"
+            f"{for_provider}: no internet-reachable base URL is configured "
+            f"(resolved against '{self._unreachable_base}'), so the provider "
+            f"cannot fetch them and its task fails. Set "
+            f"`public_callback_base_url` on the media service, or "
+            f"`file_base_url` on the tool relay, to a public HTTPS root.")
 
     def _effective_base(self, service=None):
         """Resolve the public base URL to rewrite a ref against.
@@ -135,6 +160,9 @@ class TemporaryPublicRefs:
         # a cryptic provider-side 403 "Asset proxy failed" be the only clue.
         provider = getattr(service, "TYPE", service.__class__.__name__) \
             if service is not None else ""
+        self._unreachable[file_id] = provider or "provider"
+        self._unreachable_base = self._unreachable_base or base
+        self._provider = self._provider or str(provider or "")
         logger.warning(
             "media_share: ref %s resolved against non-public base %r%s; an "
             "external provider cannot fetch it. Set public_callback_base_url "

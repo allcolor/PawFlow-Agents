@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A capability tool whose FileStore reference cannot be shared publicly now says
+  so in its result instead of silently sending the provider an unfetchable URL.
+  With no `file_base_url` on the tool relay the handlers fell back to the dead
+  `http://localhost:9090` default, so `generate_3d` handed Meshy a URL it could
+  never fetch and the vendor failed with an opaque error. The warning names the
+  refs, the base used, and the two settings that fix it.
 - A delegate turn that ended on a fatal LLM error is no longer delivered to its
   caller as a reply. The failed turn had no output, so the delegate wake fell
   back to the last persisted assistant message -- the error text itself -- and

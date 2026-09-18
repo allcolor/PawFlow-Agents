@@ -114,12 +114,19 @@ class _CapabilityHandlerBase(ToolHandler):
             share = TemporaryPublicRefs(self._base_url, self._user_id)
             token = _ACTIVE_SHARE.set(share)
             try:
-                return _raw(self, arguments)
+                result = _raw(self, arguments)
             finally:
                 try:
                     share.restore()
                 finally:
                     _ACTIVE_SHARE.reset(token)
+            # A reference the provider cannot fetch is the silent cause of a
+            # vendor-side failure (Meshy: 403 on its asset proxy). Say it in
+            # the tool result, where the agent and the user can act on it.
+            warning = share.unfetchable_warning()
+            if warning and isinstance(result, str) and warning not in result:
+                return f"{result}\n{warning}"
+            return result
 
         cls.execute = _execute_with_share
 

@@ -234,6 +234,9 @@ def test_capability_share_scope_isolated_between_concurrent_calls(monkeypatch):
         def restore(self):
             self.restored += 1
 
+        def unfetchable_warning(self):
+            return ""
+
     class _Dummy(_CapabilityHandlerBase):
         @property
         def name(self):

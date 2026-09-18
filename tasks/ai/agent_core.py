@@ -22,6 +22,33 @@ from tasks.ai._alc_llm_turn import _ALCLlmTurnMixin
 logger = logging.getLogger(__name__)
 
 
+def _delegate_reply_text(st) -> str:
+    """Body to deliver to a delegate caller, or "" when there is none.
+
+    A turn that ended on a fatal LLM error has no reply at all:
+    ``response_content`` is empty and the last persisted assistant message is
+    the error text itself. Delivering that woke the caller with the failure,
+    whose own turn then failed identically, so a provider outage ping-ponged
+    through the whole agent chain and every hop posted the same error to the
+    webchat. The failure already reached the conversation through
+    ``on_fatal_error``; a caller with nothing to read stays idle.
+    """
+    if getattr(st, "_fatal_error", False):
+        return ""
+    text = getattr(st, "response_content", "") or ""
+    if text:
+        return text
+    # claude-code's turn_callback persists text per turn and returns
+    # response.content="" at the very end, so response_content is empty. Fall
+    # back to the last persisted assistant message's text for the wake body.
+    for message in reversed(getattr(st, "messages", []) or []):
+        if (message.role == "assistant"
+                and not getattr(message, "tool_calls", None)
+                and message.content):
+            return message.content
+    return ""
+
+
 class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                      _ALCClosures1Mixin, _ALCClosures2Mixin):
     # Tools whose output is internal/trusted JSON used by the agent loop
@@ -529,15 +556,16 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     # claude-code's turn_callback persists text per turn and
                     # returns response.content="" at the very end, so
                     # response_content is empty. Fall back to the last
-                    # persisted assistant message's text for the wake body.
-                    st._reply_text = st.response_content or ""
-                    if not st._reply_text:
-                        for st._m in reversed(st.messages):
-                            if (st._m.role == "assistant"
-                                    and not getattr(st._m, "tool_calls", None)
-                                    and st._m.content):
-                                st._reply_text = st._m.content
-                                break
+                    # persisted assistant message's text for the wake body —
+                    # unless the turn failed, in which case that message IS the
+                    # error text and there is no reply to deliver.
+                    st._reply_text = _delegate_reply_text(st)
+                    if not st._reply_text and getattr(st, "_fatal_error", False):
+                        logger.warning(
+                            "[delegate-reply] turn failed (%s) — not delivering "
+                            "the error text to caller '%s'",
+                            str(getattr(st, "_fatal_error_msg", "") or "")[:150],
+                            st._src_agent or "none")
                     logger.info(
                         "[delegate-reply-check] turn_mode=%s src=%s "
                         "reply_len=%d",

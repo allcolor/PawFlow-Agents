@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A delegate turn that ended on a fatal LLM error is no longer delivered to its
+  caller as a reply. The failed turn had no output, so the delegate wake fell
+  back to the last persisted assistant message -- the error text itself -- and
+  woke the caller with the failure; the caller's own turn then failed
+  identically, so a provider outage ping-ponged through the whole agent chain
+  and every hop posted the same error in the webchat, with no agent left in
+  Active Agents to stop. The failure now reaches the conversation once, through
+  the error event.
 - An open LLM circuit breaker no longer hides the failure that tripped it: the
   fast-fail error now carries the provider error (`LLM circuit open for ...;
   retry in 55s; last error: LLM API error 429: ...`), a circuit rejection is

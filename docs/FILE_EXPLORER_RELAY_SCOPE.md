@@ -52,6 +52,13 @@ binding no longer enters the allowlist, the scope stays enforced when nothing
 resolves, and naming it says the binding is stale and points at the Relay panel
 to re-link it.
 
+The states are kept apart, because they call for different answers: a relay that
+is live, a relay whose definition exists but which is not connected right now
+(still offered -- it can come back), and a name that resolves nowhere in this
+conversation's scope, which may simply belong to another conversation. The
+classification asks the registry for the definition (`resolve_definition`)
+rather than inferring it from a missing live instance.
+
 Relay uploads carry the same captured tile conversation through
 `uploadFileToRelay`. A batch retains its original service and directory even
 if focus or navigation changes while a file is transferring. Closing the

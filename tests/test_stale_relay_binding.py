@@ -43,12 +43,26 @@ class _Handler(BaseFsHandler):
         return ""
 
 
-def _wire(monkeypatch, linked, resolvable):
+class _RegistryGet:
+    """The registry lookup the state classification asks for a definition."""
+
+    def __init__(self, defined):
+        self._defined = set(defined)
+
+    def resolve_definition(self, service_id, *, user_id="", conv_id=""):
+        return object() if service_id in self._defined else None
+
+
+def _wire(monkeypatch, linked, resolvable, defined=()):
     from core.handlers import _fs_helpers
+    from core import service_registry
 
     monkeypatch.setattr(
         _fs_helpers, "find_fs_service",
         lambda user, name, conv: object() if name in resolvable else None)
+    monkeypatch.setattr(
+        service_registry.ServiceRegistry, "get_instance",
+        staticmethod(lambda: _RegistryGet(defined)))
     runtime = _Runtime(types.SimpleNamespace(
         user_id="allcolor", conversation_id="conv-1", agent_name="dev"))
     monkeypatch.setattr(runtime, "_linked_relays", lambda: tuple(linked))
@@ -66,17 +80,31 @@ def test_only_defined_relays_are_offered(monkeypatch):
 def test_a_stale_name_says_the_binding_is_the_problem(monkeypatch):
     handler = _wire(monkeypatch, ["MyWorkspace", "Ultima7"], {"MyWorkspace"})
     message = handler._no_target_error("Ultima7")
-    assert "no relay of that name is defined" in message
+    assert "is not defined in its scope" in message
+    assert "another conversation" in message
     assert "Relay panel" in message
     assert "Available: MyWorkspace" in message
     assert "Available: MyWorkspace, Ultima7" not in message
+
+
+def test_a_relay_that_is_defined_but_down_is_not_called_stale(monkeypatch):
+    """A live instance and a definition are different things."""
+    handler = _wire(monkeypatch, ["MyWorkspace", "Studio"], {"MyWorkspace"},
+                    defined={"Studio"})
+    assert [s["id"] for s in handler._available_services] == ["MyWorkspace", "Studio"]
+    assert handler._offline_linked == ("Studio",)
+    assert handler._stale_linked == ()
+    message = handler._no_target_error("Studio")
+    assert "defined but not connected" in message
+    assert "is not defined in its scope" not in message
 
 
 def test_an_unknown_name_keeps_the_plain_message(monkeypatch):
     handler = _wire(monkeypatch, ["MyWorkspace"], {"MyWorkspace"})
     message = handler._no_target_error("SomeOtherRelay")
     assert "filesystem not found: 'SomeOtherRelay'" in message
-    assert "no relay of that name is defined" not in message
+    assert "defined but not connected" not in message
+    assert "is not defined in its scope" not in message
 
 
 def test_a_stale_only_conversation_still_enforces_the_scope(monkeypatch):

@@ -47,6 +47,7 @@ class BaseFsHandler(ToolHandler):
         self._fs_service = None
         self._available_services = []
         self._stale_linked = ()
+        self._offline_linked = ()
         self._default_service_id = ""
         self._filesystem_scope_enforced = False
         self._user_id = ""
@@ -78,11 +79,15 @@ class BaseFsHandler(ToolHandler):
 
     def set_available_services(self, services: List[Dict[str, Any]],
                                default_service_id: str = "",
-                               stale_linked: tuple = ()):
+                               stale_linked: tuple = (),
+                               offline_linked: tuple = ()):
         self._available_services = services
         # Linked relays with no definition left: named so a failed call can say
         # why instead of listing them as available.
         self._stale_linked = tuple(stale_linked or ())
+        # Linked relays whose definition exists but is not running: a different
+        # answer from "not defined any more".
+        self._offline_linked = tuple(offline_linked or ())
         self._default_service_id = default_service_id or ""
         self._filesystem_scope_enforced = True
 
@@ -218,16 +223,19 @@ class BaseFsHandler(ToolHandler):
         if fs_param:
             names = [s.get("id", "?") for s in available]
             from core.identifier import identifiers_equal
+            offline = next((name for name in getattr(self, "_offline_linked", ())
+                            if identifiers_equal(name, fs_param)), "")
+            if offline:
+                why = (f"'{offline}' is defined but not connected right now; "
+                       "check that its relay is running")
+                return self._with_available(fs_param, why, names)
             stale = next((name for name in getattr(self, "_stale_linked", ())
                           if identifiers_equal(name, fs_param)), "")
             if stale:
-                why = (f"'{stale}' is linked to this conversation but no "
-                       "relay of that name is defined any more; re-link it "
-                       "in the Relay panel")
-                if names:
-                    return (f"Error: filesystem not found: '{fs_param}'. {why}. "
-                            f"Available: {', '.join(names)}")
-                return f"Error: filesystem not found: '{fs_param}'. {why}."
+                why = (f"'{stale}' is linked to this conversation but is not "
+                       "defined in its scope -- it may belong to another "
+                       "conversation; link it here in the Relay panel")
+                return self._with_available(fs_param, why, names)
             if names:
                 return (f"Error: filesystem not found: '{fs_param}'. "
                         f"Available: {', '.join(names)}")
@@ -238,6 +246,14 @@ class BaseFsHandler(ToolHandler):
                     f"Available: {', '.join(names)}. "
                     f"Use the source/destination/filesystem parameter.")
         return "Error: no filesystem services available."
+
+    @staticmethod
+    def _with_available(fs_param: str, why: str, names: list) -> str:
+        """Compose a 'not found' error with its reason and what is available."""
+        if names:
+            return (f"Error: filesystem not found: '{fs_param}'. {why}. "
+                    f"Available: {', '.join(names)}")
+        return f"Error: filesystem not found: '{fs_param}'. {why}."
 
     # ── Optional RTK helpers ──
 

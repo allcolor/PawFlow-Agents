@@ -128,11 +128,12 @@ class GroupReadOnlyToolRuntime:
                     handler.set_fs_service(service)
                 linked = self._linked_relays()
                 if linked and hasattr(handler, "set_available_services"):
-                    resolvable, stale = self._resolvable_relays(linked)
+                    live, offline, missing = self._relay_states(linked)
                     handler.set_available_services(
                         [{"id": item, "type": "relay", "root": "?"}
-                         for item in resolvable],
-                        stale_linked=stale)
+                         for item in live + offline],
+                        stale_linked=missing,
+                        offline_linked=offline)
             elif handler.name == "web_search" and hasattr(handler, "set_fs_resolver"):
                 handler.set_fs_resolver(self._resolve_scoped_service)
 
@@ -146,29 +147,47 @@ class GroupReadOnlyToolRuntime:
             linked.append(default)
         return tuple(linked)
 
-    def _resolvable_relays(self, linked: tuple) -> tuple:
-        """Split linked relays into those with a definition and those without.
+    def _relay_states(self, linked: tuple) -> tuple:
+        """Classify linked relays: live, defined but not live, or unknown here.
 
         A binding can outlive its relay: this conversation kept 'Ultima7'
-        linked while no service with that name existed any more, so the tool
-        layer announced it as available and then answered every call naming it
-        with "filesystem not found: 'Ultima7'. Available: MyWorkspace,
-        Ultima7" -- listing the very name it had just rejected -- while the
-        Relay panel reported it as "not connected (def=missing)". What is
-        offered is now what resolves, and the rest is named as stale.
+        linked while no service of that name resolved for it, so the tool layer
+        announced it as available and then answered every call naming it with
+        "filesystem not found: 'Ultima7'. Available: MyWorkspace, Ultima7" --
+        listing the very name it had just rejected -- while the Relay panel
+        reported it as "not connected (def=missing)".
+
+        A live instance and a definition are not the same thing, and the three
+        states need three different answers: a relay defined here but simply
+        offline is not a stale binding, and a name that resolves nowhere here may
+        well exist in another conversation's scope -- re-linking is then the
+        action, but the two cases must not be described the same way.
         """
         from core.handlers._fs_helpers import find_fs_service
+        from core.service_registry import ServiceRegistry
 
-        resolvable: list = []
-        stale: list = []
+        registry = ServiceRegistry.get_instance()
+        live: list = []
+        offline: list = []
+        missing: list = []
         for item in linked:
             try:
                 found = find_fs_service(
                     self.context.user_id, item, self.context.conversation_id)
             except Exception:
                 found = None
-            (resolvable if found is not None else stale).append(item)
-        return tuple(resolvable), tuple(stale)
+            if found is not None:
+                live.append(item)
+                continue
+            defined = None
+            try:
+                defined = registry.resolve_definition(
+                    item, user_id=self.context.user_id,
+                    conv_id=self.context.conversation_id)
+            except Exception:
+                defined = None
+            (offline if defined is not None else missing).append(item)
+        return tuple(live), tuple(offline), tuple(missing)
 
     def _default_relay_service(self):
         from core.relay_bindings import get_default

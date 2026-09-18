@@ -37,6 +37,11 @@ The current core value is twofold:
   no longer wedges the agent: that request is retried once without thinking.
   Thinking is still requested up front, and nothing is latched per endpoint, so
   turns whose replayed reasoning is intact keep their reasoning.
+- A response body truncated mid-stream is retried instead of killing the turn:
+  `IncompleteRead`, `ChunkedEncodingError`, `Remote end closed connection`,
+  `ConnectionResetError` and `BrokenPipeError` now count as transport drops, and
+  a truncated body runs through the truncated-stream branch, which empties the
+  buffers first so a half answer is not sliced into the retry's output.
 - Capability tools re-share a FileStore reference in every form an agent may
   use, and say so when a reference cannot be shared publicly instead of handing
   an external provider an unfetchable URL.

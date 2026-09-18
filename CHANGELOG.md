@@ -22,6 +22,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A response body truncated mid-stream is now retried instead of killing the
+  turn. `IncompleteRead(2173 bytes read)` — raised by our own `http.client`
+  streaming loop — matched no marker in the transport-drop classifier, so
+  `retryable` stayed false and the turn failed on its first attempt with
+  `LLM streaming failed after 1 attempt(s)`. `IncompleteRead`,
+  `ChunkedEncodingError`, `Remote end closed connection`, `ConnectionResetError`
+  and `BrokenPipeError` count as transport drops now, and a truncated body goes
+  through the truncated-stream branch, which empties the buffers first so a half
+  answer already streamed is not sliced into the retry's output.
 - An interactive CLI turn that is blocked is reported instead of polled
   forever. A rate-limit banner (`429`, `usage limit`, `limit will reset`) or a
   question printed in the tmux pane stopped the turn while nothing on the wire

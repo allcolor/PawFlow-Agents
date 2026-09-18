@@ -438,6 +438,24 @@ class LLMClient(
         return self._cfg("reasoning_effort", "")
 
     @property
+    def reasoning_content_echo(self) -> bool:
+        """Replay each assistant turn's own reasoning_content when asked.
+
+        Thinking-mode OpenAI-compatible gateways validate the turns they are
+        handed back: an assistant turn that reasoned must carry its
+        reasoning_content again, or the next request of the tool loop is a 400
+        ("The `reasoning_content` in the thinking mode must be passed back to
+        the API"). Off by default, because a provider that returns the field
+        may still refuse it on input (DeepSeek's reasoning alias documents
+        exactly that). PawFlow also turns it on by itself, for the rest of the
+        process, the first time an endpoint returns that 400.
+        """
+        raw = self._cfg("reasoning_content_echo", False)
+        if isinstance(raw, bool):
+            return raw
+        return str(raw).strip().lower() not in {"", "0", "false", "no", "off"}
+
+    @property
     def prompt_cache_key(self):
         return self._cfg("prompt_cache_key", "")
 

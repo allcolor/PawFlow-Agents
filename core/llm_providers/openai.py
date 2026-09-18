@@ -29,6 +29,14 @@ _PROVIDER_ERROR_FINISH_REASONS = frozenset({
     "network_error", "server_error", "api_error", "timeout",
 })
 
+# Endpoints that answered 400 demanding the reasoning of a replayed assistant
+# turn, keyed by configured base URL and model (see `_reasoning_echo_key`).
+# Every LLM call runs on a fresh clone (`LLMClient.clone_for_call`), so an
+# instance flag would be relearned -- and repaid with another rejected request
+# -- on every single call. Same process-wide shape as the circuit breaker's
+# (provider, base URL, model) key.
+_REASONING_ECHO_ENDPOINTS: set = set()
+
 
 def _finish_reason_key(value: Any) -> str:
     """Return a comparison key without changing an unknown provider value."""
@@ -149,7 +157,8 @@ class LLMOpenaiMixin:
         api_messages = self._build_openai_messages(
             messages,
             user_id=call_user_id,
-            conversation_id=call_conversation_id)
+            conversation_id=call_conversation_id,
+            echo_reasoning=self._reasoning_echo_active(model))
         body = {
             "model": model,
             "messages": api_messages,
@@ -247,6 +256,40 @@ class LLMOpenaiMixin:
                     if response.status < 400:
                         pass
                     else:
+                        error_body = response.read().decode("utf-8")
+                        from core.llm_failure_classifier import classify_http_error
+                        raise classify_http_error(
+                            response.status, headers=dict(response.getheaders()),
+                            body=error_body, provider=getattr(self, "provider", ""),
+                            model=model)
+                elif self._is_reasoning_content_required_error(error_body):
+                    # Thinking-mode gateways (OpenCode Go, DashScope-style
+                    # Qwen/DeepSeek) validate the assistant turns they are
+                    # handed back: a turn that reasoned must carry its
+                    # reasoning_content again, or every following request of
+                    # the tool loop is a 400. Remember the verdict for the
+                    # endpoint so later calls echo from the first attempt.
+                    logger.warning(
+                        "Endpoint requires the model's reasoning back on "
+                        "replayed assistant turns; retrying with "
+                        "reasoning_content")
+                    _REASONING_ECHO_ENDPOINTS.add(self._reasoning_echo_key(model))
+                    conn.close()
+                    if parsed.scheme == "https":
+                        conn = http.client.HTTPSConnection(host, port, timeout=self.timeout, context=ctx)
+                    else:
+                        conn = http.client.HTTPConnection(host, port, timeout=self.timeout)
+                    self._active_http_conn = conn
+                    body["messages"] = self._build_openai_messages(
+                        messages,
+                        user_id=call_user_id,
+                        conversation_id=call_conversation_id,
+                        echo_reasoning=True)
+                    json_body = json.dumps(body).encode("utf-8")
+                    headers["Content-Length"] = str(len(json_body))
+                    conn.request("POST", full_path, body=json_body, headers=headers)
+                    response = conn.getresponse()
+                    if response.status >= 400:
                         error_body = response.read().decode("utf-8")
                         from core.llm_failure_classifier import classify_http_error
                         raise classify_http_error(
@@ -534,6 +577,18 @@ class LLMOpenaiMixin:
         return None
 
     @staticmethod
+    def _is_reasoning_content_required_error(error_text: str) -> bool:
+        """True when the endpoint rejects a turn whose reasoning was dropped.
+
+        Thinking-mode gateways answer 400 with, for example, "The
+        `reasoning_content` in the thinking mode must be passed back to the
+        API". Both halves are required so an unrelated 400 that merely
+        mentions the field is not mistaken for this contract.
+        """
+        text = (error_text or "").lower()
+        return "reasoning_content" in text and "thinking mode" in text
+
+    @staticmethod
     def _is_vision_rejected_error(error_text: str) -> bool:
         text = (error_text or "").lower()
         markers = (
@@ -546,10 +601,28 @@ class LLMOpenaiMixin:
         )
         return any(marker in text for marker in markers)
 
+    def _reasoning_echo_key(self, model: str) -> tuple:
+        """Identify the endpoint without resolving its relay proxy form.
+
+        Reading ``self.base_url`` mints a fresh ephemeral relay token, and the
+        provider relies on it being read exactly once per call, so the key uses
+        the configured template; a service without one falls back to its
+        provider name.
+        """
+        return (str(self._cfg("base_url", "") or self.provider).rstrip("/"),
+                str(model or ""))
+
+    def _reasoning_echo_active(self, model: str) -> bool:
+        """Whether replayed assistant turns must carry reasoning_content."""
+        if self.reasoning_content_echo:
+            return True
+        return self._reasoning_echo_key(model) in _REASONING_ECHO_ENDPOINTS
+
     def _build_openai_messages(self, messages, *,
                                 user_id: str, conversation_id: str,
                                 allow_vision: bool = True,
-                                carry_reasoning: bool = False) -> List[Dict[str, Any]]:
+                                carry_reasoning: bool = False,
+                                echo_reasoning: bool = False) -> List[Dict[str, Any]]:
         """Convert LLMMessage list to OpenAI API message format.
 
         Messages are regrouped first so the split (assistant text / assistant
@@ -561,6 +634,9 @@ class LLMOpenaiMixin:
         Older images, or all images when vision is disabled/rejected, become
         links in text context. Raw image payloads are only emitted on those
         current native-vision paths, never as historical text context.
+
+        ``echo_reasoning`` replays each assistant turn's own
+        ``reasoning_content``; see ``_reasoning_echo_active``.
         """
         from core.llm_message_regroup import regroup_split_assistant_messages
         from core.llm_tool_sequence import repair_tool_sequence
@@ -661,6 +737,8 @@ class LLMOpenaiMixin:
                 # field, so the caller has to ask for it explicitly.
                 if carry_reasoning and getattr(m, "reasoning_item", ""):
                     msg["reasoning_item"] = m.reasoning_item
+                if echo_reasoning and getattr(m, "thinking", ""):
+                    msg["reasoning_content"] = m.thinking
                 msg["tool_calls"] = [
                     {
                         "id": tc.id,
@@ -724,6 +802,9 @@ class LLMOpenaiMixin:
                 if (carry_reasoning and m.role == "assistant"
                         and getattr(m, "reasoning_item", "")):
                     plain["reasoning_item"] = m.reasoning_item
+                if (echo_reasoning and m.role == "assistant"
+                        and getattr(m, "thinking", "")):
+                    plain["reasoning_content"] = m.thinking
                 api_messages.append(plain)
         if _pending_image_users:
             api_messages.extend(_pending_image_users)
@@ -759,7 +840,8 @@ class LLMOpenaiMixin:
             "messages": self._build_openai_messages(
                 messages,
                 user_id=call_user_id,
-                conversation_id=call_conversation_id),
+                conversation_id=call_conversation_id,
+                echo_reasoning=self._reasoning_echo_active(model)),
         }
         if temperature is not None:
             body["temperature"] = temperature
@@ -805,15 +887,27 @@ class LLMOpenaiMixin:
                 base_url=base_url,
             )
         except Exception as exc:
-            if not self._is_vision_rejected_error(str(exc)):
+            if self._is_reasoning_content_required_error(str(exc)):
+                logger.warning(
+                    "Endpoint requires the model's reasoning back on "
+                    "replayed assistant turns; retrying with "
+                    "reasoning_content")
+                _REASONING_ECHO_ENDPOINTS.add(self._reasoning_echo_key(model))
+                body["messages"] = self._build_openai_messages(
+                    messages,
+                    user_id=call_user_id,
+                    conversation_id=call_conversation_id,
+                    echo_reasoning=True)
+            elif self._is_vision_rejected_error(str(exc)):
+                logger.warning(
+                    "OpenAI-compatible endpoint rejected image input; retrying without native vision blocks")
+                body["messages"] = self._build_openai_messages(
+                    messages,
+                    user_id=call_user_id,
+                    conversation_id=call_conversation_id,
+                    allow_vision=False)
+            else:
                 raise
-            logger.warning(
-                "OpenAI-compatible endpoint rejected image input; retrying without native vision blocks")
-            body["messages"] = self._build_openai_messages(
-                messages,
-                user_id=call_user_id,
-                conversation_id=call_conversation_id,
-                allow_vision=False)
             data = self._http_post(
                 self._openai_endpoint_path(base_url, model),
                 body,

@@ -707,6 +707,20 @@ class LLMConnectionService(BaseService):
                     "Empty omits the field and uses the model default."
                 ),
             },
+            "reasoning_content_echo": {
+                "type": "boolean", "default": False,
+                "description": (
+                    "Send each assistant turn's own reasoning back as "
+                    "reasoning_content. Thinking-mode gateways that validate "
+                    "the tool loop reject a replayed turn whose reasoning was "
+                    "dropped (400 'The reasoning_content in the thinking mode "
+                    "must be passed back to the API'). Leave it off for "
+                    "endpoints that refuse the field on input (DeepSeek's "
+                    "reasoning alias documents exactly that). PawFlow also "
+                    "enables it by itself, for the rest of the process, the "
+                    "first time an endpoint returns that 400."
+                ),
+            },
             "max_rounds": {
                 "type": "integer", "default": 0,
                 "description": "Max conversation rounds (0 = unlimited)",
@@ -1006,6 +1020,7 @@ class LLMConnectionService(BaseService):
                     "opencode_load_session": {"visible": False},
                     "opencode_reuse_process": {"visible": False},
                     "opencode_mcp_mode": {"visible": False},
+                    "reasoning_content_echo": {"visible": False},
                 }
             },
             {
@@ -1048,6 +1063,7 @@ class LLMConnectionService(BaseService):
                 "when": {"provider": ["openai", "openai-responses"]},
                 "set": {
                     "reasoning_effort": {"visible": True},
+                    "reasoning_content_echo": {"visible": True},
                 }
             },
             {

@@ -524,6 +524,7 @@ Common fields:
 | `token_multiplier` | no | Optional conservative multiplier for provider token estimates. |
 | `timeout` | no | Request/stall timeout in seconds. `0` or missing means no timeout; only a positive value limits provider calls. |
 | `reasoning_effort` | no | OpenAI/OpenAI Responses reasoning effort. Empty preserves the model default; supported values are `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. |
+| `reasoning_content_echo` | no | Send each assistant turn's own reasoning back as `reasoning_content` on chat/completions. Required by thinking-mode gateways that validate the tool loop (see "Chat Completions Reasoning Echo"). Off by default; the first 400 of that shape turns it on for the rest of the process. |
 | `supports_vision` | no | Whether the selected model accepts native image input. Disable it for a text-only model even if its provider can serve other vision models. |
 | `vision_llm_service` | when delegated vision is used | Id of a different, vision-enabled `llmConnection` that describes images before calls to a model with `supports_vision: false`. |
 
@@ -743,9 +744,10 @@ chat/completions is the more widely implemented of the pair.
 ### Reasoning items travel with the turn
 
 On chat/completions a model's chain of thought is a field on the message, and
-dropping it costs nothing but display. On the Responses API it is its own
-output item, and the next request is expected to hand it back with the turn
-that produced it — this is what Codex does.
+dropping it costs nothing but display -- except on a thinking-mode gateway,
+where it is a 400 (see "Chat Completions Reasoning Echo"). On the Responses API
+it is its own output item, and the next request is expected to hand it back
+with the turn that produced it — this is what Codex does.
 
 PawFlow accumulated only the reasoning *text*, so every iteration of a tool
 loop re-entered having forgotten why it had called the tool. The item itself is
@@ -784,6 +786,51 @@ The field is emitted only for the Responses builder
 (`_build_openai_messages(..., carry_reasoning=True)`). chat/completions must
 never see it: an unknown key inside a message there is a 400, not an ignored
 field.
+
+## Chat Completions Reasoning Echo
+
+`reasoning_content` is a field on the assistant message on chat/completions.
+Thinking-mode gateways validate the turns they are handed back: an assistant
+turn that reasoned must carry its reasoning again or the next request of the
+tool loop is rejected with
+
+```
+The `reasoning_content` in the thinking mode must be passed back to the API.
+```
+
+Observed on OpenCode Go serving `deepseek-v4-flash`; the wording is DashScope's,
+and Qwen/DeepSeek thinking deployments behave the same way.
+
+Only the iterations *after* the first reasoning turn fail, which is what makes
+this expensive to diagnose: for as long as the model answers with
+`thinking_chars=0` the loop is fine, and the very next request after a turn
+that reasoned is refused. In a real run that was iteration 33 of one turn and
+iteration 7 of the next, both landing on the first tool-call turn whose
+reasoning had been dropped.
+
+PawFlow keeps the reasoning it received and replays it when the service asks
+for it:
+
+| Stage | Where |
+|---|---|
+| Capture | `_stream_openai` accumulates `delta.reasoning_content` into `LLMResponse.thinking`. |
+| Store | `LLMMessage.thinking`, persisted on the assistant row and re-attached to the turn by `regroup_split_assistant_messages`. |
+| Replay | `_build_openai_messages(..., echo_reasoning=True)` adds `reasoning_content` to assistant turns that carry reasoning. |
+
+`echo_reasoning` comes from `reasoning_content_echo`, a service field shown for
+`openai` and `openai-responses`. It is off by default because a provider that
+returns the field may still refuse it on input — DeepSeek's reasoning alias
+documents exactly that 400. The first rejection of this shape turns it on for
+the rest of the process and the current request is retried once with the
+reasoning restored, so an operator who never opens the field still gets a
+working tool loop after a single refused request. The verdict lives in
+`_REASONING_ECHO_ENDPOINTS`, keyed by the configured base URL and model: every
+call runs
+on its own `LLMClient` clone, so an instance flag would be relearned — and
+repaid with another rejected request — on every single call. That
+detection is deliberately narrow: the body must mention both
+`reasoning_content` and `thinking mode`, so an unrelated 400 that happens to
+name the field is not mistaken for this contract.
 
 ## Claude Code Providers
 

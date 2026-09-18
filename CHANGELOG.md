@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenAI-compatible thinking-mode gateways receive the reasoning of a replayed
+  assistant turn again as `reasoning_content`. A turn that reasoned and then
+  called a tool is refused without it ("The `reasoning_content` in the thinking
+  mode must be passed back to the API"), which broke the tool loop from the
+  iteration that followed the first reasoned turn. The new
+  `reasoning_content_echo` service field asks for the replay, and the same 400
+  enables it for the rest of the process and retries the request once.
+
 ## [1.0.0-beta.277] — 2026-09-15
 
 ### Fixed

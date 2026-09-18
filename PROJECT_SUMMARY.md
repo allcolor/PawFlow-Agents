@@ -55,6 +55,9 @@ The current core value is twofold:
 - Media sharing only re-shares FileStore-owned references, so a vendor CDN URL
   that merely contains `/files/` is forwarded instead of being rewritten into a
   dead local link.
+- Opening a terminal on a disconnected relay fails in seconds with the reason
+  instead of hanging the UI action executor for minutes (it was sent with no
+  request timeout, which the transport reads as an unbounded wait).
 - Capability tools re-share a FileStore reference in every form an agent may
   use, and say so when a reference cannot be shared publicly instead of handing
   an external provider an unfetchable URL.

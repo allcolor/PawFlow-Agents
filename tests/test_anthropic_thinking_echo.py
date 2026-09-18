@@ -17,8 +17,7 @@ import pytest
 from core._llm_types import LLMCallError, LLMMessage, LLMToolCall
 from core.llm_client import LLMClient
 from core.llm_providers.anthropic import (
-    LLMAnthropicMixin, _THINKING_ECHO_REQUIRED_ENDPOINTS,
-    _THINKING_MISSING_REPORTED)
+    LLMAnthropicMixin, _THINKING_MISSING_REPORTED)
 
 UPSTREAM_ERROR = (
     'LLM API error 400: {"error":{"message":"The content[].thinking in the '
@@ -88,10 +87,8 @@ def _client(**config):
 @pytest.fixture(autouse=True)
 def _isolated_endpoint_registry():
     """The learned verdict is process-wide; no test may inherit another's."""
-    _THINKING_ECHO_REQUIRED_ENDPOINTS.clear()
     _THINKING_MISSING_REPORTED.clear()
     yield
-    _THINKING_ECHO_REQUIRED_ENDPOINTS.clear()
     _THINKING_MISSING_REPORTED.clear()
 
 
@@ -202,7 +199,12 @@ class TestStreamRetry:
         # The caller's temperature comes back when thinking no longer forces 1.
         assert bodies[1]["temperature"] == 0.5
 
-    def test_learned_verdict_reaches_a_fresh_client(self, monkeypatch):
+    def test_a_rejection_does_not_condemn_the_endpoint(self, monkeypatch):
+        """The contract is per request; one refusal must not disable thinking.
+
+        Latching it per endpoint would silently strip reasoning from every
+        later turn, including the ones whose replayed reasoning is intact.
+        """
         bodies = _scripted_transport(monkeypatch, [
             _ScriptedResponse(400, UPSTREAM_ERROR.encode(), reason="Bad Request"),
             _ScriptedResponse(200, STREAM_OK),
@@ -211,28 +213,13 @@ class TestStreamRetry:
         LLMAnthropicMixin._stream_anthropic(
             _client(), _reasoned_messages(), "deepseek-flash", 0.5, 0, None, None,
             thinking_budget=1024)
-        # Each call runs on its own clone, so the verdict has to outlive the
-        # client that learned it.
+        # Each call runs on its own clone, so a latched verdict would outlive
+        # the client that learned it; nothing may have been latched.
         LLMAnthropicMixin._stream_anthropic(
             _client(), _reasoned_messages(), "deepseek-flash", 0.5, 0, None, None,
             thinking_budget=1024)
 
         assert len(bodies) == 3
-        assert "thinking" not in bodies[2]
-
-    def test_verdict_is_keyed_by_endpoint_and_model(self, monkeypatch):
-        bodies = _scripted_transport(monkeypatch, [
-            _ScriptedResponse(400, UPSTREAM_ERROR.encode(), reason="Bad Request"),
-            _ScriptedResponse(200, STREAM_OK),
-            _ScriptedResponse(200, STREAM_OK),
-        ])
-        LLMAnthropicMixin._stream_anthropic(
-            _client(), _reasoned_messages(), "deepseek-flash", 0.5, 0, None, None,
-            thinking_budget=1024)
-        LLMAnthropicMixin._stream_anthropic(
-            _client(), _reasoned_messages(), "another-model", 0.5, 0, None, None,
-            thinking_budget=1024)
-
         assert bodies[2]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
 
     def test_unrelated_400_is_not_retried(self, monkeypatch):
@@ -261,23 +248,6 @@ class TestStreamRetry:
 
 
 class TestNonStreaming:
-    def test_a_learned_verdict_skips_thinking(self):
-        client = _client()
-        _THINKING_ECHO_REQUIRED_ENDPOINTS.add(
-            client._thinking_echo_key("deepseek-flash"))
-        posted = []
-        client._http_post = lambda path, body, headers: (
-            posted.append(body) or{
-                "content": [{"type": "text", "text": "ok"}],
-                "usage": {"input_tokens": 1, "output_tokens": 1},
-            })
-
-        client._complete_anthropic(
-            _messages(), "deepseek-flash", 0.5, 0, thinking_budget=1024)
-
-        assert "thinking" not in posted[0]
-        assert posted[0]["temperature"] == 0.5
-
     def test_without_a_verdict_thinking_is_still_sent(self):
         client = _client()
         posted = []

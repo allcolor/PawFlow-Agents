@@ -14,13 +14,6 @@ logger = logging.getLogger(__name__)
 _ANTHROPIC_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
-#: Endpoints (base_url, model) that rejected a thinking-enabled request because
-#: the assistant turns they were handed back did not carry their thinking
-#: blocks. Learned from the first 400 and reused process-wide, so later calls
-#: stop paying for it -- the Anthropic-compatible twin of
-#: ``openai._REASONING_ECHO_ENDPOINTS``.
-_THINKING_ECHO_REQUIRED_ENDPOINTS: set = set()
-
 #: Conversations already reported for a replayed tool_use turn that arrived
 #: without its thinking while thinking is enabled. The gateway contract is
 #: about the turns PawFlow hands back, so the useful evidence is never "the
@@ -86,21 +79,6 @@ class LLMAnthropicMixin:
         """
         text = (error_text or "").lower()
         return "thinking mode" in text and "must be passed back" in text
-
-    def _thinking_echo_key(self, model: str) -> tuple:
-        """Identify the endpoint without resolving its relay proxy form.
-
-        Reading ``self.base_url`` mints a fresh ephemeral relay token, and the
-        provider reads it exactly once per call, so the key uses the configured
-        template instead; a service without one falls back to its provider
-        name. Mirrors ``openai._reasoning_echo_key``.
-        """
-        return (str(self._cfg("base_url", "") or self.provider).rstrip("/"),
-                str(model or ""))
-
-    def _thinking_echo_required(self, model: str) -> bool:
-        """Whether this endpoint already refused a turn without its thinking."""
-        return self._thinking_echo_key(model) in _THINKING_ECHO_REQUIRED_ENDPOINTS
 
     def _report_missing_thinking(self, messages, conversation_id: str) -> bool:
         """True when a replayed tool_use turn carries no thinking.
@@ -174,18 +152,8 @@ class LLMAnthropicMixin:
         }
         self._apply_anthropic_effort(body)
         if thinking_available:
-            if self._thinking_echo_required(model):
-                # This endpoint already refused a replayed turn whose thinking
-                # blocks were missing (a resumed turn rebuilds its history from
-                # the transcript, where thinking is a separate row). Enabling
-                # thinking again would be refused identically, so the turn runs
-                # without it instead of failing.
-                logger.info(
-                    "Endpoint requires replayed thinking blocks; sending "
-                    "without thinking for model %s", model)
-            else:
-                body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
-                body["temperature"] = 1  # Required by Anthropic when thinking is enabled
+            body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+            body["temperature"] = 1  # Required by Anthropic when thinking is enabled
         _cache_ttl = int(self._cfg("anthropic_cache_ttl", 0))
         _cc = {"type": "ephemeral"}
         if _cache_ttl > 0:
@@ -240,14 +208,13 @@ class LLMAnthropicMixin:
                     # blocks again. PawFlow replays them when it still has them,
                     # but a turn rebuilt from the transcript (resume, wake,
                     # compaction) has none to send, and this gateway -- unlike
-                    # Anthropic's own API -- refuses the whole turn for it.
-                    # Remember the verdict for the endpoint and retry once
-                    # without thinking, which removes the contract entirely.
+                    # Anthropic's own API -- refuses the whole turn for it. The
+                    # contract is per request, so the retry drops thinking for
+                    # this request only: a turn whose reasoning is present keeps
+                    # it, and nothing is disabled for the endpoint.
                     logger.warning(
                         "Endpoint rejected a replayed turn without its thinking "
                         "blocks; retrying without thinking enabled")
-                    _THINKING_ECHO_REQUIRED_ENDPOINTS.add(
-                        self._thinking_echo_key(model))
                     conn.close()
                     if parsed.scheme == "https":
                         conn = http.client.HTTPSConnection(host, port, timeout=self.timeout, context=ctx)
@@ -792,9 +759,7 @@ class LLMAnthropicMixin:
             # A non-streaming call cannot pay for a rejection twice (the helper
             # raises), so it simply honours a verdict the streaming path
             # already learned for this endpoint.
-            if (self._thinking_echo_required(model)
-                    or self._report_missing_thinking(
-                        messages, call_conversation_id)):
+            if self._report_missing_thinking(messages, call_conversation_id):
                 logger.info(
                     "Endpoint requires replayed thinking blocks; sending "
                     "without thinking for model %s", model)

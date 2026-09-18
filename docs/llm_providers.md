@@ -840,27 +840,23 @@ detection is deliberately narrow: the body must mention both
 `reasoning_content` and `thinking mode`, so an unrelated 400 that happens to
 name the field is not mistaken for this contract.
 
-The Anthropic dialect has the mirror-image contract. `_build_anthropic_messages`
+The Anthropic dialect has the mirror-image contract, and it is about the turn
+PawFlow hands back rather than about a stored row. `_build_anthropic_messages`
 replays an assistant turn's `thinking` block (with its signature) whenever the
-message still carries one, which covers the live tool loop. A turn rebuilt from
-the transcript has none to send -- thinking is its own row there -- and while
-Anthropic's own API tolerates that on an older turn, a thinking-mode gateway
-refuses the whole request: "The content[].thinking in the thinking mode must be
-passed back to the API". The reasoning cannot be reconstructed, so the request
-
-The contract is about the turn, not the row: a model is free not to reason at
-all on a given step, and that reasoning is then unrecoverable by construction.
-Measured on a live conversation, 38 of its 242 tool_use turns held no thinking
--- and a thinking-mode gateway validates every one of them, refusing the whole
-request with "The content[].thinking in the thinking mode must be passed back
-to the API". The verdict is therefore taken *before* the body is built: when a
-replayed tool_use turn carries no thinking, or when
-`_THINKING_ECHO_REQUIRED_ENDPOINTS` already learned that this endpoint refuses
-such turns (keyed by configured base URL and model, like its chat/completions
-twin), the request is sent without thinking instead of paying for a refusal
-that is certain. A rejection that arrives anyway is retried once without
-thinking, restoring the caller's temperature. Because "which turn" is the
-answer that locates the loss, the turn ids are logged once per conversation
+message still carries one, which covers the live tool loop. But a model is free
+not to reason at all on a given step, and that reasoning is then unrecoverable
+by construction: measured on a live conversation, 38 of its 242 tool_use turns
+held none. A thinking-mode gateway validates the turn it is asked to continue
+-- the last assistant turn with tool calls -- and refuses the whole request
+with "The content[].thinking in the thinking mode must be passed back to the
+API". The verdict is therefore taken *before* the body is built, and only for
+that turn: when it carries no thinking, the request is sent without thinking
+instead of paying for a refusal that is certain. A rejection that arrives
+anyway is retried once without thinking, restoring the caller's temperature.
+Nothing is remembered per endpoint on purpose: the contract is per request, and
+a latched verdict would silently strip reasoning from later turns whose
+replayed reasoning is intact. Because "which turn" is the answer that locates
+the loss, the turn id is logged once per conversation
 (`[anthropic] replayed tool_use turn(s) ... carry no thinking`).
 
 ## Claude Code Providers

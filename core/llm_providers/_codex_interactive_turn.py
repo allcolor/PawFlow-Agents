@@ -110,6 +110,12 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
     hook closes the user-visible turn.
     """
 
+    _provider_label = "codex-interactive"
+
+    def _is_model_request_path(self, path: str) -> bool:
+        """Codex calls the OpenAI Responses endpoint, not /v1/messages."""
+        return urlsplit(str(path or "")).path.rstrip("/").endswith("/responses")
+
     def __init__(self, *args, context_tokens_callback=None, **kwargs):
         super().__init__(*args, **kwargs)
         # Prompt size of the LAST observed exchange -- the context gauge.
@@ -347,6 +353,7 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                       _POST_STOP_IDLE_DRAIN_SECONDS):
                     self._finish_turn_if_ready()
                     break
+                self._probe_pane_blocker(started_at)
                 self._raise_if_failed_exchange_overdue()
                 continue
 
@@ -383,9 +390,16 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                         self.session_token[:8])
                     self._stop_seen = False
                 continue
-            if etype in {"request_stop", "response_start",
-                         "response_ignored"}:
+            if etype == "request_stop":
                 self._saw_proxy_event = True
+                continue
+            if etype == "response_ignored":
+                self._saw_proxy_event = True
+                self._note_ignored_response(event)
+                continue
+            if etype == "response_start":
+                self._saw_proxy_event = True
+                self._remember_response_status(event)
                 continue
             if etype == "tool_use":
                 self._saw_proxy_event = True

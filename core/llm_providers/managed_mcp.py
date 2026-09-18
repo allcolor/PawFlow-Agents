@@ -169,6 +169,7 @@ class LLMManagedMcpMixin:
             emitted_tool_result_ids=state.emitted_tool_result_ids,
             consumer_epoch=consumer_epoch,
             liveness_callback=lambda: pool.session_is_live(state.name),
+            pane_callback=lambda: pool._pane_text(state.name),
             started_at=started_at)
 
     # -- turn --------------------------------------------------------------

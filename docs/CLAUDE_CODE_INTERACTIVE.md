@@ -428,6 +428,26 @@ Timing controls are read once when the provider modules are imported:
   Codex interactive (the capture derives its probe from the proxy-reported
   `container_id`; a session whose proxy never reported one keeps the old
   behavior).
+- A TUI that is blocked waiting for input is surfaced instead of waited on.
+  The pane is the only place that says a turn cannot progress: a rate-limit
+  banner (`429`, `usage limit`, `limit will reset`) stops the CLI from issuing
+  requests, and a question or a model menu waits for a keystroke nobody sends.
+  Both used to look like a silent but healthy turn - no event, no `Stop` hook,
+  an agent stuck in Active Agents. After the same silence window as the
+  liveness probe (so an in-flight answer is never mistaken for a blocked one),
+  the coordinator reads the pane (`_pane_text`), inspects only its tail, and
+  fails the turn with a non-retryable `LLMCallError` naming the pane line:
+  `rate_limited` for a banner, `question` for a prompt. Question patterns must
+  match one of the last three lines, so an answer that discusses a question, or
+  a plan with numbered steps, is not a false positive. Wired on the interactive
+  paths of Claude Code and Codex and on the managed MCP coordinator.
+- A model request answered with a bare `429` is reported instead of discarded.
+  Its body is not decodable, so the proxy only emits `response_start
+  status=429` and the CLI retries the same limit on its own: the turn never
+  ends and nothing on the wire says why. The status is now remembered per
+  request (a discarded body carries no status of its own), counted only for the
+  model endpoint (`/v1/messages`, `/responses`), and the third one fails the
+  turn as a non-retryable `rate_limited` error carrying `provider_status=429`.
 - `PAWFLOW_CCI_PASTE_SETTLE_SECONDS` sets the delay after `paste-buffer` and
   before the first `Enter`. Claude Code defaults to `0.2` seconds. Codex uses
   at most `0.2` seconds even when a larger inherited override is configured.

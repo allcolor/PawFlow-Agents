@@ -121,7 +121,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     emitted_tool_use_ids=state.emitted_tool_use_ids,
                     emitted_tool_result_ids=state.emitted_tool_result_ids,
                     consumer_epoch=consumer_epoch,
-                    liveness_callback=lambda: pool.session_is_live(state.name))
+                    liveness_callback=lambda: pool.session_is_live(state.name),
+                    pane_callback=lambda: pool._pane_text(state.name))
                 response = coord.run(getattr(self, "_abort", None))
             except CCCompactDetected:
                 pool.kill_session(
@@ -191,7 +192,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     emitted_tool_use_ids=state.emitted_tool_use_ids,
                     emitted_tool_result_ids=state.emitted_tool_result_ids,
                     consumer_epoch=consumer_epoch,
-                    liveness_callback=lambda: pool.session_is_live(state.name))
+                    liveness_callback=lambda: pool.session_is_live(state.name),
+                    pane_callback=lambda: pool._pane_text(state.name))
                 response = coord.run(getattr(self, "_abort", None))
             except CCCompactDetected:
                 pool.kill_session(

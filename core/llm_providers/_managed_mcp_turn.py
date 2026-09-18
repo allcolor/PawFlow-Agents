@@ -77,6 +77,7 @@ class _ManagedMcpTurnCoordinator(_CCITurnCoordinator):
                  touch_callback=None, emitted_tool_use_ids=None,
                  emitted_tool_result_ids=None, consumer_epoch: int = 0,
                  consumer_kind: str = "request", liveness_callback=None,
+                 pane_callback=None,
                  final_timeout: float | None = None,
                  started_at: float = 0.0):
         super().__init__(
@@ -87,8 +88,11 @@ class _ManagedMcpTurnCoordinator(_CCITurnCoordinator):
             emitted_tool_use_ids=emitted_tool_use_ids,
             emitted_tool_result_ids=emitted_tool_result_ids,
             consumer_epoch=consumer_epoch, consumer_kind=consumer_kind,
-            liveness_callback=liveness_callback)
+            liveness_callback=liveness_callback, pane_callback=pane_callback)
         self.provider = provider
+        # A managed session has no vendor proxy, so its failures name the
+        # managed provider rather than the underlying interactive CLI.
+        self._provider_label = provider
         spec = managed_mcp_spec(provider)
         self._spec = spec
         self.final_timeout = (
@@ -189,6 +193,7 @@ class _ManagedMcpTurnCoordinator(_CCITurnCoordinator):
             event = self._wait_event(0.25)
             if not event:
                 self._probe_liveness(started_at)
+                self._probe_pane_blocker(started_at)
                 self._raise_if_final_overdue(started_at)
                 continue
             if self.touch_callback:

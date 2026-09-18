@@ -17,6 +17,7 @@ import time
 import uuid
 
 from core._llm_types import LLMCallError
+from core.llm_providers._cli_blockers import detect_cli_blocker
 from core.llm_providers.cli_shared import is_anthropic_messages_endpoint
 from core.tool_json import parse_tool_arguments, tool_argument_parse_error
 from tools.cc_interactive_filters import (
@@ -76,6 +77,13 @@ _LIVENESS_PROBE_IDLE_SECONDS = _env_seconds(
     default=20.0,
 )
 
+# A model request answered with a bare 429 is not a decodable payload, so the
+# proxy only reports it as `response_start status=429` and the coordinator kept
+# polling while the CLI retried the same limit on its own: no event, no Stop
+# hook, an agent that stayed active forever. One 429 is normal traffic; this
+# many means the turn cannot progress and the real cause has to be reported.
+_RATE_LIMIT_RESPONSE_LIMIT = 3
+
 
 def _event_tool_args(event: dict) -> dict:
     """Return tool args from any observed CCI event shape."""
@@ -124,13 +132,17 @@ def _loads_tolerant(raw: str) -> dict:
 
 
 class _CCITurnCoordinator:
+    #: Provider name reported on failures raised by this coordinator; the
+    #: subclass that drives another CLI overrides it.
+    _provider_label = "claude-code-interactive"
+
     def __init__(self, event_service, session_token: str, callback=None,
                  thinking_callback=None, block_callback=None,
                  turn_callback=None, touch_callback=None,
                  usage_callback=None,
                  emitted_tool_use_ids=None, emitted_tool_result_ids=None,
                  consumer_epoch: int = 0, consumer_kind: str = "request",
-                 liveness_callback=None):
+                 liveness_callback=None, pane_callback=None):
         self.event_service = event_service
         self.session_token = session_token
         # Exclusive read ownership of the session's event queue. Without it
@@ -223,6 +235,12 @@ class _CCITurnCoordinator:
         self.liveness_callback = liveness_callback
         self._last_liveness_probe_at = 0.0
         self._liveness_dead_probes = 0
+        # Mid-turn "the TUI is waiting for input" probe: a rate-limit banner or
+        # a question printed in the pane. None disables it, like liveness.
+        self.pane_callback = pane_callback
+        self._last_pane_probe_at = 0.0
+        self._rate_limit_responses = 0
+        self._response_status_by_request: dict[str, tuple] = {}
         self._first_event_at = 0.0
         self._first_model_content_at = 0.0
         self._last_event_at = 0.0
@@ -322,6 +340,111 @@ class _CCITurnCoordinator:
             "session gone); failing the turn so queued messages are not "
             "stuck behind it — the session is recreated on the next message")
 
+    def _probe_pane_blocker(self, started_at: float) -> None:
+        """Fail a turn whose silence comes from the TUI waiting for input.
+
+        Called only on empty polls and gated on the same idle window as the
+        liveness probe: reading the pane costs a docker exec, and a stream that
+        went quiet for a moment is normal during a long local tool run.
+        Without this, a rate-limit banner or a question stopped the turn for
+        good -- no event, no Stop hook, an agent stuck in Active Agents --
+        because nothing on the wire ever says the CLI is waiting.
+        """
+        if self.pane_callback is None:
+            return
+        now = time.time()
+        idle_since = self._last_event_at or started_at
+        if now - idle_since < _LIVENESS_PROBE_IDLE_SECONDS:
+            return
+        if now - self._last_pane_probe_at < _LIVENESS_PROBE_IDLE_SECONDS:
+            return
+        self._last_pane_probe_at = now
+        try:
+            blocker = detect_cli_blocker(self.pane_callback())
+        except Exception:
+            logger.debug("cci pane probe errored; treating the turn as running",
+                         exc_info=True)
+            return
+        if blocker is None:
+            return
+        logger.warning(
+            "[cci-provider] session=%s pane shows %s (%s): %s",
+            self.session_token[:8], blocker.kind, blocker.reason,
+            blocker.excerpt)
+        raise LLMCallError(
+            f"Interactive CLI is blocked: {blocker.reason}. It printed: "
+            f"{blocker.excerpt!r} -- answer it or stop the CLI in its "
+            "terminal, then send the message again",
+            category=blocker.kind, provider=self._provider_label,
+            retryable=False)
+
+    def _is_model_request_path(self, path: str) -> bool:
+        """True when this observed request called the model itself.
+
+        Only the model endpoint counts: a 429 on a side endpoint (model list,
+        token counting) says nothing about whether the turn can progress.
+        """
+        return is_anthropic_messages_endpoint(str(path or ""))
+
+    def _remember_response_status(self, event: dict) -> None:
+        """Track the HTTP status of an observed response.
+
+        A bare 429 has no decodable payload, so the proxy reports it as
+        `response_start status=429` and the matching `response_ignored` carries
+        no status at all: the status has to be remembered per request to be
+        usable once the body turns out to be undecodable.
+        """
+        request_id = str(event.get("request_id") or "")
+        status = str(event.get("status") or "")
+        if not status:
+            return
+        if request_id:
+            if len(self._response_status_by_request) > 64:
+                self._response_status_by_request.clear()
+            self._response_status_by_request[request_id] = (
+                status, str(event.get("path") or ""))
+        if status != "429":
+            return
+        self._count_rate_limited_response(event.get("path", ""))
+
+    def _note_ignored_response(self, event: dict) -> None:
+        """Count a 429 carried by a response the proxy could not decode.
+
+        The undecodable body is reported without a path of its own, so the one
+        remembered from the matching `response_start` is used: dropping the
+        signal there is exactly how the 429 stayed invisible.
+        """
+        request_id = str(event.get("request_id") or "")
+        remembered = self._response_status_by_request.get(request_id)
+        if not remembered or remembered[0] != "429":
+            return
+        self._count_rate_limited_response(event.get("path") or remembered[1])
+
+    def _count_rate_limited_response(self, path: str) -> None:
+        """Fail the turn once the provider keeps rejecting with 429.
+
+        The CLI retries a 429 by itself, which is exactly why the failure is
+        invisible: the turn never ends, and the user only sees an agent that is
+        "working". Past the threshold the turn fails with the real cause, on the
+        non-retry path, so it reaches the conversation instead of looping.
+        """
+        if not self._is_model_request_path(path):
+            return
+        self._rate_limit_responses += 1
+        logger.warning(
+            "[cci-provider] session=%s observed %d/%d rate-limited model "
+            "response(s) path=%s", self.session_token[:8],
+            self._rate_limit_responses, _RATE_LIMIT_RESPONSE_LIMIT, path)
+        if self._rate_limit_responses < _RATE_LIMIT_RESPONSE_LIMIT:
+            return
+        raise LLMCallError(
+            f"The provider answered {self._rate_limit_responses} model "
+            "requests with HTTP 429 (rate limit). The interactive CLI keeps "
+            "retrying on its own, so the turn cannot progress until the limit "
+            "resets or another model is used.",
+            category="rate_limited", origin="provider", provider_status=429,
+            retryable=False, provider=self._provider_label)
+
     def _wait_event(self, timeout: float) -> dict:
         """Poll the session queue, asserting we still own the stream.
 
@@ -352,6 +475,7 @@ class _CCITurnCoordinator:
             event = self._wait_event(timeout)
             if not event:
                 self._probe_liveness(started_at)
+                self._probe_pane_blocker(started_at)
                 if not self._saw_proxy_event:
                     waited = time.time() - started_at
                     if (_NO_PROXY_EVENT_TIMEOUT_SECONDS > 0
@@ -430,9 +554,11 @@ class _CCITurnCoordinator:
                 continue
             if etype == "response_ignored":
                 self._saw_proxy_event = True
+                self._note_ignored_response(event)
                 continue
             if etype == "response_start":
                 self._saw_proxy_event = True
+                self._remember_response_status(event)
                 continue
             if etype == "tool_use":
                 self._saw_proxy_event = True

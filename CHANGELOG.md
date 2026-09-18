@@ -20,6 +20,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- An interactive CLI turn that is blocked is reported instead of polled
+  forever. A rate-limit banner (`429`, `usage limit`, `limit will reset`) or a
+  question printed in the tmux pane stopped the turn while nothing on the wire
+  said why: no event, no `Stop` hook, an agent that stayed in Active Agents and
+  could not be stopped. After the stream has been silent for the liveness
+  probe window, the coordinator now reads the pane, inspects only its tail, and
+  fails the turn with a non-retryable `LLMCallError` naming the pane line
+  (`rate_limited` for a banner, `question` for a prompt). Claude Code, Codex and
+  the managed MCP providers are covered.
+- A model request answered with a bare `429` is no longer discarded. Its body
+  is not decodable, so the proxy only reported `response_start status=429` and
+  the CLI retried the same limit by itself; the turn never ended. The status is
+  remembered per request, counted for the model endpoint only, and the third one
+  fails the turn as a non-retryable `rate_limited` error with
+  `provider_status=429`.
 - Relay Desktop on Windows no longer stays blocked after stopping a relay. The
   launcher liveness check asks the process itself whether it has exited
   (`OpenProcess` for `SYNCHRONIZE` plus a zero-timeout `WaitForSingleObject`)

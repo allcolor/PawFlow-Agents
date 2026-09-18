@@ -271,6 +271,7 @@ class LLMCodexInteractiveMixin:
                     emitted_tool_result_ids=state.emitted_tool_result_ids,
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name),
+                    pane_callback=lambda: pool._pane_text(state.name),
                     context_tokens_callback=lambda tokens: (
                         self.record_codex_live_context(
                             state, conversation_id, agent_name, tokens,
@@ -334,6 +335,7 @@ class LLMCodexInteractiveMixin:
                     emitted_tool_result_ids=state.emitted_tool_result_ids,
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name),
+                    pane_callback=lambda: pool._pane_text(state.name),
                     context_tokens_callback=lambda tokens: (
                         self.record_codex_live_context(
                             state, conversation_id, agent_name, tokens,

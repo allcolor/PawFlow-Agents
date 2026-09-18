@@ -493,7 +493,35 @@ async function downloadRelayImage(input = {}) {
   return { ok: true, image: imageName };
 }
 
+const DESKTOP_LOG_MAX_BYTES = 5 * 1024 * 1024;
+let desktopLogBytes = 0;
+
+function desktopLogPath() {
+  return path.join(app.getPath('userData'), 'logs', 'relay-desktop.log');
+}
+
+// Relay Desktop used to keep its log in memory only: a failure that needed a
+// look afterwards (a disconnect, a launcher that would not die) left nothing on
+// disk to read. Append to a bounded file next to the app data as well.
+function appendLogToFile(name, text) {
+  try {
+    const target = desktopLogPath();
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    if (desktopLogBytes > DESKTOP_LOG_MAX_BYTES) {
+      fs.rmSync(target, { force: true });
+      desktopLogBytes = 0;
+    }
+    const body = String(text);
+    const line = `[${new Date().toISOString()}]${name ? ` [${name}]` : ''} ${body.endsWith('\n') ? body : `${body}\n`}`;
+    fs.appendFileSync(target, line, 'utf8');
+    desktopLogBytes += Buffer.byteLength(line);
+  } catch (err) {
+    console.error('Unable to append to the relay desktop log:', err);
+  }
+}
+
 function appendLog(name, text) {
+  appendLogToFile(name, text);
   const win = mainWindow || BrowserWindow.getAllWindows()[0];
   if (!win || win.isDestroyed()) return;
   const contents = win.webContents;
@@ -542,6 +570,14 @@ function waitForProcessExit(proc, timeoutMs) {
 
 function cleanupRelayRuntime(name) {
   return runRelayClientJson(['cleanup', name || '']);
+}
+
+// Explicit escape hatch for a relay whose local stop cannot complete because a
+// server-side step fails: the runtime lock is released instead of being left
+// for the user to delete by hand. Never chosen automatically: an incomplete
+// cleanup must stay visible, and a launcher still running still fails the stop.
+function forceCleanupRelayRuntime(name) {
+  return runRelayClientJson(['cleanup', name || '', '--force']);
 }
 
 function showMainWindow() {
@@ -737,6 +773,7 @@ async function refreshTrayMenu() {
           submenu: [
             { label: 'Connect all', enabled: !active, click: () => startRelay(workspace.name).catch(err => appendLog(workspace.name, `${err.message}\n`)) },
             { label: workspace.cleanup_pending ? 'Retry cleanup' : 'Disconnect all', enabled: active || workspace.cleanup_pending, click: () => stopRelay(workspace.name).catch(err => appendLog(workspace.name, `${err.message}\n`)) },
+            { label: 'Force cleanup', visible: Boolean(workspace.cleanup_pending), click: () => forceCleanupRelayRuntime(workspace.name).then(result => appendLog(workspace.name, `[relay] forced cleanup: ${JSON.stringify(result)}\n`)).catch(err => appendLog(workspace.name, `[relay] force cleanup failed: ${err.message}\n`)) },
             { label: 'Open GUI', click: showMainWindow },
           ],
         };
@@ -851,6 +888,7 @@ ipcMain.handle('relay:delete-physical', async (_event, name) => {
 ipcMain.handle('relay:start', async (_event, name) => startRelay(name));
 
 ipcMain.handle('relay:stop', async (_event, name) => stopRelay(name));
+ipcMain.handle('relay:force-cleanup', async (_event, name) => forceCleanupRelayRuntime(name));
 
 ipcMain.handle('relay:running', async () => {
   return Array.from(runningPhysicalNames(await getRelayState()));

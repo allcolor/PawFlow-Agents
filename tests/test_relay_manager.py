@@ -314,6 +314,62 @@ def test_relay_manager_stop_workspace_runtime_forces_live_runtime_lock(monkeypat
     assert not lock_path.exists()
 
 
+def test_relay_manager_force_cleanup_releases_lock_when_unregister_fails(monkeypatch, tmp_path):
+    """A server-side failure must not leave a lock the user deletes by hand.
+
+    With `force`, the local stop stays authoritative: the runtime lock is
+    removed and the failed step is returned in `skipped`, so the incomplete
+    cleanup stays visible instead of being silently dropped.
+    """
+    monkeypatch.setenv("PAWFLOW_RELAY_HOME", str(tmp_path / "relay-home"))
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    manager.add_server("prod", "https://pawflow.example", gateway_key="k")
+    manager.update_server_auth(
+        "prod", gateway_cookie="gw", session_token="session", username="quentin")
+    share = manager.add_workspace("repo", "prod", str(workspace))
+    lock_path = manager._workspace_runtime_lock_path(share["relay_id"])
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_text(json.dumps({"pid": 99999999}), encoding="utf-8")
+    monkeypatch.setattr(manager, "api_call", lambda *args, **kwargs: {"error": "boom"})
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", lambda relay_id: 0)
+
+    with pytest.raises(RuntimeError, match="Unable to unregister relay"):
+        manager.stop_workspace_runtime("repo")
+
+    assert lock_path.exists(), "an incomplete cleanup stays visible"
+
+    result = manager.stop_workspace_runtime("repo", force=True)
+
+    assert result["forced"] is True
+    assert result["service_uninstalled"] is False
+    assert result["runtime_lock_removed"] is True
+    assert not lock_path.exists()
+    assert result["skipped"] and "Unable to unregister relay" in result["skipped"][0]
+
+
+def test_relay_manager_force_cleanup_never_releases_a_live_launcher(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAWFLOW_RELAY_HOME", str(tmp_path / "relay-home"))
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    manager.add_server("prod", "https://pawflow.example", gateway_key="k")
+    manager.update_server_auth(
+        "prod", gateway_cookie="gw", session_token="session", username="quentin")
+    share = manager.add_workspace("repo", "prod", str(workspace))
+    lock_path = manager._workspace_runtime_lock_path(share["relay_id"])
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_text(json.dumps({"pid": 424242}), encoding="utf-8")
+    monkeypatch.setattr(manager, "_process_is_running", lambda pid: True)
+    monkeypatch.setattr(manager.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(manager, "api_call", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", lambda relay_id: 0)
+
+    with pytest.raises(RuntimeError, match="launcher is still running"):
+        manager.stop_workspace_runtime("repo", force=True)
+
+    assert lock_path.exists(), "force never releases a launcher that is running"
+
+
 def test_host_helper_relative_paths_remain_workspace_scoped(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()

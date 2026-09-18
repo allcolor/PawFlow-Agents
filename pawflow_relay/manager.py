@@ -509,12 +509,20 @@ def delete_workspace(name: str) -> Dict[str, Any]:
 
 
 @_workspace_config_lock()
-def stop_workspace_runtime(name: str) -> Dict[str, Any]:
+def stop_workspace_runtime(name: str, *, force: bool = False) -> Dict[str, Any]:
     """Stop one physical relay and all its logical connections.
 
     This is used by the desktop app before stopping its launcher wrapper. On
     Windows, Electron can terminate the child process without letting Python run
     `RelayThread.stop()`, so Docker containers must be cleaned independently.
+
+    ``force`` keeps the local stop authoritative when the *server* side of the
+    cleanup cannot run: a relay whose launcher is gone must not stay blocked,
+    with a runtime lock the user has to delete by hand, because unregistering it
+    on the server failed. It is an explicit user choice, never automatic: the
+    skipped steps are returned in ``skipped`` so an incomplete cleanup stays
+    visible. A launcher that is genuinely still running still fails the stop —
+    force never releases a live relay.
     """
     from pawflow_relay._thread_base import RelayContainerCleanupError
     from pawflow_relay.physical_config import get_physical
@@ -524,33 +532,57 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
     lock_path = _workspace_runtime_lock_path(relay_id)
     previous = _read_runtime_lock(lock_path)
     had_runtime = lock_path.exists() and bool(previous.get("had_runtime", True))
+    skipped = []
     try:
         runtime_process_terminated = _terminate_workspace_runtime_lock(relay_id)
         had_runtime = had_runtime or runtime_process_terminated
         runtime = _read_runtime_lock(lock_path)
         pid = int(runtime.get("pid") or 0)
         if pid and _process_is_running(pid):
+            # Never release a launcher that is genuinely running, even forced.
             raise RuntimeError(f"Physical relay '{name}' launcher is still running (pid {pid})")
         from pawflow_relay.thread import cleanup_relay_containers
-        containers_removed = cleanup_relay_containers(relay_id)
+        try:
+            containers_removed = cleanup_relay_containers(relay_id)
+        except Exception as exc:
+            if not force:
+                raise
+            containers_removed = 0
+            skipped.append(f"container cleanup failed: {exc}")
         had_runtime = had_runtime or containers_removed > 0
         if had_runtime and not server.get("session_token"):
-            raise ValueError(
+            logged_out = (
                 f"Server '{physical['server']}' is not logged in. Run: "
                 f"pawflow-relay server login {physical['server']}, then retry cleanup")
-        service_uninstalled = had_runtime
-        if service_uninstalled:
-            for share in physical["workspaces"]:
-                response = api_call(
-                    server["url"], "POST", "/api/ui",
-                    body={"action": "service_uninstall", "service_id": share["relay_id"]},
-                    session_token=server.get("session_token", ""),
-                    gateway_cookie=server.get("gateway_cookie", ""),
-                    gateway_key=server.get("gateway_key", ""),
-                )
+            if not force:
+                raise ValueError(logged_out)
+            skipped.append(logged_out)
+            service_uninstalled = False
+        else:
+            service_uninstalled = had_runtime
+            for share in (physical["workspaces"] if service_uninstalled else []):
+                try:
+                    response = api_call(
+                        server["url"], "POST", "/api/ui",
+                        body={"action": "service_uninstall", "service_id": share["relay_id"]},
+                        session_token=server.get("session_token", ""),
+                        gateway_cookie=server.get("gateway_cookie", ""),
+                        gateway_key=server.get("gateway_key", ""),
+                    )
+                except Exception as exc:
+                    if not force:
+                        raise
+                    service_uninstalled = False
+                    skipped.append(f"unregister '{share['relay_id']}' failed: {exc}")
+                    continue
                 error = response.get("error")
                 if error and error != f"Service '{share['relay_id']}' not found.":
-                    raise RuntimeError(f"Unable to unregister relay '{share['relay_id']}': {error}")
+                    unregister_error = (
+                        f"Unable to unregister relay '{share['relay_id']}': {error}")
+                    if not force:
+                        raise RuntimeError(unregister_error)
+                    service_uninstalled = False
+                    skipped.append(unregister_error)
     except Exception as exc:
         # The child may already have removed its lock. Retain retry state under
         # the config transaction without inventing evidence of a running relay.
@@ -571,6 +603,8 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
         "containers_removed": containers_removed,
         "runtime_lock_removed": runtime_lock_removed,
         "already_stopped": not had_runtime,
+        "forced": force,
+        "skipped": skipped,
     }
 
 

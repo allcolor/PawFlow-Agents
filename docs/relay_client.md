@@ -272,6 +272,16 @@ A server outage also keeps cleanup pending; restore connectivity before retrying
 CLI `physical delete` and `workspace delete` require this explicit cleanup first.
 If Docker is unavailable, restore the configured Docker command or daemon before
 retrying; removing a lock manually does not establish that cleanup succeeded.
+When the local stop is what should win — the launcher is gone and only a
+server-side step fails — `pawflow-relay cleanup <physical> --force` completes it:
+the runtime lock is released and the failed step is reported in `skipped`, so the
+incomplete cleanup stays visible instead of being dropped. Relay Desktop offers
+the same action as **Force cleanup**, next to **Retry cleanup**, once a cleanup is
+pending. Force is never chosen automatically, and it never releases a launcher
+that is genuinely still running.
+Relay Desktop appends everything it logs to `<app data>/logs/relay-desktop.log`
+(bounded to 5 MB), so a failed disconnect can be read after the fact instead of
+surviving only in the window that reported it.
 
 `PAWFLOW_RELAY_DOCKER` selects one Docker executable path for both Relay Desktop
 and the Python runtime, including container cleanup. Paths containing spaces

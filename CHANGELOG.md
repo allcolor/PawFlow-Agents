@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `pawflow-relay cleanup <physical> --force` completes a local stop when the
+  server side of the cleanup cannot run, and Relay Desktop offers the same as
+  **Force cleanup** next to **Retry cleanup**. The skipped steps are reported and
+  an incomplete cleanup stays visible; a launcher that is genuinely running is
+  still never released. Until now the only way out of a failed disconnect was to
+  delete the runtime lock by hand and restart the desktop.
+- Relay Desktop appends everything it logs to
+  `<app data>/logs/relay-desktop.log` (bounded to 5 MB). It kept its log in
+  memory only, so a failure worth reading afterwards left nothing on disk.
+
 ### Fixed
 
 - Relay Desktop on Windows no longer stays blocked after stopping a relay. The

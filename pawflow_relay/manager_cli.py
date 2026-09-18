@@ -160,6 +160,12 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("workspace")
     cleanup = sub.add_parser("cleanup", help="Disconnect a physical relay and every logical relay in its group")
     cleanup.add_argument("workspace")
+    cleanup.add_argument(
+        "--force", action="store_true",
+        help="Complete the local stop even when the server side of the cleanup "
+             "cannot run (not logged in, unregister failed, container already "
+             "gone). Skipped steps are reported; a launcher still running is "
+             "never released.")
 
     # Encryption key-relay custody: the relay keypair lives only on this host.
     key = sub.add_parser("key", help="Manage the relay encryption keypair")
@@ -325,7 +331,8 @@ def main(argv=None) -> int:
             return 0
 
         if args.command == "cleanup":
-            _print_result(args, stop_workspace_runtime(args.workspace))
+            _print_result(args, stop_workspace_runtime(
+                args.workspace, force=bool(getattr(args, "force", False))))
             return 0
 
         if args.command == "key":

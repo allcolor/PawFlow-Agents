@@ -54,6 +54,14 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "async function stopAllRelays()" in main
     assert "async function quitApp()" in main
     assert "runRelayClientJson(['cleanup', name || ''])" in main
+    assert "function forceCleanupRelayRuntime(name)" in main
+    assert "runRelayClientJson(['cleanup', name || '', '--force'])" in main
+    assert "relay:force-cleanup" in main
+    assert "relay-desktop.log" in main
+    assert "appendLogToFile(name, text)" in main
+    assert "forceCleanup: name => ipcRenderer.invoke('relay:force-cleanup', name)" in preload
+    assert 'id="forceCleanupBtn"' in renderer
+    assert "async function forceCleanupRelay(name)" in renderer
     assert "process.platform === 'win32' ? 'SIGTERM' : 'SIGINT'" in main
     assert "stopRequested" in main
     assert "await waitForProcessExit(proc, 5000)" in main

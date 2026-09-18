@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('pawflowRelay', {
   deletePhysical: name => ipcRenderer.invoke('relay:delete-physical', name),
   start: name => ipcRenderer.invoke('relay:start', name),
   stop: name => ipcRenderer.invoke('relay:stop', name),
+  forceCleanup: name => ipcRenderer.invoke('relay:force-cleanup', name),
   running: () => ipcRenderer.invoke('relay:running'),
   selectDirectory: currentPath => ipcRenderer.invoke('relay:select-directory', currentPath),
   listDockerImages: () => ipcRenderer.invoke('relay:docker-images'),

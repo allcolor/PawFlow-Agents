@@ -322,6 +322,7 @@ function renderPhysicalPanel(physical) {
         <button type="button" id="cancelWorkspaceBtn" class="button ghost">Cancel</button>
         ${physical ? `<button type="button" id="startRelayBtn" class="button secondary" ${running ? 'disabled' : ''}>Connect all</button>
           <button type="button" id="stopRelayBtn" class="button secondary" ${running || physical.cleanup_pending ? '' : 'disabled'}>${physical.cleanup_pending ? 'Retry cleanup' : 'Disconnect all'}</button>
+          ${physical.cleanup_pending ? '<button type="button" id="forceCleanupBtn" class="button secondary">Force cleanup</button>' : ''}
           <button type="button" id="deleteRelayBtn" class="button danger">Delete physical relay</button>` : ''}
       </div>
     </form>`;
@@ -334,6 +335,8 @@ function renderPhysicalPanel(physical) {
   if (physical) {
     $('#startRelayBtn').addEventListener('click', () => startRelay(physical.name));
     $('#stopRelayBtn').addEventListener('click', () => stopRelay(physical.name));
+    const forceCleanupBtn = $('#forceCleanupBtn');
+    if (forceCleanupBtn) forceCleanupBtn.addEventListener('click', () => forceCleanupRelay(physical.name));
     $('#deleteRelayBtn').addEventListener('click', () => deleteWorkspace(physical.name));
   }
 }
@@ -662,6 +665,20 @@ async function stopRelay(name) {
   try {
     await window.pawflowRelay.stop(name);
     toast(`Stopped ${name}`);
+    await refresh();
+    setSelected('physical', name);
+  } catch (err) {
+    await refresh();
+    toast(err.message, true);
+  }
+}
+
+async function forceCleanupRelay(name) {
+  try {
+    const result = await window.pawflowRelay.forceCleanup(name);
+    const skipped = (result && result.skipped) || [];
+    toast(`Stopped ${name}`);
+    if (skipped.length) toast(`Skipped: ${skipped.join(' | ')}`);
     await refresh();
     setSelected('physical', name);
   } catch (err) {

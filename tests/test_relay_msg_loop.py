@@ -295,9 +295,13 @@ def test_command_cs_ws_is_answered_without_tracking_it_inflight():
         execute_command=lambda m, on_output=None: seen.append(m["action"]) or {
             "data": {"ok": True}}))
     s.run()
-    assert seen == ["cs_ws_send"]
-    results = [json.loads(f) for f, op in sends if b'"type": "result"' in f]
-    assert results and results[0]["request_id"] == "c1"
+
+    # The frame runs on its stream's FIFO, so run() can return before it: wait
+    # for it within a bound instead of assuming the loop ran it inline.
+    assert _wait_until(lambda: seen == ["cs_ws_send"])
+    assert _wait_until(lambda: any(
+        json.loads(f).get("request_id") == "c1"
+        for f, _op in sends if b'"type": "result"' in f))
     # The stream path answers on the wire and never tracks the request as
     # inflight: a frame is not a call anyone waits on.
     assert s.inflight_cmds == {}

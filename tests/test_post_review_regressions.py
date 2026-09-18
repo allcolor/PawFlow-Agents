@@ -1149,18 +1149,25 @@ def test_code_server_worker_starts_with_isolated_profile_and_no_updates():
 
 def test_code_server_worker_keeps_ws_frames_ordered_outside_pool():
     # The command router moved from worker._ws_connect into
-    # _relay_msg_loop.ConnSession; cs_ws_send/cs_ws_close must still run
-    # inline (ordered) and never go through the thread pool.
+    # _relay_msg_loop.ConnSession; cs_ws_send/cs_ws_close must keep their wire
+    # order and never go through the shared command pool. They used to run
+    # inline in the message loop, which stalled every other command of the relay
+    # as soon as one viewer's socket buffer filled up (a paused browser, a slow
+    # link); each stream now has its own FIFO, so the order is kept and the loop
+    # keeps reading.
     src = open("pawflow_relay/_relay_msg_loop.py", encoding="utf-8").read()
     start = src.index("def _handle_command(")
     stop = src.index("self.inflight_lock", start)
     command_prefix = src[start:stop]
 
-    assert 'msg.get("action") in ("cs_ws_send", "cs_ws_close")' in command_prefix
-    assert "_run_command_sync" in command_prefix
+    assert 'msg.get("action") in _STREAM_IO_ACTIONS' in command_prefix
+    assert "_stream_io_queue" in command_prefix
     assert "return" in command_prefix
     assert "self.pool.submit" not in command_prefix
-    # the inline sync path executes directly, not via the pool
+    # one frame at a time per stream, and the sync path executes directly
+    stream_worker = src[src.index("def _stream_io_worker("):src.index(
+        "def _retire_stream_io_queue(")]
+    assert "self._run_command_sync(msg, request_id)" in stream_worker
     sync = src[src.index("def _run_command_sync("):src.index("def _run_command(")]
     assert "self.execute_command(msg)" in sync
 

@@ -350,10 +350,22 @@ commands on a thread pool of a fixed size, and a handful of agents running long
 tools keep every worker busy for minutes: an `open_terminal` then waited for a
 free worker -- measured 188s and 97s on a live relay, both returning the moment
 tool results landed, which is also why the keystrokes of a terminal opened that
-way would have queued. Interactive actions (terminal spawn, keystrokes, resize,
-close; desktop start/stop/status and audio; code-server; website browser) now
+way would have queued. Interactive actions (terminal spawn, close and listing;
+desktop start/stop/status and audio; code-server start/stop and its WebSocket
+open; the noVNC asset and VNC WebSocket open; website browser start/stop) now
 run on their own thread, so their latency no longer depends on how much batch
-work the relay happens to be doing.
+work the relay happens to be doing. Keystrokes and resizes are different: they
+must keep their order, so each terminal session has one FIFO that runs them one
+after another -- deliberately not inline in the message loop, where an
+`os.write` to a full PTY, or a forward to the host helper, would stall every
+other command.
+
+How many commands share that pool is the operator's number:
+`PAWFLOW_RELAY_COMMAND_WORKERS` (default 4) sets it, the worker prints the
+concurrency it uses when it connects, and a command that waited more than a few
+seconds for a worker says so on the relay log. Nothing else caps it, and an
+unusable value is reported rather than silently adjusted -- a cap the operator
+cannot see is how a saturated pool stayed invisible.
 
 `open_terminal` is deliberately sent without a `_request_timeout`: the transport
 reads "no timeout" as waiting for the relay to answer, which is the right

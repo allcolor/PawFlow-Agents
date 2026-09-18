@@ -184,14 +184,63 @@ def test_command_normal_submits_to_pool_and_tracks_inflight():
     s = ConnSession(_ctx([_cmd("read_file", request_id="p1"), CLOSE],
                          pool=_Pool()))
     s.run()
+    # The pool runs a zero-argument wrapper: it reports a worker wait before
+    # handing over to _run_command.
     assert len(submitted) == 1
     fn, args = submitted[0]
-    assert fn == s._run_command
-    # msg, request_id, sock, send_fn
-    assert args[1] == "p1"
+    assert args == ()
     # Tracked as inflight at submit time (the pool worker would pop it).
     assert "p1" in s.inflight_cmds
     assert s.inflight_cmds["p1"]["action"] == "read_file"
+    # The wrapper runs the command and reports its result.
+    sends = []
+    s.ws_frame_send = lambda _s, _f, opcode=0x1: sends.append((_f, opcode))
+    fn()
+    results = [json.loads(f) for f, _op in sends if b'"type": "result"' in f]
+    assert results[0]["request_id"] == "p1"
+    assert s.inflight_cmds == {}
+
+
+def test_terminal_io_keeps_its_order_per_session():
+    """Keystrokes must reach the PTY in the order they were typed.
+
+    Each one is its own command, and the server side sends them one after the
+    other; without a per-session FIFO two of them (or the two halves of a paste)
+    can land the wrong way round.
+    """
+    order = []
+
+    class _Exec:
+        def __call__(self, m, on_output=None):
+            order.append(m["data"])
+            return {"data": {"ok": True}}
+
+    s = ConnSession(_ctx([CLOSE], execute_command=_Exec()))
+    for chunk in ("a", "b", "c"):
+        s._handle_command({
+            "action": "write_terminal", "session_id": "sess-1",
+            "request_id": f"w{chunk}", "data": chunk})
+
+    s._term_io_queue("sess-1").join()
+    assert order == ["a", "b", "c"]
+
+
+def test_a_command_waiting_for_a_worker_says_so(monkeypatch, capfd):
+    """A saturated pool must be visible instead of looking like a slow reply."""
+    held = []
+
+    class _Pool:
+        def submit(self, fn, *args):
+            held.append(fn)
+
+    monkeypatch.setattr(ml, "_POOL_WAIT_LOG_SECONDS", 0.0)
+    s = ConnSession(_ctx([CLOSE], pool=_Pool()))
+    s._handle_command({"action": "read_file", "request_id": "p1"})
+
+    held[0]()
+    err = capfd.readouterr().err
+    assert "read_file waited" in err
+    assert "PAWFLOW_RELAY_COMMAND_WORKERS" in err
 
 
 def test_an_interactive_action_never_waits_on_the_command_pool():

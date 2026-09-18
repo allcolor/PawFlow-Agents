@@ -19,6 +19,7 @@ The ``spawn_relay`` Docker context is resolved by a worker-supplied callback
 stay in the worker module's scope, not this module's.
 """
 import json
+import queue
 import socket
 import threading
 import sys
@@ -39,13 +40,24 @@ from pawflow_relay._relay_session import close_frame_info
 #: side sends these names (see ``tasks/ai/actions/_sf_k6.py``).
 _INTERACTIVE_ACTIONS = frozenset({
     "open_terminal", "open_local_terminal", "close_terminal",
-    "write_terminal", "resize_terminal", "list_terminals",
-    "mcp_terminal_inject",
+    "list_terminals", "mcp_terminal_inject",
     "start_desktop", "stop_desktop", "desktop_status",
     "desktop_audio_open", "desktop_audio_close",
     "start_code_server", "stop_code_server",
+    "cs_ws_open", "desktop_ws_open", "novnc_asset",
     "website_browser_start", "website_browser_stop",
 })
+
+#: Terminal I/O keeps its order: two keystrokes arriving close together, or the
+#: two halves of a paste, must not reach the PTY the wrong way round. They run
+#: one after another in one FIFO per session -- not inline in the message loop,
+#: where an ``os.write`` to a full PTY or a forward to the host helper would
+#: stall every other command.
+_TERMINAL_IO_ACTIONS = frozenset({"write_terminal", "resize_terminal"})
+
+#: Log threshold for a command that had to wait for a worker. It is a diagnostic,
+#: not a limit: nothing is cancelled or refused when it is crossed.
+_POOL_WAIT_LOG_SECONDS = 5.0
 
 
 @dataclass
@@ -95,6 +107,9 @@ class ConnSession:
          self.skills_fs_client) = ctx.fuse_clients
         self.inflight_cmds: dict = {}
         self.inflight_lock = threading.Lock()
+        # One FIFO per terminal session, for keystrokes and resizes only.
+        self._term_io_queues: dict = {}
+        self._term_io_lock = threading.Lock()
         # Run-fence high-waters (B1-O): armed by the server's
         # fence_snapshot BEFORE registration completes, raised by
         # fence_raise frames and monotonically by the tokens the
@@ -339,9 +354,63 @@ class ConnSession:
                 args=(msg, request_id, self.sock, self.ws_frame_send),
                 name=f"relay-term-{request_id[:8]}", daemon=True).start()
             return
-        # Execute in thread pool for parallel command handling.
-        self.pool.submit(
-            self._run_command, msg, request_id, self.sock, self.ws_frame_send)
+        if msg.get("action") in _TERMINAL_IO_ACTIONS:
+            # Ordered, one session at a time: see _TERMINAL_IO_ACTIONS.
+            self._term_io_queue(str(msg.get("session_id") or "")).put(
+                (msg, request_id, self.sock, self.ws_frame_send))
+            return
+        self._submit_command(msg, request_id)
+
+    def _submit_command(self, msg: dict, request_id: str) -> None:
+        """Run a command on the shared pool, reporting a worker wait.
+
+        The pool is the relay's operator-facing concurrency (see
+        ``PAWFLOW_RELAY_COMMAND_WORKERS``). A command that had to wait for a
+        worker is the signal that the relay is saturated, so it says so instead
+        of looking like an unexplained slow reply.
+        """
+        action = msg.get("action", "?")
+        queued_at = time.time()
+
+        def _run_after_wait():
+            waited = time.time() - queued_at
+            if waited > _POOL_WAIT_LOG_SECONDS:
+                sys.stderr.write(
+                    f"[FSRelay] {action} waited {waited:.1f}s for a command "
+                    "worker; interactive actions have their own lane, but a "
+                    "busy pool delays everything else (see "
+                    "PAWFLOW_RELAY_COMMAND_WORKERS)\n")
+            self._run_command(msg, request_id, self.sock, self.ws_frame_send)
+
+        self.pool.submit(_run_after_wait)
+
+    def _term_io_queue(self, session_id: str) -> "queue.Queue":
+        """Return the FIFO that serializes one terminal session's I/O."""
+        with self._term_io_lock:
+            entry = self._term_io_queues.get(session_id)
+            if entry is None:
+                entry = queue.Queue()
+                self._term_io_queues[session_id] = entry
+                threading.Thread(
+                    target=self._term_io_worker, args=(entry,),
+                    name=f"relay-term-io-{session_id[:8] or 'default'}",
+                    daemon=True).start()
+            return entry
+
+    def _term_io_worker(self, fifo: "queue.Queue") -> None:
+        while True:
+            item = fifo.get()
+            if item is None:
+                return
+            msg, request_id, sock, send_fn = item
+            try:
+                # _run_command reports its own failures on the wire.
+                self._run_command(msg, request_id, sock, send_fn)
+            except Exception as exc:
+                sys.stderr.write(
+                    f"[FSRelay] terminal io command failed: {exc}\n")
+            finally:
+                fifo.task_done()
 
     def _run_command_sync(self, msg: dict, request_id: str):
         # WebSocket sends and closes run inline (no pool or inflight tracking)

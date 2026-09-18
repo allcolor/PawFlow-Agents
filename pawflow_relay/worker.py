@@ -95,8 +95,31 @@ from pawflow_relay._relay_session import (  # noqa: E402
 )
 from pawflow_relay._relay_msg_loop import ConnContext, ConnSession  # noqa: E402
 
+#: How many relay commands run at once when the operator says nothing. It is a
+#: default, not a policy: ``PAWFLOW_RELAY_COMMAND_WORKERS`` overrides it, the
+#: worker prints the value it uses, and a command that had to wait for a worker
+#: reports the wait. Four busy workers used to be invisible, and a terminal open
+#: waited 188s behind them.
+_DEFAULT_COMMAND_WORKERS = 4
 
-def _is_allowed_tmp_path(path: str) -> bool:
+
+def _command_pool_workers() -> int:
+    """Resolve the relay command concurrency, reporting an unusable value."""
+    raw = (os.environ.get("PAWFLOW_RELAY_COMMAND_WORKERS") or "").strip()
+    if not raw:
+        return _DEFAULT_COMMAND_WORKERS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        sys.stderr.write(
+            f"[FSRelay] PAWFLOW_RELAY_COMMAND_WORKERS={raw!r} is not a worker "
+            f"count; using {_DEFAULT_COMMAND_WORKERS}\n")
+        return _DEFAULT_COMMAND_WORKERS
+    return value
+
+
     """True when `path` is absolute and falls under a system temp dir."""
     if not path or not isinstance(path, str):
         return False
@@ -279,7 +302,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _last_activity = [time.time()]  # updated on any recv
             import threading as _threading
             from concurrent.futures import ThreadPoolExecutor
-            _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="relay-cmd")
+            _cmd_workers = _command_pool_workers()
+            _pool = ThreadPoolExecutor(
+                max_workers=_cmd_workers, thread_name_prefix="relay-cmd")
+            sys.stderr.write(
+                f"[FSRelay] Command pool: {_cmd_workers} worker(s) "
+                "(PAWFLOW_RELAY_COMMAND_WORKERS; interactive actions run "
+                "outside it)\n")
             _socket_diag = {
                 "local_close": "",
                 "last_send": "",

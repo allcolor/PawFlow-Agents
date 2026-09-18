@@ -95,19 +95,21 @@ from pawflow_relay._relay_session import (  # noqa: E402
 )
 from pawflow_relay._relay_msg_loop import ConnContext, ConnSession  # noqa: E402
 
-#: How many relay commands run at once when the operator says nothing. It is a
-#: default, not a policy: ``PAWFLOW_RELAY_COMMAND_WORKERS`` overrides it, the
-#: worker prints the value it uses, and a command that had to wait for a worker
-#: reports the wait. Four busy workers used to be invisible, and a terminal open
-#: waited 188s behind them.
-_DEFAULT_COMMAND_WORKERS = 4
+#: Zero means no ceiling: each command gets its own thread. The relay is a shared
+#: execution surface -- several agents' tool calls and the user's own UI actions
+#: -- and a fixed number of workers made it a bottleneck: long commands kept
+#: every worker busy, an ``open_terminal`` waited 188s, and other agents' calls
+#: ran into ``Relay timeout for exec`` while the relay was in fact healthy. A
+#: ceiling is the operator's to set (``PAWFLOW_RELAY_COMMAND_WORKERS``), never an
+#: implicit one.
+_UNCAPPED_COMMAND_WORKERS = 0
 
 
 def _command_pool_workers() -> int:
-    """Resolve the relay command concurrency, reporting an unusable value."""
+    """Resolve the relay command ceiling; 0 means no ceiling."""
     raw = (os.environ.get("PAWFLOW_RELAY_COMMAND_WORKERS") or "").strip()
     if not raw:
-        return _DEFAULT_COMMAND_WORKERS
+        return _UNCAPPED_COMMAND_WORKERS
     try:
         value = int(raw)
     except ValueError:
@@ -115,8 +117,8 @@ def _command_pool_workers() -> int:
     if value < 1:
         sys.stderr.write(
             f"[FSRelay] PAWFLOW_RELAY_COMMAND_WORKERS={raw!r} is not a worker "
-            f"count; using {_DEFAULT_COMMAND_WORKERS}\n")
-        return _DEFAULT_COMMAND_WORKERS
+            f"count; running every command on its own thread\n")
+        return _UNCAPPED_COMMAND_WORKERS
     return value
 
 
@@ -331,12 +333,17 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             import threading as _threading
             from concurrent.futures import ThreadPoolExecutor
             _cmd_workers = _command_pool_workers()
-            _pool = ThreadPoolExecutor(
+            # No ceiling by default: the relay must never be the reason a
+            # command is late. With PAWFLOW_RELAY_COMMAND_WORKERS set, the
+            # operator's number is honoured and a wait for a worker is reported.
+            _pool = (ThreadPoolExecutor(
                 max_workers=_cmd_workers, thread_name_prefix="relay-cmd")
+                if _cmd_workers else None)
             sys.stderr.write(
-                f"[FSRelay] Command pool: {_cmd_workers} worker(s) "
-                "(PAWFLOW_RELAY_COMMAND_WORKERS; interactive actions run "
-                "outside it)\n")
+                f"[FSRelay] Command concurrency: "
+                f"{_cmd_workers or 'one thread per command'}" 
+                f"{' (PAWFLOW_RELAY_COMMAND_WORKERS)' if _cmd_workers else ''}; "
+                "interactive actions always run outside it\n")
             _socket_diag = {
                 "local_close": "",
                 "last_send": "",

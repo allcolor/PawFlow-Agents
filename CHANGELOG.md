@@ -58,6 +58,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `PAWFLOW_RELAY_DEAD_TIMEOUT` sets how long the relay tolerates a silent socket
   before reconnecting (default 90s, printed at startup). It was the last
   hard-coded deadline in the relay loop.
+- The relay no longer caps its own command concurrency by default: every command
+  runs on its own thread. A fixed four workers made the relay the bottleneck --
+  long tool runs held every worker, an `open_terminal` waited 188s, and other
+  callers got `Relay timeout for exec` while the relay was healthy, merely
+  queued. `PAWFLOW_RELAY_COMMAND_WORKERS` sets a ceiling for operators who want
+  one, and the wait for a worker is reported when they do.
 - A linked relay is described by what it is: live, defined but not connected, or
   not defined in this conversation's scope (it may belong to another
   conversation, so re-linking here is the action). The three states used to

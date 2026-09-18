@@ -361,11 +361,14 @@ after another -- deliberately not inline in the message loop, where an
 other command.
 
 How many commands share that pool is the operator's number:
-`PAWFLOW_RELAY_COMMAND_WORKERS` (default 4) sets it, the worker prints the
-concurrency it uses when it connects, and a command that waited more than a few
-seconds for a worker says so on the relay log. Nothing else caps it, and an
-unusable value is reported rather than silently adjusted -- a cap the operator
-cannot see is how a saturated pool stayed invisible.
+`PAWFLOW_RELAY_COMMAND_WORKERS` sets it, the worker prints the concurrency it
+uses when it connects, and a command that waited more than a few seconds for a
+worker says so on the relay log. Unset means no ceiling at all: every command
+gets its own thread. A fixed number of workers made the relay a bottleneck --
+long tool runs kept all of them busy, an `open_terminal` waited 188s behind them,
+and other callers hit `Relay timeout for exec` while the relay was in fact
+healthy, merely queued. A ceiling is the operator's to set, never an implicit
+one.
 
 `close_terminal` takes its place in the session's FIFO instead of running on a
 free thread, so it cannot overtake the keystrokes still queued for that session,

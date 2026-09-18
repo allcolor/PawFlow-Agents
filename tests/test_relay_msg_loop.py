@@ -85,6 +85,30 @@ def _wait_until(predicate, timeout=5.0):
     return predicate()
 
 
+def test_a_command_runs_even_with_no_pool_configured():
+    """The relay must never be the reason a command is late.
+
+    With no ceiling configured there is no pool to wait for: a command runs on
+    its own thread, so one long tool run cannot hold up everything else. A fixed
+    pool of four made that happen -- other agents' calls failed with "Relay
+    timeout for exec" while the relay was healthy, simply queued.
+    """
+    ran = threading.Event()
+    sends = []
+
+    def _exec(msg, on_output=None):
+        ran.set()
+        return {"data": {"ok": True}}
+
+    s = ConnSession(_ctx([_cmd("read_file", "p1"), CLOSE], _sends=sends,
+                         execute_command=_exec))
+    assert s.pool is None
+    s.run()
+
+    assert ran.wait(5), "the command must run without a pool"
+    assert _wait_until(lambda: s.inflight_cmds == {})
+
+
 def test_a_close_waits_for_the_keystrokes_queued_before_it():
     """close_terminal used to run on a free thread and could overtake them."""
     order = []

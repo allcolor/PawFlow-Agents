@@ -378,15 +378,25 @@ class ConnSession:
         self._submit_command(msg, request_id)
 
     def _submit_command(self, msg: dict, request_id: str) -> None:
-        """Run a command on the shared pool, reporting a worker wait.
+        """Run a command, on the pool when the operator set one.
 
-        The pool is the relay's operator-facing concurrency (see
-        ``PAWFLOW_RELAY_COMMAND_WORKERS``). A command that had to wait for a
-        worker is the signal that the relay is saturated, so it says so instead
-        of looking like an unexplained slow reply.
+        By default there is no pool: every command gets its own thread. A fixed
+        number of workers turned the relay into a bottleneck -- long tool runs
+        kept them all busy, an ``open_terminal`` waited 188s, and other agents'
+        calls failed with ``Relay timeout for exec`` while the relay was in fact
+        healthy. A ceiling is the operator's to set
+        (``PAWFLOW_RELAY_COMMAND_WORKERS``), and a command that then has to wait
+        for a worker reports the wait instead of looking like a slow reply.
         """
         action = msg.get("action", "?")
         queued_at = time.time()
+
+        if self.pool is None:
+            threading.Thread(
+                target=self._run_command,
+                args=(msg, request_id, self.sock, self.ws_frame_send),
+                name=f"relay-cmd-{action}-{request_id[:8]}", daemon=True).start()
+            return
 
         def _run_after_wait():
             waited = time.time() - queued_at

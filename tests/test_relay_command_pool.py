@@ -24,9 +24,16 @@ def test_the_silent_socket_timeout_is_the_operators_number(monkeypatch, capsys):
     assert "not a duration" in capsys.readouterr().err
 
 
-def test_the_default_concurrency_is_stated_not_hidden(monkeypatch):
+def test_no_ceiling_unless_the_operator_sets_one(monkeypatch):
+    """One or several long commands must never be able to block the relay."""
     monkeypatch.delenv("PAWFLOW_RELAY_COMMAND_WORKERS", raising=False)
-    assert worker._command_pool_workers() == worker._DEFAULT_COMMAND_WORKERS
+    assert worker._command_pool_workers() == worker._UNCAPPED_COMMAND_WORKERS
+
+    monkeypatch.setenv("PAWFLOW_RELAY_COMMAND_WORKERS", "6")
+    assert worker._command_pool_workers() == 6
+
+    monkeypatch.setenv("PAWFLOW_RELAY_COMMAND_WORKERS", "lots")
+    assert worker._command_pool_workers() == worker._UNCAPPED_COMMAND_WORKERS
 
 
 def test_the_operator_can_raise_it(monkeypatch):
@@ -37,6 +44,7 @@ def test_the_operator_can_raise_it(monkeypatch):
 def test_an_unusable_value_is_reported_and_replaced(monkeypatch, capfd):
     for bad in ("abc", "0", "-3"):
         monkeypatch.setenv("PAWFLOW_RELAY_COMMAND_WORKERS", bad)
-        assert worker._command_pool_workers() == worker._DEFAULT_COMMAND_WORKERS
+        assert (worker._command_pool_workers()
+                == worker._UNCAPPED_COMMAND_WORKERS)
     err = capfd.readouterr().err
     assert "is not a worker count" in err

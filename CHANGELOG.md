@@ -81,10 +81,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   its own row there -- and such a gateway answers 400 "The content[].thinking in
   the thinking mode must be passed back to the API" for the whole turn, where
   Anthropic's own API tolerates the older turn. The reasoning cannot be
-  reconstructed, so the request is retried once with thinking disabled and the
-  verdict is remembered per endpoint and model: later calls, streaming or not,
-  stop enabling thinking for that gateway instead of paying for the refusal
-  again.
+  reconstructed -- a model is free not to reason on a step, and a live
+  conversation held 38 tool_use turns out of 242 with none -- so the request is
+  now sent without thinking as soon as such a turn is in the history, or as
+  soon as the endpoint is known to refuse that shape, instead of paying for a
+  guaranteed refusal; a rejection that still arrives is retried once without
+  thinking. The turn ids are logged once per conversation.
 
 ## [1.0.0-beta.278] — 2026-09-18
 

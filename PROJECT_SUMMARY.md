@@ -47,6 +47,13 @@ The current core value is twofold:
   children in a second pass instead of trusting row order. 138 of the 337 child
   rows of one live context sorted ahead of their anchor and vanished, which is
   how a turn reached a thinking-mode gateway without its reasoning.
+- The blocked-pane probe never kills a working CLI turn (a pane showing
+  `esc to interrupt` wins), `Approaching usage limit` is no longer read as a
+  banner, and the bare-429 counter counts one failure per response and resets on
+  a served one.
+- Media sharing only re-shares FileStore-owned references, so a vendor CDN URL
+  that merely contains `/files/` is forwarded instead of being rewritten into a
+  dead local link.
 - Capability tools re-share a FileStore reference in every form an agent may
   use, and say so when a reference cannot be shared publicly instead of handing
   an external provider an unfetchable URL.

@@ -22,6 +22,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The blocked-pane probe no longer kills a healthy interactive CLI turn, and the
+  bare-429 counter no longer adds up transients. A pane that still shows the CLI
+  working (`esc to interrupt`) is never read as blocked: a long local tool emits
+  no event for minutes, which is exactly the silence the probe reacts to, and the
+  rate-limit wording on such a pane is the model's prose, a path it is editing,
+  or the status footer. `Approaching usage limit` is no longer a banner (a
+  reached limit names `reached`/`exceeded`), and the notice a CLI prints when its
+  limit resets -- the very text that appears when a resumed turn starts -- no
+  longer fails that turn non-retryably. The 429 counter now counts one failure
+  per response (the proxy reports an undecodable body twice, which put the real
+  threshold one short of the announced one) and resets on a served model
+  response, so three transients the CLI recovered from are not a dead end.
+- Media sharing only re-shares FileStore-owned references. `/files/<id>` is also
+  a path third-party CDNs use (Meshy serves `/files/<task>/<name>`), and the
+  normalisation rewrote such a URL against the local base -- turning a working
+  vendor URL into a dead `localhost:9090` link and warning about a file PawFlow
+  never held. A reference is now re-shared only when it is a native FileStore
+  form or its id is one FileStore actually holds.
 - A context rewrite no longer strips the reasoning from the turns it rewrites,
   and a reader no longer depends on row order. The rewrite stamped no `seq` on
   the `thinking`/`tool_call` rows it rebuilt, while the context reader sorts rows

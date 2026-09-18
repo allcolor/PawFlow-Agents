@@ -66,6 +66,10 @@ The current core value is twofold:
   definition is gone (`Ultima7` here) used to be announced as available and then
   rejected by name, contradicting the Relay panel's `def=missing`. Naming it now
   says the binding is stale and to re-link it.
+- Relays report three states instead of one: live, defined but not connected, or
+  not defined in this conversation's scope. The relay's last hard-coded deadline
+  (`PAWFLOW_RELAY_DEAD_TIMEOUT`, 90s by default) is now the operator's number, and
+  a closed terminal session retires its ordering thread instead of leaking it.
 - Capability tools re-share a FileStore reference in every form an agent may
   use, and say so when a reference cannot be shared publicly instead of handing
   an external provider an unfetchable URL.

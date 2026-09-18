@@ -52,6 +52,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   just refused, while the Relay panel said `not connected (def=missing)`. What
   is offered is now what resolves, and naming a stale one says so and points at
   the Relay panel to re-link it.
+- Closing a terminal no longer overtakes keystrokes still queued for it, and a
+  session's FIFO thread retires with the session instead of parking on `get()`
+  for the life of the connection (a fresh series started at every reconnect).
+- `PAWFLOW_RELAY_DEAD_TIMEOUT` sets how long the relay tolerates a silent socket
+  before reconnecting (default 90s, printed at startup). It was the last
+  hard-coded deadline in the relay loop.
+- A linked relay is described by what it is: live, defined but not connected, or
+  not defined in this conversation's scope (it may belong to another
+  conversation, so re-linking here is the action). The three states used to
+  collapse into one message that listed the name it had just rejected.
 - The blocked-pane probe no longer kills a healthy interactive CLI turn, and the
   bare-429 counter no longer adds up transients. A pane that still shows the CLI
   working (`esc to interrupt`) is never read as blocked: a long local tool emits

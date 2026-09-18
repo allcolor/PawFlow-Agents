@@ -391,6 +391,19 @@ does the killing and follows the same rule as the server's `cancel_request`:
 SIGTERM to the process group, then SIGKILL, and always drop the entry so the
 action's own thread unblocks.
 
+code-server and VNC frames take the same route instead of running inline in the
+relay's message loop: a viewer whose socket buffer is full -- a paused browser, a
+slow link -- used to stall every other command, because the loop itself was
+inside the send. Each stream keeps its byte order in its own queue, retired when
+its `cs_ws_close` / `desktop_ws_close` runs.
+
+On the server side, how many UI actions run at once is the operator's number as
+well. `PAWFLOW_MAX_BG_ACTIONS` sets a ceiling, and unset means none: each action
+gets its own thread, because a fixed pool of 32 for the whole server let a
+handful of long handlers delay an unrelated `list_active` by four seconds (logged
+as `queue_wait=4043ms`). `PAWFLOW_BG_ACTION_QUEUE_MAX` is a depth that now only
+produces a log line: an action is never dropped for being late.
+
 `open_terminal` is deliberately sent without a `_request_timeout`: the transport
 reads "no timeout" as waiting for the relay to answer, which is the right
 contract for an operation a person is watching. The waiting is kept sane by the

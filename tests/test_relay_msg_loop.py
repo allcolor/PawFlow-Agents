@@ -85,6 +85,44 @@ def _wait_until(predicate, timeout=5.0):
     return predicate()
 
 
+def test_a_blocked_stream_send_does_not_stall_the_message_loop():
+    """code-server and VNC frames used to run inline in the message loop.
+
+    One viewer whose socket buffer is full -- a paused browser, a slow link --
+    then stalled every other command of the relay, because the loop itself was
+    inside the send. Each stream keeps its order in its own FIFO now, so the
+    loop keeps reading and the bytes still go out in order.
+    """
+    order = []
+    release = threading.Event()
+
+    def _exec(msg, on_output=None):
+        order.append(msg.get("action"))
+        if msg.get("action") == "cs_ws_send":
+            assert release.wait(10), "the loop never reached the other command"
+        return {"data": {"ok": True}}
+
+    s = ConnSession(_ctx([
+        _cmd("cs_ws_send", "s1", session_id="w1", frame="AA=="),
+        _cmd("read_file", "p1"),
+        CLOSE,
+    ], execute_command=_exec))
+
+    def _release_once_the_other_command_ran():
+        deadline = time.time() + 8
+        while time.time() < deadline and "read_file" not in order:
+            time.sleep(0.01)
+        release.set()
+
+    threading.Thread(
+        target=_release_once_the_other_command_ran, daemon=True).start()
+    s.run()
+
+    assert "read_file" in order, (
+        "a blocked stream send must not hold up the other commands")
+    assert order.index("cs_ws_send") < order.index("read_file")
+
+
 def test_a_command_runs_even_with_no_pool_configured():
     """The relay must never be the reason a command is late.
 
@@ -248,7 +286,7 @@ def test_terminal_input_ignored_for_unknown_session():
     assert writes == []
 
 
-def test_command_cs_ws_runs_inline_and_sends_result():
+def test_command_cs_ws_is_answered_without_tracking_it_inflight():
     sends = []
     seen = []
     s = ConnSession(_ctx(
@@ -260,7 +298,8 @@ def test_command_cs_ws_runs_inline_and_sends_result():
     assert seen == ["cs_ws_send"]
     results = [json.loads(f) for f, op in sends if b'"type": "result"' in f]
     assert results and results[0]["request_id"] == "c1"
-    # Inline path never tracks the request as inflight.
+    # The stream path answers on the wire and never tracks the request as
+    # inflight: a frame is not a call anyone waits on.
     assert s.inflight_cmds == {}
 
 

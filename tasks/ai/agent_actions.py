@@ -52,12 +52,19 @@ from tasks.ai._agent_actions_conv import _AgentActionsConvMixin
 
 logger = logging.getLogger(__name__)
 
-_MAX_BG_ACTIONS = int(os.getenv("PAWFLOW_MAX_BG_ACTIONS", "32") or "32")
-_BG_ACTION_EXECUTOR = ThreadPoolExecutor(
-    max_workers=max(1, _MAX_BG_ACTIONS),
+#: Ceiling on UI actions running at once; 0 means none. It used to be a fixed 32
+#: for the whole server, and a log line proved what that costs: with a handful of
+#: long handlers occupying the pool, an unrelated `list_active` waited 4s
+#: (``queue_wait=4043ms``) and a 123ms reply was logged as a "slow response".
+#: Running late is the caller's business; the server must not be the reason. An
+#: operator who wants a ceiling sets PAWFLOW_MAX_BG_ACTIONS.
+_MAX_BG_ACTIONS = int(os.getenv("PAWFLOW_MAX_BG_ACTIONS", "0") or "0")
+_BG_ACTION_EXECUTOR = (ThreadPoolExecutor(
+    max_workers=_MAX_BG_ACTIONS,
     thread_name_prefix="cmd-action",
-)
-atexit.register(_BG_ACTION_EXECUTOR.shutdown, wait=False, cancel_futures=True)
+) if _MAX_BG_ACTIONS > 0 else None)
+if _BG_ACTION_EXECUTOR is not None:
+    atexit.register(_BG_ACTION_EXECUTOR.shutdown, wait=False, cancel_futures=True)
 _BG_ACTION_SUBMIT_DELAY = float(os.getenv("PAWFLOW_BG_ACTION_SUBMIT_DELAY", "1.0") or "1.0")
 _BG_ACTION_QUEUE_MAX = max(
     1, int(os.getenv("PAWFLOW_BG_ACTION_QUEUE_MAX", "256") or "256"))
@@ -247,7 +254,14 @@ def _ensure_bg_action_scheduler() -> None:
                         action_name, action_call_id[:12], handler_ms,
                     )
             try:
-                _BG_ACTION_EXECUTOR.submit(_run)
+                if _BG_ACTION_EXECUTOR is None:
+                    # No ceiling: its own thread, so one long handler cannot hold
+                    # up every other UI action of the server.
+                    threading.Thread(
+                        target=_run, name=f"cmd-action-{action[:24]}",
+                        daemon=True).start()
+                else:
+                    _BG_ACTION_EXECUTOR.submit(_run)
             except RuntimeError:
                 logger.debug("action background executor unavailable", exc_info=True)
 
@@ -257,13 +271,16 @@ def _ensure_bg_action_scheduler() -> None:
 def _schedule_bg_action(fn, action: str = "", call_id: str = "") -> bool:
     _ensure_bg_action_scheduler()
     with _BG_ACTION_QUEUE_COND:
+        # No rejection: a full queue used to drop the action ("rejected ...
+        # limit=256"), which is a quota the caller never agreed to. The queue
+        # only carries the submit debounce now, and running late is visible in
+        # the queue_wait line instead of being turned into a failure.
         if len(_BG_ACTION_QUEUE) >= _BG_ACTION_QUEUE_MAX:
             logger.warning(
-                "[ui-action-bg] rejected action=%s call_id=%s queued=%d limit=%d",
-                action, str(call_id)[:12], len(_BG_ACTION_QUEUE),
-                _BG_ACTION_QUEUE_MAX,
+                "[ui-action-bg] queue depth %d over the configured %d "
+                "(PAWFLOW_BG_ACTION_QUEUE_MAX): the action still runs",
+                len(_BG_ACTION_QUEUE), _BG_ACTION_QUEUE_MAX,
             )
-            return False
         queued_at = time.monotonic()
         ready_at = queued_at + max(0.0, _BG_ACTION_SUBMIT_DELAY)
         # Each action owns its deadline. A process-wide "last enqueue" deadline

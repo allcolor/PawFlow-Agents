@@ -69,6 +69,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   calls that no longer had a reason to run could not be unblocked from the app:
   the worker polls a request file in the runtime root it shares with the app
   (Windows has no signal to send it) and reports how many calls it killed.
+- A deterministic task failure stops the task instead of being retried forever:
+  `TaskError` carries `retryable`, and the sandbox's refused import and a script
+  syntax error set it to False. A build flow retried "Blocked by sandbox: Module
+  'os' is not allowed" 509 times, every three seconds, because the refusal
+  arrived as an ordinary error. The refusal message now also says the two ways
+  out: the injected `fs`/`pawflow` helpers, or `containerize=true` for a full
+  standard library in its own process.
+- The server no longer caps how many UI actions run at once: a fixed pool of 32
+  for the whole server, plus a 256-deep queue that **dropped** what exceeded it,
+  made the UI itself the bottleneck (a `list_active` waited 4s behind unrelated
+  long handlers, logged as `queue_wait=4043ms`). Each action gets its own thread
+  now, nothing is rejected, and an operator who wants a ceiling sets
+  `PAWFLOW_MAX_BG_ACTIONS`.
+- code-server and VNC frames no longer run inline in the relay's message loop:
+  one viewer on a full socket buffer stalled every other command. Each stream
+  keeps its byte order in its own queue, like terminal keystrokes.
 - A linked relay is described by what it is: live, defined but not connected, or
   not defined in this conversation's scope (it may belong to another
   conversation, so re-linking here is the action). The three states used to

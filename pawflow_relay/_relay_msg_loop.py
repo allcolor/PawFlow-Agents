@@ -59,6 +59,13 @@ _INTERACTIVE_ACTIONS = frozenset({
 _TERMINAL_IO_ACTIONS = frozenset({
     "write_terminal", "resize_terminal", "close_terminal"})
 
+#: code-server and VNC byte streams: each frame is its own command, so they need
+#: the same treatment as keystrokes. They used to run inline in the message loop
+#: to keep their wire order, which meant one viewer on a full socket buffer -- a
+#: paused browser, a slow link -- stalled every other command of the relay.
+_STREAM_IO_ACTIONS = frozenset({
+    "cs_ws_send", "cs_ws_close", "desktop_ws_send", "desktop_ws_close"})
+
 #: Log threshold for a command that had to wait for a worker. It is a diagnostic,
 #: not a limit: nothing is cancelled or refused when it is crossed.
 _POOL_WAIT_LOG_SECONDS = 5.0
@@ -113,6 +120,9 @@ class ConnSession:
         self.inflight_lock = threading.Lock()
         # One FIFO per terminal session, for keystrokes and resizes only.
         self._term_io_queues: dict = {}
+        # One FIFO per code-server / VNC stream: same ordering rule as terminal
+        # I/O, and never inline in the loop (see _STREAM_IO_ACTIONS).
+        self._stream_io_queues: dict = {}
         # Sessions whose close went through the FIFO: a keystroke arriving after
         # it is answered rather than queued behind the worker's sentinel, where
         # it would never run and its request would never be answered.
@@ -346,11 +356,16 @@ class ConnSession:
             with self.send_lock:
                 self.ws_frame_send(self.sock, resp)
             return
-        if msg.get("action") in ("cs_ws_send", "cs_ws_close"):
-            self._run_command_sync(msg, request_id)
-            return
-        if msg.get("action") in ("desktop_ws_send", "desktop_ws_close"):
-            self._run_command_sync(msg, request_id)
+        if msg.get("action") in _STREAM_IO_ACTIONS:
+            # Ordered, one stream at a time -- and never inline: see
+            # _STREAM_IO_ACTIONS. The per-stream queue keeps the byte order that
+            # running them synchronously exists to preserve, without making the
+            # relay's loop wait for a slow viewer.
+            _stream_id = str(msg.get("session_id") or "")
+            self._stream_io_queue(_stream_id).put(
+                (msg, request_id, self.sock, self.ws_frame_send))
+            if msg.get("action") in ("cs_ws_close", "desktop_ws_close"):
+                self._retire_stream_io_queue(_stream_id)
             return
         with self.inflight_lock:
             self.inflight_cmds[request_id] = {
@@ -472,12 +487,65 @@ class ConnSession:
                 del self._term_io_queues[session_id]
 
     def shutdown_term_io(self) -> None:
-        """Stop every session FIFO; call this when the connection ends."""
+        """Stop every ordering FIFO; call this when the connection ends.
+
+        Terminal sessions and code-server/VNC streams each park one thread per
+        session on ``get()``; the connection owns them, so they stop with it
+        instead of surviving into the next reconnect.
+        """
         with self._term_io_lock:
-            queues = list(self._term_io_queues.items())
+            queues = (list(self._term_io_queues.items())
+                      + list(self._stream_io_queues.items()))
             self._term_io_queues.clear()
+            self._stream_io_queues.clear()
         for _session_id, fifo in queues:
             fifo.put(None)
+
+    def _stream_io_queue(self, stream_id: str) -> "queue.Queue":
+        """Return the FIFO that serializes one code-server / VNC stream."""
+        with self._term_io_lock:
+            entry = self._stream_io_queues.get(stream_id)
+            if entry is None:
+                entry = queue.Queue()
+                self._stream_io_queues[stream_id] = entry
+                threading.Thread(
+                    target=self._stream_io_worker, args=(entry,),
+                    name=f"relay-stream-io-{stream_id[:8] or 'default'}",
+                    daemon=True).start()
+            return entry
+
+    def _stream_io_worker(self, fifo: "queue.Queue") -> None:
+        while True:
+            item = fifo.get()
+            if item is None:
+                return
+            msg, request_id, sock, send_fn = item
+            try:
+                # _run_command_sync answers on the wire itself.
+                self._run_command_sync(msg, request_id)
+            except Exception as exc:
+                sys.stderr.write(f"[FSRelay] stream io command failed: {exc}\n")
+            finally:
+                fifo.task_done()
+
+    def _retire_stream_io_queue(self, stream_id: str) -> None:
+        """Retire a stream's FIFO once the close it queued has run."""
+        with self._term_io_lock:
+            fifo = self._stream_io_queues.get(stream_id)
+        if fifo is None:
+            return
+        threading.Thread(
+            target=self._retire_stream_io_worker, args=(stream_id, fifo),
+            name=f"relay-stream-retire-{stream_id[:8] or 'default'}",
+            daemon=True).start()
+
+    def _retire_stream_io_worker(self, stream_id: str,
+                                 fifo: "queue.Queue") -> None:
+        fifo.join()  # the close, and every frame queued before it, has run
+        fifo.put(None)
+        with self._term_io_lock:
+            if self._stream_io_queues.get(stream_id) is fifo:
+                del self._stream_io_queues[stream_id]
 
     def _reply_closed_terminal(self, request_id: str, session_id: str) -> None:
         """Answer a command aimed at a session that is already closed."""

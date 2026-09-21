@@ -201,7 +201,9 @@ def test_a_keystroke_after_close_is_answered_instead_of_hanging():
     assert late, "the late keystroke must be answered, not queued behind the stop"
     assert late[0]["data"]["ok"] is False
     assert "closed" in late[0]["data"]["error"]
-    assert s.inflight_cmds == {}
+    # close_terminal (c1) completes on its session worker, which can still be
+    # running when run() returns on the close frame.
+    assert _wait_until(lambda: s.inflight_cmds == {})
     s = ConnSession(_ctx([CLOSE]))
     reason = s.run()
     assert reason.startswith("server close frame")

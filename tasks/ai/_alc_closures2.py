@@ -617,11 +617,11 @@ class _ALCClosures2Mixin:
         _agentctx_p3 is replayed here on the whole batch. Precedence:
 
         1. Any human message in the batch wins: the next turn is a plain
-           user turn, visible in the chat. While an agent answers a delegator
-           every webchat message is queued with "mode mismatch"; letting the
-           newest queued delegate broadcast re-select delegate_reply routed
-           the agent's replies privately to the delegator and queued the
-           user's next messages again, starving the user until a force stop.
+           user turn, visible in the chat. A webchat message preempts a
+           running delegate turn (can_preempt_running_turn) and its rescue
+           copy lands in this batch; letting the newest queued delegate
+           broadcast re-select delegate_reply routed the agent's replies
+           privately to the delegator, starving the user until a force stop.
         2. Newest external request (a2a / cross-conversation) → isolated
            external_request turn.
         3. Newest delegate request (kind != reply) → delegate_reply turn.

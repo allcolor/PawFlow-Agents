@@ -43,6 +43,29 @@ def stamp_turn_identity(flowfile, user_msg_id: str) -> str:
         flowfile.set_attribute("agent.request_msg_id", user_msg_id)
     return flowfile.get_attribute("agent.request_msg_id") or ""
 
+
+def can_preempt_running_turn(incoming_mode: dict, running_mode: dict) -> bool:
+    """Whether an incoming trigger may reach a busy agent's running turn now.
+
+    Agent triggers keep the sticky-mode rule: only the same mode, source and
+    task preempt, anything else waits for the turn to end. A human message is
+    never delayed. It preempts a user turn and a delegate_reply turn alike --
+    queued behind a delegate turn it sat unread until the delegate finished,
+    while typing the same text into the CLI terminal (grab) was read at once.
+    The running turn keeps its delegate_reply ownership, so the delegator still
+    gets its terminal reply; the end-of-turn drain then makes the next turn a
+    user turn. An isolated external_request turn stays excluded: its context
+    belongs to an external caller.
+    """
+    incoming_type = incoming_mode.get("type")
+    running_type = running_mode.get("type")
+    if incoming_type == "user" and running_type in {"user", "delegate_reply"}:
+        return True
+    return (incoming_type == running_type
+            and incoming_mode.get("source_agent") == running_mode.get("source_agent")
+            and incoming_mode.get("task_id") == running_mode.get("task_id"))
+
+
 from tasks.ai.agent_sync import AgentSyncMixin  # noqa: E402
 from tasks.ai.agent_side_channels import AgentSideChannelsMixin  # noqa: E402
 from tasks.ai._agent_streaming_loop import _AgentStreamingLoopMixin  # noqa: E402
@@ -887,11 +910,11 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
 
         _fast_restart_after_preempt = False
         if _already_active:
-            # Sticky-mode rule: only preempt the running turn if the
-            # incoming trigger matches its mode + source. Mismatches go
-            # to the queue so the current turn finishes with a coherent
-            # reply tag (you can't mix a user message into a
-            # delegate_reply turn, etc.).
+            # Sticky-mode rule: an agent trigger only preempts a running
+            # turn of its own mode + source; a mismatch is queued so the
+            # turn finishes with a coherent reply tag. A human message is
+            # never delayed: it also preempts a delegate_reply turn (see
+            # can_preempt_running_turn).
             _incoming_mode = {"type": "user", "source_agent": None}
             try:
                 _raw_ms = flowfile.get_attribute("message_source") or ""
@@ -918,11 +941,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 _active_turn = self._active_turns.get(_agent_key) or {}
             _running_mode = _active_ctx.get("_turn_mode") or {
                 "type": "user", "source_agent": None}
-            _modes_match = (
-                _incoming_mode.get("type") == _running_mode.get("type")
-                and _incoming_mode.get("source_agent") == _running_mode.get("source_agent")
-                and _incoming_mode.get("task_id") == _running_mode.get("task_id")
-            )
+            _modes_match = can_preempt_running_turn(_incoming_mode, _running_mode)
             if not _modes_match:
                 logger.info(
                     "[agent:%s] mode mismatch (incoming=%s/%s, running=%s/%s) "

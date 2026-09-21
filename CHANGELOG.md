@@ -16,6 +16,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the agent. Observed on OpenCode Go (`deepseek-flash`): once the endpoint
   required `reasoning_content` back, replaying 354 reasoned turns took the
   prompt from 481k to 1.43M tokens against a 1,048,576 window.
+- A webchat message to an agent that is answering a delegate is delivered at
+  once instead of waiting for the delegate turn to end. The sticky-mode rule
+  queued every message whose mode differed from the running turn's, so a
+  human message sat unread behind the delegate while typing the same text
+  into the CLI terminal (grab) reached the agent immediately. The running turn
+  keeps its delegate owner, so the delegator still gets its reply; agent
+  triggers keep the sticky-mode rule and an isolated external request still
+  queues.
 
 ## [1.0.0-beta.279] — 2026-09-18
 

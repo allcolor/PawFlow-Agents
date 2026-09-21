@@ -220,8 +220,8 @@ def test_delegate_request_identity_reaches_reply_history_and_live_events():
     assert '"task_id": st._ms.get("task_id", "")' in context
     assert '"task_id": _tm.get("task_id", "")' in append
     assert '"task_id": st._tm_end.get("task_id", "")' in completion
-    assert ('_incoming_mode.get("task_id") == '
-            '_running_mode.get("task_id")') in streaming
+    assert ('incoming_mode.get("task_id") == '
+            'running_mode.get("task_id")') in streaming
     assert '"task_id": _tm.get("task_id", "")' in cc_stream
 
 

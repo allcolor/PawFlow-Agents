@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.280] — 2026-09-21
+
 ### Fixed
 
 - A prompt over the model window now compacts and retries instead of failing

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A prompt over the model window now compacts and retries instead of failing
+  the turn when the provider words it "maximum context length is N tokens.
+  However, you requested M tokens". `classify_http_error` already typed that
+  body `context_overflow`, but the agent loop only matched four literal
+  wordings, so the error was fatal -- and fatal again on every later wake of
+  the agent. Observed on OpenCode Go (`deepseek-flash`): once the endpoint
+  required `reasoning_content` back, replaying 354 reasoned turns took the
+  prompt from 481k to 1.43M tokens against a 1,048,576 window.
+
 ## [1.0.0-beta.279] — 2026-09-18
 
 ### Added

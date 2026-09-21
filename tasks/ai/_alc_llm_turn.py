@@ -21,6 +21,26 @@ from tasks.ai._alc_base import (  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
+# Provider wordings that an untyped error can still carry for a prompt that
+# exceeds the model window.
+_CONTEXT_OVERFLOW_MARKERS = (
+    "exceed_context_size", "n_prompt_tokens", "Prompt is too long",
+    "prompt_too_long")
+
+
+def is_context_overflow_error(err: BaseException) -> bool:
+    """Whether an LLM call failed because the prompt exceeds the window.
+
+    The typed category is authoritative: classify_http_error already reads
+    "maximum context length is N tokens. However, you requested M tokens" as
+    context_overflow, a wording none of the literal markers match. Missing it
+    turned a recoverable overflow into a fatal error on every later turn.
+    """
+    if isinstance(err, LLMCallError) and err.category == "context_overflow":
+        return True
+    text = str(err)
+    return any(marker in text for marker in _CONTEXT_OVERFLOW_MARKERS)
+
 
 class _ALCLlmTurnMixin:
     @staticmethod
@@ -538,10 +558,7 @@ class _ALCLlmTurnMixin:
                         if not st._is_transport_kill else
                         f"Claude Code stream interrupted: {st.err_str}"))
                 return _ALC_BREAK
-            if ("exceed_context_size" in st.err_str
-                  or "n_prompt_tokens" in st.err_str
-                  or "Prompt is too long" in st.err_str
-                  or "prompt_too_long" in st.err_str):
+            if is_context_overflow_error(llm_err):
                 logger.warning(f"[agent:{st.conversation_id[:8]}] Context overflow, retrying...")
                 st.emitter.on_overflow_retry(st.iteration)
                 # Context too long: compact PawFlow ctx in

@@ -850,6 +850,20 @@ detection is deliberately narrow: the body must mention both
 `reasoning_content` and `thinking mode`, so an unrelated 400 that happens to
 name the field is not mistaken for this contract.
 
+The echo is not free, and it must not be trimmed. DeepSeek documents that on a
+request carrying `tools` the `reasoning_content` of *every* previous turn has
+to be passed back and is concatenated into the context, so replaying only the
+current tool loop would bring the 400 back. The size jump is real: the first
+request after the echo switched on for a long-running agent went from 481k to
+1,434,594 tokens (354 reasoned turns, 3.5M characters of reasoning) against a
+1,048,576 window. From the next successful request on, the gauge follows the
+provider-measured prompt size, which includes the echoed reasoning, so
+auto-compaction fires on time. The transition request itself fails with
+`maximum context length ... you requested N tokens`; `classify_http_error`
+types it `context_overflow`, and the agent loop
+(`is_context_overflow_error` in `tasks/ai/_alc_llm_turn.py`) compacts the
+context and retries once instead of failing the turn.
+
 The Anthropic dialect has the mirror-image contract, and it is about the turn
 PawFlow hands back. `_build_anthropic_messages` replays an assistant turn's
 `thinking` block (with its signature) whenever the message still carries one,

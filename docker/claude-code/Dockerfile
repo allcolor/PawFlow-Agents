@@ -135,7 +135,12 @@ ENV PYTHONPATH="/opt/pawflow"
 COPY stamp_versions.sh /opt/pawflow/stamp_versions.sh
 RUN chmod +x /opt/pawflow/stamp_versions.sh \
     && /opt/pawflow/stamp_versions.sh > /opt/pawflow/cli_versions.json \
-    && cat /opt/pawflow/cli_versions.json
+    && cat /opt/pawflow/cli_versions.json \
+    && chown -R pawflow:pawflow /home/pawflow
+# The CLIs probed above (and by the earlier --version checks) run as root with HOME=/home/pawflow
+# and leave root-owned ~/.config, ~/.cache, ~/.gemini behind. Chromium then
+# cannot write its profile and aborts (crashpad "--database is required"),
+# so `claude auth login` in the server login container never gets a browser.
 
 USER pawflow
 ENTRYPOINT ["/usr/bin/tini", "--"]

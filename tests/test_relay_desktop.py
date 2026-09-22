@@ -202,6 +202,8 @@ def test_relay_desktop_prepare_runtime_script_declares_required_payload():
     assert "scripts', 'generate-relay-image.py'" in script
     assert "copyDir(path.join(repoRoot, 'pawflow_relay')" in script
     assert "copyDir(path.join(repoRoot, 'pawflow_cli')" in script
+    # The relay-side project graph build imports graphify from /opt/pawflow.
+    assert "copyDir(path.join(repoRoot, 'core', 'graphify')" in script
     assert "__pycache__" in script
     portable = (DESKTOP / "scripts" / "package-portable.js").read_text(encoding="utf-8")
     assert "prepare-runtime.js" in portable

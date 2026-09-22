@@ -75,5 +75,7 @@ copyFile(
 );
 copyDir(path.join(repoRoot, 'pawflow_relay'), path.join(runtimeRoot, 'pawflow_relay'));
 copyDir(path.join(repoRoot, 'pawflow_cli'), path.join(runtimeRoot, 'pawflow_cli'));
+// Mounted at /opt/pawflow/graphify for the relay-side project graph build.
+copyDir(path.join(repoRoot, 'core', 'graphify'), path.join(runtimeRoot, 'core', 'graphify'));
 
 console.log(`Prepared PawFlow Relay Desktop runtime at ${runtimeRoot}`);

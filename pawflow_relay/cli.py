@@ -296,6 +296,7 @@ def worker_main():
         _runtime_root = _relay_runtime_root()
         _pkg_src = str(_runtime_root / "pawflow_relay")
         _tools_src = str(_runtime_root / "tools")
+        _graphify_src = _runtime_root / "core" / "graphify"
         for _relay_file in _RELAY_SCRIPTS:
             _src = os.path.join(_tools_src, _relay_file)
             if os.path.exists(_src):
@@ -307,6 +308,12 @@ def worker_main():
             "-v",
             f"{translate_path(to_host_path(_pkg_src))}:/opt/pawflow/pawflow_relay:ro",
         ]
+        # The project graph build imports graphify from /opt/pawflow.
+        if _graphify_src.is_dir():
+            docker_run_args += [
+                "-v",
+                f"{translate_path(to_host_path(str(_graphify_src)))}:/opt/pawflow/graphify:ro",
+            ]
         if gateway_cookie:
             docker_run_args += ["-e", f"PAWFLOW_GATEWAY_COOKIE={gateway_cookie}"]
         if args.gateway_key:

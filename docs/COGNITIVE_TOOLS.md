@@ -285,9 +285,15 @@ The project graph builds a structural code graph from a codebase using tree-sitt
 
 ### 4.1 Build via Relay
 
-Initial context preparation schedules a background build automatically. Successful
-relay writes and shell commands schedule a debounced incremental refresh. The
-manual `build` action remains available for recovery or an explicit root change.
+Automatic builds are opt-in. They run only when the variable
+`PAWFLOW_PROJECT_GRAPH_AUTO` is truthy (`1`, `true`, `yes`, `on`), resolved
+from the process environment first, then the conversation → user → global
+variable cascade (for example `manage_variable` at user scope). When opted in,
+initial context preparation schedules a background build, and successful
+relay writes and shell commands schedule a debounced incremental refresh.
+Otherwise project maintenance skips the graph (the wiki scan still runs,
+seeded from the existing graph). The manual `build` action and the UI Build
+button always work, for a first build, recovery or an explicit root change.
 Automatic maintenance always indexes the relay container, even when a server-local
 mutation triggered the refresh; otherwise it would index the deployed runtime
 instead of the relay-scoped project. An explicit manual `build(local=true)`
@@ -301,7 +307,11 @@ the extractor, trying `PAWFLOW_RELAY_CODE_DIR` then `/opt/pawflow`, since the
 relay exec env carries no `PYTHONPATH`. Managed relay runtimes stage the
 integrated `graphify` package alongside the relay handlers and include it in
 the runtime source hash, so server upgrades cannot reuse a stale runtime that
-lacks the extractor. Small deltas retain
+lacks the extractor. Desktop and CLI relays bind-mount the same package from
+`<runtime root>/core/graphify` onto `/opt/pawflow/graphify`; the Relay Desktop
+runtime bundle (`prepare-runtime.js`) ships it. Extraction writes nothing into
+the project tree: incremental rebuilds rely on the fingerprint map below, not
+on a per-file `graphify-out/cache`. Small deltas retain
 Graphify's normal grouped cross-file resolution. Large
 deltas are AST-parsed one file at a time in a memory-bounded sequential pass.
 Nodes are compressed as they are produced and edges use an anonymous disk spool,

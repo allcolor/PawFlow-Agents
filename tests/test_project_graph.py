@@ -202,6 +202,23 @@ def test_managed_relay_runtime_stages_importable_graphify(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def test_extract_leaves_no_cache_in_the_source_tree(tmp_path):
+    """Single-file batches used to create graphify-out/cache in every
+    scanned directory, never pruned: 113 directories in one workspace."""
+    from core.graphify.extract import extract
+
+    nested = tmp_path / "pkg" / "sub"
+    nested.mkdir(parents=True)
+    source = nested / "mod.py"
+    source.write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    result = extract([source])
+
+    assert any(n.get("label") == "f()" for n in result["nodes"])
+    assert sorted(p.name for p in tmp_path.rglob("*")) == [
+        "mod.py", "pkg", "sub"]
+
+
 def test_relay_script_runs_from_env_var_command(tmp_path):
     """The exact command build_from_relay sends works end-to-end with the
     script and the gzip+base64 known map delivered via env vars only.

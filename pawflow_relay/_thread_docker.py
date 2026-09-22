@@ -222,6 +222,7 @@ class _RelayDockerMixin:
             _tools_dir = os.path.join(_project_root, "tools")
             _sdk_dir = os.path.join(_project_root, "docker", "pawflow_sdk")
             _pkg_dir = os.path.join(_project_root, "pawflow_relay")
+            _graphify_dir = os.path.join(_project_root, "core", "graphify")
             _translated_pkg = ""
             _relay_script_mounts = []
             _mount_report = []
@@ -266,6 +267,15 @@ class _RelayDockerMixin:
                 _mount_report.append(f"pawflow_relay/→{_translated_pkg}")
             else:
                 _mount_report.append(f"pawflow_relay/:MISSING({_pkg_dir})")
+            # The project graph build imports graphify from /opt/pawflow;
+            # without this mount it can only fail with ModuleNotFoundError.
+            if os.path.isdir(_graphify_dir):
+                _translated_graphify = translate_path(to_host_path(_graphify_dir))
+                _relay_script_mounts += [
+                    "-v", f"{_translated_graphify}:/opt/pawflow/graphify:ro"]
+                _mount_report.append(f"graphify/→{_translated_graphify}")
+            else:
+                _mount_report.append(f"graphify/:MISSING({_graphify_dir})")
             self._log(
                 f"[Relay] dev-mount scripts: {'; '.join(_mount_report)}")
 

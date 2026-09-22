@@ -11,7 +11,6 @@ import logging
 import sys
 from pathlib import Path
 from typing import Any
-from .cache import load_cached, save_cached
 from ._extract_base import _make_id
 from ._extract_generic import (
     extract_c,
@@ -358,23 +357,12 @@ def extract(paths: list[Path]) -> dict:
     1. Per-file structural extraction (classes, functions, imports)
     2. Cross-file import resolution: turns file-level imports into
        class-level INFERRED edges (DigestAuth --uses--> Response)
+
+    Nothing is written to disk: incremental rebuilds are driven by the
+    caller's mtime map, so a per-file cache under the source tree would only
+    leave an unbounded ``graphify-out/cache`` in every scanned directory.
     """
     per_file: list[dict] = []
-
-    # Infer a common root for cache keys
-    try:
-        if not paths:
-            root = Path(".")
-        elif len(paths) == 1:
-            root = paths[0].parent
-        else:
-            common_len = sum(
-                1 for i in range(min(len(p.parts) for p in paths))
-                if len({p.parts[i] for p in paths}) == 1
-            )
-            root = Path(*paths[0].parts[:common_len]) if common_len else Path(".")
-    except Exception:
-        root = Path(".")
 
     _DISPATCH: dict[str, Any] = {
         ".py": extract_python,
@@ -409,14 +397,7 @@ def extract(paths: list[Path]) -> dict:
         extractor = _DISPATCH.get(path.suffix)
         if extractor is None:
             continue
-        cached = load_cached(path, root)
-        if cached is not None:
-            per_file.append(cached)
-            continue
-        result = extractor(path)
-        if "error" not in result:
-            save_cached(path, result, root)
-        per_file.append(result)
+        per_file.append(extractor(path))
 
     all_nodes: list[dict] = []
     all_edges: list[dict] = []

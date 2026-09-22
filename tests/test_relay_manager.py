@@ -462,6 +462,17 @@ def test_relay_docker_launcher_passes_token_as_equals_arg():
     assert '"python3", "-u", "/opt/pawflow/pawflow_relay_launcher.py"' in source
 
 
+def test_relay_docker_launchers_mount_graphify_for_the_project_graph():
+    """Without it the relay graph build only fails: No module named 'graphify'."""
+    desktop = inspect.getsource(RelayThread._run_docker_relay)
+    cli_source = Path("pawflow_relay/cli.py").read_text(encoding="utf-8")
+
+    assert '"core", "graphify"' in desktop
+    assert ":/opt/pawflow/graphify:ro" in desktop
+    assert '_runtime_root / "core" / "graphify"' in cli_source
+    assert ":/opt/pawflow/graphify:ro" in cli_source
+
+
 def test_relay_worker_sends_gateway_key_header_for_ws_private_gateway():
     worker_source = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
     cli_source = Path("pawflow_relay/cli.py").read_text(encoding="utf-8")

@@ -3,7 +3,76 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from core.project_maintenance import ProjectMaintenanceScheduler, _MaintenanceJob
+
+
+@pytest.fixture(autouse=True)
+def _graph_auto_opted_in(monkeypatch):
+    """Most tests exercise the full refresh; opt-out cases override this."""
+    monkeypatch.setenv("PAWFLOW_PROJECT_GRAPH_AUTO", "1")
+
+
+def _run_with_graph(monkeypatch):
+    graph = MagicMock(nodes=[{"source_file": "core/main.py"}])
+    graph.build_from_relay.return_value = {"status": "built"}
+    wiki = MagicMock()
+    wiki.scan_from_relay.return_value = {"status": "refreshed"}
+    wiki.auto_update.return_value = {"status": "idle"}
+    monkeypatch.setattr(
+        "core.project_graph.ProjectGraph.for_relay", lambda *_args: graph)
+    monkeypatch.setattr(
+        "core.project_wiki.ProjectWiki.for_relay", lambda *_args: wiki)
+    monkeypatch.setattr(
+        "core.summarizer_bindings.resolve_service",
+        lambda *_args: (None, None, False))
+    service = MagicMock()
+    ProjectMaintenanceScheduler()._run(_MaintenanceJob(
+        user_id="alice", relay_id="relay-a", service=service,
+        conversation_id="conv-a"))
+    return graph, wiki, service
+
+
+def test_automatic_graph_build_is_off_unless_opted_in(monkeypatch):
+    """A relay without graphify failed a build every lazy refresh."""
+    monkeypatch.delenv("PAWFLOW_PROJECT_GRAPH_AUTO", raising=False)
+    monkeypatch.setattr("core.expression.resolve_expression",
+                        lambda *_args, **_kwargs: "")
+
+    graph, wiki, service = _run_with_graph(monkeypatch)
+
+    graph.build_from_relay.assert_not_called()
+    # The wiki keeps its own maintenance, seeded from the existing graph.
+    wiki.scan_from_relay.assert_called_once_with(
+        service, ".", local=False, initial_paths=["core/main.py"])
+
+
+def test_graph_opt_in_resolves_through_the_variable_cascade(monkeypatch):
+    monkeypatch.delenv("PAWFLOW_PROJECT_GRAPH_AUTO", raising=False)
+    seen = {}
+
+    def _resolve(expr, **kwargs):
+        seen.update(kwargs, expr=expr)
+        return "true"
+
+    monkeypatch.setattr("core.expression.resolve_expression", _resolve)
+
+    graph, _wiki, _service = _run_with_graph(monkeypatch)
+
+    graph.build_from_relay.assert_called_once()
+    assert "PAWFLOW_PROJECT_GRAPH_AUTO" in seen["expr"]
+    assert (seen["owner"], seen["conversation_id"]) == ("alice", "conv-a")
+
+
+def test_process_env_disables_the_graph_over_variables(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_PROJECT_GRAPH_AUTO", "0")
+    monkeypatch.setattr("core.expression.resolve_expression",
+                        lambda *_args, **_kwargs: "1")
+
+    graph, _wiki, _service = _run_with_graph(monkeypatch)
+
+    graph.build_from_relay.assert_not_called()
 
 
 def test_worker_refreshes_graph_and_wiki_for_same_relay(monkeypatch):

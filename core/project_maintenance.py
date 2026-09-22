@@ -9,6 +9,11 @@ process-only runs in between: they skip the graph rebuild and the tree hashing
 scan, which would otherwise be repeated on every turn for as long as the
 backlog lasts. Blocked or deferred sources do not count as ready. Nothing runs
 on the UI or HTTP worker thread.
+
+The automatic AST graph rebuild is opt-in: it runs only when the variable
+``PAWFLOW_PROJECT_GRAPH_AUTO`` resolves truthy (process env, then the
+conversation -> user -> global variable cascade). An explicit
+``project_graph(action='build')`` or the UI Build button always works.
 """
 
 from __future__ import annotations
@@ -31,6 +36,11 @@ _WRITE_DEBOUNCE_SECONDS = 2.0
 _BACKLOG_PROCESS_SECONDS = 10.0
 _WIKI_FLOW_FQN = "pawflow.agents.wiki:1.0.0"
 _WIKI_WORKFLOW_CUTOVER_ENV = "PAWFLOW_WIKI_WORKFLOW_CUTOVER"
+_GRAPH_AUTO_VARIABLE = "PAWFLOW_PROJECT_GRAPH_AUTO"
+
+
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -276,6 +286,22 @@ class ProjectMaintenanceScheduler:
     def _workflow_cutover_enabled() -> bool:
         return os.environ.get(_WIKI_WORKFLOW_CUTOVER_ENV, "").strip() == "1"
 
+    @staticmethod
+    def _graph_auto_enabled(user_id: str, conversation_id: str) -> bool:
+        """Whether automatic project graph rebuilds were opted into."""
+        if _GRAPH_AUTO_VARIABLE in os.environ:
+            return _truthy(os.environ.get(_GRAPH_AUTO_VARIABLE))
+        try:
+            from core.expression import resolve_expression
+            raw = resolve_expression(
+                "$" + "{" + _GRAPH_AUTO_VARIABLE + ":default(\"\")}",
+                owner=user_id, conversation_id=conversation_id)
+        except Exception:
+            logger.debug("Failed to resolve %s", _GRAPH_AUTO_VARIABLE,
+                         exc_info=True)
+            raw = ""
+        return _truthy(raw)
+
     def _run(self, job: _MaintenanceJob) -> None:
         if job.conversation_id and job.agent_name:
             try:
@@ -298,16 +324,20 @@ class ProjectMaintenanceScheduler:
         wiki = ProjectWiki.for_relay(job.user_id, job.relay_id)
         if job.scan:
             graph = ProjectGraph.for_relay(job.user_id, job.relay_id)
-            # Project knowledge is relay-scoped. A server-local filesystem
-            # mutation may schedule this job with local=True, but indexing
-            # that surface would scan the deployed /app tree instead of the
-            # relay project.
-            graph_result = graph.build_from_relay(
-                job.service, job.root, local=False)
-            if graph_result.get("status") == "error":
-                logger.warning(
-                    "Automatic project graph refresh failed relay=%s: %s",
-                    job.relay_id, graph_result.get("reason", ""))
+            if self._graph_auto_enabled(job.user_id, job.conversation_id):
+                # Project knowledge is relay-scoped. A server-local filesystem
+                # mutation may schedule this job with local=True, but indexing
+                # that surface would scan the deployed /app tree instead of
+                # the relay project.
+                graph_result = graph.build_from_relay(
+                    job.service, job.root, local=False)
+                if graph_result.get("status") == "error":
+                    logger.warning(
+                        "Automatic project graph refresh failed relay=%s: %s",
+                        job.relay_id, graph_result.get("reason", ""))
+            else:
+                graph_result = {"status": "skipped",
+                                "reason": "automatic graph not opted in"}
             # The wiki always scans the relay container, whatever surface
             # the graph build used: local=true would index the server/host tree.
             wiki_result = wiki.scan_from_relay(

@@ -148,7 +148,7 @@ either way.
 | `screen` | Screenshot/click/type/key/scroll/mouse-position against local or Docker desktop. |
 | `browser` | Browser automation action through the browser service. |
 | `see` | Analyze an image, video, or audio artifact. |
-| `project_graph` | Query or manually rebuild the automatically maintained relay-scoped AST graph. |
+| `project_graph` | Query or manually rebuild the relay-scoped AST graph (automatic rebuilds are opt-in via `PAWFLOW_PROJECT_GRAPH_AUTO`). |
 | `project_wiki` | Query, inspect, lint, refresh, or repair the automatically maintained relay-scoped project wiki. |
 
 When `PAWFLOW_USE_RTK` is set to a truthy value (`1`, `true`, `yes`, `on`) and

@@ -19,9 +19,10 @@ from services.cc_interactive_event_service import CCInteractiveEventService
 
 @pytest.fixture
 def captured(monkeypatch):
-    """Return (service, state, written, published)."""
+    """Return (service, state, written, published); patches land on svc."""
     written = []
     published = []
+    patched = []
 
     class _Writer:
         @staticmethod
@@ -30,6 +31,9 @@ def captured(monkeypatch):
 
         def enqueue_message(self, msg, **kw):
             written.append((msg, kw.get("sse_events") or []))
+
+        def enqueue_patch_message(self, msg_id, **fields):
+            patched.append((msg_id, fields))
 
     class _Bus:
         @staticmethod
@@ -47,7 +51,9 @@ def captured(monkeypatch):
     svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
     state = svc.register_session("sess", user_id="allcol",
                                  conversation_id="80c37670",
-                                 agent_name="claude")
+                                 agent_name="claude",
+                                 llm_service="codex_interactive_llm_service")
+    svc.test_patched = patched
     return svc, state, written, published
 
 
@@ -283,6 +289,36 @@ class TestTheMetaLineUnderACapturedTurn:
         block_cb("text", {"text": "Hello"})
 
         assert written[0][0]["source"]["provider"] == state.provider
+
+    def test_the_source_carries_the_llm_service(self, captured):
+        """Without it the badge loses its 'via <service>' part."""
+        svc, state, written, published = captured
+        text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
+
+        text_cb("He")
+        block_cb("text", {"text": "Hello"})
+
+        token = [d for _c, kind, d in published if kind == "token"][0]
+        assert token["source"]["llm_service"] == "codex_interactive_llm_service"
+        assert written[0][0]["source"]["llm_service"] == (
+            "codex_interactive_llm_service")
+
+    def test_the_real_numbers_are_persisted_on_the_row(self, captured):
+        """A reload must show the same meta line as the live bubble."""
+        svc, state, written, _published = captured
+        _text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
+        block_cb("text", {"text": "Hello"})
+
+        svc._publish_capture_meta(state, _Resp())
+
+        assert len(svc.test_patched) == 1
+        msg_id, fields = svc.test_patched[0]
+        assert msg_id == written[0][0]["msg_id"]
+        source = fields["source"]
+        assert source["model"] == "opus"
+        assert (source["tokens_in"], source["tokens_out"]) == (12, 34)
+        assert source["llm_service"] == "codex_interactive_llm_service"
+        assert source["name"] == "claude"
 
     def test_the_real_numbers_update_the_message_that_was_written(
             self, captured):

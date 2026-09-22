@@ -1286,3 +1286,43 @@ def test_hook_keeps_manual_prompt_when_marker_is_missing(monkeypatch):
     assert "pawflow_injected_prompt_missing" not in compact
     assert compact["prompt_sha256"] == hook.hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     assert compact["prompt"] == prompt
+
+
+def _ws_submit_events(monkeypatch, payload):
+    from tools import cc_interactive_observers as observers
+    events = []
+    monkeypatch.setattr(observers.EVENTS, "emit", events.append)
+    observers._emit_ws_prompt_submit("ws-1", json.dumps(payload).encode())
+    return events
+
+
+def test_codex_websocket_turn_emits_prompt_digests_never_text(monkeypatch):
+    import hashlib
+    prompt = "GameDev -> GameDev7. Lance la sonde.\n"
+    events = _ws_submit_events(monkeypatch, {
+        "type": "response.create",
+        "input": [
+            {"type": "message", "role": "user", "content": [
+                {"type": "input_text", "text": "an earlier prompt"}]},
+            {"type": "message", "role": "assistant", "content": []},
+            {"type": "message", "role": "user", "content": [
+                {"type": "input_text", "text": prompt},
+                {"type": "input_image", "image_url": "data:,"}]},
+        ],
+    })
+
+    assert events == [{
+        "type": "ws_prompt_submit", "request_id": "ws-1",
+        "prompt_sha256s": [hashlib.sha256(
+            prompt.rstrip("\n").encode("utf-8")).hexdigest()],
+    }]
+    assert "Lance la sonde" not in json.dumps(events)
+
+
+def test_non_turn_websocket_messages_emit_no_receipt(monkeypatch):
+    assert _ws_submit_events(monkeypatch, {"type": "session.update"}) == []
+    assert _ws_submit_events(monkeypatch, {
+        "type": "response.create",
+        "input": [{"type": "function_call_output", "call_id": "c",
+                   "output": "ok"}],
+    }) == []

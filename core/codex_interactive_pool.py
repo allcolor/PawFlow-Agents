@@ -217,6 +217,7 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
         event_service.register_session(
             session_token, user_id=user_id, conversation_id=conversation_id,
             agent_name=agent_name, provider=provider,
+            llm_service=getattr(client, "_agent_service", "") or "",
             observation_mode=observation_mode)
 
         name = self._spawn_container(
@@ -608,9 +609,17 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             return True
         max_enter_retries = 3
         proof_window = window / (max_enter_retries + 1)
+        configured_grace = os.environ.get(
+            "PAWFLOW_CCI_SUBMIT_GRACE_SECONDS", "")
+        try:
+            submit_grace = (float(configured_grace) if configured_grace
+                            else 45.0)
+        except ValueError:
+            submit_grace = 45.0
         if event_service is not None:
             after_submit, after_request = submit_marker
             saw_other_submit = False
+            graced = False
             enter_retries = 0
             proof_attempts_remaining = max_enter_retries + 1
             while proof_attempts_remaining:
@@ -679,6 +688,20 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                     # the full configured proof window without adding another
                     # Enter unless the composer still visibly holds the chip.
                     continue
+                if not graced and holds is not True and submit_grace > 0:
+                    # Codex can accept a paste long after Enter (observed
+                    # 2026-09-22: UserPromptSubmit 19 s after this window
+                    # closed). Declaring failure then orphans the turn Codex
+                    # runs anyway. Nothing is stranded in the composer, so
+                    # wait once more for a receipt without pressing a key.
+                    graced = True
+                    proof_attempts_remaining = 1
+                    proof_window = submit_grace
+                    logger.warning(
+                        "[codex-interactive] no submission receipt yet for "
+                        "%s; waiting up to %.0fs more before failing",
+                        state.name, submit_grace)
+                    continue
                 if holds is True:
                     reason = "the prompt remains in the composer"
                 elif holds is False or (
@@ -739,6 +762,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             idle_ttl_seconds=int(idle_ttl) if idle_ttl is not None else None)
         service_id = getattr(client, "_agent_service", "") or ""
         key = (user_id, conversation_id, agent_name, service_id)
+        retired = None
         with self._lock:
             existing = self._sessions.get(key)
             container_alive = bool(existing and self._is_alive(existing.name))
@@ -765,8 +789,14 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                             existing.name)
                     self._recover_container_tokens(existing)
                     self._kill_container(existing.name)
+                retired = existing
             if before_launch is not None:
                 before_launch()
+        if retired is not None:
+            # Dead or killed, its event session must not outlive it: left
+            # registered, its traffic is adopted as orphan captures. Outside
+            # the pool lock -- the event service takes its own lock first.
+            self._unregister_event_session(retired)
         state = self._start_new(
             client, model, user_id, conversation_id, agent_name, key,
             pool_index=-1)

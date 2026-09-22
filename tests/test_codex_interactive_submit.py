@@ -625,8 +625,10 @@ def test_missing_ack_fails_without_appending_enter(monkeypatch):
         monkeypatch, "")
     assert result is False
     assert keys == []
-    assert len(service.calls) == 4
+    # Four proof windows, then one grace wait for a late receipt.
+    assert len(service.calls) == 5
     assert service.calls[0][2]["timeout"] == 0.3
+    assert service.calls[4][2]["timeout"] == 45.0
     assert "not confirmed" in state.last_error
 
 
@@ -635,8 +637,30 @@ def test_missing_ack_is_not_replaced_by_visual_pane_inference(monkeypatch):
         monkeypatch, "", pane=SUBMITTED_PANE)
     assert result is False
     assert keys == []
-    assert len(service.calls) == 4
+    assert len(service.calls) == 5
     assert "not confirmed" in state.last_error
+
+
+def test_late_receipt_in_the_grace_window_confirms_without_enter(monkeypatch):
+    """2026-09-22: UserPromptSubmit came 19 s after the proof window closed.
+
+    Failing there orphaned the turn Codex ran anyway; the grace wait keeps
+    the turn PawFlow's own and never presses another key.
+    """
+    result, state, service, keys = _verify_with_signals(
+        monkeypatch, "", "", "", "", "hook", pane=SUBMITTED_PANE)
+    assert result is True
+    assert state.last_error == ""
+    assert keys == []
+    assert len(service.calls) == 5
+
+
+def test_grace_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_GRACE_SECONDS", "0")
+    result, _state, service, _keys = _verify_with_signals(
+        monkeypatch, "", "", "", "", "hook")
+    assert result is False
+    assert len(service.calls) == 4
 
 
 def test_missing_ack_retries_a_prompt_still_in_the_composer(monkeypatch):

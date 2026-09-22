@@ -100,6 +100,9 @@ class CCInteractiveSessionEvents:
     conversation_id: str = ""
     agent_name: str = ""
     provider: str = "claude-code-interactive"
+    # The agent's LLM service id. A captured turn has no agent loop to stamp
+    # it, so the capture reads it here for the message's ``via`` badge.
+    llm_service: str = ""
     # ``mitm``: a proxy in the container streams vendor events here.
     # ``managed_mcp``: only native lifecycle hooks (and relay tool rows)
     # arrive; there is no proxy, so hook registrations are the liveness
@@ -288,6 +291,7 @@ class CCInteractiveEventService(BaseService):
                          conversation_id: str = "",
                          agent_name: str = "",
                          provider: str = "",
+                         llm_service: str = "",
                          observation_mode: str = "") -> CCInteractiveSessionEvents:
         if not session_token:
             raise ValueError("session_token is required")
@@ -311,6 +315,8 @@ class CCInteractiveEventService(BaseService):
                 state.agent_name = agent_name
             if provider:
                 state.provider = provider
+            if llm_service:
+                state.llm_service = llm_service
             if observation_mode:
                 state.observation_mode = observation_mode
                 # No proxy will ever connect for a managed session: the pool
@@ -693,7 +699,8 @@ class CCInteractiveEventService(BaseService):
         state.last_event_at = time.time()
         self._record_submission_signal(state, event)
         self._log_event_summary(session_token, event)
-        if event.get("type") == "wire":
+        # Side-channel evidence only: never part of the turn's stream.
+        if event.get("type") in {"wire", "ws_prompt_submit"}:
             return
         self._mirror_native_todo_event(state, event)
         self._track_turn_boundary(state, event)
@@ -751,6 +758,9 @@ class CCInteractiveEventService(BaseService):
                 state.provider_request_seq += 1
                 state.stream_condition.notify_all()
             return
+        if event.get("type") == "ws_prompt_submit":
+            self._record_ws_prompt_submit(state, event)
+            return
         if (event.get("type") != "hook"
                 or event.get("hook_event_name") != "UserPromptSubmit"):
             return
@@ -788,6 +798,45 @@ class CCInteractiveEventService(BaseService):
             state.prompt_submit_seq += 1
             state.prompt_submit_receipts.append(
                 (state.prompt_submit_seq, digest, kind))
+            del state.prompt_submit_receipts[:-64]
+            state.stream_condition.notify_all()
+
+    def _record_ws_prompt_submit(self, state: CCInteractiveSessionEvents,
+                                 event: dict) -> None:
+        """Record the MITM view of a Codex WebSocket turn as a receipt.
+
+        Codex submits turns as ``response.create`` messages on a persistent
+        /responses WebSocket, so no ``request_start`` marks them and the
+        ``UserPromptSubmit`` hook -- one short-lived connection per hook --
+        is the only other proof. When that connection fails, a prompt Codex
+        is already answering was declared unsubmitted and its turn orphaned.
+        The proxy reports digests of the last user message it forwarded;
+        only the digest of the newest prompt PawFlow injected counts, and only
+        once: every later ``response.create`` of the same turn (tool
+        continuations) may repeat that user message, and a stale receipt
+        read by the next prompt's waiter would look like a different prompt.
+        Anything else is left to the hook to classify.
+        """
+        digests = event.get("prompt_sha256s") or []
+        if not isinstance(digests, list):
+            return
+        with self._sessions_lock:
+            if state.injected_prompt_texts:
+                newest = state.injected_prompt_texts[-1].digest
+            elif state.injected_prompts:
+                newest = max(
+                    state.injected_prompts.items(), key=lambda item: item[1])[0]
+            else:
+                newest = ""
+        if not newest or newest not in digests:
+            return
+        with state.stream_condition:
+            if any(digest == newest
+                   for _seq, digest, _kind in state.prompt_submit_receipts):
+                return
+            state.prompt_submit_seq += 1
+            state.prompt_submit_receipts.append(
+                (state.prompt_submit_seq, newest, "exact"))
             del state.prompt_submit_receipts[:-64]
             state.stream_condition.notify_all()
 
@@ -1484,18 +1533,7 @@ class CCInteractiveEventService(BaseService):
         persisted_texts = []
 
         def _source():
-            # `provider` is what the meta line under a message is built from
-            # (buildMetaLine reads model / provider / tokens and renders
-            # nothing when it has none of them). A captured turn runs outside
-            # the streaming worker, so it never gets the richer source the
-            # agent loop builds -- without this it arrived bare and the
-            # message showed no meta line at all.
-            # Model and token counts stay absent on purpose: this observer
-            # sees tmux activity, not the provider's usage, and a meta line
-            # is worth less than nothing if it states numbers nobody measured.
-            return {"type": "agent", "name": state.agent_name,
-                    "provider": state.provider,
-                    "input": self._tmux_input_tag(state)}
+            return self._capture_source(state)
 
         def _writer():
             from core.conversation_writer import ConversationWriter
@@ -1662,6 +1700,33 @@ class CCInteractiveEventService(BaseService):
 
         return _text_callback, _block_callback, _ensure_final_text
 
+    def _capture_source(self, state: CCInteractiveSessionEvents,
+                        response=None) -> Dict[str, Any]:
+        """The ``source`` of a message written by a captured turn.
+
+        A captured turn runs outside the streaming worker, so it never gets
+        the source the agent loop builds. ``llm_service`` feeds the ``via``
+        badge and ``provider`` the meta line. Model and token counts exist
+        only once the coordinator returns the observed provider response;
+        before that they stay absent rather than state unmeasured numbers.
+        """
+        source: Dict[str, Any] = {
+            "type": "agent", "name": state.agent_name,
+            "provider": state.provider,
+            "input": self._tmux_input_tag(state)}
+        if state.llm_service:
+            source["llm_service"] = state.llm_service
+        if response is not None:
+            model = str(getattr(response, "model", "") or "")
+            tokens_in = int(getattr(response, "tokens_in", 0) or 0)
+            tokens_out = int(getattr(response, "tokens_out", 0) or 0)
+            if model:
+                source["model"] = model
+            if tokens_in or tokens_out:
+                source["tokens_in"] = tokens_in
+                source["tokens_out"] = tokens_out
+        return source
+
     def _capture_dedup_sets(self, state: CCInteractiveSessionEvents):
         """The tool-id dedup sets a capture must share with PawFlow-driven turns.
 
@@ -1697,11 +1762,11 @@ class CCInteractiveEventService(BaseService):
         carries only the provider. The client renders that as a meta line
         with one item, or none at all.
 
-        ``message_meta`` is the update channel: the client looks the message
-        up by id and REPLACES its meta line, so sending the real values here
-        completes what was written earlier instead of leaving a stub. A meta
-        line that stays half-empty is worse than absent -- it looks like the
-        turn cost nothing.
+        The persisted row is patched with the complete source, so a reload
+        shows the same meta line; ``message_meta`` then updates the live
+        bubble: the client looks the message up by id and REPLACES its meta
+        line. A meta line that stays half-empty is worse than absent -- it
+        looks like the turn cost nothing.
 
         Best-effort by construction: this closes a display gap, and must
         never be able to fail the capture that produced the answer.
@@ -1716,6 +1781,11 @@ class CCInteractiveEventService(BaseService):
             model = str(getattr(response, "model", "") or "")
             if not (model or tokens_in or tokens_out):
                 return
+            source = self._capture_source(state, response)
+            from core.conversation_writer import ConversationWriter
+            ConversationWriter.for_conversation(
+                state.conversation_id).enqueue_patch_message(
+                    msg_id, source=source)
             from core.conversation_event_bus import ConversationEventBus
             ConversationEventBus.instance().publish_event(
                 state.conversation_id, "message_meta", {
@@ -1725,6 +1795,7 @@ class CCInteractiveEventService(BaseService):
                     "model": model,
                     "tokens_in": tokens_in,
                     "tokens_out": tokens_out,
+                    "source": source,
                 })
         except Exception:
             logger.debug("CC interactive capture meta publish failed",
@@ -1744,6 +1815,20 @@ class CCInteractiveEventService(BaseService):
             return None
         pool = self._pool_for(state)
         return lambda: pool.session_is_live(container)
+
+    def _capture_pane_callback(self, state):
+        """Pane reader for captured turns, like a PawFlow-driven turn gets.
+
+        Without it a capture never saw the rate-limit, auth or question
+        banner the CLI printed, nor the idle prompt of a turn whose Stop hook
+        was lost: it waited forever with Active Agents raised. Same container
+        resolution as the liveness probe.
+        """
+        container = getattr(state, "container_id", "") or ""
+        if not container:
+            return None
+        pool = self._pool_for(state)
+        return lambda: pool._pane_text(container)
 
     def _compact_captured_turn(self, state, capture_epoch: int, coordinator=None) -> None:
         """Transfer a native compact to the normal PawFlow compact procedure.
@@ -1877,7 +1962,8 @@ class CCInteractiveEventService(BaseService):
                 block_callback=_block_cb, emitted_tool_use_ids=_use_ids,
                 emitted_tool_result_ids=_result_ids,
                 consumer_kind="capture", consumer_epoch=capture_epoch,
-                liveness_callback=self._capture_liveness_callback(state))
+                liveness_callback=self._capture_liveness_callback(state),
+                pane_callback=self._capture_pane_callback(state))
             response = coord.run()
             _ensure_final_text(response.content or "")
             self._publish_capture_meta(state, response)

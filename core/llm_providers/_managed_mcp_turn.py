@@ -72,6 +72,9 @@ def _stop_failure_error(provider: str, info: dict) -> LLMCallError:
 class _ManagedMcpTurnCoordinator(_CCITurnCoordinator):
     """Wait for the native final of one managed CLI turn."""
 
+    # The managed path has its own overdue-final rule.
+    _finish_on_idle_pane = False
+
     def __init__(self, event_service, session_token: str, *, provider: str,
                  callback=None, block_callback=None, turn_callback=None,
                  touch_callback=None, emitted_tool_use_ids=None,

@@ -257,8 +257,53 @@ class _ClientWebSocketReader:
             _log(
                 f"websocket_client_message request={self.exchange.request_id} "
                 f"bytes={len(message)}")
+            _emit_ws_prompt_submit(self.exchange.request_id, message)
             _emit_observed_tool_blocks(
                 self.exchange.request_id, self.exchange.path, message)
+
+
+def _last_user_texts(items) -> list:
+    """The input_text parts of the last user message of a Responses input."""
+    for item in reversed(items):
+        if not isinstance(item, dict) or item.get("role") != "user":
+            continue
+        content = item.get("content")
+        if isinstance(content, str):
+            return [content]
+        if not isinstance(content, list):
+            return []
+        return [part.get("text") for part in content
+                if isinstance(part, dict) and part.get("type") == "input_text"
+                and isinstance(part.get("text"), str)]
+    return []
+
+
+def _emit_ws_prompt_submit(request_id: str, message: bytes) -> None:
+    """Report a Codex ``response.create`` as a prompt submission receipt.
+
+    A WebSocket turn has no ``request_start``, so without this the
+    ``UserPromptSubmit`` hook is PawFlow's only proof that a pasted prompt
+    was submitted. Only SHA-256 digests leave the container, never the text,
+    hashed the way the server hashes the prompts it injects.
+    """
+    try:
+        payload = json.loads(message.decode("utf-8"))
+    except Exception:
+        return
+    if not isinstance(payload, dict) or payload.get("type") != "response.create":
+        return
+    items = payload.get("input")
+    texts = _last_user_texts(items) if isinstance(items, list) else []
+    digests = [
+        hashlib.sha256(text.rstrip("\r\n").encode("utf-8")).hexdigest()
+        for text in texts if text.strip()]
+    if not digests:
+        return
+    EVENTS.emit({
+        "type": "ws_prompt_submit",
+        "request_id": request_id,
+        "prompt_sha256s": digests,
+    })
 
 
 class _ServerWebSocketReader:

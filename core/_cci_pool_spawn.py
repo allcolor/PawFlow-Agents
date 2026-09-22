@@ -256,6 +256,7 @@ class _InteractiveContainerSpawnMixin:
             conversation_id=conversation_id,
             agent_name=agent_name,
             provider=provider,
+            llm_service=getattr(client, "_agent_service", "") or "",
             observation_mode=observation_mode,
         )
 
@@ -724,13 +725,33 @@ class _InteractiveContainerSpawnMixin:
 
     @staticmethod
     def _is_alive(name: str) -> bool:
+        """Whether the container runs. A probe that cannot answer is NOT death.
+
+        `docker inspect` times out under load (twenty CLI containers plus a
+        game engine on the host). Reading that as "stopped" made callers drop
+        a live container from the pool without killing it: its CLI kept
+        running, its event session stayed registered, the webchat lost the
+        tmux ("No live interactive tmux session") and the next orphan capture
+        on it held Active Agents for hours. Only a definitive answer --
+        inspect succeeded and says not running, or the container is gone --
+        is death.
+        """
         try:
             result = subprocess.run(  # nosec B603
                 docker_cmd() + ["inspect", "-f", "{{.State.Running}}", name],
                 capture_output=True, text=True, timeout=5)
-            return result.stdout.strip() == "true"
         except Exception:
+            logger.warning("[cci-live] docker inspect %s did not answer; "
+                           "treating the container as alive", name)
+            return True
+        if result.returncode == 0:
+            return result.stdout.strip() == "true"
+        if "no such" in (result.stderr or "").lower():
             return False
+        logger.warning("[cci-live] docker inspect %s failed (%s); treating "
+                       "the container as alive", name,
+                       (result.stderr or "").strip()[:200])
+        return True
 
     def session_is_live(self, name: str) -> bool:
         """Whether the interactive session can still complete a turn.
@@ -750,12 +771,24 @@ class _InteractiveContainerSpawnMixin:
         The container can remain healthy after Ctrl-C terminates the CLI and
         its tmux server. Container liveness alone must therefore never qualify
         an interactive session for reuse.
+
+        `tmux has-session` answers 0 (exists) or 1 (no session / no server).
+        Anything else -- a docker exec that timed out or failed on the daemon
+        side -- is not an answer, and reading it as "dead" killed live
+        sessions mid-work.
         """
         try:
             result = subprocess.run(  # nosec B603
                 docker_cmd() + ["exec", "--user", self._user_spec(), name,
                                 "tmux", "has-session", "-t", "pawflow"],
                 capture_output=True, text=True, timeout=5)
-            return result.returncode == 0
         except Exception:
-            return False
+            logger.warning("[cci-live] tmux probe in %s did not answer; "
+                           "treating the session as alive", name)
+            return True
+        if result.returncode in (0, 1):
+            return result.returncode == 0
+        logger.warning("[cci-live] tmux probe in %s failed (exit %s: %s); "
+                       "treating the session as alive", name,
+                       result.returncode, (result.stderr or "").strip()[:200])
+        return True

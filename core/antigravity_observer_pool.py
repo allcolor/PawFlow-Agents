@@ -391,6 +391,7 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
                 session_token, user_id=user_id,
                 conversation_id=conversation_id, agent_name=agent_name,
                 provider=provider,
+                llm_service=service_id or original_agent_service,
                 observation_mode=MANAGED_MCP_OBSERVATION_MODE)
             hook_env = {
                 "PAWFLOW_CCI_SESSION_TOKEN": session_token,

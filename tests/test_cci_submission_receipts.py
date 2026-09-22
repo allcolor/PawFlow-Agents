@@ -104,3 +104,45 @@ def test_a_different_submit_is_reported_instead_of_called_no_ack():
     assert service.wait_for_prompt_submission(
         "sess", PROMPT, after_submit=marker[0], after_request=marker[1],
         timeout=0) == "other"
+
+
+def _ws_submit(*texts):
+    return {
+        "type": "ws_prompt_submit", "request_id": "ws1",
+        "prompt_sha256s": [
+            hashlib.sha256(t.rstrip("\r\n").encode("utf-8")).hexdigest()
+            for t in texts],
+    }
+
+
+def test_codex_websocket_turn_proves_submission_without_the_hook():
+    """2026-09-22: the hook connection broke; the proxy had seen the turn."""
+    service = _service()
+    marker = service.submission_marker("sess")
+    service.publish_event("sess", _ws_submit("<environment_context/>", PROMPT))
+
+    assert service.wait_for_prompt_submission(
+        "sess", PROMPT, after_submit=marker[0], after_request=marker[1],
+        timeout=0) == "hook"
+    # Side-channel evidence: the turn coordinator never sees it.
+    assert service.wait_event("sess", timeout=0) == {}
+
+
+def test_websocket_digest_of_a_foreign_prompt_is_not_a_receipt():
+    service = _service()
+    marker = service.submission_marker("sess")
+    service.publish_event("sess", _ws_submit("something a human typed"))
+
+    assert service.wait_for_prompt_submission(
+        "sess", PROMPT, after_submit=marker[0], after_request=marker[1],
+        timeout=0) == ""
+
+
+def test_tool_continuations_do_not_repeat_the_receipt():
+    """Each continuation may resend the user message; one receipt only."""
+    service = _service()
+    service.publish_event("sess", _ws_submit(PROMPT))
+    marker = service.submission_marker("sess")
+    service.publish_event("sess", _ws_submit(PROMPT))
+
+    assert service.submission_marker("sess") == marker

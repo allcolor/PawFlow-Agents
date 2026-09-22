@@ -17,7 +17,7 @@ import time
 import uuid
 
 from core._llm_types import LLMCallError
-from core.llm_providers._cli_blockers import detect_cli_blocker
+from core.llm_providers._cli_blockers import cli_pane_is_idle, detect_cli_blocker
 from core.llm_providers.cli_shared import is_anthropic_messages_endpoint
 from core.tool_json import parse_tool_arguments, tool_argument_parse_error
 from tools.cc_interactive_filters import (
@@ -84,6 +84,14 @@ _LIVENESS_PROBE_IDLE_SECONDS = _env_seconds(
 # many means the turn cannot progress and the real cause has to be reported.
 _RATE_LIMIT_RESPONSE_LIMIT = 3
 
+# A Stop hook is delivered over a one-shot connection that can break or never
+# open; the turn then had no end at all. Observed: the CLI answered at 08:30,
+# sat at its prompt, and the agent stayed in Active Agents -- and every message
+# for it queued -- for hours. After this many consecutive idle-pane probes
+# (each one idle window apart, the stream silent throughout) the prompt on
+# screen is taken as the Stop that never arrived.
+_IDLE_PANE_PROBES_FOR_STOP = 2
+
 
 def _event_tool_args(event: dict) -> dict:
     """Return tool args from any observed CCI event shape."""
@@ -132,6 +140,10 @@ def _loads_tolerant(raw: str) -> dict:
 
 
 class _CCITurnCoordinator:
+    # The Claude Code TUI's prompt footer is recognised by cli_pane_is_idle;
+    # other CLIs and the managed path keep their own end-of-turn rules.
+    _finish_on_idle_pane = True
+
     #: Provider name reported on failures raised by this coordinator; the
     #: subclass that drives another CLI overrides it.
     _provider_label = "claude-code-interactive"
@@ -239,6 +251,7 @@ class _CCITurnCoordinator:
         # a question printed in the pane. None disables it, like liveness.
         self.pane_callback = pane_callback
         self._last_pane_probe_at = 0.0
+        self._idle_pane_probes = 0
         self._rate_limit_responses = 0
         self._rate_limited_request_ids: set = set()
         self._response_status_by_request: dict[str, tuple] = {}
@@ -379,12 +392,14 @@ class _CCITurnCoordinator:
             return
         self._last_pane_probe_at = now
         try:
-            blocker = detect_cli_blocker(self.pane_callback())
+            pane = self.pane_callback()
+            blocker = detect_cli_blocker(pane)
         except Exception:
             logger.debug("cci pane probe errored; treating the turn as running",
                          exc_info=True)
             return
         if blocker is None:
+            self._probe_idle_pane(pane)
             return
         logger.warning(
             "[cci-provider] session=%s pane shows %s (%s): %s",
@@ -396,6 +411,44 @@ class _CCITurnCoordinator:
             "terminal, then send the message again",
             category=blocker.kind, provider=self._provider_label,
             retryable=False)
+
+    def _probe_idle_pane(self, pane: str) -> None:
+        """Stand in for a Stop hook that never arrived.
+
+        Called by the pane probe only, so the stream has been silent for the
+        idle window and no Stop was seen. A pane at its prompt with no running
+        hint, on consecutive probes, is a CLI that finished: the answer it
+        streamed is final, and requests still marked open are ghosts whose
+        request_stop was lost. Without an answer, the turn fails visibly
+        instead of holding Active Agents.
+        """
+        if not self._finish_on_idle_pane or not cli_pane_is_idle(pane):
+            self._idle_pane_probes = 0
+            return
+        self._idle_pane_probes += 1
+        if self._idle_pane_probes < _IDLE_PANE_PROBES_FOR_STOP:
+            return
+        if not self._saw_model_content:
+            logger.warning(
+                "[cci-provider] session=%s CLI is back at its prompt with no "
+                "answer and no Stop hook", self.session_token[:8])
+            raise LLMCallError(
+                "Interactive CLI went back to its prompt without answering "
+                "and without a Stop hook; the turn is released so queued "
+                "messages are not stuck behind it",
+                category="cli_idle", provider=self._provider_label,
+                retryable=False)
+        logger.warning(
+            "[cci-provider] session=%s CLI is back at its prompt but no Stop "
+            "hook arrived (open=%d awaiting_followup=%s) — finishing the turn",
+            self.session_token[:8], len(self._open_messages_requests),
+            self._awaiting_followup)
+        self._open_messages_requests.clear()
+        self._awaiting_followup = False
+        self._saw_proxy_event = True
+        self._stop_seen = True
+        self._stop_seen_at = self._stop_seen_at or time.time()
+        self._post_stop_last_event_at = 0.0
 
     def _is_model_request_path(self, path: str) -> bool:
         """True when this observed request called the model itself.

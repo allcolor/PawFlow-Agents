@@ -352,6 +352,13 @@ arrives. The coordinator's returned content is unaffected by supplying
 capture no longer uses it: persisting per block and again at the end would
 double the text.
 
+A captured message carries the same identity as a PawFlow-driven one: the
+pools register each event session with the agent's `llm_service`, so its
+`source` renders the `<agent> via <service>` badge. Model and token counts are
+known only when the coordinator returns; the capture then patches the last
+captured row's `source` in the store (so a reload shows them) and publishes
+`message_meta` for the live bubble.
+
 This mirrors the Antigravity observer, whose manual ingest streams out-of-band
 tmux activity by default and is *suspended* only while PawFlow drives a turn.
 The rule both providers implement: everything the proxy intercepts reaches the
@@ -422,22 +429,36 @@ Timing controls are read once when the provider modules are imported:
   consecutive dead probes fail the turn with a clear error so the pending
   queue drains and the next message recreates the session. A probe that
   ERRORS (slow docker daemon) never counts as death, and a live probe clears
-  accumulated strikes. Silence itself stays legal: long local tool runs
+  accumulated strikes. The pool probes themselves follow the same rule:
+  `_is_alive` only reports a stopped container when `docker inspect` answers
+  (not running, or `No such object`), and `_tmux_is_alive` only reports a
+  missing session on `tmux has-session` exit code 1; a timeout or daemon
+  error counts as alive. Reading a timed-out probe as death used to drop a
+  live container from the pool without killing it (its CLI kept running,
+  the webchat lost its tmux, its traffic became orphan captures) or kill a
+  live session mid-work. A container the pool drops because it really
+  stopped is always removed and its event session unregistered, in
+  `ensure_started`, `find_session` and `list_sessions` alike, and Codex's
+  `ensure_started` too. Silence itself stays legal: long local tool runs
   produce no wire events, and their probes simply come back alive. Wired on
   the request, interrupt, and manual-capture paths of both Claude Code and
-  Codex interactive (the capture derives its probe from the proxy-reported
-  `container_id`; a session whose proxy never reported one keeps the old
-  behavior).
+  Codex interactive, including the Codex turn loop (the capture derives its
+  probe from the proxy-reported `container_id`; a session whose proxy never
+  reported one keeps the old behavior).
 - A TUI that is blocked waiting for input is surfaced instead of waited on.
   The pane is the only place that says a turn cannot progress: a rate-limit
-  banner (`429`, `reached ... limit`, `limit will reset`) stops the CLI from issuing
-  requests, and a question or a model menu waits for a keystroke nobody sends.
+  banner (`429`, `reached ... limit`, `limit will reset`, Codex's `hit your
+  usage limit`) or an authentication failure (`API Error: 401`,
+  `authentication_error`, expired or already-used OAuth token, `Please run
+  /login`, `401 Unauthorized`) stops the CLI from issuing requests, and a
+  question or a model menu waits for a keystroke nobody sends.
   Both used to look like a silent but healthy turn - no event, no `Stop` hook,
   an agent stuck in Active Agents. After the same silence window as the
   liveness probe (so an in-flight answer is never mistaken for a blocked one),
   the coordinator reads the pane (`_pane_text`), inspects only its tail, and
   fails the turn with a non-retryable `LLMCallError` naming the pane line:
-  `rate_limited` for a banner, `question` for a prompt. Question patterns must
+  `rate_limited` for a banner, `auth_invalid` for an authentication failure,
+  `question` for a prompt. Question patterns must
   match one of the last three lines, so an answer that discusses a question, or
   a plan with numbered steps, is not a false positive. A pane that still shows
   the CLI working (`esc to interrupt`, mirroring `_RUNNING_MARKERS`) is never a
@@ -446,7 +467,21 @@ Timing controls are read once when the provider modules are imported:
   prose, a path it is editing, or the status footer (`Approaching usage limit`
   is not a banner either -- a reached limit names `reached`/`exceeded`). Wired
   on the interactive paths of Claude Code and Codex and on the managed MCP
-  coordinator.
+  coordinator, and on manual captures (`_capture_pane_callback`, resolved
+  from the proxy-reported `container_id` like the capture liveness probe) --
+  a capture used to have no pane probe at all, so a banner printed during a
+  captured turn held Active Agents until a force stop.
+- A lost `Stop` hook no longer leaves a finished turn open. The hook reaches
+  the server over a one-shot connection that can break; the CLI then sits at
+  its prompt while the coordinator (or an orphan capture) waits forever. For
+  Claude Code interactive, the pane probe also recognises the idle prompt
+  (`cli_pane_is_idle`: a ready footer such as `bypass permissions` and no
+  `esc to interrupt`). Two consecutive idle probes, one silence window apart,
+  stand in for the Stop: requests still marked open are dropped as ghosts and
+  the turn finishes with the answer it streamed. With no answer at all the
+  turn fails as a non-retryable `cli_idle` error instead. Codex and the
+  managed MCP path keep their own end-of-turn rules
+  (`_finish_on_idle_pane = False`).
 - A model request answered with a bare `429` is reported instead of discarded.
   Its body is not decodable, so the proxy only emits `response_start
   status=429` and the CLI retries the same limit on its own: the turn never
@@ -497,6 +532,20 @@ Timing controls are read once when the provider modules are imported:
   that has cleared or a pane that already looks busy still consumes the full
   configured acknowledgement window: cold sessions can submit before their
   hook or first MITM request reaches PawFlow, especially after compaction.
+  Codex submits turns as `response.create` messages on a persistent
+  `/responses` WebSocket, so no `request_start` marks them. The proxy
+  therefore emits a side-channel `ws_prompt_submit` event carrying only the
+  SHA-256 digests (never the text) of the last user message it forwarded.
+  It counts as an exact receipt when it matches the newest prompt PawFlow
+  injected, once per prompt (tool continuations resend that message), and
+  never enters the turn coordinator's queue. This keeps a submission proven
+  when the short-lived `UserPromptSubmit` hook connection fails.
+  When the acknowledgement window closes with nothing stranded in the
+  composer, Codex verification waits once more, up to
+  `PAWFLOW_CCI_SUBMIT_GRACE_SECONDS` (default `45`, `0` disables), for a late
+  receipt before failing, without pressing any key. Failing earlier orphaned
+  a prompt Codex accepted late: its turn ran as a capture while the agent's
+  queued messages waited behind it.
   Native Codex `PreCompact` or `PostCompact` is a preemption signal, never a
   submission acknowledgement. It wakes the submission waiter immediately,
   takes priority over receipts, and remains latched for that session even if

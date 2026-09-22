@@ -202,6 +202,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         compatible = existing is None or self._session_compatible(
             existing, client)
         dead_existing = None
+        stopped_existing = None
         with self._lock:
             current = self._sessions.get(key)
             if current is not None and current is not existing:
@@ -217,6 +218,16 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 self._sessions.pop(key, None)
                 if container_alive:
                     dead_existing = existing
+                else:
+                    stopped_existing = existing
+        if stopped_existing is not None:
+            # The container is gone, but its event session is still registered
+            # and would keep adopting traffic as orphan captures.
+            logger.warning("[cci-live] container %s stopped; recreating the "
+                           "interactive session", stopped_existing.name)
+            self._recover_container_tokens(stopped_existing)
+            self._kill_container(stopped_existing.name)
+            self._unregister_event_session(stopped_existing)
         if dead_existing is not None:
             if tmux_alive and not compatible:
                 logger.info(
@@ -362,6 +373,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     def find_session(self, user_id: str, conversation_id: str,
                      agent_name: str, service_id: str = "") -> Optional[InteractiveContainer]:
         """Return the newest live interactive session for an agent."""
+        stopped = []
+        found = None
         with self._lock:
             candidates = [
                 state for key, state in self._sessions.items()
@@ -374,9 +387,26 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             for state in candidates:
                 if self._is_alive(state.name):
                     state.last_used = time.time()
-                    return state
+                    found = state
+                    break
                 self._sessions.pop(state.key, None)
-        return None
+                stopped.append(state)
+        self._retire_stopped(stopped)
+        return found
+
+    def _retire_stopped(self, states) -> None:
+        """Clean up containers dropped from the pool because they stopped.
+
+        Called outside the pool lock. Dropping the pool entry alone left the
+        event session registered, so traffic from it was adopted as orphan
+        captures that no pool lookup could ever reach again.
+        """
+        for state in states:
+            logger.warning("[cci-live] container %s stopped; dropped from "
+                           "the pool", state.name)
+            self._recover_container_tokens(state)
+            self._kill_container(state.name)
+            self._unregister_event_session(state)
 
     def find_by_session_token(self, session_token: str) -> Optional[InteractiveContainer]:
         """The live container behind a proxy session token, if any.
@@ -397,6 +427,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                       service_id: str = "") -> list[dict]:
         """Return live interactive sessions for a conversation."""
         sessions: list[dict] = []
+        stopped = []
         with self._lock:
             candidates = [
                 (key, state) for key, state in self._sessions.items()
@@ -408,6 +439,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             for key, state in candidates:
                 if not self._is_alive(state.name):
                     self._sessions.pop(key, None)
+                    stopped.append(state)
                     continue
                 sessions.append({
                     "agent_name": key[2],
@@ -424,6 +456,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                     "observation_mode": getattr(
                         state, "observation_mode", "mitm"),
                 })
+        self._retire_stopped(stopped)
         return sessions
 
     def list_sessions_snapshot(self, user_id: str, conversation_id: str,

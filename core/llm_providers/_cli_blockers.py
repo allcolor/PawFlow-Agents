@@ -5,6 +5,8 @@ input the proxy never sees:
 
 * a rate-limit banner (``429``, ``usage limit``, ``limit will reset``) -- the
   CLI stops issuing requests, so the event stream goes silent;
+* an authentication failure (``401``, expired or already-used OAuth token,
+  ``Please run /login``) -- same silence, and no retry can fix it;
 * a question or a menu (model switch, confirmation) -- the CLI waits for a
   keystroke nobody sends.
 
@@ -29,7 +31,7 @@ from typing import NamedTuple
 class CliBlocker(NamedTuple):
     """What the pane says the interactive CLI is waiting for."""
 
-    kind: str      #: "rate_limited" or "question"
+    kind: str      #: "rate_limited", "auth_invalid" or "question"
     reason: str    #: short label for the reported message
     excerpt: str   #: the matching pane line, trimmed
 
@@ -64,6 +66,24 @@ _RATE_LIMIT_PATTERNS = (
     r"(?:reached|exceeded)[^\n]{0,40}limit",
     r"(?:session|weekly|daily|hourly) limit (?:reached|exceeded)",
     r"limit will reset",
+    # Codex: "You've hit your usage limit. ... try again at 3:05 PM."
+    r"hit your usage limit",
+)
+
+#: Claude Code: "API Error: 401 ... authentication_error ... OAuth token has
+#: expired · Please run /login", "Invalid API key · Please run /login".
+#: Codex: "unexpected status 401 Unauthorized", "Your access token could not
+#: be refreshed because your refresh token was already used".
+_AUTH_PATTERNS = (
+    r"api error: 40[13]\b",
+    r"\b401\b[^\n]{0,40}unauthori[sz]ed",
+    r"authentication_error",
+    r"oauth token (?:has )?(?:expired|been revoked)",
+    r"invalid (?:api key|bearer token)",
+    r"please run /login",
+    r"token could not be refreshed",
+    r"refresh token (?:was |has )?(?:already (?:been )?used|revoked|expired)",
+    r"(?:please )?(?:log|sign) (?:out and sign )?in again",
 )
 
 _QUESTION_PATTERNS = (
@@ -79,6 +99,33 @@ _QUESTION_PATTERNS = (
     r"enter to select",
     r"switch to (?:a |the )?(?:different )?(?:model|account)",
 )
+
+
+#: Footer affordances the Claude Code TUI renders once its input box accepts a
+#: prompt. Mirrors ``_PROMPT_READY_MARKERS`` in
+#: ``core.claude_code_interactive_pool``.
+_PROMPT_READY_MARKERS = (
+    "for shortcuts",
+    "shift+tab",
+    "bypass permissions",
+    "auto-accept edits",
+)
+
+
+def cli_pane_is_idle(pane: str) -> bool:
+    """True when the Claude Code TUI sits at its prompt, doing nothing.
+
+    Both halves are required: the ready footer is drawn while the CLI works
+    too, and only the absence of the running hint says it stopped. A pane that
+    could not be read (empty) is never idle -- that is not an answer.
+    """
+    tail = tail_lines(pane, _TAIL_LINES)
+    if not tail:
+        return False
+    screen = "\n".join(tail).lower()
+    if any(marker in screen for marker in _RUNNING_MARKERS):
+        return False
+    return any(marker in screen for marker in _PROMPT_READY_MARKERS)
 
 
 def tail_lines(text: str, count: int) -> list:
@@ -116,6 +163,11 @@ def detect_cli_blocker(pane: str) -> CliBlocker | None:
         return CliBlocker(
             "rate_limited", "the CLI hit a provider rate limit",
             _excerpt(ratelimited))
+    auth = _first_match(tail, _AUTH_PATTERNS)
+    if auth:
+        return CliBlocker(
+            "auth_invalid", "the CLI lost its authentication (log in again)",
+            _excerpt(auth))
     question = _first_match(tail[-_QUESTION_TAIL_LINES:], _QUESTION_PATTERNS)
     if question:
         return CliBlocker(

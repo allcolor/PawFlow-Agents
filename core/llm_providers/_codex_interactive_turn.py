@@ -111,6 +111,8 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
     """
 
     _provider_label = "codex-interactive"
+    # The idle-prompt check reads the Claude Code footer; Codex's differs.
+    _finish_on_idle_pane = False
 
     def _is_model_request_path(self, path: str) -> bool:
         """Codex calls the OpenAI Responses endpoint, not /v1/messages."""
@@ -353,6 +355,7 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                       _POST_STOP_IDLE_DRAIN_SECONDS):
                     self._finish_turn_if_ready()
                     break
+                self._probe_liveness(started_at)
                 self._probe_pane_blocker(started_at)
                 self._raise_if_failed_exchange_overdue()
                 continue

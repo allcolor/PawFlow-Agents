@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A Codex interactive prompt accepted late is no longer declared unsent.
+  The paste was failed after a 6-8 s receipt window while Codex submitted it
+  19 s later, or while the one-shot `UserPromptSubmit` hook connection broke
+  (`BrokenPipeError`); the turn Codex ran anyway became an orphan capture and
+  every message queued for the agent waited behind it. The proxy now reports
+  each WebSocket `response.create` as a digest-only `ws_prompt_submit`
+  receipt, and verification waits once more for a late receipt
+  (`PAWFLOW_CCI_SUBMIT_GRACE_SECONDS`, default 45) before failing, without
+  pressing a key.
+- Messages of a captured interactive turn show `<agent> via <service>` and
+  keep their model and token counts after a reload. The capture wrote a bare
+  source (no `llm_service`, no model) and sent the numbers only as a live
+  `message_meta` event; the event session now records the agent's LLM service
+  and the capture patches the stored row.
+- Automatic project graph rebuilds are opt-in (`PAWFLOW_PROJECT_GRAPH_AUTO`)
+  and no longer fill the disk. Desktop and CLI relays never mounted
+  `graphify`, so every lazy refresh failed with `No module named 'graphify'`;
+  both launchers now mount it and the Relay Desktop runtime ships it. The
+  extractor also left an unbounded `graphify-out/cache` in every scanned
+  directory (single-file batches used each file's parent as cache root);
+  that per-file cache is removed, as incremental builds already use the
+  server's fingerprint map.
+- An interactive agent no longer stays in Active Agents after its CLI
+  finished, or while it shows a 429 or login error in its tmux. Four causes:
+  a timed-out `docker inspect`/`docker exec` probe counted as death, so the
+  pool dropped a live container without killing it (the webchat lost its
+  tmux and its traffic was adopted as an orphan capture that never ended) or
+  killed a live session; a container dropped because it really stopped left
+  its event session registered; captures had no pane probe, and the pane
+  patterns missed authentication failures and Codex's "hit your usage
+  limit"; and a lost `Stop` hook left a finished Claude Code turn open
+  forever. Probes now treat no answer as alive, dropped containers are always
+  removed and unregistered, captures read the pane, authentication failures
+  fail the turn as `auth_invalid`, two idle-prompt probes stand in for a lost
+  `Stop`, and the Codex turn loop runs the dead-session probe.
+- The server-side Claude Code login (`/cls` noVNC) opens its browser again.
+  The CLI image's version stamping ran the CLIs as root with
+  `HOME=/home/pawflow`, leaving root-owned `~/.config` and `~/.cache`;
+  Chromium aborted on start (`chrome_crashpad_handler: --database is
+  required`) and the login window only showed the debug shell. The image now
+  hands the home directory back to `pawflow` (rebuild the CLI image).
+
 ## [1.0.0-beta.280] — 2026-09-21
 
 ### Fixed

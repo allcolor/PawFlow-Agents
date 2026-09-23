@@ -281,3 +281,20 @@ def test_private_init_requires_mapping_ack_and_closes_control_before_exec(monkey
         with pytest.raises(json.JSONDecodeError):
             runtime.private_init(21)
         assert events == ["closed"]
+
+
+def test_missing_tun_driver_reports_the_host_remedy(monkeypatch):
+    def unavailable(path, flags):
+        raise OSError(19, "No such device")
+
+    monkeypatch.setattr(runtime.os, "open", unavailable)
+    with pytest.raises(RuntimeError, match="wsl -u root -- modprobe tun"):
+        runtime.require_tun()
+
+
+def test_available_tun_device_is_closed_after_the_check(monkeypatch):
+    closed = []
+    monkeypatch.setattr(runtime.os, "open", lambda path, flags: 42)
+    monkeypatch.setattr(runtime.os, "close", closed.append)
+    runtime.require_tun()
+    assert closed == [42]

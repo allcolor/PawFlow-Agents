@@ -166,3 +166,48 @@ def test_manager_does_not_start_a_group_member_individually(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="Unknown physical relay"):
         manager.stop_workspace_runtime("Two")
     assert json.loads((tmp_path / "config/workspaces.json").read_text())["One"]["relay_id"] == "One"
+
+
+class _Process:
+    def __init__(self, events):
+        self.stdin = SimpleNamespace(write=lambda data: events.append("config"), close=lambda: None)
+
+
+def _spawn(tmp_path, monkeypatch, prefix, modprobe):
+    relay = thread(tmp_path)
+    events, logs = [], []
+    relay._log = logs.append
+    monkeypatch.setattr(relay, "_group_launch", lambda command: ([*prefix, "run"], {"exports": []}))
+
+    def run(args, **kwargs):
+        events.append(tuple(args))
+        return modprobe(args)
+
+    def popen(args, **kwargs):
+        events.append("docker")
+        return _Process(events)
+
+    monkeypatch.setattr("pawflow_relay.physical_thread.subprocess.run", run)
+    monkeypatch.setattr("pawflow_relay.physical_thread.subprocess.Popen", popen)
+    relay._spawn_group_process([])
+    return events, logs
+
+
+def test_wsl_group_launch_loads_tun_before_docker(tmp_path, monkeypatch):
+    events, logs = _spawn(tmp_path, monkeypatch, ["wsl", "docker"],
+                          lambda args: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    assert events[:2] == [("wsl", "-u", "root", "--", "modprobe", "tun"), "docker"]
+    assert logs == []
+
+
+def test_native_docker_group_launch_never_runs_modprobe(tmp_path, monkeypatch):
+    events, _ = _spawn(tmp_path, monkeypatch, ["docker"],
+                       lambda args: pytest.fail("unexpected modprobe"))
+    assert events[0] == "docker"
+
+
+def test_wsl_modprobe_failure_is_logged_and_launch_continues(tmp_path, monkeypatch):
+    events, logs = _spawn(tmp_path, monkeypatch, ["wsl", "docker"],
+                          lambda args: SimpleNamespace(returncode=1, stdout="", stderr="not found"))
+    assert "docker" in events
+    assert logs == ["[Relay] modprobe tun in WSL failed (1): not found"]

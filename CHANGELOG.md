@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Relay Desktop on Windows can start a physical relay that groups several
+  logical relays through WSL Docker. WSL 6.x kernels ship `tun` as a module
+  that was never loaded, so `slirp4netns` failed on `/dev/net/tun` with
+  "No such device" and the container restarted in a loop with "Logical relay
+  network did not become ready". The launcher now runs
+  `wsl -u root -- modprobe tun` before the grouped `docker run`, and the
+  container checks `/dev/net/tun` first and reports the exact remedy when the
+  driver is still missing.
+
 ## [1.0.0-beta.284] — 2026-09-23
 
 ### Fixed

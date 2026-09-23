@@ -158,6 +158,17 @@ the Desktop launcher translates its path for WSL. Real grouped mount, FUSE, netw
 still required before release; source and mocked lifecycle tests alone do not
 establish runtime isolation.
 
+Each logical worker gets its network through `slirp4netns`, which needs the
+Docker host kernel's `tun` driver. WSL 6.x kernels build it as a module
+(`CONFIG_TUN=m`) that nothing loads on demand from a container: `/dev/net/tun`
+exists but opening it fails with `ENODEV`. When the group runs through
+`wsl docker`, the launcher therefore runs `wsl -u root -- modprobe tun` before
+each `docker run` and only logs a failure. Inside the container, the supervisor
+opens `/dev/net/tun` before starting any worker and, if that fails, stops with
+the remedy (`sudo modprobe tun`, or `wsl -u root -- modprobe tun` on Windows)
+instead of the generic "Logical relay network did not become ready". A single
+logical relay does not use this path and never needs `tun`.
+
 The `Physical Runtime Acceptance` workflow runs the first kernel validation stage
 on a disposable GitHub-hosted Ubuntu runner. It builds the project's minimal relay
 image, including the required `tini`, `slirp4netns` and `util-linux` packages, and

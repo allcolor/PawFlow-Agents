@@ -291,6 +291,17 @@ def supervise(exports: list[dict], stop: threading.Event) -> int:
         _stop_processes(processes)
 
 
+def require_tun() -> None:
+    """Fail with the remedy when the Docker host kernel has no tun driver."""
+    try:
+        os.close(os.open("/dev/net/tun", os.O_RDWR))
+    except OSError as exc:
+        raise RuntimeError(
+            f"Logical relay networking needs the tun kernel module on the Docker host "
+            f"(/dev/net/tun: {exc.strerror}). Load it with 'sudo modprobe tun', "
+            f"or on Windows/WSL with 'wsl -u root -- modprobe tun'.") from exc
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
@@ -312,6 +323,7 @@ def main() -> int:
     else:
         config = json.load(sys.stdin)
     Path(ROOTFS).mkdir(parents=True, exist_ok=True)
+    require_tun()
     return supervise(config["exports"], stop)
 
 

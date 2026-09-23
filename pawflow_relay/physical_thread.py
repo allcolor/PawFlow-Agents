@@ -259,6 +259,8 @@ class PhysicalRelayThread(RelayThread):
 
     def _spawn_group_process(self, command):
         command, config = self._group_launch(command)
+        if command[:2] == ["wsl", "docker"]:
+            self._load_wsl_tun_module()
         env_file = getattr(self, "_env_file_path", "")
         if env_file:
             os.unlink(env_file)
@@ -274,3 +276,22 @@ class PhysicalRelayThread(RelayThread):
             process.wait(timeout=10)
             raise
         return process
+
+    def _load_wsl_tun_module(self):
+        """Load ``tun`` in the WSL kernel before slirp4netns needs it.
+
+        WSL 6.x kernels build it as a module (``CONFIG_TUN=m``) and nothing
+        loads it on demand from inside a container, so ``/dev/net/tun`` exists
+        but opening it fails with ENODEV. A failure is only logged: the
+        container's own preflight then reports the exact remedy.
+        """
+        try:
+            result = subprocess.run(  # nosec B603 B607
+                ["wsl", "-u", "root", "--", "modprobe", "tun"],
+                capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self._log(f"[Relay] modprobe tun in WSL failed: {exc}")
+            return
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            self._log(f"[Relay] modprobe tun in WSL failed ({result.returncode}): {detail}")

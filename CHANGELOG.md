@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.284] — 2026-09-23
+
 ### Fixed
 
 - Relay Desktop can start its relays again. Its packaged relay binary was

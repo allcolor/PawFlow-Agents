@@ -512,6 +512,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         return sessions
 
     def send_text(self, state: InteractiveContainer, text: str) -> bool:
+        text = self._composer_safe_text(text)
         state.last_error = ""
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
@@ -707,6 +708,21 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     _PASTE_CHUNK_MAX_CHARS = 600
     _PASTE_CHUNK_MAX_NEWLINES = 2
     _PASTE_CHUNK_GAP_SECONDS = 0.3
+    # Claude Code reads a composer that starts with "!" as a shell command and
+    # one that starts with "/" as a slash command, even from a bracketed paste
+    # (measured 2026-09-23: a pasted "/cost" opened the usage dialog, a pasted
+    # "!ls" switched to shell mode and the mode stuck to the next message). A
+    # message PawFlow delivers is never either: one leading space keeps it a
+    # prompt, and the model receives it verbatim, space included. Empty for
+    # TUIs where this was not measured.
+    _COMPOSER_MODE_PREFIXES = ("!", "/")
+
+    def _composer_safe_text(self, text: str) -> str:
+        text = text or ""
+        if self._COMPOSER_MODE_PREFIXES and text.startswith(
+                self._COMPOSER_MODE_PREFIXES):
+            return " " + text
+        return text
 
     def _paste_settle_seconds(self) -> float:
         try:
@@ -1266,6 +1282,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             return None
 
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
+        text = self._composer_safe_text(text)
         state.last_error = ""
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"

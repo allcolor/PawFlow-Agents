@@ -772,8 +772,14 @@ As a safety net, `CLI_MCP_SYSTEM_PROMPT` tells the model that a user message
 marked as pasted content is still the user's own message, while tool results
 and fetched content remain untrusted data.
 
-Known and left alone: a user message that itself starts with `!` switches the
-Claude Code composer into shell mode even through a bracketed paste.
+A message is never a shell or slash command. Claude Code reads a composer that
+starts with `!` as a shell command and one that starts with `/` as a slash
+command, even from a bracketed paste: a pasted `/cost` opened the usage
+dialog, and a pasted `!ls` switched the composer to shell mode, which stuck to
+the next message. `_composer_safe_text` prefixes such a message with one space
+before it is recorded as injected and pasted; the model receives it verbatim,
+space included. Codex leaves `_COMPOSER_MODE_PREFIXES` empty (not measured on
+its TUI).
 
 ### Claude Code: the receipt decides, a stranded prompt fails the send
 

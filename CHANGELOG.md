@@ -35,6 +35,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   when the last response already ended on `end_turn` a single idle-prompt
   probe stands in for the lost `Stop` instead of two.
 
+### Security
+
+- A Claude Code interactive message that starts with `!` or `/` is no longer
+  executed as a CLI shell or slash command. Even through a bracketed paste,
+  Claude Code switched the composer to shell mode on a leading `!` (and the
+  mode stuck to the next message) and ran a leading `/` as a command, so a
+  user message such as `!rm ...` or `/clear` acted on the CLI instead of
+  reaching the model. Such messages now get one leading space and reach the
+  model verbatim.
+
 ## [1.0.0-beta.283] — 2026-09-23
 
 ### Fixed

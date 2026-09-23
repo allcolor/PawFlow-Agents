@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Delegate results reach their callers without delay on long multi-agent
+  conversations. Every scheduled wake made the poller load and sort the whole
+  transcript only to check that the conversation existed; on a 1.5 GB
+  transcript each pass took 45 to 90 seconds and woke a single agent, so
+  queued delegate results waited minutes. The poller now only checks that the
+  conversation exists.
+- `delegate_status` and `delegate_result` no longer decode the whole transcript
+  on every call. Delegate rows are selected before decoding and memoised per
+  segment in compact form, so a call re-reads only the segment being written;
+  reply text is read back only for the results returned.
 - Relay Desktop on Windows can start a physical relay that groups several
   logical relays through WSL Docker. WSL 6.x kernels ship `tun` as a module
   that was never loaded, so `slirp4netns` failed on `/dev/net/tun` with

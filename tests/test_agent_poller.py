@@ -1,4 +1,5 @@
 import hashlib
+import sys
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -596,7 +597,7 @@ def test_scheduled_entry_target_extraction(poller_env):
 
 @pytest.mark.parametrize("change", ["cancel", "replace", "conversation", "next_poll"])
 @pytest.mark.parametrize("keep_other", [False, True])
-def test_idle_reminder_invalidated_during_history_load_is_not_delivered(
+def test_idle_reminder_invalidated_during_existence_check_is_not_delivered(
         poller_env, monkeypatch, change, keep_other):
     from core.conversation_store import ConversationStore
     from core.poll_scheduler import PollScheduler
@@ -609,10 +610,12 @@ def test_idle_reminder_invalidated_during_history_load_is_not_delivered(
         _schedule(cid, f"{cid}::continuation::keep", "[scheduled:assistant] keep plan")
     scheduler = PollScheduler.instance()
     store = ConversationStore.instance()
-    load = store.load
+    exists = store.exists
 
-    def invalidate_during_load(*args, **kwargs):
-        result = load(*args, **kwargs)
+    def invalidate_during_check(*args, **kwargs):
+        result = exists(*args, **kwargs)
+        if sys._getframe(1).f_code.co_name != "_poll_once":
+            return result
         if change == "cancel":
             assert scheduler.cancel(key)
         elif change == "replace":
@@ -623,7 +626,7 @@ def test_idle_reminder_invalidated_during_history_load_is_not_delivered(
             scheduler.get_due()
         return result
 
-    monkeypatch.setattr(store, "load", invalidate_during_load)
+    monkeypatch.setattr(store, "exists", invalidate_during_check)
     threads = _poll(task, cid)
     if keep_other and change in {"cancel", "replace"}:
         assert len(threads) == 1
@@ -728,3 +731,27 @@ def test_digest_shaped_agent_name_keeps_its_target(poller_env):
     assert len(threads) == 1
     assert threads[0].kwargs["args"][0]["_gen_key"] == f"{cid}:{agent}"
     assert _remaining(cid) == []
+
+
+@pytest.mark.parametrize("key_suffix, reason", [
+    ("::continuation::c1", "[scheduled:assistant] resume"),
+    ("::thought::assistant", "[random_thought] think (assistant)"),
+])
+def test_due_wake_never_loads_the_full_transcript(
+        poller_env, monkeypatch, key_suffix, reason):
+    """A wake rebuilds the agent's own context; the transcript can be gigabytes."""
+    from core.conversation_store import ConversationStore
+
+    cid = "no_transcript_load"
+    task = _active_task(cid, [])
+    _schedule(cid, f"{cid}{key_suffix}", reason)
+    store = ConversationStore.instance()
+    monkeypatch.setattr(store, "load", MagicMock(
+        side_effect=AssertionError("poller loaded the full transcript")))
+    with patch("tasks.ai.agent_poller.threading.Thread") as thread_cls:
+        task._poll_once()
+    workers = [call for call in thread_cls.call_args_list
+               if call.kwargs.get("name", "").startswith(("agent-poll-", "agent-thought-"))]
+    assert len(workers) == 1
+    args = task._build_poll_context.call_args.args
+    assert args == (cid, [])

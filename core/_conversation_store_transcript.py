@@ -103,8 +103,9 @@ class _CsTranscriptMixin:
         compaction or a runtime restart cannot make an acknowledged delegate
         disappear from delegate_status or delegate_result.
 
-        The scan is O(transcript rows) but keeps only delegate state in memory;
-        it never materializes the full conversation.
+        Only delegate rows are read, memoised per segment so a call re-reads
+        just the segment being appended to; it never materializes the full
+        conversation.
         """
         empty = {"live": [], "finished": []}
         if not caller or not self.exists(cid):
@@ -171,7 +172,9 @@ class _CsTranscriptMixin:
                 "_order": order,
             }
 
-        for row in log.iter_rows():
+        from core._conversation_store_delegate_rows import DELEGATE_ROWS
+
+        for row in DELEGATE_ROWS.rows(cid, log):
             if self._is_trace_update_row(row):
                 task_id = str(row.get("trace_id") or "")
                 trace = traces.get(task_id)
@@ -264,10 +267,12 @@ class _CsTranscriptMixin:
                     str(source.get("from") or ""),
                     "completed",
                     "",
-                    _text(row.get("content")),
+                    "",
                     _time(row),
                     "shared",
                 )
+                # The reply text is read back only if this result is returned.
+                finished[task_id]["_response_ref"] = row.get("_ref")
 
         ordered_finished = sorted(
             finished.values(),
@@ -280,6 +285,10 @@ class _CsTranscriptMixin:
             ordered_finished = []
         for item in ordered_finished:
             item.pop("_order", None)
+            ref = item.pop("_response_ref", None)
+            if ref:
+                item["response"] = _text(
+                    DELEGATE_ROWS.content(log, ref))[:response_limit]
         return {
             "live": sorted(
                 active.values(),

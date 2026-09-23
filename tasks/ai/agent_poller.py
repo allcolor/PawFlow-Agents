@@ -307,8 +307,6 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         # 1. Scheduled rechecks that are due (persistent, works without SSE)
         # 2. Active SSE conversations with cooldown expired (legacy behavior)
         to_poll: set[str] = set()
-        # Scheduled rechecks bypass eligibility checks (they were explicitly requested)
-        scheduled_ids: set[str] = set()
 
         # Source 1: PollScheduler — persistent scheduled rechecks
         # Map cid -> list of reasons for scheduled wakeups (non-thought)
@@ -344,7 +342,6 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             # Generic scheduled recheck (user-requested via /schedule)
             logger.info(f"[poller] Scheduled recheck due for {cid[:8]}: {reason}")
             to_poll.add(cid)
-            scheduled_ids.add(cid)
             scheduled_reasons.setdefault(cid, []).append(reason)
             scheduled_entries.setdefault(cid, []).append(entry)
 
@@ -449,15 +446,11 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             if not runnable:
                 continue
 
-            # Load conversation history
-            messages_data = store.load(conversation_id)
-            if not messages_data:
+            # Only existence matters: the woken agent rebuilds its own
+            # context, and a shared transcript can hold gigabytes that this
+            # single poll thread would otherwise read for every due wake.
+            if not store.exists(conversation_id):
                 continue
-
-            # Scheduled rechecks bypass eligibility (explicitly requested by agent)
-            if conversation_id not in scheduled_ids:
-                if not self._is_eligible_for_poll(conversation_id, messages_data):
-                    continue
 
             # History loading may race cancellation/replacement. Begin delivery
             # atomically before the first visible write or external handoff.
@@ -485,7 +478,7 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             # Build context and run agent loop
             try:
                 reasons = scheduled_reasons.get(conversation_id, [])
-                ctx = self._build_poll_context(conversation_id, messages_data,
+                ctx = self._build_poll_context(conversation_id, [],
                                                scheduled_reasons=reasons)
                 if ctx is None:
                     with self._active_lock:
@@ -609,9 +602,12 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                     # Set permission_mode on sub-conv if auto_allow
                     if _task_data_tmp.get("auto_allow"):
                         store.set_extra(entry_key, "permission_mode", "auto")
+            elif store.exists(cid):
+                # Thought and recheck wakes rebuild the agent's own context.
+                messages_data = []
             else:
-                messages_data = store.load(cid)
-            if not messages_data:
+                continue
+            if _is_task_context and not messages_data:
                 continue
 
             # Extract agent name from key
@@ -933,54 +929,3 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                 )
                 logger.info(f"[thought-watchdog] Rescheduled autoconv for {agent} "
                             f"in {cid[:8]} (delay={delay}s)")
-
-
-    def _is_eligible_for_poll(self, conversation_id: str,
-                              messages_data: List[Dict]) -> bool:
-        """Check if a conversation is eligible for autonomous polling.
-
-        Eligible if conversation status is ``active`` (set by the agent when
-        it used tools and may have follow-up work).  Falls back to message
-        heuristics if status is not set.
-        """
-        if not messages_data or len(messages_data) < 3:
-            return False
-
-        # Primary check: use conversation status
-        from core.conversation_store import ConversationStore
-        meta = ConversationStore.instance().get_metadata(conversation_id)
-        if meta:
-            status = meta.get("status", "idle")
-            # Only poll active conversations
-            if status != "active":
-                return False
-
-        # Find the last non-system message
-        last_msg = None
-        for msg in reversed(messages_data):
-            role = msg.get("role", "")
-            if role in ("assistant", "user", "tool"):
-                last_msg = msg
-                break
-
-        if not last_msg:
-            return False
-
-        # Must end with assistant message (not waiting for user)
-        if last_msg.get("role") != "assistant":
-            return False
-
-        # Don't re-poll if last message is already a poll check-in response
-        content = last_msg.get("content", "")
-        if "[NO_PENDING_WORK]" in content:
-            return False
-
-        # Must have had tool calls in history (active work, not just chat)
-        has_tools = any(
-            msg.get("role") == "tool" or msg.get("tool_calls")
-            for msg in messages_data
-        )
-        if not has_tools:
-            return False
-
-        return True

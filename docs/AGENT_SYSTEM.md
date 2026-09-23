@@ -876,11 +876,20 @@ Delegate observability uses that same durable transcript as its source of
 truth. Shared requests and replies carry the same `task_id`; isolated and
 flash work writes an append-only `sub_agent_trace` before pool submission and
 a terminal update on every exit, including preflight failures.
-`delegate_status` scans those rows in streaming mode and merges them with the
+`delegate_status` rebuilds state from those rows and merges it with the
 process-local live registry, while `delegate_result` falls back to the durable
-reply or trace when the in-memory finished ring is empty. The scan retains at
-most the latest 100 terminal results and never loads the complete transcript
-into memory. Consequently an LLM context compaction or provider-session restart
+reply or trace when the in-memory finished ring is empty. The rows are selected
+on clear-text metadata before any content is decoded and are memoised per
+transcript segment against the file's inode, size and mtime
+(`core/_conversation_store_delegate_rows.py`), so a call re-reads only the
+segment being appended to, or one that was rewritten. Shared delegate rows are
+cached compactly as routing metadata plus the row's byte offset; the reply
+text is read back from disk only for the at most 100 terminal results that a
+call returns, and is empty if that row has moved. On a 439,000-row transcript
+this took a call from about 16 s to 0.2 s after the first scan, which still
+reads every segment once per server process, for about 68 MB of retained rows.
+The complete transcript is never loaded into memory.
+Consequently an LLM context compaction or provider-session restart
 does not lose an acknowledged asynchronous delegate or its completed result,
 and merging runtime state never launches the task a second time.
 
@@ -1316,6 +1325,12 @@ external-agent redirect resolve the intended agent instead of the
 conversation's default one. This routing also applies when the conversation
 is completely idle. A roster member whose name is eight hexadecimal characters
 remains a valid target; an unregistered digest suffix stays a generic retry.
+
+A due wake only checks that its conversation still exists before starting the
+agent. The woken agent rebuilds its own context, so the poller never loads the
+transcript: on a multi-agent conversation with a gigabyte-sized transcript that
+load took about a minute per pass and delayed every queued delegate result
+behind it.
 
 Scheduled wakes use the same agent-qualified generation key as user turns and
 active runtime markers (`conversation_id:agent_name`). The poller allocates that

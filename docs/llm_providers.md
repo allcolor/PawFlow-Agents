@@ -1042,8 +1042,10 @@ Operational notes:
   Large pastes receive a proportionally longer bounded acknowledgement window; a
   fragmented submit or an unacknowledged prompt fails explicitly instead of
   being reported as a successful turn.
-- A live Codex preempt waits for the editable-composer signal after its two
-  `Escape` keys and before loading the paste. If the composer does not return,
+- A live Codex preempt waits for the editable-composer signal after its single
+  `Escape` key and before loading the paste (a second `Escape` would open
+  Codex's backtrack overlay, where `Enter` rewinds the conversation; see
+  `docs/CLAUDE_CODE_INTERACTIVE.md`). If the composer does not return,
   the preempt is refused before mutation and its pending-queue rescue remains
   available for replay after the active turn.
 - Codex's `.codex/sessions/**/rollout-*.jsonl` supplies the interactive context

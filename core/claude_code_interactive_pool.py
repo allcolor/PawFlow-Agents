@@ -714,8 +714,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     # First characters of the TUI's input-box line, used to cut the pane down
     # to the composer. Without it a chip left in the *transcript* by an already
     # submitted message would read as an unsent one, and we would press Enter
-    # forever.
-    _COMPOSER_PROMPT_PREFIX = ""
+    # forever. A tuple lists every prefix a TUI release may draw.
+    _COMPOSER_PROMPT_PREFIX: "str | tuple" = ""
 
     def _composer_text(self, pane: str) -> str:
         """The input-box region of the pane: the last prompt line onward.
@@ -723,12 +723,15 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         Returns '' when the prompt line is not on screen — the caller treats
         that as "cannot tell", never as "empty composer".
         """
-        prefix = self._COMPOSER_PROMPT_PREFIX
-        if not prefix:
+        prefixes = self._COMPOSER_PROMPT_PREFIX
+        if not prefixes:
             return pane or ""
+        if isinstance(prefixes, str):
+            prefixes = (prefixes,)
         lines = (pane or "").splitlines()
         for idx in range(len(lines) - 1, -1, -1):
-            if self._is_composer_line(lines[idx], prefix):
+            if any(self._is_composer_line(lines[idx], prefix)
+                   for prefix in prefixes):
                 return "\n".join(lines[idx:])
         return ""
 

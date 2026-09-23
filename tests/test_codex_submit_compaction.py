@@ -175,7 +175,7 @@ def test_provider_preempts_native_compaction_during_real_send(
     elif arrival in {"escape", "enter_failure"}:
         def fail_keys(_state, batch):
             keys.append(batch)
-            if batch == (["Escape", "Escape"] if arrival == "escape" else ["Enter"]):
+            if batch == (["Escape"] if arrival == "escape" else ["Enter"]):
                 return compact()
             return True
         monkeypatch.setattr(pool, "send_keys", fail_keys)
@@ -205,7 +205,7 @@ def test_provider_preempts_native_compaction_during_real_send(
     assert state.initial_context_loaded is (arrival == "coordinator" and not interrupt)
     assert not state.submitted_msg_ids
     assert state.last_error == ""
-    expected = [] if arrival in {"preexisting", "not_alive", "coordinator"} else [["Escape", "Escape"]]
+    expected = [] if arrival in {"preexisting", "not_alive", "coordinator"} else [["Escape"]]
     if arrival == "readiness" and not interrupt:
         expected = []
     if arrival == "submit":

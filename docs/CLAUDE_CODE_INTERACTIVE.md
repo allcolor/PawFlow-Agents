@@ -531,10 +531,24 @@ Timing controls are read once when the provider modules are imported:
 - `PAWFLOW_CCI_SUBMIT_DELAY_SECONDS` sets the delay between repeated submit
   keys. Claude Code defaults to `1.0` second. Codex uses at most `0.2`
   seconds. A live Codex preempt waits for the structural editable-composer
-  signal after `Escape`, `Escape`; if it never returns, the paste is refused
+  signal after a single `Escape`; if it never returns, the paste is refused
   and the pending rescue remains queued. Codex then submits both normal prompts
-  and live preempts with the fixed sequence `Escape`, `Escape`, paste, 200ms,
+  and live preempts with the fixed sequence `Escape`, paste, 200ms,
   `Enter`, 200ms, `Enter`.
+- Codex is prepared with ONE `Escape`, never two (codex-cli 0.156.1). A
+  second `Escape` on an empty composer opens Codex's backtrack overlay
+  ("Browsing transcript · ↵ rewind · esc back"): a paste is dropped there and
+  `Enter` means *rewind*, reverting the conversation to an earlier prompt.
+  `core/_codex_composer_guard.py` closes the overlay with `Escape` if it is
+  open anyway (and refuses the paste if it stays open), refuses any `Enter`
+  while it is on screen, and never accepts a changed pane with an overlay on
+  it as proof of the paste. Once the composer is located only its content
+  (chip or text) proves the paste. The composer is recognised by `›`
+  (codex-cli 0.156) or `>` (earlier releases); a `›` line followed by
+  transcript chrome (`•`, `■`, `└`) or a running turn is a transcript user
+  turn, not the composer. Failure logs carry a structural pane summary
+  (`composer=chip|empty|nonempty|absent`, `backtrack_overlay`,
+  `backtrack_primed`, `running`), never prompt text.
   In production only the exact `UserPromptSubmit` digest or matching MITM
   request confirms submission. If the structurally recognised composer still
   holds the pasted chip, verification may send up to three evidence-gated

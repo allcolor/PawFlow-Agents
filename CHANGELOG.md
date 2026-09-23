@@ -27,6 +27,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   responder, and only as a last resort abort its own positively identified
   connection. Hosts still holding a ghost from an older relay can release it
   with the procedure in `docs/relay_server_fs.md`.
+- Codex interactive prompts no longer vanish with "the submission pane is
+  inconclusive". Prompt preparation sent `Escape`, `Escape`; on codex-cli
+  0.156.1 a second Esc on an empty composer opens the backtrack overlay,
+  which drops the paste and turns `Enter` into a rewind of the conversation.
+  Codex also draws its composer as `›` now, so PawFlow could no longer locate
+  it to retry `Enter` on a stranded chip. Preparation now sends one Esc and
+  closes the overlay if it opened anyway, `Enter` is refused while the
+  overlay is shown, only the composer's content proves a paste, both `›` and
+  `>` composers are recognised, and failures log a structural pane summary.
 
 ## [1.0.0-beta.282] — 2026-09-23
 

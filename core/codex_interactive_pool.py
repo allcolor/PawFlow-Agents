@@ -23,6 +23,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import core.paths as _paths
+from core._codex_composer_guard import CodexComposerGuardMixin
 from core._cci_pool_spawn import InteractiveContainer, _InteractiveContainerSpawnMixin
 from core.cc_interactive_certs import generate_leaf
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
@@ -372,6 +373,7 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
 
 
 class CodexInteractivePool(_CodexInteractiveSpawnMixin,
+                           CodexComposerGuardMixin,
                            InteractiveClaudeCodePool):
     _instance: Optional["CodexInteractivePool"] = None
     _instance_lock = threading.Lock()
@@ -404,7 +406,8 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     # which is how six pastes stacked up in one composer while every send
     # reported success. The chip is the signal instead.
     _PASTE_CHIP_MARKERS = ("[pasted content", "[image ")
-    _COMPOSER_PROMPT_PREFIX = ">"
+    # codex-cli 0.156 draws `›`; earlier releases drew `>`.
+    _COMPOSER_PROMPT_PREFIX = ("›", ">")
     _PASTE_SETTLE_DEFAULT = 0.2
 
     def _paste_settle_seconds(self) -> float:
@@ -524,12 +527,15 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     def _prepare_prompt_input(self, state: InteractiveContainer) -> bool:
         """Put Codex in its canonical input state before the paste.
 
-        The two Esc keys stop or dismiss any active TUI mode before PawFlow
-        touches the composer. The shared send path waits after the paste, where
-        the delay prevents Enter from being swallowed into the attachment.
+        ONE Esc stops a running turn or dismisses an active TUI mode. Never
+        two: a second Esc on an empty composer opens Codex's backtrack
+        overlay, which drops the paste and turns Enter into a rewind (see
+        core/_codex_composer_guard.py). If the overlay is open anyway, close it.
         """
         self._check_native_compaction(state)
-        return self.send_keys(state, ["Escape", "Escape"])
+        if not self.send_keys(state, ["Escape"]):
+            return False
+        return self._leave_backtrack_overlay(state)
 
     def send_text(self, state: InteractiveContainer, text: str) -> bool:
         self._check_native_compaction(state)
@@ -579,7 +585,10 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
 
     def _paste_landed(self, state: InteractiveContainer, text: str,
                       before_pane: str = "") -> bool:
-        landed = super()._paste_landed(state, text, before_pane)
+        # Strict: only the composer's content proves the paste. "The pane
+        # changed" is also what the backtrack overlay opening looks like, and
+        # accepting it pressed Enter -- a rewind -- into that overlay.
+        landed = self._strict_paste_landed(state, text, before_pane)
         if landed:
             # A pane reaction proves the transport directly. Keep later turns
             # off the cold-start wait even when its structural probe missed.
@@ -716,8 +725,9 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                     f"canonical Enter sequence ({reason})")
                 logger.error(
                     "[codex-interactive] prompt submission not confirmed for "
-                    "%s after the canonical Enter sequence (%s)",
-                    state.name, reason)
+                    "%s after the canonical Enter sequence (%s; %s)",
+                    state.name, reason,
+                    self._pane_state_summary(self._pane_text(state.name)))
                 return False
 
         # No event service is available only in isolated diagnostics/tests.

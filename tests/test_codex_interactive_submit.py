@@ -469,7 +469,7 @@ def test_codex_cold_send_recovers_when_startup_strands_the_prompt(monkeypatch):
 
     assert pool.send_text(state, PROMPT) is True
     assert keys == [
-        ["Escape", "Escape"],
+        ["Escape"],
         ["Enter"],
         ["Enter"],
         ["Enter"],
@@ -560,7 +560,8 @@ def test_the_prompt_is_pasted_once_then_submitted_with_two_spaced_enters(
 
     assert pool.send_text(state, PROMPT) is True
     assert events == [
-        ("keys", ["Escape", "Escape"]),
+        ("keys", ["Escape"]),
+        ("sleep", 0.3),  # overlay check after the single Esc
         ("paste", PROMPT),
         ("sleep", 0.2),
         ("keys", ["Enter"]),
@@ -710,6 +711,7 @@ def test_codex_interrupt_waits_for_receipt_before_reporting_success(monkeypatch)
     monkeypatch.setattr(pool, "_remember_injected_prompt_for_event_service",
                         lambda _state, _text: service)
     monkeypatch.setattr(pool, "_load_buffer", lambda _state, _text: True)
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: "")
     monkeypatch.setattr(
         pool, "_paste_buffer",
         lambda _state: events.append(("paste", PROMPT)) or True)
@@ -724,7 +726,8 @@ def test_codex_interrupt_waits_for_receipt_before_reporting_success(monkeypatch)
 
     assert pool.send_interrupt(state, PROMPT) is True
     assert events == [
-        ("keys", ["Escape", "Escape"]),
+        ("keys", ["Escape"]),
+        ("sleep", 0.3),  # overlay check after the single Esc
         ("ready", _State.name),
         ("paste", PROMPT),
         ("sleep", 0.2),
@@ -760,7 +763,7 @@ def test_codex_interrupt_fails_when_receipt_and_pane_stay_inconclusive(
 
     assert pool.send_interrupt(state, PROMPT) is False
     assert keys == [
-        ["Escape", "Escape"], ["Enter"], ["Enter"],
+        ["Escape"], ["Enter"], ["Enter"],
     ]
     assert "not confirmed" in state.last_error
 
@@ -774,6 +777,8 @@ def test_codex_interrupt_queues_before_paste_when_composer_never_returns(
 
     monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
     monkeypatch.setattr(pool, "_cancel_copy_mode", lambda _state: None)
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: "")
+    monkeypatch.setattr(ccip.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         pool, "send_keys",
         lambda _state, keys: events.append(("keys", list(keys))) or True)
@@ -786,7 +791,7 @@ def test_codex_interrupt_queues_before_paste_when_composer_never_returns(
 
     assert pool.send_interrupt(state, PROMPT) is False
     assert events == [
-        ("keys", ["Escape", "Escape"]),
+        ("keys", ["Escape"]),
         ("not-ready", _State.name),
     ]
     assert "not ready after interrupt" in state.last_error

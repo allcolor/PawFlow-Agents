@@ -14,6 +14,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `docker run --security-opt seccomp=...` failed with exit code 125 in a
   restart loop. The desktop PyInstaller build now collects that data, like the
   relay CLI build already did.
+- Claude Code interactive agents take the user's message as the user's
+  instruction again. Claude Code 2.1.277+ collapses a bracketed paste of three
+  or more line breaks, or of more than ~800 characters, into a
+  `[Pasted text #N]` chip and hands it to the model as `<pasted_content>`,
+  which the model does not follow as an instruction. PawFlow's
+  `[System: Current date/time ...]` note alone adds three line breaks, so every
+  turn-start message, even a bare "yes", arrived that way and the agent asked
+  the user to confirm what they had typed, while mid-turn messages stayed
+  inline. Prompts are now pasted as small bracketed pieces that the TUI keeps
+  inline and verbatim (Codex keeps its single paste), and the CLI system prompt
+  states that content marked as pasted in a user message is the user's own.
 
 ## [1.0.0-beta.283] — 2026-09-23
 

@@ -567,9 +567,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         # therefore fails visibly and leaves the single paste untouched.
         settle = self._paste_settle_seconds()
         before = self._pane_text(state.name)
-        if not self._load_buffer(state, text):
-            return False
-        if not self._paste_buffer(state):
+        if not self._paste_text(state, text):
             return False
         # Let the TUI finish ingesting the paste before pressing Enter: an
         # Enter that lands inside the paste-detection window is treated as a
@@ -695,6 +693,20 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     # buffers the whole paste into a single attachment needs longer than one
     # that echoes it character by character.
     _PASTE_SETTLE_DEFAULT = 0.2
+
+    # Claude Code 2.1.277+ turns a bracketed paste of three or more line
+    # breaks, or of more than ~800 characters, into a "[Pasted text #N]" chip
+    # and hands it to the model wrapped in <pasted_content> -- text the model
+    # is told not to take as the user's instruction. Every turn-start prompt
+    # ends with PawFlow's "\n\n[System: ...]\n" note, so even a bare "yes"
+    # arrived that way. Smaller bracketed pastes stay inline and verbatim, so
+    # the prompt is pasted in pieces below both limits, far enough apart for
+    # the TUI to see separate pastes. Unbracketed input is no alternative: it
+    # still collapses above ~800 characters, and it is read as keystrokes.
+    # A limit of 0 keeps the single paste (TUIs that do not collapse).
+    _PASTE_CHUNK_MAX_CHARS = 600
+    _PASTE_CHUNK_MAX_NEWLINES = 2
+    _PASTE_CHUNK_GAP_SECONDS = 0.3
 
     def _paste_settle_seconds(self) -> float:
         try:
@@ -1190,6 +1202,33 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             return False
         return True
 
+    def _paste_chunks(self, text: str) -> list:
+        """Split a prompt into pastes the TUI keeps inline (see the limits)."""
+        limit = self._PASTE_CHUNK_MAX_CHARS
+        if limit <= 0:
+            return [text]
+        chunks, current, newlines = [], [], 0
+        for ch in text:
+            if current and (len(current) >= limit or (
+                    ch == "\n" and newlines >= self._PASTE_CHUNK_MAX_NEWLINES)):
+                chunks.append("".join(current))
+                current, newlines = [], 0
+            current.append(ch)
+            if ch == "\n":
+                newlines += 1
+        chunks.append("".join(current))
+        return chunks
+
+    def _paste_text(self, state: InteractiveContainer, text: str) -> bool:
+        """Paste the whole prompt, once, as bracketed pieces kept inline."""
+        for index, chunk in enumerate(self._paste_chunks(text)):
+            if index and self._PASTE_CHUNK_GAP_SECONDS > 0:
+                time.sleep(self._PASTE_CHUNK_GAP_SECONDS)
+            if not (self._load_buffer(state, chunk)
+                    and self._paste_buffer(state)):
+                return False
+        return True
+
     @staticmethod
     def _remember_injected_prompt(state: InteractiveContainer, text: str) -> None:
         """Record PawFlow-injected tmux prompts so hooks can ignore them."""
@@ -1261,7 +1300,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 logging.getLogger(__name__).debug(
                     "Could not mark CCI interrupt submission", exc_info=True)
                 event_service = None
-        if not (self._load_buffer(state, text) and self._paste_buffer(state)):
+        if not self._paste_text(state, text):
             return False
         if not canonical_input and not self.send_keys(state, ["Escape"]):
             return False

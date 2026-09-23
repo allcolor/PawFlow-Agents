@@ -513,10 +513,11 @@ Timing controls are read once when the provider modules are imported:
 - `PAWFLOW_CCI_PASTE_SETTLE_SECONDS` sets the delay after `paste-buffer` and
   before the first `Enter`. Claude Code defaults to `0.2` seconds. Codex uses
   at most `0.2` seconds even when a larger inherited override is configured.
-- Every prompt is loaded into one tmux buffer and sent with exactly one
-  bracketed `paste-buffer -p`. Pane verification may reject an unconfirmed
-  transport, but it never replays the paste and risks duplicating the prompt in
-  the composer.
+- Every prompt is pasted once, with bracketed `paste-buffer -p`. Claude Code
+  receives it as a sequence of small pastes (see *Pasted content is still the
+  user's message* below); Codex receives it as exactly one paste. Pane
+  verification may reject an unconfirmed transport, but it never replays the
+  paste and risks duplicating the prompt in the composer.
 - A cold Codex send waits up to 12 seconds for two consecutive structural
   readiness observations. A UUID writer lock newer than the container state
   proves that Codex created the thread for this launch. Tmux must simultaneously
@@ -729,6 +730,36 @@ stacked up in one composer until a human pressed `Enter`. Pools whose TUI
 collapses pastes declare their chip in `_PASTE_CHIP_MARKERS`, scoped to the
 composer via `_COMPOSER_PROMPT_PREFIX` so a chip left in the transcript by an
 already submitted message is not mistaken for an unsent one.
+
+### Pasted content is still the user's message
+
+Claude Code 2.1.277+ collapses a bracketed paste of **three or more line
+breaks** or of **more than ~800 characters** into a `[Pasted text #N +M lines]`
+chip, and the model receives it wrapped in `<pasted_content>` tags: content
+the model is told not to follow as the user's instruction. Every turn-start
+prompt ends with PawFlow's `\n\n[System: Current date/time ...]\n` note, which
+alone is three line breaks, so even a bare "yes" arrived as pasted content and
+the agent asked the user to confirm what they had just typed (incident
+2026-09-23). Messages sent mid-turn carry no note and stayed inline, which made
+the behavior look random.
+
+Smaller bracketed pastes stay inline and verbatim, and consecutive small
+pastes are not merged into a chip. `InteractiveClaudeCodePool._paste_text`
+therefore splits the prompt into pieces of at most `_PASTE_CHUNK_MAX_CHARS`
+(600) characters and `_PASTE_CHUNK_MAX_NEWLINES` (2) line breaks, pasted
+`_PASTE_CHUNK_GAP_SECONDS` (0.3 s) apart; the pieces rebuild the prompt exactly.
+Unbracketed input (`paste-buffer -r` without `-p`) was measured and rejected:
+it still collapses above ~800 characters, and typed input is interpreted as
+keystrokes (a leading `!` switched the composer into shell mode, and the mode
+stuck to the next message). Codex sets `_PASTE_CHUNK_MAX_CHARS = 0`
+and keeps a single paste, because its verifier proves a paste by its chip.
+
+As a safety net, `CLI_MCP_SYSTEM_PROMPT` tells the model that a user message
+marked as pasted content is still the user's own message, while tool results
+and fetched content remain untrusted data.
+
+Known and left alone: a user message that itself starts with `!` switches the
+Claude Code composer into shell mode even through a bracketed paste.
 
 ### Claude Code: the receipt decides, a stranded prompt fails the send
 

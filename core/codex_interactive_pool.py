@@ -409,6 +409,9 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     # codex-cli 0.156 draws `›`; earlier releases drew `>`.
     _COMPOSER_PROMPT_PREFIX = ("›", ">")
     _PASTE_SETTLE_DEFAULT = 0.2
+    # One paste: the chip above is how this verifier proves a paste landed,
+    # and pieces would stack one chip per piece.
+    _PASTE_CHUNK_MAX_CHARS = 0
     # Space Space Esc Esc on Codex can reach the backtrack overlay; its own
     # verifier already refuses a stranded chip without clearing it.
     _CLEAR_STRANDED_ON_FAILED_SEND = False

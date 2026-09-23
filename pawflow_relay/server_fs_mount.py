@@ -1,13 +1,12 @@
 """FUSE3 filesystem that proxies every syscall to the PawFlow server.
 
-Mounts a directory on the relay host (typically `/var/lib/pawflow/server-mount`
-or a per-relay tmpdir). The relay docker bind-mounts that path at
-`/cc_sessions` so containerized tools see the user's session files via
-canonical paths identical to what CC itself uses.
+Holds the pyfuse3 Operations class of the combined server-fs mount. It runs
+only inside the out-of-process responder (`pawflow_relay.fuse_responder`);
+the relay-side supervisor lives in `pawflow_relay.combined_fs`.
 
 Depends on `pyfuse3` + `trio` + `libfuse3`. The imports are lazy so this
 module can be loaded for inspection without the libs installed; only
-`mount()` requires them.
+building the Operations class requires them.
 """
 
 import base64
@@ -15,11 +14,9 @@ import errno
 import logging
 import os
 import stat as _stat
-import subprocess  # nosec B404
 import sys
 import threading
 import time as _time
-from typing import Optional
 
 from pawflow_relay.server_fs_client import ServerFsClient
 
@@ -93,16 +90,14 @@ def _to_fuse_error(reply: dict) -> int:
 # Combined two-subtree mount
 # ─────────────────────────────────────────────────────────────────────
 #
-# pyfuse3 keeps a single global session, so two ServerFsMount instances
-# in the same process race for that global state — the second `init`
-# wins and the first mount goes orphan in the kernel. CombinedServerFsMount
-# sidesteps this by registering ONE pyfuse3 mount at a parent path
-# (e.g. `/pawflow_fs`) whose root contains exactly two synthetic
-# subdirectories: `cc_sessions` (routed to sfs.* client) and
-# `filestore` (routed to ffs.* client). The relay's worker then
-# `mount --bind`s the canonical /cc_sessions and /filestore onto
-# those subtrees so all downstream consumers (CC config, file tools,
-# etc.) keep their existing absolute paths.
+# pyfuse3 keeps a single global session, so two mounts in the same process
+# race for that global state — the second `init` wins and the first mount
+# goes orphan in the kernel. The combined mount sidesteps this with ONE
+# pyfuse3 mount whose root contains exactly three synthetic subdirectories:
+# `cc_sessions` (sfs.*), `filestore` (ffs.*) and `skills` (skfs.*). The
+# relay symlinks the canonical /cc_sessions, /filestore and /skills to
+# those subtrees so all downstream consumers (CC config, file tools, etc.)
+# keep their existing absolute paths.
 
 def _build_combined_operations_class():
     """Build the routing pyfuse3 Operations subclass.
@@ -545,168 +540,3 @@ def _build_combined_operations_class():
             return self._attrs_from_server(ar['data'], inode)
 
     return CombinedRouterOperations
-
-
-class CombinedServerFsMount:
-    """Single pyfuse3 mount at `mountpoint`/ exposing three routed subtrees.
-
-    The mount's root contains exactly three synthetic directories,
-    `cc_sessions`, `filestore` and `skills`, which forward all FS ops
-    to `sfs_client`, `ffs_client` and `skfs_client` respectively. Use a
-    `mount --bind` in the relay's outer setup to expose those subtrees
-    on the canonical /cc_sessions, /filestore and /skills paths.
-
-    Why this exists: pyfuse3 keeps a single global session, so two
-    separate `ServerFsMount` instances in the same process would race
-    on `pyfuse3.init()` — the second wins, the first goes orphan, and
-    `ls` on the first hangs forever (no daemon answers the kernel).
-    """
-
-    def __init__(self, mountpoint: str,
-                 sfs_client: ServerFsClient,
-                 ffs_client: ServerFsClient,
-                 skfs_client: ServerFsClient,
-                 allow_other: bool = False,
-                 request_timeout: float = 30.0,
-                 fsname: str = 'pawflow-combined-fs'):
-        self._mountpoint = mountpoint
-        self._sfs = sfs_client
-        self._ffs = ffs_client
-        self._skfs = skfs_client
-        self._allow_other = allow_other
-        self._timeout = request_timeout
-        self._fsname = fsname
-        self._thread: Optional[threading.Thread] = None
-        self._started = threading.Event()
-
-    def start(self) -> None:
-        _fuse_trace_emit(
-            f"[fuse-mount] CombinedServerFsMount.start ENTER "
-            f"mountpoint={self._mountpoint}")
-        try:
-            if self._thread is not None:
-                raise RuntimeError('mount already started')
-            _fuse_trace_emit(
-                f"[fuse-mount] start step=makedirs mountpoint={self._mountpoint}")
-            os.makedirs(self._mountpoint, exist_ok=True)
-            _fuse_trace_emit("[fuse-mount] start step=try_unmount")
-            self._try_unmount(silent=True)
-            _fuse_trace_emit("[fuse-mount] start step=build_ops_class")
-            Operations = _build_combined_operations_class()
-            _fuse_trace_emit("[fuse-mount] start step=import_pyfuse3_trio")
-            import pyfuse3
-            import trio
-            _fuse_trace_emit("[fuse-mount] start step=instantiate_ops")
-            ops = Operations(self._sfs, self._ffs, self._skfs,
-                             request_timeout=self._timeout)
-        except BaseException as _se:
-            _fuse_trace_emit(
-                f"[fuse-mount] start FAILED PRE-INIT "
-                f"err={type(_se).__name__}:{_se}")
-            raise
-
-        fuse_opts = set(pyfuse3.default_options)
-        fuse_opts.add(f'fsname={self._fsname}')
-        if self._allow_other:
-            fuse_opts.add('allow_other')
-
-        _hb_stop = threading.Event()
-
-        def _heartbeat():
-            n = 0
-            while not _hb_stop.wait(5.0):
-                n += 1
-                _fuse_trace_emit(
-                    f"[fuse-heartbeat] combined alive seq={n} "
-                    f"mounted={self._is_mounted()}")
-
-        threading.Thread(target=_heartbeat, daemon=True,
-                         name='fuse-hb-combined').start()
-
-        def _run():
-            try:
-                pyfuse3.init(ops, self._mountpoint, fuse_opts)
-                _fuse_trace_emit(
-                    f"[fuse-mount] combined pyfuse3.init OK "
-                    f"mountpoint={self._mountpoint}")
-            except Exception as e:
-                _fuse_trace_emit(
-                    f"[fuse-mount] combined pyfuse3.init FAILED "
-                    f"err={type(e).__name__}:{e}")
-                logger.error('[combined-fs] pyfuse3.init failed: %s',
-                             e, exc_info=True)
-                _hb_stop.set()
-                self._started.set()
-                return
-            try:
-                _fuse_trace_emit(
-                    "[fuse-mount] combined trio.run(pyfuse3.main) START")
-                trio.run(pyfuse3.main)
-                _fuse_trace_emit(
-                    "[fuse-mount] combined trio.run(pyfuse3.main) RETURNED cleanly")
-            except BaseException as e:
-                _fuse_trace_emit(
-                    f"[fuse-mount] combined trio.run RAISED "
-                    f"err={type(e).__name__}:{e}")
-                logger.error('[combined-fs] pyfuse3 main exited: %s',
-                             e, exc_info=True)
-            finally:
-                _hb_stop.set()
-                try:
-                    pyfuse3.close(unmount=True)
-                    _fuse_trace_emit(
-                        "[fuse-mount] combined pyfuse3.close(unmount=True) ok")
-                except Exception as ce:
-                    _fuse_trace_emit(
-                        f"[fuse-mount] combined pyfuse3.close FAILED err={ce}")
-                self._started.set()
-
-        self._thread = threading.Thread(target=_run, daemon=True,
-                                         name='combined-fs-fuse')
-        self._thread.start()
-        deadline = _time.time() + 3.0
-        while _time.time() < deadline:
-            if self._is_mounted():
-                self._started.set()
-                logger.info('[combined-fs] mounted at %s', self._mountpoint)
-                return
-            _time.sleep(0.05)
-        if not self._thread.is_alive():
-            raise RuntimeError(
-                f'FUSE thread died before mount became visible at {self._mountpoint}')
-        logger.warning(
-            '[combined-fs] mount at %s not visible after 3s but thread alive',
-            self._mountpoint)
-
-    def stop(self) -> None:
-        self._try_unmount(silent=False)
-        if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=3.0)
-        self._thread = None
-
-    def _is_mounted(self) -> bool:
-        try:
-            with open('/proc/self/mountinfo', 'r') as f:
-                for line in f:
-                    if self._mountpoint in line:
-                        return True
-        except OSError:
-            pass
-        return False
-
-    def _try_unmount(self, silent: bool) -> None:
-        if not os.path.exists(self._mountpoint):
-            return
-        for cmd in (['fusermount3', '-u', self._mountpoint],
-                    ['fusermount', '-u', self._mountpoint],
-                    ['umount', self._mountpoint]):
-            try:
-                r = subprocess.run(cmd, capture_output=True,  # nosec B603
-                                   text=True, timeout=5)
-                if r.returncode == 0:
-                    return
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                continue
-        if not silent:
-            logger.warning('[combined-fs] unmount %s failed (all backends)',
-                           self._mountpoint)

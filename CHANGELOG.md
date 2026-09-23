@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A relay can no longer leave an unkillable ghost of its container behind.
+  The combined server-fs FUSE responder (`/tmp/pf_combined_fs`,
+  `pawflow-combined-fs`) ran as a thread of the relay worker, whose own
+  command threads read the mount (`list_dir`, `glob`, `grep` on
+  `/cc_sessions`, `/filestore`, `/skills`). When the worker exited with such
+  a read in flight, the responder died with it while the waiting threads,
+  stuck uninterruptibly in `request_wait_answer`, kept `/dev/fuse` open, so
+  the kernel never aborted the connection: the worker stayed `<defunct>`,
+  `docker-init` stayed in `zap_pid_ns_processes`, and the PID namespace
+  outlived the container (observed for a month, four threads in `D` state,
+  `waiting = 4` on the connection). SIGTERM also skipped the unmount
+  entirely (only KeyboardInterrupt stopped the mount). The responder now runs
+  in its own process (`pawflow_relay.fuse_responder`) that answers every
+  request in bounded time and releases the connection when it dies; the
+  worker supervises it (health pings, restart after a crash) and stops it in
+  order on every exit path: refuse new work, lazy unmount, end the
+  responder, and only as a last resort abort its own positively identified
+  connection. Hosts still holding a ghost from an older relay can release it
+  with the procedure in `docs/relay_server_fs.md`.
+
 ## [1.0.0-beta.282] — 2026-09-23
 
 ### Fixed

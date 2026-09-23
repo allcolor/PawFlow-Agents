@@ -213,8 +213,89 @@ kernel-side mount and inode allocations stay stable, so:
 - The negative-dentry cache problem (deep paths returning ENOENT after
   an unmount/remount cycle) does not occur.
 
-The FUSE is unmounted **only** on relay shutdown (KeyboardInterrupt path
-in `_ws_connect`).
+The FUSE is unmounted **only** on relay shutdown. `setup_combined_fs`
+registers `CombinedServerFsMount.stop()` with `atexit`, so every exit path
+runs it — SIGTERM (`sys.exit(0)` in `worker_main`), SIGINT, an escaping
+exception. `stop()` is idempotent.
+
+### Out-of-process FUSE responder
+
+The process that answers the kernel's FUSE requests is **never** the relay
+worker. `pawflow_relay/combined_fs.py` (`CombinedServerFsMount`, in the
+worker) spawns `python -m pawflow_relay.fuse_responder`, which owns the
+`/dev/fuse` session (pyfuse3 + trio) and forwards each backend op over an
+inherited `AF_UNIX` socketpair (length-prefixed JSON frames: `ready` /
+`failed`, `req` / `rep`, `ping` / `pong`). The worker answers `req` frames
+with the `SwappableServerFsClient` for the op's prefix (`sfs.`, `ffs.`,
+`skfs.`).
+
+Why: once the responder has read a request, the calling thread waits in
+the kernel's `request_wait_answer` uninterruptibly — SIGKILL included —
+until the responder replies or the connection is aborted, and the kernel
+aborts the connection only when the last reference to the `/dev/fuse` file
+is released. When the responder was a thread of the worker, the worker's
+own command threads (`list_dir`, `glob`, `grep`, … on `/cc_sessions`,
+`/filestore`, `/skills`) could be waiting on it when the process exited.
+Those waiting threads kept the fd table — and so the `/dev/fuse` file —
+alive, so the connection was never aborted and they were never answered:
+the worker stayed `<defunct>` with threads in `D` state, `docker-init`
+stayed stuck in `zap_pid_ns_processes`, and the container's PID namespace
+outlived the container (observed for a month, 2026-08-23 → 2026-09-23,
+`/sys/fs/fuse/connections/63/waiting = 4`).
+
+Guarantees of the split:
+
+| Failure | What ends the waits |
+|---|---|
+| Worker exits or is SIGKILLed with ops in flight | The responder answers every request it forwarded within `op timeout + REPLY_GRACE` (5 s + 2 s) with EIO; the worker's threads return, its fds close, the responder sees end of stream, stops its loop, unmounts and exits. |
+| Responder crashes or is SIGKILLed | Its `/dev/fuse` file is released, the kernel aborts the connection, every waiter gets `ENOTCONN`. The worker lazily detaches the dead mount and restarts the responder (backoff 1 s → 30 s). |
+| Responder alive but stuck | The worker pings every 10 s; no pong for 30 s, or a FUSE loop that has not ticked for 30 s, gets the responder SIGKILLed (previous row). |
+| Whole container killed | The responder dies with the PID namespace, which releases the connection as above. |
+
+The responder runs in its own session (`start_new_session`), so terminal
+signals aimed at the worker cannot end it before the worker detaches the
+mount, and it never accesses its own mount.
+
+`stop()` ordering: mark stopping (every backend op now gets EIO) → lazy
+unmount (`fusermount3 -u -z`, no new lookups) → close the socket (the
+responder stops, unmounts, exits) → SIGKILL after 5 s → as a last resort,
+abort the connection through `/sys/fs/fuse/connections/<id>/abort`. The id
+is the one recorded from `/proc/self/mountinfo` when this mount came up
+(mount point **and** `pawflow-combined-fs` source must match), and it is
+used only while its responder is still unreaped, so it cannot name another
+filesystem. Unmounting never `stat`s the mountpoint first: that is itself a
+FUSE request, and it fails with `ENOTCONN` on a dead mount.
+
+#### Recovering a host hit by the old in-process responder
+
+A relay started before this change can still leave a ghost namespace. On the
+host (root), identify the connection **positively** before aborting it —
+never abort arbitrary entries:
+
+```bash
+# the stuck process's mount of pawflow-combined-fs gives the connection id
+grep pawflow-combined-fs /proc/<stuck-pid>/mountinfo   # ... 0:63 / /tmp/pf_combined_fs ...
+cat /sys/fs/fuse/connections/63/waiting               # > 0: requests pending
+echo 1 > /sys/fs/fuse/connections/63/abort            # releases the D-state threads
+```
+
+The threads leave `D`, the process and `docker-init` finish exiting, and the
+PID namespace goes away.
+
+#### Regression tests
+
+- `tests/test_combined_fs_lifecycle.py` — framing, EOF/timeout bounds of the
+  responder link, prefix routing, refusal once stopping, `stop()` ordering
+  (detach → end of stream → kill → abort of the recorded connection only),
+  lazy unmount without `stat`, `atexit` registration.
+- `tests/test_combined_fs_fuse_integration.py` — real kernel FUSE: a relay
+  process SIGKILLed while four of its own threads sit in
+  `request_wait_answer` exits and takes its responder and mount with it; a
+  responder crash releases callers and the mount recovers; `stop()` with a
+  readdir in flight is bounded. Skipped without FUSE. Inside the relay
+  container AppArmor allows FUSE mounts only under `/tmp/pf_combined_fs`,
+  `/remote` and `/workspace`: set `PAWFLOW_FUSE_TEST_ROOT` to a directory
+  under `/remote` owned by the relay user.
 
 ### Multi-relay scenarios
 
@@ -346,7 +427,11 @@ mount is live alongside `/cc_sessions` and `/filestore`.
 - `tests/test_relay_skills_fs.py` — 20 path/op/access-scope tests
 - `services/filesystem_service.py:_handle_relay_request` — prefix dispatch
 - `pawflow_relay/server_fs_client.py` — relay-side request/response correlator
-- `pawflow_relay/server_fs_mount.py` — FUSE proxy (lazy pyfuse3 import,
-  `method_prefix` parameter selects which protocol it speaks)
+- `pawflow_relay/combined_fs.py` — relay-side supervisor of the combined
+  mount (spawn, routing, health, restart, ordered stop)
+- `pawflow_relay/fuse_responder.py` — out-of-process FUSE responder and the
+  relay ↔ responder link
+- `pawflow_relay/server_fs_mount.py` — pyfuse3 Operations routing the three
+  subtrees (lazy pyfuse3 import; runs only in the responder)
 - `tests/test_server_fs_client.py` — 8 client tests
 - `tests/test_server_fs_roundtrip.py` — 5 end-to-end (no WS) tests

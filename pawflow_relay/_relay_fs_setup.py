@@ -1,12 +1,15 @@
 """One-time combined FUSE mount setup for the relay worker.
 
-Extracted verbatim from _ws_connect: mounts a single pyfuse3 CombinedServerFsMount
-(serving the cc_sessions / filestore / skills subtrees) and symlinks the
+Mounts a single CombinedServerFsMount (serving the cc_sessions / filestore /
+skills subtrees from an out-of-process FUSE responder) and symlinks the
 canonical paths to it via sudo. Returns the three SwappableServerFsClient
 handles (whose .set_inner the reconnect loop swaps per connection) and the
-mount object (stopped on final exit). Returns Nones when no mount is requested
-or the mount fails — identical to the in-closure behaviour.
+mount object. The mount is stopped at interpreter exit whatever ends the
+worker (SIGTERM's sys.exit, SIGINT, an exception); stop() is idempotent, so
+an explicit earlier stop is harmless. Returns Nones when no mount is
+requested or the mount fails.
 """
+import atexit
 import logging
 import os
 import subprocess  # nosec B404
@@ -21,8 +24,8 @@ def setup_combined_fs(server_mount, filestore_mount, skills_mount):
     _filestore_fs_swap = None
     _skills_fs_swap = None
     if server_mount or filestore_mount or skills_mount:
+        from pawflow_relay.combined_fs import CombinedServerFsMount
         from pawflow_relay.server_fs_client import SwappableServerFsClient
-        from pawflow_relay.server_fs_mount import CombinedServerFsMount
         # ONE pyfuse3 mount at /pawflow_fs serving both cc_sessions
         # (sfs.*) and filestore (ffs.*) subtrees. Required because
         # pyfuse3 keeps a single global session per process — two
@@ -45,6 +48,7 @@ def setup_combined_fs(server_mount, filestore_mount, skills_mount):
                 _combined_root, _server_fs_swap, _filestore_fs_swap,
                 _skills_fs_swap)
             _server_fs_mount.start()
+            atexit.register(_server_fs_mount.stop)
             sys.stderr.write(
                 f"[FSRelay] combined-fs mounted at {_combined_root}\n")
             # Expose each canonical path as a symlink to the routed

@@ -76,14 +76,49 @@ class TestMessageBuilder:
 
         assert payload[1]["reasoning_content"] == "I must call the tool"
 
-    def test_turns_without_reasoning_gain_no_field(self):
-        messages = [LLMMessage("assistant", "plain", conversation_id="conv1")]
+    def test_turns_before_the_last_user_message_without_reasoning_gain_no_field(self):
+        messages = [
+            LLMMessage("user", "hi", conversation_id="conv1"),
+            LLMMessage("assistant", "plain", conversation_id="conv1"),
+            LLMMessage("user", "again", conversation_id="conv1"),
+        ]
 
         payload = _client()._build_openai_messages(
             messages, user_id="allcolor", conversation_id="conv1",
             echo_reasoning=True)
 
-        assert "reasoning_content" not in payload[0]
+        assert "reasoning_content" not in payload[1]
+
+    def test_turns_after_the_last_user_message_always_carry_the_field(self):
+        # Measured against OpenCode Go (deepseek-flash): every assistant turn
+        # after the last user message -- tool loop or trailing turn -- must
+        # carry reasoning_content, and "" is accepted for a turn that did not
+        # reason. Without it the echo retry is refused a second time.
+        messages = _messages() + [
+            LLMMessage(
+                "assistant", "", conversation_id="conv1",
+                tool_calls=[LLMToolCall(id="call_2", name="bash", arguments={})],
+            ),
+            LLMMessage("tool", "out", conversation_id="conv1", tool_call_id="call_2"),
+            LLMMessage("assistant", "done", conversation_id="conv1"),
+        ]
+
+        payload = _client()._build_openai_messages(
+            messages, user_id="allcolor", conversation_id="conv1",
+            echo_reasoning=True)
+
+        assert payload[1]["reasoning_content"] == "I must call the tool"
+        assert payload[3]["reasoning_content"] == ""
+        assert payload[5]["reasoning_content"] == ""
+
+    def test_the_field_stays_off_without_echo(self):
+        messages = [LLMMessage("user", "hi", conversation_id="conv1"),
+                    LLMMessage("assistant", "plain", conversation_id="conv1")]
+
+        payload = _client()._build_openai_messages(
+            messages, user_id="allcolor", conversation_id="conv1")
+
+        assert "reasoning_content" not in payload[1]
 
 
 class TestServiceField:
@@ -164,6 +199,23 @@ class TestStreamRetry:
         assert len(bodies) == 2
         assert "reasoning_content" not in bodies[0]["messages"][1]
         assert bodies[1]["messages"][1]["reasoning_content"] == "I must call the tool"
+
+    def test_retry_fills_a_loop_turn_that_has_no_reasoning(self, monkeypatch):
+        # The refusal of 2026-09-23 19:03: the retry echoed what was stored,
+        # but a turn of the live loop had no reasoning, so it was refused again.
+        bodies = _scripted_transport(monkeypatch, [
+            _bad_request(),
+            _ScriptedResponse(200, STREAM_OK),
+        ])
+        messages = _messages()
+        messages[1].thinking = ""
+
+        LLMOpenaiMixin._stream_openai(
+            _client(), messages, "deepseek-v4-flash", 0.0, 0, None, None)
+
+        assert len(bodies) == 2
+        assert "reasoning_content" not in bodies[0]["messages"][1]
+        assert bodies[1]["messages"][1]["reasoning_content"] == ""
 
     def test_learned_echo_reaches_a_fresh_client(self, monkeypatch):
         bodies = _scripted_transport(monkeypatch, [

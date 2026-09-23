@@ -833,7 +833,17 @@ for it:
 |---|---|
 | Capture | `_stream_openai` accumulates `delta.reasoning_content` into `LLMResponse.thinking`. |
 | Store | `LLMMessage.thinking`, persisted on the assistant row and re-attached to the turn by `regroup_split_assistant_messages`. |
-| Replay | `_build_openai_messages(..., echo_reasoning=True)` adds `reasoning_content` to assistant turns that carry reasoning. |
+| Replay | `_build_openai_messages(..., echo_reasoning=True)` adds `reasoning_content` to assistant turns that carry reasoning, and `""` to every assistant turn after the last user message that has none. |
+
+The gateway's check, measured against OpenCode Go (`deepseek-flash`) on
+2026-09-23 with requests carrying `tools`: every assistant turn after the last
+user message (each tool-call turn of the live loop, and a trailing assistant
+turn) must carry `reasoning_content`; an empty string satisfies it. Turns
+before the last user message are accepted without the field, and a request
+without `tools` is not checked. A tool-call turn the model answered with
+`thinking_chars=0`, or a turn whose reasoning was not stored, has nothing to
+echo, which is why the empty string is filled in: without it the retry is
+refused a second time and the turn fails.
 
 `echo_reasoning` comes from `reasoning_content_echo`, a service field shown for
 `openai` and `openai-responses`. It is off by default because a provider that

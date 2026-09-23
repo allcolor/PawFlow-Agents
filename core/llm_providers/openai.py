@@ -808,6 +808,18 @@ class LLMOpenaiMixin:
                 api_messages.append(plain)
         if _pending_image_users:
             api_messages.extend(_pending_image_users)
+        if echo_reasoning:
+            # The gateway requires the field on every assistant turn after
+            # the last user message -- the live tool loop, and a trailing
+            # assistant turn -- even when that turn produced no reasoning
+            # (a zero-thinking tool call, a turn whose reasoning was not
+            # stored). An empty string satisfies it; without it the echo
+            # retry is refused again because there is nothing to echo.
+            last_user = max((i for i, am in enumerate(api_messages)
+                             if am.get("role") == "user"), default=-1)
+            for am in api_messages[last_user + 1:]:
+                if am.get("role") == "assistant":
+                    am.setdefault("reasoning_content", "")
         return api_messages
 
     @staticmethod

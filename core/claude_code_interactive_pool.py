@@ -601,6 +601,15 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         if verified is False:
             if not state.last_error:
                 state.last_error = "prompt submission was not confirmed"
+            # A prompt left in the input box would be stacked under the
+            # caller's next paste. Only here, where the failure reaches the
+            # caller: the interrupt verifier runs detached and must not
+            # silently erase a preempt.
+            if (self._CLEAR_STRANDED_ON_FAILED_SEND
+                    and self._pane_holds_stranded_prompt(
+                        self._pane_text(state.name),
+                        self._submit_probe_fragment(text))):
+                self._clear_stranded_prompt(state)
             return False
         return True
 
@@ -920,16 +929,18 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     def _verify_submitted(self, state: InteractiveContainer, text: str, *,
                           event_service=None,
                           submit_marker=(0, 0)):
-        """Best-effort post-submit check with Enter retries.
+        """Post-submit check with spaced Enter retries.
 
         Despite the settle delay, an Enter can still be coalesced into the
         paste burst and inserted as a literal newline, leaving the message
         sitting in the input box (forcing a human to press Enter in the
-        tmux — the bug this guards against). Poll the pane: a running
-        marker means the prompt was accepted; an idle prompt with the
-        pasted text still visible means the Enter was swallowed — press it
-        again. Never makes a send fail: extra Enters on an empty or
-        already-submitted prompt are no-ops in the CC TUI.
+        tmux — the bug this guards against).
+
+        With an event service the exact UserPromptSubmit receipt (or the
+        MITM model request) is the proof, see _verify_submitted_by_receipt.
+        Without one (isolated diagnostics/tests) poll the pane: a running
+        marker means the prompt was accepted; an idle prompt with the pasted
+        text still visible means the Enter was swallowed — press it again.
         """
         try:
             window = float(os.environ.get(
@@ -939,7 +950,15 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         if window <= 0:
             return True
         fragment = self._submit_probe_fragment(text)
+        if event_service is not None:
+            return self._verify_submitted_by_receipt(
+                state, text, fragment, window, event_service, submit_marker)
         interval = 0.3
+        # An Enter inside the TUI's paste-detection window is a pasted
+        # newline, not a submit: three retries 0.3 s apart (observed
+        # 2026-09-23) all landed in it. Space them by the submit delay.
+        retry_gap = max(interval, self._submit_delay_seconds())
+        last_retry_at = 0.0
         polls = max(1, int(window / interval))
         retries = 0
         log = logging.getLogger(__name__)
@@ -952,7 +971,11 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                     # box, whatever else the pane shows. Press Enter again.
                     if retries >= 3:
                         break
+                    if time.time() - last_retry_at < retry_gap:
+                        time.sleep(interval)
+                        continue
                     retries += 1
+                    last_retry_at = time.time()
                     log.warning(
                         "[cci] pasted prompt still in the input box of %s; "
                         "pressing Enter again (retry %d)", state.name, retries)
@@ -978,7 +1001,11 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 if self._pane_shows_prompt(pane):
                     if retries >= 3:
                         break
+                    if time.time() - last_retry_at < retry_gap:
+                        time.sleep(interval)
+                        continue
                     retries += 1
+                    last_retry_at = time.time()
                     log.warning(
                         "[cci] pasted prompt still unsubmitted in %s; "
                         "pressing Enter again (retry %d)", state.name, retries)
@@ -990,6 +1017,117 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 "[cci] submit verification inconclusive for %s after %d "
                 "Enter retries", state.name, retries)
         return None
+
+    _MAX_SUBMIT_ENTER_RETRIES = 3
+    # Keys that empty the Claude Code input box without opening its rewind
+    # menu: the two spaces make it non-empty first, because a double Esc on
+    # an EMPTY input box opens the message selector instead of clearing.
+    _CLEAR_INPUT_KEYS = ["Space", "Space", "Escape", "Escape",
+                         "BSpace", "BSpace"]
+    _PANE_TAIL_DIAGNOSTIC_CHARS = 1200
+    _CLEAR_STRANDED_ON_FAILED_SEND = True
+
+    def _pane_holds_stranded_prompt(self, pane: str, fragment: str) -> bool:
+        """Is our prompt visibly sitting unsent in an idle TUI?"""
+        if not pane or self._pane_shows_running(pane):
+            return False
+        holds = self._pane_holds_unsent_paste(pane)
+        if holds is not None:
+            return holds
+        return bool(fragment) and fragment in pane and self._pane_shows_prompt(pane)
+
+    def _pane_tail_diagnostic(self, pane: str) -> str:
+        """The bottom of the pane -- the input box and footer -- for a log."""
+        if not pane:
+            return " [pane empty or unreadable]"
+        return (f"; pane tail:\n"
+                f"{pane.rstrip()[-self._PANE_TAIL_DIAGNOSTIC_CHARS:]}")
+
+    def _verify_submitted_by_receipt(self, state: InteractiveContainer,
+                                     text: str, fragment: str, window: float,
+                                     event_service, submit_marker):
+        """Prove the submit with the UserPromptSubmit receipt.
+
+        Incident 2026-09-23: a prompt stayed in the input box after three
+        Enter retries 0.3 s apart. The check returned "inconclusive", the
+        send was reported successful, and the turn waited on a CLI that had
+        never received it until the idle-pane probe failed it a minute later
+        ("went back to its prompt without answering"). The stranded text was
+        then still in the input box for the next prompt to land on.
+
+        Now the receipt decides. Enter is retried only while the prompt is
+        visibly stranded in an idle TUI, at most three times, one submit
+        delay apart. If the window closes with no receipt and the prompt
+        still stranded, the send fails now (and send_text empties the input
+        box, so the next prompt is not stacked onto this one).
+        """
+        log = logging.getLogger(__name__)
+        after_submit, after_request = submit_marker
+        retry_gap = max(0.3, self._submit_delay_seconds())
+        deadline = time.monotonic() + window
+        retries = 0
+        saw_other = False
+        pane = ""
+        while True:
+            remaining = deadline - time.monotonic()
+            proof = event_service.wait_for_prompt_submission(
+                state.session_token, text,
+                after_submit=after_submit, after_request=after_request,
+                timeout=max(0.0, min(retry_gap, remaining)))
+            if proof in ("hook", "request"):
+                return True
+            if proof == "fragment":
+                state.last_error = (
+                    "Claude Code submitted only a fragment of the pasted prompt")
+                log.error("[cci] fragmented prompt submission for %s",
+                          state.name)
+                return False
+            if proof == "other" and not saw_other:
+                # Enter submitted something else first (a stale or typed
+                # prompt). Wait for ours past that receipt.
+                saw_other = True
+                try:
+                    after_submit, after_request = (
+                        event_service.submission_marker(state.session_token))
+                except Exception:
+                    log.debug("[cci] could not refresh the submission marker",
+                              exc_info=True)
+                log.warning("[cci] a different prompt was submitted in %s; "
+                            "still waiting for ours", state.name)
+            pane = self._pane_text(state.name)
+            stranded = self._pane_holds_stranded_prompt(pane, fragment)
+            if time.monotonic() >= deadline:
+                break
+            if stranded and retries < self._MAX_SUBMIT_ENTER_RETRIES:
+                retries += 1
+                log.warning(
+                    "[cci] pasted prompt still unsubmitted in %s; pressing "
+                    "Enter again (retry %d)", state.name, retries)
+                if not self.send_keys(state, ["Enter"]):
+                    return False
+        if self._pane_holds_stranded_prompt(pane, fragment):
+            state.last_error = (
+                "prompt stayed in the Claude Code input box after "
+                f"{retries} Enter retries and no UserPromptSubmit arrived")
+            log.error("[cci] prompt not submitted in %s after %d Enter "
+                      "retries%s", state.name, retries,
+                      self._pane_tail_diagnostic(pane))
+            return False
+        log.warning(
+            "[cci] no submission receipt for %s within %.1fs after %d Enter "
+            "retries; the input box no longer shows the prompt%s",
+            state.name, window, retries, self._pane_tail_diagnostic(pane))
+        return None
+
+    def _clear_stranded_prompt(self, state: InteractiveContainer) -> None:
+        """Empty the input box, keeping the send's own last_error."""
+        error = state.last_error
+        try:
+            self.send_keys(state, list(self._CLEAR_INPUT_KEYS))
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "[cci] could not clear the input box", exc_info=True)
+        state.last_error = error
 
     def _wait_for_prompt_ready(self, name: str, *,
                                timeout: Optional[float] = None) -> bool:
@@ -1171,8 +1309,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         return True
 
     def force_stop(self, state: InteractiveContainer) -> bool:
-        return self.send_keys(
-            state, ["Space", "Space", "Escape", "Escape", "BSpace", "BSpace"])
+        return self.send_keys(state, list(self._CLEAR_INPUT_KEYS))
 
     def send_keys(self, state: InteractiveContainer, keys: list[str]) -> bool:
         state.last_error = ""

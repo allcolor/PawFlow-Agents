@@ -730,6 +730,33 @@ collapses pastes declare their chip in `_PASTE_CHIP_MARKERS`, scoped to the
 composer via `_COMPOSER_PROMPT_PREFIX` so a chip left in the transcript by an
 already submitted message is not mistaken for an unsent one.
 
+### Claude Code: the receipt decides, a stranded prompt fails the send
+
+With the event service available (production), Claude Code's
+`_verify_submitted` waits for the exact `UserPromptSubmit` receipt or the
+MITM model request, like Codex. Pane text only authorizes an `Enter` retry:
+at most three, only while the prompt is visibly stranded in an idle TUI (tail
+fragment on screen, prompt footer shown, no `esc to interrupt`), and one
+`PAWFLOW_CCI_SUBMIT_DELAY_SECONDS` apart -- retries 0.3 s apart landed inside
+the paste-detection window and each became a newline (incident 2026-09-23).
+When `PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS` elapses with no receipt:
+
+- prompt still stranded: the send fails at once with the pane tail in the
+  log, and `send_text` empties the input box (`Space Space Esc Esc BSpace
+  BSpace`, the force-stop sequence; the spaces keep a double Esc on an empty
+  box from opening the rewind menu) so the next prompt is not stacked onto
+  it. Before, the send was reported successful and the turn waited until the
+  idle-pane probe failed it ("went back to its prompt without answering and
+  without a Stop hook").
+- prompt no longer visible: the result stays inconclusive and the turn
+  coordinator keeps waiting for the hook.
+
+A `fragment` receipt fails the send; an `other` receipt (a stale or typed
+prompt submitted first) moves the marker once and keeps waiting. The detached
+verifier of a Claude Code live interrupt never clears the input box. Codex
+keeps its own verifier and never uses the clearing sequence
+(`_CLEAR_STRANDED_ON_FAILED_SEND = False`).
+
 ### An empty composer is not proof of a submitted prompt
 
 Enter was the only retry there was, and it answers the wrong failure. When the

@@ -409,6 +409,9 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     # codex-cli 0.156 draws `›`; earlier releases drew `>`.
     _COMPOSER_PROMPT_PREFIX = ("›", ">")
     _PASTE_SETTLE_DEFAULT = 0.2
+    # Space Space Esc Esc on Codex can reach the backtrack overlay; its own
+    # verifier already refuses a stranded chip without clearing it.
+    _CLEAR_STRANDED_ON_FAILED_SEND = False
 
     def _paste_settle_seconds(self) -> float:
         return min(0.2, super()._paste_settle_seconds())

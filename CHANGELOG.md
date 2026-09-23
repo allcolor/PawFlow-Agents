@@ -36,6 +36,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   closes the overlay if it opened anyway, `Enter` is refused while the
   overlay is shown, only the composer's content proves a paste, both `›` and
   `>` composers are recognised, and failures log a structural pane summary.
+- A Claude Code prompt that stays in the input box no longer turns into
+  "Interactive CLI went back to its prompt without answering and without a
+  Stop hook" a minute later. Submit verification pressed three Enter retries
+  0.3 s apart (inside the TUI's paste-detection window, so each became a
+  newline), reported the unsent prompt as "inconclusive" and the send as
+  successful, and the turn waited on a CLI that never received it. The exact
+  `UserPromptSubmit` receipt (or the MITM model request) now proves the
+  submit; Enter is retried only while the prompt is visibly stranded in an
+  idle TUI, one submit delay apart; if the window closes without a receipt
+  and the prompt is still there, the send fails immediately with the pane
+  tail in the log, and the input box is emptied so the next prompt is not
+  stacked onto it.
 
 ## [1.0.0-beta.282] — 2026-09-23
 

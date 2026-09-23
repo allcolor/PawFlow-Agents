@@ -1518,6 +1518,93 @@ class TestAppendMessage:
                 "tool output" in str(msg.get("content", ""))
                 for msg in shared)
 
+    def test_delegate_turn_keeps_its_tool_calls_for_the_sender(self, conv):
+        # A delegate-mode turn used to reach the sender's context as one raw
+        # row with inline tool_calls, which the reader ignores: the turn came
+        # back without its calls and every tool result became an orphan.
+        store, cid, uid = conv
+        store.save_agent_context(cid, "alice", [])
+        store.save_agent_context(cid, "bob", [])
+        store._reload_cache(cid)
+        source = {"type": "agent_delegate", "from": "bob", "to": "alice",
+                  "kind": "reply", "delegate_visibility": "final_reply"}
+        turn = _msg(role="assistant", content="checking", source=source,
+                    thinking="I should look",
+                    tool_calls=[{"id": "call_1", "name": "bash",
+                                 "arguments": {"command": "ls"}}])
+        result = _msg(role="tool", content="out", tool_call_id="call_1",
+                      source={**source, "delegate_visibility": "self_only"})
+        store.append_message(cid, turn, agent_name="bob", user_id=uid)
+        store.append_message(cid, result, agent_name="bob", user_id=uid)
+
+        bob_rows = store.load_agent_context(cid, "bob")
+        alice_rows = store.load_agent_context(cid, "alice")
+        assert [r["role"] for r in bob_rows] == [
+            "assistant", "thinking", "tool_call", "tool"]
+        calls = [r for r in bob_rows if r["role"] == "tool_call"]
+        assert calls[0]["tool_call_id"] == "call_1"
+        assert calls[0]["parent_message_id"] == turn["msg_id"]
+        from tasks.ai.agent_serialization import AgentSerializationMixin
+        replayed = AgentSerializationMixin()._deserialize_messages(
+            bob_rows, conversation_id=cid)
+        assert [m.role for m in replayed] == ["assistant", "tool"]
+        assert [tc.id for tc in replayed[0].tool_calls] == ["call_1"]
+        assert replayed[0].thinking == "I should look"
+        # The caller gets the attributed text only: no reasoning, no calls.
+        assert [r["role"] for r in alice_rows] == ["user"]
+        assert "thinking" not in alice_rows[0]
+        assert "tool_calls" not in alice_rows[0]
+
+        tail = store.load_transcript_tail_for_agent(cid, "bob", limit=10)
+        assert [r["role"] for r in tail] == [
+            "assistant", "thinking", "tool_call", "tool"]
+        tail = store.load_transcript_tail_for_agent(cid, "alice", limit=10)
+        assert [r["role"] for r in tail] == ["user"]
+
+    def test_transcript_tail_gives_each_agent_its_delegate_copy(self, conv):
+        # Compaction rebuilds an agent context from this tail. A delegate
+        # reply used to pass through raw, so the caller replayed the
+        # responder's words as its own assistant turn -- a turn without
+        # reasoning that thinking-mode gateways refuse.
+        store, cid, uid = conv
+        store.save_agent_context(cid, "alice", [])
+        store.save_agent_context(cid, "bob", [])
+        store.save_agent_context(cid, "carol", [])
+        store._reload_cache(cid)
+        request = _msg(role="user", content="do X",
+                       source={"type": "agent_delegate", "from": "alice",
+                               "to": "bob", "target_agent": "bob",
+                               "kind": "request"})
+        reply = _msg(role="assistant", content="answer",
+                     source={"type": "agent_delegate", "from": "bob",
+                             "to": "alice", "kind": "reply",
+                             "delegate_visibility": "final_reply"})
+        internal = _msg(role="assistant", content="thinking aloud",
+                        source={"type": "agent_delegate", "from": "bob",
+                                "to": "alice", "kind": "reply",
+                                "delegate_visibility": "self_only"})
+        store.append_message(cid, request, agent_name="alice", user_id=uid)
+        store.append_message(cid, internal, agent_name="bob", user_id=uid)
+        store.append_message(cid, reply, agent_name="bob", user_id=uid)
+
+        def _view(agent):
+            return [(m["role"], m["content"])
+                    for m in store.load_transcript_tail_for_agent(
+                        cid, agent, limit=10)]
+
+        assert _view("alice") == [
+            ("user", "[delegate alice → bob]:\ndo X"),
+            ("user", "Here is agent 'bob''s reply to your delegate:\nanswer"),
+        ]
+        assert _view("bob") == [
+            ("user", "Here is a message from agent 'alice':\ndo X"),
+            ("assistant", "[delegate bob → alice]:\nthinking aloud"),
+            ("assistant", "[delegate bob → alice]:\nanswer"),
+        ]
+        assert _view("carol") == [
+            ("user", "[alice to agent bob]:\ndo X"),
+        ]
+
     def test_external_delegate_routes_only_to_real_target(self, conv):
         store, cid, uid = conv
         store.set_extra(cid, "conv_agents", {

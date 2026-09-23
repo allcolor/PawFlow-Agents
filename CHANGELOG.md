@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Agents on OpenCode Go (`deepseek-flash`) no longer fail a turn with 400
+  "The `reasoning_content` in the thinking mode must be passed back to the
+  API" after the echo retry. The gateway requires the field on every
+  assistant turn after the last user message, including turns that did not
+  reason; the retry only echoed stored reasoning, so a turn with none was
+  refused twice. Such turns now carry an empty `reasoning_content`, which the
+  gateway accepts.
+- Compaction no longer replays another agent's delegate reply as the
+  receiver's own assistant turn. The transcript tail it rebuilds from passed
+  `agent_delegate` rows through unchanged; they now get the per-agent copy the
+  live routing writes (attributed user turn for the receiver, tagged row for
+  the sender, requests only for everyone else).
+- An agent answering a delegate no longer loses the tool calls of that turn
+  when its context is reloaded. The sender's copy was written as one raw row
+  with the calls and reasoning inline, which the context reader ignores, so
+  the turn came back without its calls and every result was dropped as an
+  orphan ("Removed 79 orphan tool result(s)" on each load). The copy is now
+  stored as canonical rows, and the caller's copy no longer carries the
+  responder's reasoning.
+
 ## [1.0.0-beta.285] — 2026-09-23
 
 ### Fixed

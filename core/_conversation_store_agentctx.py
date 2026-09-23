@@ -252,17 +252,24 @@ class _CsAgentCtxMixin:
                                           canon: str) -> List[Dict]:
         """Personalize already-loaded transcript messages for one agent."""
 
+        def _is_own(src: Dict) -> bool:
+            # A delegate-mode turn is authored by its sender (source.from),
+            # an ordinary turn by source.name.
+            if src.get("type") == "agent":
+                author = src.get("name", "")
+            elif src.get("type") == "agent_delegate":
+                author = src.get("from", "")
+            else:
+                return False
+            return bool(canon and author and author.lower() == canon.lower())
+
         # First pass: collect tool_call_ids that belong to THIS agent so we
         # can keep matching tool results and drop everybody else's.
         own_tc_ids: set = set()
         for m in raw:
             if m.get("role") != "tool_call":
                 continue
-            src = m.get("source") or {}
-            if src.get("type") != "agent":
-                continue
-            sname = src.get("name", "")
-            if not (canon and sname and sname.lower() == canon.lower()):
+            if not _is_own(m.get("source") or {}):
                 continue
             tid = m.get("tool_call_id") or m.get("tc_id")
             if tid:
@@ -292,8 +299,7 @@ class _CsAgentCtxMixin:
                 continue
 
             if role in ("thinking", "tool_call"):
-                if src_type == "agent" and canon and src_name \
-                        and src_name.lower() == canon.lower():
+                if _is_own(src):
                     out.append(dict(m))
                 continue
 
@@ -335,6 +341,12 @@ class _CsAgentCtxMixin:
                     out.append(mm)
                 continue
 
+            if src_type == "agent_delegate" and role in ("user", "assistant"):
+                view = self._delegate_row_for_agent(m, canon)
+                if view is not None:
+                    out.append(view)
+                continue
+
             if role == "user":
                 tgt = src.get("target_agent", "") if isinstance(src, dict) else ""
                 # Drop btw/sub-task user messages addressed to another agent —
@@ -355,6 +367,54 @@ class _CsAgentCtxMixin:
             # system, etc. — passthrough
             out.append(dict(m))
         return out
+
+    def _delegate_row_for_agent(self, m: Dict, canon: str) -> Optional[Dict]:
+        """Return the copy of an agent_delegate row that ``canon`` holds.
+
+        Mirrors ``_route_delegate_message``, which wrote the live copies: the
+        sender keeps its own row tagged ``[delegate <from> → <to>]:``, the
+        receiver gets it as a user turn with an explicit attribution, other
+        agents see only requests, as ``[<from> to agent <to>]:``. A rebuilt
+        context must never replay another agent's reply as the receiver's
+        own assistant turn. None when the row does not reach ``canon``.
+        """
+        src = m.get("source") or {}
+        _from = src.get("from", "")
+        _to = src.get("to", "")
+        if not _to or not canon:
+            return None
+        _kind = src.get("kind")
+        _external_transport = src.get("external_transport", "")
+        mm = dict(m)
+        if canon == self._canon_agent(_from):
+            if _external_transport and _kind != "reply":
+                return None
+            mm["content"] = self._prefix_content(
+                mm.get("content", ""),
+                f"[delegate {_from} → {src.get('to_label') or _to}]:")
+            return mm
+        if _kind == "reply" and _external_transport:
+            return None
+        if mm.get("role") == "assistant":
+            mm["role"] = "user"
+        if canon == self._canon_agent(_to):
+            if (_kind == "reply"
+                    and src.get("delegate_visibility") == "self_only"):
+                return None
+            if _kind == "reply":
+                _attr = f"Here is agent '{_from}''s reply to your delegate:"
+            elif _external_transport:
+                _attr = (f"Here is a message from "
+                         f"'{src.get('from_label') or _from}':")
+            else:
+                _attr = f"Here is a message from agent '{_from}':"
+            mm["content"] = self._prefix_content(mm.get("content", ""), _attr)
+            return mm
+        if _kind == "reply" or _external_transport:
+            return None
+        mm["content"] = self._prefix_content(
+            mm.get("content", ""), f"[{_from} to agent {_to}]:")
+        return mm
 
     def load_shared_for_agent(self, cid: str, agent_name: str) -> Optional[List[Dict]]:
         """Load shared context personalized for a specific agent.

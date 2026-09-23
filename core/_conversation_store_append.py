@@ -336,7 +336,8 @@ class _CsAppendMixin:
                 # replies stay private between from/to).
                 _t0 = time.monotonic()
                 touched_agents.update(
-                    self._route_delegate_message(cid, msg, agent_name))
+                    self._route_delegate_message(
+                        cid, canonical_rows, agent_name))
                 _mark_timing("delegate_route", _t0)
             else:
                 # 2. Author's own context (brut, keeps tool_calls /
@@ -624,13 +625,20 @@ class _CsAppendMixin:
                 cid[:8], len(items), len(transcript_rows), len(shared_rows),
                 len(ctx_rows), total_ms, len(touched_agents))
 
-    def _route_delegate_message(self, cid: str, msg: Dict,
+    def _route_delegate_message(self, cid: str, rows: List[Dict],
                                 agent_name: str) -> set:
         """Route an agent_delegate message to from's ctx, to's ctx, and
         (for requests only) to shared + other agents.
 
+        ``rows`` are the message's canonical rows: the anchor first, then
+        its ``thinking`` / ``tool_call`` children. The sender keeps all of
+        them, exactly like a normal own-context write, so a delegate-mode
+        turn that called tools reloads with its tool calls; everyone else
+        receives the anchor only.
+
         Called under the conv lock by append_message.
         """
+        msg = rows[0]
         src = msg.get("source") or {}
         _from = src.get("from", "") or agent_name
         _to = src.get("to", "")
@@ -648,7 +656,7 @@ class _CsAppendMixin:
             _for_from["content"] = self._prefix_content(
                 _for_from.get("content", ""),
                 f"[delegate {_from} → {src.get('to_label') or _to}]:")
-            self._append_ctx_file(cid, _from, [_for_from])
+            self._append_ctx_file(cid, _from, [_for_from] + list(rows[1:]))
             touched_agents.add(self._canon_agent(_from))
 
         _visibility = src.get("delegate_visibility") or "final_reply"

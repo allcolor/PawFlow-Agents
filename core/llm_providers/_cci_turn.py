@@ -91,6 +91,12 @@ _RATE_LIMIT_RESPONSE_LIMIT = 3
 # (each one idle window apart, the stream silent throughout) the prompt on
 # screen is taken as the Stop that never arrived.
 _IDLE_PANE_PROBES_FOR_STOP = 2
+# The wire already said the answer is complete (the last response ended on
+# end_turn, nothing open, nothing owed): one idle-pane probe is enough. The
+# Stop hook runs under a command timeout and was once killed before the event
+# service accepted it (2026-09-23), and the second probe only added twenty
+# more seconds of Active Agents to an answer the user was already reading.
+_IDLE_PANE_PROBES_AFTER_END_TURN = 1
 
 
 def _event_tool_args(event: dict) -> dict:
@@ -224,6 +230,7 @@ class _CCITurnCoordinator:
         self._thinking_start: dict[int, float] = {}
         self._thinking_end: dict[int, float] = {}
         self._request_stop_reasons: dict[str, str] = {}
+        self._last_stop_reason = ""
         self._request_saw_model_content: dict[str, bool] = {}
         self._request_saw_tool_use: dict[str, bool] = {}
         self._saw_model_content = False
@@ -426,7 +433,13 @@ class _CCITurnCoordinator:
             self._idle_pane_probes = 0
             return
         self._idle_pane_probes += 1
-        if self._idle_pane_probes < _IDLE_PANE_PROBES_FOR_STOP:
+        needed = (_IDLE_PANE_PROBES_AFTER_END_TURN
+                  if (self._last_stop_reason == "end_turn"
+                      and self._saw_model_content
+                      and not self._open_messages_requests
+                      and not self._awaiting_followup)
+                  else _IDLE_PANE_PROBES_FOR_STOP)
+        if self._idle_pane_probes < needed:
             return
         if not self._saw_model_content:
             logger.warning(
@@ -803,6 +816,7 @@ class _CCITurnCoordinator:
                 if request_id and stop_reason:
                     self._request_stop_reasons[request_id] = str(stop_reason)
                 if stop_reason:
+                    self._last_stop_reason = str(stop_reason)
                     # tool_use means the CLI owes another /v1/messages call
                     # for the model's continuation; any other stop reason
                     # settles the debt.

@@ -146,6 +146,59 @@ def test_one_idle_probe_is_not_enough(monkeypatch):
     assert coord._stop_seen is False
 
 
+def test_after_end_turn_one_idle_probe_ends_the_turn(monkeypatch):
+    # 2026-09-23: the Stop hook was killed at its command timeout; the answer
+    # had ended on end_turn, yet the agent stayed in Active Agents for two
+    # probe windows. The wire already proved the answer complete.
+    _probe_now(monkeypatch)
+    coord = _CCITurnCoordinator(_EmptyService(), "sess",
+                                pane_callback=lambda: IDLE_PANE)
+    coord._saw_model_content = True
+    coord._last_stop_reason = "end_turn"
+    coord._probe_pane_blocker(0.0)
+    assert coord._stop_seen is True
+
+
+def test_end_turn_with_a_request_still_open_needs_two_probes(monkeypatch):
+    _probe_now(monkeypatch)
+    coord = _CCITurnCoordinator(_EmptyService(), "sess",
+                                pane_callback=lambda: IDLE_PANE)
+    coord._saw_model_content = True
+    coord._last_stop_reason = "end_turn"
+    coord._open_messages_requests.add("r2")
+    coord._probe_pane_blocker(0.0)
+    assert coord._stop_seen is False
+    coord._last_pane_probe_at = 0.0
+    coord._probe_pane_blocker(0.0)
+    assert coord._stop_seen is True
+
+
+def test_a_lost_stop_after_end_turn_costs_one_probe(monkeypatch):
+    _probe_now(monkeypatch)
+    reads = []
+    coord = _CCITurnCoordinator(_QueuedService([
+        {"type": "request_start", "request_id": "r1", "path": "/v1/messages"},
+        {"type": "sse", "request_id": "r1", "event": "content_block_start",
+         "payload": {"type": "content_block_start", "index": 0,
+                     "content_block": {"type": "text", "text": ""}}},
+        {"type": "sse", "request_id": "r1", "event": "content_block_delta",
+         "payload": {"type": "content_block_delta", "index": 0,
+                     "delta": {"type": "text_delta", "text": "All done."}}},
+        {"type": "sse", "request_id": "r1", "event": "content_block_stop",
+         "payload": {"type": "content_block_stop", "index": 0}},
+        {"type": "sse", "request_id": "r1", "event": "message_delta",
+         "payload": {"type": "message_delta",
+                     "delta": {"stop_reason": "end_turn"}}},
+        {"type": "sse", "request_id": "r1", "event": "message_stop",
+         "payload": {"type": "message_stop"}},
+        # The Stop hook was lost.
+    ]), "sess", pane_callback=lambda: reads.append(1) or IDLE_PANE)
+    result = _run(coord)
+    assert "error" not in result, result.get("error")
+    assert result["response"].content == "All done."
+    assert len(reads) == 1
+
+
 def test_an_idle_prompt_without_any_answer_fails_visibly(monkeypatch):
     _probe_now(monkeypatch)
     result = _run(_CCITurnCoordinator(

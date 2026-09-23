@@ -493,6 +493,20 @@ Timing controls are read once when the provider modules are imported:
   turn fails as a non-retryable `cli_idle` error instead. Codex and the
   managed MCP path keep their own end-of-turn rules
   (`_finish_on_idle_pane = False`).
+  When the wire already proved the answer complete -- the last response ended
+  on `end_turn`, with model content, no request open and no follow-up owed --
+  one idle probe is enough (`_IDLE_PANE_PROBES_AFTER_END_TURN`), so a lost Stop
+  releases Active Agents one silence window after the answer instead of two.
+- Lifecycle hooks (UserPromptSubmit, Stop, StopFailure, compaction,
+  SessionEnd) run under a 30-second command timeout
+  (`OBSERVATION_HOOK_TIMEOUT_SECONDS`) for Claude Code, Codex and agy. It was
+  five seconds: under server load a Stop hook was killed after its TCP
+  connection but before the event service accepted its registration
+  (2026-09-23), the turn never received its end and the agent stayed in Active
+  Agents while the user was already reading the answer. The event service now
+  logs `CC interactive hook connection closed without an event` whenever a
+  registered hook closes without delivering, and `CC interactive event
+  rejected` when `publish_event` refuses one; both used to be silent.
 - A model request answered with a bare `429` is reported instead of discarded.
   Its body is not decodable, so the proxy only emits `response_start
   status=429` and the CLI retries the same limit on its own: the turn never
@@ -1163,9 +1177,11 @@ envelope. On `Stop` it now delivers `last_assistant_message`, bounded at
   both supported, tool calls and tool results never match;
 - empty when neither exists, in which case the coordinator fails the turn.
 
-Delivery stays fire-and-forget with one bounded retry (`_DELIVERY_RETRIES`,
-0.4 s) inside the five-second hook timeout. The hook mints no consumer epoch,
-no turn receipt and no event id: those stay server-owned.
+Delivery stays fire-and-forget but retries a refused or stalled connection
+every 0.4 s until `_DELIVERY_DEADLINE_SECONDS` (25 s), each attempt bounded by
+`_DELIVERY_ATTEMPT_TIMEOUT_SECONDS` (10 s) and the time left, inside the
+30-second hook command timeout. The hook mints no consumer epoch, no turn
+receipt and no event id: those stay server-owned.
 
 For `agy` the hook is client-aware: each configured handler passes its event
 through `--event`, since the documented payload has no event-name field.

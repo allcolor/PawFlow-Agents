@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import logging
 import threading
 import time
 from queue import Queue
@@ -3330,6 +3331,53 @@ def test_cc_interactive_event_service_accepts_hook_disconnect():
     assert event["hook_event_name"] == "Stop"
     assert event["session_token"] == "sess"
     assert event["timestamp"] > 0
+
+
+def _serve_hook_frames(svc, frames):
+    class _Writer:
+        def write(self, data):
+            pass
+
+        async def drain(self):
+            return None
+
+        def close(self):
+            pass
+
+    async def run_service():
+        reader = asyncio.StreamReader()
+        for obj in frames:
+            data = json.dumps(obj).encode()
+            reader.feed_data(bytes([0x81, len(data)]) + data)
+        reader.feed_eof()
+        await svc._serve(reader, _Writer(), "test")
+
+    asyncio.run(run_service())
+
+
+_HOOK_REGISTER = {"type": "register", "token": "tok",
+                  "session_token": "sess", "client_kind": "hook"}
+
+
+def test_cc_interactive_hook_closed_without_event_is_logged(caplog):
+    # 2026-09-23: the CLI killed a Stop hook at its command timeout right after
+    # it registered. Nothing was logged and the turn silently never ended.
+    from services.cc_interactive_event_service import CCInteractiveEventService
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    with caplog.at_level(logging.WARNING):
+        _serve_hook_frames(svc, [_HOOK_REGISTER])
+    assert "hook connection closed without an event" in caplog.text
+
+
+def test_cc_interactive_hook_with_event_is_not_logged(caplog):
+    from services.cc_interactive_event_service import CCInteractiveEventService
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    with caplog.at_level(logging.WARNING):
+        _serve_hook_frames(svc, [_HOOK_REGISTER, {
+            "type": "event", "event": {"type": "hook", "hook_event_name": "Stop"}}])
+    assert "without an event" not in caplog.text
 
 
 def test_cc_interactive_event_service_logs_wire_without_queueing(caplog):

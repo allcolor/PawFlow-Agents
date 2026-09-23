@@ -24,7 +24,9 @@ from urllib.parse import urlparse
 
 import core.paths as _paths
 from core._codex_composer_guard import CodexComposerGuardMixin
-from core._cci_pool_spawn import InteractiveContainer, _InteractiveContainerSpawnMixin
+from core._cci_pool_spawn import (
+    OBSERVATION_HOOK_TIMEOUT_SECONDS, InteractiveContainer,
+    _InteractiveContainerSpawnMixin)
 from core.cc_interactive_certs import generate_leaf
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.docker_utils import docker_cmd, get_host_ip
@@ -274,7 +276,7 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
         handler = {
             "type": "command",
             "command": "python3 /opt/pawflow/cc_interactive_hook.py",
-            "timeout": 5,
+            "timeout": OBSERVATION_HOOK_TIMEOUT_SECONDS,
         }
         hooks = {name: [{"hooks": [handler]}] for name in (
             "UserPromptSubmit", "Stop", "PreCompact",

@@ -25,6 +25,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   inline. Prompts are now pasted as small bracketed pieces that the TUI keeps
   inline and verbatim (Codex keeps its single paste), and the CLI system prompt
   states that content marked as pasted in a user message is the user's own.
+- A finished interactive CLI turn no longer stays in Active Agents because its
+  `Stop` hook was lost. The lifecycle hooks of Claude Code, Codex and agy ran
+  under a 5-second command timeout; under server load the CLI killed a `Stop`
+  hook before the event service accepted it, the turn never ended and the
+  user's next message was injected into it. Hooks now get 30 seconds and
+  retry delivery until a 25-second deadline; a hook that closes without
+  delivering, or an event the service rejects, is logged as a warning; and
+  when the last response already ended on `end_turn` a single idle-prompt
+  probe stands in for the lost `Stop` instead of two.
 
 ## [1.0.0-beta.283] — 2026-09-23
 

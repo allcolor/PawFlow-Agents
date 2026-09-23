@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import core.paths as _paths
+from core._cci_pool_spawn import OBSERVATION_HOOK_TIMEOUT_SECONDS
 from core.apparmor import apparmor_security_opts
 from core.cc_interactive_certs import ca_private_key_is_host_only, generate_leaf
 from core.docker_utils import (
@@ -471,7 +472,7 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
                 "type": "command",
                 "command": ("python3 /opt/pawflow/cc_interactive_hook.py "
                             f"--event {event}"),
-                "timeout": 5,
+                "timeout": OBSERVATION_HOOK_TIMEOUT_SECONDS,
             }]
             for event in cls._AGY_MANAGED_HOOK_EVENTS
         }

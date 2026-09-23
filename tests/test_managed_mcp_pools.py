@@ -454,7 +454,7 @@ class TestAntigravityPool:
             assert handlers == [{
                 "type": "command",
                 "command": f"python3 /opt/pawflow/cc_interactive_hook.py --event {event}",
-                "timeout": 5,
+                "timeout": 30,
             }]
 
     def test_managed_agy_container_mounts_hook_not_proxy(self, monkeypatch):

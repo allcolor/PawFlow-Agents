@@ -475,7 +475,7 @@ def test_codex_hooks_use_documented_hooks_json_shape(tmp_path):
     assert handler == {
         "type": "command",
         "command": "python3 /opt/pawflow/cc_interactive_hook.py",
-        "timeout": 5,
+        "timeout": 30,
     }
 
 

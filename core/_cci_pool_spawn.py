@@ -36,6 +36,9 @@ import core.paths as _paths
 # container. The proxy is told the same path so its own size guard can keep the
 # file off the 512 MB /tmp tmpfs; one literal, both sides.
 CCI_PROXY_LOG = "/tmp/cci_proxy.log"  # nosec B108 - container-local tmpfs capture file.
+# Command timeout of the lifecycle hooks (UserPromptSubmit, Stop, compaction,
+# SessionEnd). tools/cc_interactive_hook.py keeps its delivery deadline below it.
+OBSERVATION_HOOK_TIMEOUT_SECONDS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -478,11 +481,16 @@ class _InteractiveContainerSpawnMixin:
     def _write_hook_settings(
             self, workdir: str, anthropic_api_key: str = "") -> None:
         hooks = {}
+        # Observation hooks connect to the event service over a fresh TLS
+        # WebSocket. Five seconds was not enough under server load: a Stop
+        # hook was killed before the service accepted it (2026-09-23), the
+        # turn never ended and the agent stayed in Active Agents. The hook's
+        # own delivery deadline stays below this timeout.
         handler = {
             "type": "command",
             "command": "python3",
             "args": ["/opt/pawflow/cc_interactive_hook.py"],
-            "timeout": 5,
+            "timeout": OBSERVATION_HOOK_TIMEOUT_SECONDS,
         }
         for event_name in ("UserPromptSubmit", "Stop", "StopFailure", "PreCompact", "PostCompact", "SessionEnd"):
             hooks[event_name] = [{"hooks": [handler]}]

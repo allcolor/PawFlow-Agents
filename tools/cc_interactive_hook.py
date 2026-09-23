@@ -41,9 +41,13 @@ _MAX_FINAL_CHARS = 200_000
 # How much of a local transcript is read (from its end) to find the last
 # assistant message. Transcripts are append-only JSONL, so the tail is enough.
 _TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024
-# One short retry when the event service refuses the first connection: the
-# hook has a five-second command timeout, so this stays well inside it.
-_DELIVERY_RETRIES = 1
+# Delivery keeps retrying a refused or stalled connection until this deadline,
+# which stays below the hooks' 30-second command timeout
+# (OBSERVATION_HOOK_TIMEOUT_SECONDS). A Stop killed by that timeout is lost for
+# good: the turn never ends and the agent stays in Active Agents -- which is
+# what a five-second budget with one retry did under server load (2026-09-23).
+_DELIVERY_DEADLINE_SECONDS = 25.0
+_DELIVERY_ATTEMPT_TIMEOUT_SECONDS = 10.0
 _DELIVERY_RETRY_DELAY_SECONDS = 0.4
 
 
@@ -84,12 +88,12 @@ def _recv_json(sock) -> dict:
     return json.loads(_recvn(sock, length).decode("utf-8"))
 
 
-def _connect(url: str, token: str, session_token: str):
+def _connect(url: str, token: str, session_token: str, timeout: float = 5):
     parsed = urlparse(url)
     host = parsed.hostname or "localhost"
     port = parsed.port or (443 if parsed.scheme == "wss" else 80)
     path = parsed.path or "/ws/cc-interactive/events"
-    sock = socket.create_connection((host, port), timeout=5)
+    sock = socket.create_connection((host, port), timeout=timeout)
     if parsed.scheme == "wss":
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
@@ -377,21 +381,24 @@ def _consume_injected_prompt(prompt: str) -> bool:
 
 
 def _deliver(url: str, token: str, session_token: str, event: dict) -> bool:
-    """Send one event; retry once on a refused/aborted connection."""
-    attempts = _DELIVERY_RETRIES + 1
-    for attempt in range(attempts):
+    """Send one event, retrying transport failures until the deadline."""
+    deadline = time.monotonic() + _DELIVERY_DEADLINE_SECONDS
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
         try:
-            sock = _connect(url, token, session_token)
+            sock = _connect(url, token, session_token,
+                            timeout=min(_DELIVERY_ATTEMPT_TIMEOUT_SECONDS, remaining))
             try:
                 sock.sendall(_masked_frame({"type": "event", "event": event}))
             finally:
                 sock.close()
             return True
         except Exception:  # noqa: BLE001 - any transport failure is a retry, never a CLI error
-            if attempt + 1 >= attempts:
+            if deadline - time.monotonic() <= _DELIVERY_RETRY_DELAY_SECONDS:
                 return False
             time.sleep(_DELIVERY_RETRY_DELAY_SECONDS)
-    return False
 
 
 def _client_output(client: str) -> str:

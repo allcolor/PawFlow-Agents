@@ -2045,6 +2045,11 @@ class CCInteractiveEventService(BaseService):
         from services.filesystem_service import _ws_recv_frame, _ws_send_frame
 
         session_token = ""  # nosec B105
+        client_kind = ""
+        # A hook connects once per event. Registered but closed without one
+        # means the CLI killed the hook mid-delivery (its command timeout):
+        # a lost Stop leaves the turn without an end, so it must be visible.
+        hook_delivered = False
         native_cancel = threading.Event()
         native_task = None
         try:
@@ -2110,6 +2115,7 @@ class CCInteractiveEventService(BaseService):
                         break
                     native_task = asyncio.create_task(answer_native_input(
                         state, msg.get("input"), native_cancel, writer))
+                    hook_delivered = True
                     continue
                 if msg.get("type") != "event":
                     continue
@@ -2119,10 +2125,22 @@ class CCInteractiveEventService(BaseService):
                 try:
                     self.publish_event(session_token, event, block=True)
                 except Exception as exc:
+                    logger.warning(
+                        "CC interactive event rejected: session=%s kind=%s "
+                        "type=%s hook=%s error=%s", session_token[:8],
+                        client_kind, event.get("type", ""),
+                        event.get("hook_event_name", ""), exc)
                     await _ws_send_frame(writer, json.dumps({
                         "type": "error", "message": str(exc)}).encode())
                     break
+                hook_delivered = True
         finally:
+            if client_kind == "hook" and not hook_delivered:
+                logger.warning(
+                    "CC interactive hook connection closed without an event: "
+                    "session=%s addr=%s (hook killed or transport broken "
+                    "mid-delivery; a lost Stop leaves its turn open)",
+                    session_token[:8], remote)
             native_cancel.set()
             if native_task is not None:
                 native_task.cancel()
@@ -2132,7 +2150,7 @@ class CCInteractiveEventService(BaseService):
                     state = self._sessions.get(session_token)
                     if state:
                         state.native_input_cancels.discard(native_cancel)
-                        if locals().get("client_kind", "proxy") == "proxy":
+                        if client_kind in ("", "proxy"):
                             state.connected = False
                             for cancel in state.native_input_cancels:
                                 cancel.set()

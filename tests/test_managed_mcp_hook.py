@@ -146,16 +146,28 @@ class TestEnvelopeAndDelivery:
         assert not {"consumer_epoch", "turn_receipt", "event_id"} & set(event)
         assert capsys.readouterr().out == ""
 
-    def test_delivery_retries_once_then_gives_up(self, hook, monkeypatch):
-        attempts = []
+    def test_delivery_retries_until_the_deadline_then_gives_up(self, hook, monkeypatch):
+        # 2026-09-23: a Stop hook killed at its 5 s command timeout before the
+        # event service accepted it left the turn without an end. Delivery now
+        # keeps retrying, each attempt bounded by the time left.
+        clock = {"t": 0.0}
+        timeouts = []
 
-        def _connect(url, token, session):
-            attempts.append(1)
-            raise ConnectionError("refused")
+        def _connect(url, token, session, timeout=5):
+            timeouts.append(timeout)
+            clock["t"] += timeout
+            raise ConnectionError("stalled")
+
+        def _sleep(seconds):
+            clock["t"] += seconds
         monkeypatch.setattr(hook, "_connect", _connect)
-        monkeypatch.setattr(hook.time, "sleep", lambda s: None)
+        monkeypatch.setattr(hook.time, "monotonic", lambda: clock["t"])
+        monkeypatch.setattr(hook.time, "sleep", _sleep)
         assert hook._deliver("wss://e", "t", "s", {"type": "hook"}) is False
-        assert len(attempts) == hook._DELIVERY_RETRIES + 1
+        assert len(timeouts) > 2
+        assert timeouts[0] == hook._DELIVERY_ATTEMPT_TIMEOUT_SECONDS
+        assert clock["t"] <= hook._DELIVERY_DEADLINE_SECONDS
+        assert hook._DELIVERY_DEADLINE_SECONDS < 30
 
     def test_delivery_succeeds_on_retry(self, hook, monkeypatch):
         calls = []
@@ -169,7 +181,7 @@ class TestEnvelopeAndDelivery:
 
         state = {"n": 0}
 
-        def _connect(url, token, session):
+        def _connect(url, token, session, timeout=5):
             state["n"] += 1
             if state["n"] == 1:
                 raise ConnectionError("refused")

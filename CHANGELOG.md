@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.282] — 2026-09-23
+
 ### Fixed
 
 - Stopping a provider-pool or relay container no longer takes 10 seconds, and

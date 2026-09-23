@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Relay Desktop can start its relays again. Its packaged relay binary was
+  built without the `pawflow_relay` package data, so
+  `physical-seccomp.json` was missing from the extracted bundle and every
+  `docker run --security-opt seccomp=...` failed with exit code 125 in a
+  restart loop. The desktop PyInstaller build now collects that data, like the
+  relay CLI build already did.
+
 ## [1.0.0-beta.283] — 2026-09-23
 
 ### Fixed

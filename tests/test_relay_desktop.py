@@ -216,6 +216,8 @@ def test_relay_desktop_prepare_runtime_script_declares_required_payload():
     assert "binDir" in build_bin
     assert "pawflow-relay.exe" in build_bin
     assert "--hidden-import" in build_bin
+    # The frozen relay passes pawflow_relay/physical-seccomp.json to docker run.
+    assert "'--collect-data', 'pawflow_relay'" in build_bin
     assert "runtimeToolHiddenImports" in build_bin
     assert "difflib" in build_bin
     assert "urllib.request" in build_bin

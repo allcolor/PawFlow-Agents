@@ -76,6 +76,8 @@ run(pythonCommand(), [
   '--workpath', buildDir,
   '--specpath', buildDir,
   '--paths', repoRoot,
+  // Package data (physical-seccomp.json) is resolved next to the frozen module.
+  '--collect-data', 'pawflow_relay',
   '--hidden-import', 'pawflow_relay.manager_cli',
   '--hidden-import', 'pawflow_relay.thread',
   '--hidden-import', 'pawflow_relay.worker',

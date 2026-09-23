@@ -246,7 +246,19 @@ AppArmor (skip with `--skip-apparmor`); to load manually: `sudo install -m
 `scripts/test_apparmor_profile.sh`, then restart PawFlow so new pool
 containers pick it up. `scripts/doctor-pawflow.sh` reports whether the
 profiles are loaded. `PAWFLOW_APPARMOR_PROFILE` overrides the detection
-with a verbatim profile name. Treat
+with a verbatim profile name.
+
+Both profiles must let the container **receive** signals from unconfined
+peers (`signal (receive) peer=unconfined,`, as `docker-default` does): runc,
+containerd and dockerd are unconfined, so without that rule the kernel denies
+them SIGTERM and SIGKILL. The symptom is not a refusal but a delay — docker
+waits out its full 10s kill window, then kills through the cgroup — measured
+at 10.2s per `docker rm -f` against 0.16s with `docker-default`. That delay
+pushed pool-container removal past its timeout under load and leaked live CLI
+containers (the webchat then answered "No live interactive tmux session").
+A host still running the older profiles keeps the 10s stop; reload them
+(`sudo apparmor_parser -r -W /etc/apparmor.d/pawflow-mount`) after upgrading.
+Treat
 those containers as privileged runtime surfaces: credentials are scoped per
 user/conversation/service, and workloads should remain isolated to the generated
 session directory.

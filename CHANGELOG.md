@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Stopping a provider-pool or relay container no longer takes 10 seconds, and
+  a CLI container is no longer left running with nothing tracking it. The
+  `pawflow-mount` and `pawflow-relay` AppArmor profiles were missing
+  `signal (receive) peer=unconfined,` (docker-default has it), so the kernel
+  denied unconfined runc/containerd/dockerd the right to signal the
+  container: docker waited out its whole 10s kill window on every stop, then
+  killed through the cgroup (measured `docker rm -f`: 10.2 s, against 0.16 s
+  with docker-default). Because every eviction path drops the pool entry
+  before removing the container and `_kill_container` ignored the result,
+  a removal that ran past its timeout leaked a live CLI: the webchat answered
+  "No live interactive tmux session for agent X", the next turn spawned
+  another container, and the abandoned one held Active Agents until an orphan
+  capture adopted it hours later (observed: five live containers for one
+  agent in one night). The profiles now carry the docker-default signal and
+  ptrace peers, container removal is verified and retried by the pool sweeper
+  instead of being assumed, and a removal slower than 2 s is reported.
+  Hosts that already load the profiles must reload them
+  (`sudo apparmor_parser -r -W /etc/apparmor.d/pawflow-mount`).
+
 ## [1.0.0-beta.281] — 2026-09-22
 
 ### Fixed

@@ -1,8 +1,13 @@
 """Tests for core.apparmor — pool-container AppArmor profile resolution."""
 
+from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 import core.apparmor as apparmor
+
+_PROFILE_DIR = Path(__file__).resolve().parents[1] / "docker" / "apparmor"
 
 
 def setup_function(_fn):
@@ -95,6 +100,30 @@ def test_relay_env_override_skips_probe(monkeypatch):
         opts = apparmor.relay_apparmor_security_opts("img:latest")
     assert opts == ["--security-opt", "apparmor=unconfined"]
     probe.assert_not_called()
+
+
+@pytest.mark.parametrize("profile", ["pawflow-mount", "pawflow-relay"])
+def test_profile_lets_docker_signal_the_container(profile):
+    """A confined process must accept signals from unconfined peers.
+
+    runc, containerd and dockerd are unconfined. Without
+    `signal (receive) peer=unconfined` the kernel denies them SIGTERM and
+    SIGKILL, so docker waits out its full 10s kill window on every stop and
+    then has to kill through the cgroup: measured `docker rm -f` at 10.2s
+    against 0.16s with docker-default. That delay is what pushed pool
+    container removal past its subprocess timeout and leaked live CLI
+    containers (webchat: "No live interactive tmux session").
+    """
+    text = (_PROFILE_DIR / profile).read_text()
+    assert "signal (receive) peer=unconfined," in text
+    assert f"signal (send,receive) peer={profile}," in text
+
+
+@pytest.mark.parametrize("profile", ["pawflow-mount", "pawflow-relay"])
+def test_profile_keeps_docker_default_ptrace_peers(profile):
+    """`docker top`, and any unconfined reader of /proc, need the readby rule."""
+    text = (_PROFILE_DIR / profile).read_text()
+    assert "ptrace (readby,tracedby) peer=unconfined," in text
 
 
 def test_pool_and_relay_profiles_cache_independently(monkeypatch):

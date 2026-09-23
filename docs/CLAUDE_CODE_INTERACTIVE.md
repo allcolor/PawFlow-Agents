@@ -45,6 +45,17 @@ proxy. The provider does not read Claude Code transcripts or terminal output.
 - Every interactive tmux window and browser viewer uses the same pinned
   220x50 grid as Codex Interactive. The browser never resizes the shared tmux
   window; xterm renders the fixed grid and letterboxes it when necessary.
+- Every eviction path (compact invalidation, idle sweep, stopped container,
+  force stop) drops the pool entry BEFORE removing the container, so the
+  removal must be verified: `_kill_container` reads the exit status of
+  `docker rm -f`, treats `No such container` as success, and logs and queues
+  anything else for `_retry_pending_kills`, which the 60s sweeper runs until
+  the container is really gone. Ignoring that status leaked live CLIs — the
+  pool no longer knew the session (the webchat answered "No live interactive
+  tmux session for agent X"), the next turn spawned another container, and the
+  abandoned one kept answering into a stream nobody read, holding Active
+  Agents until an orphan capture adopted it hours later (observed: five live
+  containers for one agent in one night).
 - In API-key mode, PawFlow preapproves Claude Code's custom-key confirmation by
   storing only Claude Code's own 20-character key suffix in
   `customApiKeyResponses.approved`. The full API key remains only in the

@@ -46,6 +46,18 @@ profile pawflow-mount flags=(attach_disconnected,mediate_deleted) {
   deny /sys/firmware/** rwklx,
   deny /sys/kernel/security/** rwklx,
 
+  # Signals from OUTSIDE the profile, and this is not optional: runc,
+  # containerd and dockerd are unconfined, so without the receive rule the
+  # kernel denies them SIGTERM *and SIGKILL* on every process in here.
+  # Measured cost of the omission: `docker rm -f` on a pool container took
+  # 10.2s instead of 0.16s -- the daemon's whole kill-wait window -- before
+  # it fell back to killing through the cgroup. That 10s is what pushed
+  # container removal past the pools' subprocess timeout under load, and a
+  # removal aborted there leaves a live CLI container behind (see
+  # InteractiveClaudeCodePool._kill_container). docker-default carries both
+  # rules; "kept verbatim" above was true of the deny list only.
+  signal (receive) peer=unconfined,
   signal (send,receive) peer=pawflow-mount,
   ptrace (trace,read,tracedby,readby) peer=pawflow-mount,
+  ptrace (readby,tracedby) peer=unconfined,
 }

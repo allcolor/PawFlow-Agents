@@ -49,6 +49,10 @@ _DISALLOWED_BUILTIN_TOOLS = (
     "ScheduleWakeup,PushNotification"
 )
 
+# Above this, a container removal is reported. Measured on this image with an
+# idle daemon: ~0.16s. See InteractiveClaudeCodePool._kill_container.
+_SLOW_KILL_SECONDS = 2.0
+
 
 
 
@@ -63,6 +67,13 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     # the only trustworthy proof that the TUI accepted the interrupted prompt.
     _VERIFY_INTERRUPT_SYNCHRONOUS = False
     _PREPARE_INTERRUPT_BEFORE_PASTE = False
+    # A removal costs ~0.2s once the AppArmor profile lets the container
+    # receive SIGKILL (docker/apparmor/pawflow-mount). It cost 10.2s while
+    # that rule was missing, which is what the old 15s left no margin over.
+    # The timeout stays generous: it guards a loaded daemon, not that bug.
+    _KILL_TIMEOUT_SECONDS = float(
+        os.environ.get("PAWFLOW_CLI_CONTAINER_KILL_TIMEOUT_SECONDS", "45")
+        or 45)
 
     @classmethod
     def instance(cls) -> "InteractiveClaudeCodePool":
@@ -83,6 +94,11 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         # same credential slot, and each reservation must count once toward
         # that slot's load for least-loaded balancing.
         self._reserved_slots: list = []
+        # Containers whose removal failed, kept so the sweeper can retry.
+        # Every eviction path drops the pool entry BEFORE killing, so a
+        # removal that fails silently leaves a live CLI nothing tracks: see
+        # _kill_container.
+        self._pending_kills: set[str] = set()
         self._sweeper_started = False
         self._sweeper_stop = threading.Event()
         self._tick_seconds = 60
@@ -1402,6 +1418,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             survivors = list(self._sessions.values())
         for state in survivors:
             self._recover_container_tokens(state)
+        # A container whose removal failed on an earlier tick is still running
+        # a CLI no pool entry points at. Retry it here, where the failure is
+        # cheap, instead of leaving it to adopt orphan turns for hours.
+        self._retry_pending_kills()
         return len(to_kill)
 
     def shutdown_all(self) -> None:
@@ -1443,9 +1463,86 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             logger.debug("[cci-live] event session cleanup failed",
                          exc_info=True)
 
-    @staticmethod
-    def _kill_container(name: str) -> None:
-        subprocess.run(docker_cmd() + ["rm", "-f", name], capture_output=True, timeout=15)  # nosec B603
+    def _kill_container(self, name: str) -> bool:
+        """Remove one container, and SAY whether it is really gone.
+
+        `docker rm -f` does fail -- a daemon busy with twenty CLI containers
+        and a game engine, a kill whose exit event never arrives -- and every
+        eviction path here pops the pool entry BEFORE killing. Ignoring the
+        exit status therefore turned one failed removal into a permanent,
+        invisible leak: the pool no longer knew the session (the webchat
+        answered "No live interactive tmux session"), the next turn launched
+        yet another container, and the abandoned CLI kept answering into a
+        stream nobody read -- holding Active Agents until an orphan capture
+        finally adopted it hours later. A failed removal is now logged and
+        queued for `_retry_pending_kills`.
+
+        The timeout is _KILL_TIMEOUT_SECONDS, not 15: removals measured
+        10.2s each (2026-09-23, six containers) because the pool's AppArmor
+        profile denied the container SIGKILL from unconfined runc/dockerd --
+        fixed in docker/apparmor/pawflow-mount, where a removal is back to
+        ~0.16s. A client killed by the timeout drops the request the daemon
+        is serving, which is how a removal could be lost without a trace.
+
+        Returns True when the container is gone (or was never there).
+        """
+        if not name:
+            return True
+        started = time.time()
+        try:
+            result = subprocess.run(  # nosec B603
+                docker_cmd() + ["rm", "-f", name],
+                capture_output=True, text=True,
+                timeout=self._KILL_TIMEOUT_SECONDS)
+        except Exception as exc:
+            logger.warning("[cci-live] docker rm -f %s did not answer after "
+                           "%.1fs (%s); queued for retry",
+                           name, time.time() - started, exc)
+            with self._lock:
+                self._pending_kills.add(name)
+            return False
+        elapsed = time.time() - started
+        stderr = (result.stderr or "").strip()
+        if result.returncode == 0 or "no such container" in stderr.lower():
+            # ~0.16s is the normal cost. A removal that takes seconds means
+            # the container is not accepting SIGKILL -- the AppArmor
+            # signal-receive regression, or a daemon in trouble -- so the
+            # duration is reported instead of assumed.
+            if elapsed >= _SLOW_KILL_SECONDS:
+                logger.warning("[cci-live] docker rm -f %s took %.1fs",
+                               name, elapsed)
+            else:
+                logger.debug("[cci-live] docker rm -f %s took %.1fs",
+                             name, elapsed)
+            with self._lock:
+                self._pending_kills.discard(name)
+            return True
+        logger.warning("[cci-live] docker rm -f %s failed (exit %s: %s); "
+                       "queued for retry", name, result.returncode,
+                       stderr[:200])
+        with self._lock:
+            self._pending_kills.add(name)
+        return False
+
+    def _retry_pending_kills(self) -> int:
+        """Re-kill the containers whose removal failed on an earlier tick.
+
+        Called from the sweeper. A container that is no longer running is
+        dropped from the queue: `_is_alive` answers False only when docker
+        said so, so a probe that cannot answer keeps the retry armed instead
+        of forgetting a live orphan.
+        """
+        with self._lock:
+            names = sorted(self._pending_kills)
+        retried = 0
+        for name in names:
+            if not self._is_alive(name):
+                with self._lock:
+                    self._pending_kills.discard(name)
+                continue
+            retried += 1
+            self._kill_container(name)
+        return retried
 
     @staticmethod
     def _fmt_key(key: tuple[str, str, str, str]) -> str:

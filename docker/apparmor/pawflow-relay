@@ -83,6 +83,12 @@ profile pawflow-relay flags=(attach_disconnected,mediate_deleted) {
   deny /sys/firmware/** rwklx,
   deny /sys/kernel/security/** rwklx,
 
+  # Same rule the pool profile was missing: runc/containerd/dockerd are
+  # unconfined, and a confined process that may not RECEIVE their signals
+  # cannot be stopped or killed by docker -- the daemon waits out its full
+  # 10s kill window on every stop. docker-default carries both peers.
+  signal (receive) peer=unconfined,
   signal (send,receive) peer=pawflow-relay,
   ptrace (trace,read,tracedby,readby) peer=pawflow-relay,
+  ptrace (readby,tracedby) peer=unconfined,
 }

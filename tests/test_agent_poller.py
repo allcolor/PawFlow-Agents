@@ -529,8 +529,9 @@ def test_continuation_during_final_response_runs_again_with_its_plan(poller_env,
             assert _poll(task, cid) == []
             return LLMResponse(content="Continuation scheduled; stopping now.",
                                finish_reason="stop", model="test-model")
-        assert len(seen) == 2
-        assert any("inspect REDkit output" in str(text) for text in seen[-1])
+        # No assert in here: the loop reports a raising provider as an LLM
+        # error, so a failed check only surfaced when its text happened to
+        # look transient and triggered a third call.
         return LLMResponse(content="The due check is handled.",
                            finish_reason="stop", model="test-model")
 
@@ -539,6 +540,8 @@ def test_continuation_during_final_response_runs_again_with_its_plan(poller_env,
     with patch("threading.Timer"):
         task._streaming_agent_loop_inner(ctx, cid, MagicMock())
     assert len(seen) == 2
+    assert any("inspect REDkit output" in str(text) for text in seen[1])
+    assert any("Work until the check is due" in str(text) for text in seen[1])
     assert PendingQueue.for_agent(cid, "assistant").peek_count() == 0
     assert not ctx.get("_retrigger_after_done")
 

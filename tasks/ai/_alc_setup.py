@@ -169,8 +169,13 @@ class _ALCSetupMixin:
 
         st._append = lambda msg: self._alc_append(st, msg)
 
-        st.messages, st._repaired = _repair_tool_result_order(
+        # Repair IN PLACE: ctx["messages"] is this exact list, and a retrigger
+        # re-enters the loop from ctx. Rebinding st.messages to the repaired
+        # copy left ctx on the start-of-turn list, so a retrigger ran without
+        # the reply it followed and without the messages the final drain added.
+        _repaired_messages, st._repaired = _repair_tool_result_order(
             st.messages, st.conversation_id)
+        st.messages[:] = _repaired_messages
         if st._repaired:
             logger.warning(
                 "[agent:%s] repaired interrupted tool-call ordering in context",

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- On API providers, a turn re-triggered because messages arrived during the
+  previous one now sees them. The loop repaired the tool-call order into a
+  new list and kept working on that copy, while the re-trigger restarted
+  from the start-of-turn list: the model answered without its own previous
+  reply and without the drained reminder, delegate result or user message
+  that caused the re-trigger. The repair now updates the list in place.
+  The poller test covering this checked it inside the fake provider, where a
+  failure was reported as an LLM error and only failed the test when the
+  error text looked transient; it now asserts after the loop.
+
 ## [1.0.0-beta.286] — 2026-09-23
 
 ### Fixed

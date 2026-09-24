@@ -144,8 +144,11 @@ measurements or imply a deployment or a new release.
 
 `SegmentedJsonl.scrub_secret_runtime_values` now keeps a versioned
 `secret_scrub.json` completion cache beside each stream's segments. A cache entry
-records device/inode, size, nanosecond modification/change timestamps, and whether
-rows were decoded with a codec. An unchanged segment is checked by metadata rather
+records device/inode, size, nanosecond modification timestamp, and whether
+rows were decoded with a codec. The change timestamp (ctime) is deliberately
+excluded: the server entrypoint's `chown -R` bumps it on every file at each
+start, which used to invalidate every marker and rescan every conversation
+under its lock (40-60 s of blocked UI actions on large conversations). An unchanged segment is checked by metadata rather
 than decoded again. A changed tail, new segment, replaced/restored file, obsolete
 marker, or encryption rewrite is rescanned. The marker contains no message text
 or secrets and is replaced atomically only after successful validation. A failed

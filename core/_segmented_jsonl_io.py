@@ -19,7 +19,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 
 _SEGMENT_INDEX_VERSION = 2
-_SECRET_SCRUB_VERSION = 1
+_SECRET_SCRUB_VERSION = 2
 _ROLE_KEY_BYTES = b'"role":'
 _ROLE_STRING_PREFIX = b'{"role": "'
 
@@ -47,9 +47,11 @@ class _SegmentedJsonlIOMixin:
 
     @staticmethod
     def _scrub_segment_signature(path: Path) -> list:
+        # No st_ctime_ns: the server entrypoint's `chown -R` (and any
+        # chmod/backup tool) bumps ctime on every file at each start, which
+        # made every restart rescan every conversation under its lock.
         stat = path.stat()
-        return [stat.st_dev, stat.st_ino, stat.st_size,
-                stat.st_mtime_ns, stat.st_ctime_ns]
+        return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns]
 
     def scrub_secret_runtime_values(self) -> tuple[int, int]:
         """Remove legacy runtime secrets, rechecking only changed segments.

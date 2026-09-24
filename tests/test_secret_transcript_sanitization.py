@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 import pytest
 
@@ -180,6 +181,23 @@ def test_scrub_only_scans_segments_changed_since_completion(tmp_path, monkeypatc
     monkeypatch.setattr(log, "_iter_file", record)
     assert log.scrub_secret_runtime_values() == (0, 0)
     assert read_paths == [paths[-1]]
+
+
+def test_scrub_completion_survives_metadata_only_change(tmp_path, monkeypatch):
+    # The server entrypoint runs `chown -R` at every start: ctime moves on
+    # every segment while content, inode, size and mtime stay the same.
+    log = SegmentedJsonl(tmp_path / "transcript.jsonl", max_rows=1)
+    log.append_dicts([{"role": "user", "content": str(i)} for i in range(3)])
+    log.scrub_secret_runtime_values()
+    for path in log.iter_paths():
+        before = path.stat().st_ctime_ns
+        time.sleep(0.01)
+        os.chmod(path, path.stat().st_mode)
+        assert path.stat().st_ctime_ns != before
+    restarted = SegmentedJsonl(log.flat_path, max_rows=1)
+    monkeypatch.setattr(restarted, "_iter_file", lambda path: pytest.fail(
+        "a metadata-only change rescanned unchanged history"))
+    assert restarted.scrub_secret_runtime_values() == (0, 0)
 
 
 def test_scrub_rechecks_replaced_segment_even_with_same_size_and_mtime(tmp_path):

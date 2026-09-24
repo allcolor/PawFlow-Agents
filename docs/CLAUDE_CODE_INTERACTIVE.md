@@ -762,6 +762,12 @@ pastes are not merged into a chip. `InteractiveClaudeCodePool._paste_text`
 therefore splits the prompt into pieces of at most `_PASTE_CHUNK_MAX_CHARS`
 (600) characters and `_PASTE_CHUNK_MAX_NEWLINES` (2) line breaks, pasted
 `_PASTE_CHUNK_GAP_SECONDS` (0.3 s) apart; the pieces rebuild the prompt exactly.
+Each piece costs about one second (two `docker exec` calls plus the gap), so a
+prompt that would need more than `_PASTE_CHUNK_MAX_PIECES` (8) pieces keeps only
+the first one inline and sends the rest as a single paste, which the TUI
+collapses into a chip. Without that cap a 10k-line delegate result took over an
+hour to paste and was never submitted while the next results piled up behind it
+(incident 2026-09-24). Short turn-start prompts stay fully inline.
 Unbracketed input (`paste-buffer -r` without `-p`) was measured and rejected:
 it still collapses above ~800 characters, and typed input is interpreted as
 keystrokes (a leading `!` switched the composer into shell mode, and the mode

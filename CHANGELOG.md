@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Large messages to a Claude Code interactive agent are delivered again.
+  Since beta.284 every prompt was pasted in pieces of at most 600 characters
+  and two line breaks so the TUI would keep it inline, and each piece cost
+  about one second. A burst of large delegate results (10k lines is ~5000
+  pieces) took over an hour to paste, was never submitted, and the next
+  results piled up behind it. A prompt that would need more than eight
+  pieces now keeps its first piece inline and sends the rest as one paste,
+  so any send costs at most two pastes. Short turn-start prompts stay fully
+  inline.
+- Large conversations no longer stall for up to a minute after every server
+  restart. The check that strips runtime secrets from stored history skips
+  segments it already scanned, recognised by their file metadata, which
+  included the change time. The server entrypoint runs `chown -R` on the
+  data directory at every start, which updates that time on every file, so
+  each restart rescanned the whole history (1.5 GB for one conversation)
+  while holding the conversation lock, and every UI action on it waited. The
+  metadata compared is now device, inode, size and modification time. The
+  first start after upgrading rescans once, because the old markers use a
+  different format.
+
 ## [1.0.0-beta.287] — 2026-09-24
 
 ### Fixed

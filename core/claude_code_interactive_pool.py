@@ -708,6 +708,13 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     _PASTE_CHUNK_MAX_CHARS = 600
     _PASTE_CHUNK_MAX_NEWLINES = 2
     _PASTE_CHUNK_GAP_SECONDS = 0.3
+    # Every piece costs two docker exec calls plus the gap, about one second.
+    # A 10k-line delegate result is ~5000 pieces, over an hour of pasting
+    # while the next results pile up behind it. Past this many pieces only the
+    # first stays inline; the rest goes as ONE paste the TUI collapses into a
+    # chip, which the CLI prompt tells the model is still the user's message.
+    # The short turn-start prompts the pieces exist for stay fully inline.
+    _PASTE_CHUNK_MAX_PIECES = 8
     # Claude Code reads a composer that starts with "!" as a shell command and
     # one that starts with "/" as a slash command, even from a bracketed paste
     # (measured 2026-09-23: a pasted "/cost" opened the usage dialog, a pasted
@@ -1219,7 +1226,11 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         return True
 
     def _paste_chunks(self, text: str) -> list:
-        """Split a prompt into pastes the TUI keeps inline (see the limits)."""
+        """Split a prompt into pastes the TUI keeps inline (see the limits).
+
+        Beyond _PASTE_CHUNK_MAX_PIECES, returns the first inline piece and the
+        remainder as a single paste.
+        """
         limit = self._PASTE_CHUNK_MAX_CHARS
         if limit <= 0:
             return [text]
@@ -1233,6 +1244,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             if ch == "\n":
                 newlines += 1
         chunks.append("".join(current))
+        if len(chunks) > self._PASTE_CHUNK_MAX_PIECES:
+            return [chunks[0], "".join(chunks[1:])]
         return chunks
 
     def _paste_text(self, state: InteractiveContainer, text: str) -> bool:

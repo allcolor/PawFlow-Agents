@@ -40,11 +40,23 @@ def test_turn_start_prompt_is_split_below_the_collapse_limits():
 
 def test_long_multiline_prompt_is_split_and_rebuilt_verbatim():
     text = ("Attachments:\nfs://filestore/abc/image.png -> @/x/abc.png\n\n"
-            + "é" * 1500 + "\n" + "\n".join("line %d" % i for i in range(40))
+            + "é" * 1500 + "\n" + "\n".join("line %d" % i for i in range(4))
             + TURN_START)
     chunks = _pool()._paste_chunks(text)
+    assert 2 < len(chunks) <= InteractiveClaudeCodePool._PASTE_CHUNK_MAX_PIECES
     assert "".join(chunks) == text
     _assert_inline(chunks)
+
+
+def test_huge_prompt_is_one_inline_piece_and_one_paste():
+    # Incident 2026-09-24: bursts of large delegate results. At ~1 s per
+    # piece a 10k-line message took over an hour to paste and was never
+    # submitted while the next results piled up behind it.
+    text = "\n".join("result line %d" % i for i in range(10000)) + TURN_START
+    chunks = _pool()._paste_chunks(text)
+    assert len(chunks) == 2
+    assert "".join(chunks) == text
+    _assert_inline(chunks[:1])
 
 
 def test_short_single_line_prompt_is_one_paste():

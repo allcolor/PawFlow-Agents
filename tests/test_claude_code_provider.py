@@ -1308,6 +1308,73 @@ class TestKillCcHardByPid(unittest.TestCase):
         self.assertIn("pool-compacter", cmd)
 
 
+def _catchup_msg(msg_id, ts, content, source):
+    return {"role": "user", "msg_id": msg_id, "ts": ts,
+            "content": content, "source": source}
+
+
+class TestCatchupSurvivesCompaction(unittest.TestCase):
+    """The catch-up resumes after the last seen message, not at a position."""
+
+    AGENT = "GameDev7"
+
+    def setUp(self):
+        self.client = LLMClient(provider="claude-code", config={"api_key": "k"})
+        self.ctx = [
+            _catchup_msg(f"old{i}", 100.0 + i, f"old {i}",
+                         {"type": "agent", "name": "GameDev"})
+            for i in range(10)
+        ]
+        store = MagicMock()
+        store.load_agent_context.side_effect = lambda cid, agent: list(self.ctx)
+        patcher = patch("core.conversation_store.ConversationStore.instance",
+                        return_value=store)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _delegate(self, msg_id, ts):
+        return _catchup_msg(msg_id, ts, "GD2 -> GD7. new work",
+                            {"type": "agent_delegate", "from": "GameDev2",
+                             "to": self.AGENT, "target_agent": self.AGENT})
+
+    def test_message_after_compaction_is_delivered(self):
+        self.client._build_catchup_context("conv", self.AGENT)  # baseline
+        self.ctx.append(self._delegate("d0", 111.0))
+        self.assertIn("GD2 -> GD7", self.client._build_catchup_context(
+            "conv", self.AGENT))
+        # Compaction rewrites the context shorter than what was seen.
+        self.ctx = [
+            _catchup_msg("summary", 99.0, "[Conversation summary]",
+                         {"type": "context"}),
+            *self.ctx[-3:],
+            self._delegate("d1", 200.0),
+        ]
+        text = self.client._build_catchup_context("conv", self.AGENT)
+        self.assertIn("GD2 -> GD7. new work", text)
+        self.assertNotIn("old 8", text)
+        self.assertNotIn("[Conversation summary]", text)
+
+    def test_compaction_that_removed_the_anchor_uses_its_timestamp(self):
+        self.client._build_catchup_context("conv", self.AGENT)
+        self.ctx = [
+            _catchup_msg("summary", 99.0, "[Conversation summary]",
+                         {"type": "context"}),
+            self.ctx[7],
+            self._delegate("d1", 200.0),
+        ]
+        text = self.client._build_catchup_context("conv", self.AGENT)
+        self.assertIn("GD2 -> GD7. new work", text)
+        self.assertNotIn("old 7", text)
+
+    def test_seen_messages_are_not_sent_twice(self):
+        self.client._build_catchup_context("conv", self.AGENT)
+        self.ctx.append(self._delegate("d1", 200.0))
+        self.assertIn("new work", self.client._build_catchup_context(
+            "conv", self.AGENT))
+        self.assertEqual(
+            self.client._build_catchup_context("conv", self.AGENT), "")
+
+
 class TestProviderInProviders(unittest.TestCase):
     """Test that claude-code and gemini-cli are in PROVIDERS."""
 

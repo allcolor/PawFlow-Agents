@@ -9,7 +9,9 @@ must:
    already submitted.
 """
 
-from core.llm_client import LLMClient, LLMMessage
+import pytest
+
+from core.llm_client import LLMClient, LLMClientError, LLMMessage
 from core._cci_pool_spawn import InteractiveContainer
 
 
@@ -99,13 +101,13 @@ def test_prompt_contains_every_drained_message(tmp_path):
 
 def test_prompt_does_not_repaste_fully_submitted_tail(tmp_path):
     client = _client()
-    prompt = client._cci_prompt(
-        _msgs(), None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv",
-        initial_context=False, agent_name="a",
-        state=_state(submitted={"m2", "m3", "m4"}))
-
     # The old fallback re-pasted the latest user text -> double delivery.
-    assert "[Delegate result C]" not in prompt
+    # Nothing is left to submit, and a blank paste is refused as well.
+    with pytest.raises(LLMClientError, match="nothing to submit"):
+        client._cci_prompt(
+            _msgs(), None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv",
+            initial_context=False, agent_name="a",
+            state=_state(submitted={"m2", "m3", "m4"}))
 
 
 def test_prompt_without_state_still_renders_tail(tmp_path):

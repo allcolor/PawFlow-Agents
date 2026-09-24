@@ -427,8 +427,8 @@ class AgentLoopTask(
                 logger.debug("force-stop relaunch cleanup failed", exc_info=True)
             from tasks.ai.actions.cancel_interrupt import _cancel_provider_client
             if _cancel_provider_client(_cc, force=True) \
-                    and hasattr(_cc, "_cc_catchup_idx"):
-                _cc._cc_catchup_idx = 0
+                    and hasattr(_cc, "_cc_catchup_anchor"):
+                _cc._cc_catchup_anchor = None
         try:
             from services.tool_relay_service import ToolRelayService
             ToolRelayService.cancel_agent(conversation_id, agent_name,

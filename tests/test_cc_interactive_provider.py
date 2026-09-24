@@ -1366,6 +1366,18 @@ def test_live_interactive_prompt_includes_multi_agent_catchup(tmp_path):
     assert prompt.endswith("new request\n")
 
 
+def test_live_interactive_prompt_refuses_an_empty_paste(tmp_path):
+    from core.llm_client import LLMClientError
+
+    client = LLMClient("claude-code-interactive")
+    client._build_catchup_context = lambda cid, agent: ""
+
+    with pytest.raises(LLMClientError, match="nothing to submit"):
+        client._cci_prompt(
+            [], None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv",
+            initial_context=False, agent_name="a")
+
+
 def test_resume_interactive_prompt_uses_current_turn_only(tmp_path):
     from core.llm_client import LLMMessage
 

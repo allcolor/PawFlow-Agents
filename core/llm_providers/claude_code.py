@@ -28,6 +28,34 @@ from core.llm_providers._cc_stream_result import _CCStreamResultMixin
 logger = logging.getLogger(__name__)
 
 
+def _catchup_ts(message: dict) -> float:
+    try:
+        return float(message.get("ts") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _catchup_resume_index(ctx_data: list, anchor: tuple) -> int:
+    """Index of the first message after the catch-up anchor.
+
+    The anchor is the last message already seen, found by identity, never
+    by position: compaction rewrites the agent context shorter, so a stored
+    index pointed past its end and every later message was skipped
+    (2026-09-24: a delegate woke an idle Codex agent with an empty prompt,
+    twice, and the team stalled for 95 minutes). When compaction removed the
+    anchor itself, its timestamp still separates old messages from new.
+    """
+    anchor_id, anchor_ts = anchor
+    if anchor_id:
+        for i in range(len(ctx_data) - 1, -1, -1):
+            if ctx_data[i].get("msg_id") == anchor_id:
+                return i + 1
+    for i, m in enumerate(ctx_data):
+        if _catchup_ts(m) > anchor_ts:
+            return i
+    return len(ctx_data)
+
+
 class LLMClaudeCodeMixin(
         _CCStreamMixin, _CCStreamLoopMixin, _CCStreamTurnMixin,
         _CCStreamResultMixin, _CCIoMixin, ClaudeCodeSessionMixin):
@@ -549,10 +577,10 @@ class LLMClaudeCodeMixin(
 
         Reads the PARENT conversation's context for this agent (sub-agents
         included — a delegate still sees new activity in the main chat
-        while it works). Finds messages after the last known index
-        (tracked in self._cc_catchup_idx). Returns formatted text block or "".
-        Also updates self._cc_catchup_idx so the same messages aren't sent twice
-        (shared between initial, preempt, and inter-turn catch-up).
+        while it works). Finds messages after the last one already seen
+        (tracked in self._cc_catchup_anchor). Returns formatted text block or "".
+        Also moves self._cc_catchup_anchor so the same messages aren't sent
+        twice (shared between initial, preempt, and inter-turn catch-up).
         """
         if not conv_id:
             return ""
@@ -575,18 +603,23 @@ class LLMClaudeCodeMixin(
             if not ctx_data:
                 return ""
 
-            # Initialize tracking index: find last own message as baseline
-            if not hasattr(self, '_cc_catchup_idx') or self._cc_catchup_idx == 0:
+            anchor = getattr(self, "_cc_catchup_anchor", None)
+            if anchor is None:
+                # Baseline: everything after our last own message
                 last_own = -1
                 for i, m in enumerate(ctx_data):
                     src = m.get("source") or {}
                     if src.get("type") == "agent" and src.get("name") == agent_name:
                         last_own = i
-                self._cc_catchup_idx = (last_own + 1) if last_own >= 0 else len(ctx_data)
+                start = (last_own + 1) if last_own >= 0 else len(ctx_data)
+            else:
+                start = _catchup_resume_index(ctx_data, anchor)
 
             # Collect messages since last check
-            new_msgs = ctx_data[self._cc_catchup_idx:]
-            self._cc_catchup_idx = len(ctx_data)
+            new_msgs = ctx_data[start:]
+            last = ctx_data[-1]
+            self._cc_catchup_anchor = (str(last.get("msg_id") or ""),
+                                       _catchup_ts(last))
 
             if not new_msgs:
                 return ""

@@ -281,6 +281,14 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             if current:
                 parts.append(current)
         rendered = "\n\n".join(parts).strip()
+        if not initial_context and not rendered:
+            # A blank paste is never submitted: the TUI ignores it, no hook or
+            # request follows, and the turn used to fail a minute later as a
+            # paste failure that hid the missing message.
+            from core.llm_client import LLMClientError
+            raise LLMClientError(
+                "no new message for the live CLI session: this turn has "
+                "nothing to submit")
         if not initial_context:
             rendered += "\n"
         if initial_context:

@@ -17,6 +17,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The poller test covering this checked it inside the fake provider, where a
   failure was reported as an LLM error and only failed the test when the
   error text looked transient; it now asserts after the loop.
+- An idle interactive CLI agent (Codex, Claude Code) woken by a delegate
+  after its context was compacted now receives the message. The catch-up
+  that carries other agents' messages into a live session remembered a
+  position in the agent context; compaction rewrote that context shorter,
+  the position pointed past its end, and every later message was skipped.
+  The woken turn pasted an empty prompt, Codex ignored it, and the turn
+  failed after a minute with "the pane looks submitted but no hook/MITM
+  receipt arrived" while the delegate's request was lost. The catch-up now
+  resumes after the last message it saw, found by `msg_id` (or by its
+  timestamp when compaction removed it), and a live turn with nothing to
+  submit fails at once with "this turn has nothing to submit".
 
 ## [1.0.0-beta.286] — 2026-09-23
 

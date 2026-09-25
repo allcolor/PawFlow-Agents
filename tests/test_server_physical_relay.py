@@ -433,13 +433,26 @@ def test_service_connection_and_recovery_route_only_to_physical_manager(manager)
                                                      calls.append(args) or {"accepted": True})
     assert service._start_managed_server_relay() is True
     assert service.ensure_managed_relay_alive() is True
+    # The UI Reconnect button restarts the group instead of refusing it.
+    assert service.restart_managed_relay() is True
     assert calls == [
         ("autostart", "user", "alice", "MyWorkspace"),
         ("ensure", "user", "alice", "MyWorkspace"),
+        ("restart", "user", "alice", "MyWorkspace"),
     ]
-    with pytest.raises(ValueError, match="physical"):
-        service.restart_managed_relay()
     assert "_physical_relay_manager" not in service.config
+
+
+def test_recovery_skipped_behind_a_slow_operation_is_reported_once(manager, caplog):
+    key = ("user", "alice", "MyWorkspace")
+    manager._operations["op"] = {"action": "autostart", "created_at": 0.0}
+    manager._active[key] = "op"
+    with caplog.at_level("WARNING", logger="core.server_physical_relay"):
+        for _ in range(3):
+            assert manager.submit("ensure", *key) == {"accepted": False, "operation_id": "op"}
+    warnings = [r for r in caplog.records if "skipped" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "autostart has been running" in warnings[0].getMessage()
 
 
 def test_admin_inventory_recovers_physical_scope_without_service_projection(manager, monkeypatch):

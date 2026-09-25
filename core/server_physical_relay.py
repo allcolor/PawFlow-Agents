@@ -11,6 +11,12 @@ from contextlib import nullcontext
 
 from core import server_physical_config as config
 
+# An ensure or autostart arriving while another operation is still running is
+# skipped. Past this age that operation is reported once: every automatic
+# recovery waits behind it (2026-09-25: a startup autostart held MyWorkspace
+# down for 6m47s without a single log line).
+_SLOW_OPERATION_SECONDS = 60.0
+
 
 class ServerPhysicalRelayManager:
     def __init__(self, registry):
@@ -72,6 +78,13 @@ class ServerPhysicalRelayManager:
         with self._guard:
             if key in self._active:
                 if operation in {"ensure", "autostart"}:
+                    active = self._operations.get(self._active[key]) or {}
+                    age = time.time() - active.get("created_at", time.time())
+                    if age > _SLOW_OPERATION_SECONDS and not active.get("slow_reported"):
+                        active["slow_reported"] = True
+                        logging.getLogger(__name__).warning(
+                            "Physical relay %s: %s skipped, %s has been running for %.0fs",
+                            physical_id, operation, active.get("action", "?"), age)
                     return {"accepted": False, "operation_id": self._active[key]}
                 raise ValueError("A physical relay operation is already running in this scope")
             operation_id = str(uuid.uuid4())
@@ -89,6 +102,9 @@ class ServerPhysicalRelayManager:
                     del self._operations[old_id]
 
         def run():
+            started = time.monotonic()
+            logging.getLogger(__name__).info(
+                "Physical relay %s: %s started", physical_id, operation)
             try:
                 result = self.execute(
                     operation, scope, scope_id, physical_id,
@@ -96,8 +112,13 @@ class ServerPhysicalRelayManager:
                 with self._guard:
                     state.update(status="completed", result=result,
                                  physical_id=result["physical_id"])
+                logging.getLogger(__name__).info(
+                    "Physical relay %s: %s completed in %.1fs",
+                    physical_id, operation, time.monotonic() - started)
             except Exception as exc:
-                logging.getLogger(__name__).exception("Physical relay operation failed")
+                logging.getLogger(__name__).exception(
+                    "Physical relay %s: %s failed after %.1fs",
+                    physical_id, operation, time.monotonic() - started)
                 with self._guard:
                     state.update(status="failed", error=str(exc))
             finally:

@@ -14,7 +14,8 @@ def test_managed_relay_uses_private_plain_ws_bridge():
 def test_managed_relay_spawn_log_does_not_include_secret_command():
     source = inspect.getsource(srm.ServerRelayManager.spawn_service_relay)
     assert 'cmd=%s' not in source
-    assert 'logger.info("Spawning managed server relay service: %s", container_name)' in source
+    assert 'logger.info("Spawning managed server relay service: %s (prepared in %.1fs: %s)",' in source
+    assert "container_name, time.monotonic() - started," in source
 
 
 def test_managed_server_relay_passes_opt_in_tunnel_capability_to_launcher():

@@ -172,9 +172,14 @@ class _RelayConnMixin:
         The server relay manager replaces only the disposable container. Its
         workspace directory, home volume, service definition and bindings stay
         intact. Standalone relays are owned by Relay Desktop and are rejected.
+
+        A physical relay's container belongs to its physical group, so the
+        restart goes through the physical manager like autostart and ensure
+        do. Refusing it left the UI Reconnect button unable to recover the
+        server's own MyWorkspace relay (2026-09-25).
         """
         if self.config.get("server_physical_id"):
-            raise ValueError("Reconnect the physical relay from Server relays settings")
+            return self._submit_physical("restart")
         if not self.config.get("server_managed"):
             raise ValueError(
                 f"Relay '{self._service_id}' is not a managed server relay")

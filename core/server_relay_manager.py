@@ -17,6 +17,7 @@ import secrets
 import shutil
 import subprocess  # nosec B404
 import threading
+import time
 from pathlib import Path  # noqa: F401  # re-exported: tests read srm.Path(srm.__file__)
 from typing import Any, Dict, Optional
 
@@ -329,6 +330,10 @@ class ServerRelayManager:
             internal_token = mint_token()
 
         path = f"/ws/relay/{relay_id}"
+        # Each preparation step is timed and reported on the spawn line: a
+        # startup spawn once took 6m47s to reach Docker with nothing logged.
+        started = time.monotonic()
+        timings = {}
         container_name = _relay_container_name(relay_id, kind)
         home_volume = f"pawflow_home_{relay_id}"
         volume = _relay_volume_name(relay_id, kind)
@@ -340,6 +345,7 @@ class ServerRelayManager:
             runtime_dir = Path(physical_config["server_workspace_dir"])
         runtime_dir.mkdir(parents=True, exist_ok=True)
         _chown_for_host_runner(runtime_dir)
+        timings["chown"] = time.monotonic() - started
         runtime_host_dir = (physical_config.get("server_workspace_host_dir")
                             or _relay_runtime_host_dir(runtime_dir))
         host_ip = get_host_ip()
@@ -367,6 +373,9 @@ class ServerRelayManager:
             code_runtime_dir.mkdir(parents=True, exist_ok=True)
         code_dir = _prepare_relay_code_dir(code_runtime_dir)
         code_host_dir = _relay_runtime_host_dir(code_dir)
+        timings["code"] = time.monotonic() - started - sum(timings.values())
+        security_opts = relay_apparmor_security_opts(relay_image)
+        timings["apparmor"] = time.monotonic() - started - sum(timings.values())
 
         ws_url_for_container = _managed_relay_ws_url(
             host_ip, main_port, path)
@@ -385,7 +394,7 @@ class ServerRelayManager:
             "--memory", relay_memory,
             "--cap-add", "SYS_ADMIN",
             "--device", "/dev/fuse",
-            *relay_apparmor_security_opts(relay_image),
+            *security_opts,
             "--env", f"PAWFLOW_RELAY_SERVER={ws_url_for_container}",
             "--env", f"PAWFLOW_RELAY_TOKEN={token}",
             "--env", f"PAWFLOW_RELAY_ID={relay_id}",
@@ -434,7 +443,9 @@ class ServerRelayManager:
         # The command carries relay and internal-auth tokens in --env values.
         # Logging it exposes live credentials; the container identity is enough
         # to correlate spawn failures with Docker diagnostics.
-        logger.info("Spawning managed server relay service: %s", container_name)
+        logger.info("Spawning managed server relay service: %s (prepared in %.1fs: %s)",
+                    container_name, time.monotonic() - started,
+                    " ".join(f"{k}={v:.1f}s" for k, v in timings.items()))
         container_id, reused = start_managed_relay_container(
             container_name, cmd, replace=replace,
         )

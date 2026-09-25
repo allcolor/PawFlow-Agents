@@ -17,6 +17,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   re-sent everything since, the agent's own delegated replies included.
   A Codex agent reached ~1M characters per prompt and failed with "Your
   input exceeds the context window of this model".
+- The Reconnect button of a server workspace relay (such as MyWorkspace)
+  restarts it again. The UI action accepted the relay, but the relay service
+  refused every physical relay with "Reconnect the physical relay from Server
+  relays settings"; the restart now goes through the physical relay manager
+  like automatic start and recovery do.
+
+### Changed
+
+- Physical relay operations log when they start, finish or fail, with their
+  duration, and a managed relay spawn reports how long its preparation took
+  (ownership repair, runtime code, AppArmor probe). Automatic recovery that is
+  skipped because another operation has been running for over a minute is
+  reported once. After a server restart MyWorkspace stayed disconnected for
+  almost seven minutes behind its startup operation without any log line.
 
 ## [1.0.0-beta.288] — 2026-09-24
 

@@ -72,7 +72,6 @@ class _AgentPollCheckinMixin:
         the queue; if it finished before enqueue, wake_agent does so here.
         """
         from core.conversation_store import ConversationStore
-        from core.pending_queue import PendingQueue
         from core.poll_scheduler import PollScheduler
         from tasks.ai.agent_loop import AgentLoopTask
 
@@ -104,8 +103,9 @@ class _AgentPollCheckinMixin:
         message = self._persist_scheduled_wakeup(
             conversation_id, agent_name, content, user_id, timestamp=created_at)
         message["_already_persisted"] = True
-        if not PendingQueue.for_agent(conversation_id, agent_name).enqueue(
-                message, source="scheduled_wakeup"):
+        from tasks.ai._live_submit import submit_or_queue
+        if not submit_or_queue(conversation_id, agent_name, message,
+                               "scheduled_wakeup", user_id=user_id, wake=False):
             # A force stop may have fenced the message while it was being
             # persisted. Cancellation is terminal, not a delivery error.
             cutoff = max(

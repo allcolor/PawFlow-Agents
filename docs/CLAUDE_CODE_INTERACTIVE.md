@@ -714,13 +714,41 @@ reply that was not recognised as its own kept the start on an older reply,
 and every prompt re-sent the whole backlog -- the agent's own delegated
 replies included -- until the model rejected the context.
 
+The catch-up keeps only the newest messages within `_CATCHUP_MAX_CHARS`
+(40 000 characters) and says how many older ones it left out, pointing the
+agent at `read_history`. An agent idle for hours otherwise received the whole
+team backlog in one paste (2634 messages, 2.5 M characters), which Codex
+never submitted.
+
+### Non-user messages are submitted on arrival, one at a time
+
+A delegate, a background result (`background_tool`) or a wake-up that falls
+due while the agent works is not the user: it never interrupts. It is still
+submitted the moment it arrives. `tasks/ai/_live_submit.submit_or_queue`
+finds the agent's running tmux client and calls
+`LLMClient.send_queued_message`, which runs the pool's `send_queued`: paste +
+`Enter`, no `Escape`. The CLI keeps the message until its current step --
+a 15-minute tool included -- lets it read it. Twenty delegates are twenty
+submissions, serialised per agent in arrival order, never one paste. The
+message is then queued as `preempt_rescue`, so the final drain persists it
+without starting another turn, and its `msg_id` joins `submitted_msg_ids`.
+A paste that fails, an idle agent and an API provider keep the PendingQueue +
+wake path; an API loop drains the queue at every iteration.
+
+Before, these messages waited in the PendingQueue until the CLI turn ended:
+a CLI turn is a single PawFlow iteration, so nothing drained the queue in
+between, and delegates arrived up to 20 minutes late. Only a user message
+interrupts (`send_interrupt`: Escape, then paste + Enter).
+
 ### Multi-message drain and msg_id dedup
 
 The live-session delta is NOT just the newest user message. A retrigger turn
 can carry several drained user messages (e.g. N delegate results preempted
-while the previous turn was ending); `_cci_live_text` renders the whole tail
-of consecutive user messages after the last assistant reply, in order, in one
-paste. Each session tracks the `msg_id`s it has already conveyed
+while the previous turn was ending). Each of them is its own submission:
+`_cci_live_text` puts the first not-yet-submitted message of the tail in the
+turn's prompt and stashes the others on `_cci_live_followups`, which
+`_cci_submit_followups` submits one paste + `Enter` each, in order, right
+after the prompt went in. Each session tracks the `msg_id`s it has already conveyed
 (`InteractiveContainer.submitted_msg_ids`, updated after every successful
 paste — cold context, catch-up, and live tail all count): a message is never
 pasted twice, and when a spurious retrigger finds the whole tail already

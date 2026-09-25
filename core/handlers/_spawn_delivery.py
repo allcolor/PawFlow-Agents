@@ -548,9 +548,8 @@ class _SpawnDeliveryMixin:
     @staticmethod
     def _preempt_caller(inst, conv_id, caller_agent, text, msg_id, source,
                         user_id=""):
-        """Queue a delegate result and request a race-safe caller wake."""
+        """Submit a delegate to its running target, or queue it and wake."""
         try:
-            from core.pending_queue import PendingQueue
             from core.llm_client import stamp_message
             msg = stamp_message({
                 "role": "user",
@@ -558,18 +557,18 @@ class _SpawnDeliveryMixin:
                 "source": source or {"type": "agent_delegate"},
                 "msg_id": msg_id or None,
             }, conv_id)
-            PendingQueue.for_agent(conv_id, caller_agent or "").enqueue(
-                msg, source="delegate_reply")
-            # The caller can leave its active loop after delivery selected the
-            # preempt path but before this enqueue. Always schedule the stable
-            # per-agent pending key: the poller defers it while still active and
-            # consumes it once idle, so the durable result cannot be stranded.
-            from tasks.ai.agent_loop import AgentLoopTask
-            AgentLoopTask.wake_agent(
-                conv_id, caller_agent or "",
-                reason=(f"[delegate_reply] queued result for "
-                        f"{caller_agent or 'default'}"),
-                user_id=user_id, delay=0.0, even_if_active=True)
+            # A running CLI target gets the delegate submitted now, on its
+            # own. Otherwise it is queued and the stable per-agent pending key
+            # is always scheduled: the caller can leave its active loop after
+            # delivery selected the preempt path but before this enqueue, and
+            # the poller defers the key while still active and consumes it
+            # once idle, so the durable result cannot be stranded.
+            from tasks.ai._live_submit import submit_or_queue
+            submit_or_queue(
+                conv_id, caller_agent or "", msg, "delegate_reply",
+                user_id=user_id,
+                wake_reason=(f"[delegate_reply] queued result for "
+                             f"{caller_agent or 'default'}"))
         except Exception as e:
             logger.error("[bg-delegate] preempt failed: %s", e)
 

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A delegate, a background result or a due wake-up reaches a busy Claude
+  Code or Codex interactive agent at once. It is submitted into the running
+  session on its own (paste + Enter, no interruption: only a user message
+  interrupts), and several are submitted one by one, never in one paste.
+  They used to wait until the agent's turn ended, up to 20 minutes, and the
+  next prompt then carried all of them at once.
+- The catch-up block keeps only the newest messages from other participants
+  (40 000 characters) and says how many older ones it left out. A Codex
+  agent idle for seven hours received 2634 messages (2.5 M characters) in
+  one paste that Codex never submitted: "Codex prompt submission was not
+  confirmed after the canonical Enter sequence".
+
 ## [1.0.0-beta.289] — 2026-09-25
 
 ### Fixed

@@ -27,6 +27,12 @@ from core.llm_providers._cc_stream_result import _CCStreamResultMixin
 
 logger = logging.getLogger(__name__)
 
+# Characters of other participants' messages one catch-up block may carry.
+# An agent idle for hours missed thousands of team messages: pasted whole
+# they exceed any context window, and Codex never submits such a paste
+# (2026-09-25: 2634 messages, 2.5 M characters). The newest ones are kept.
+_CATCHUP_MAX_CHARS = 40_000
+
 
 def _catchup_ts(message: dict) -> float:
     try:
@@ -74,6 +80,24 @@ def _catchup_resume_index(ctx_data: list, anchor: tuple) -> int:
         if _catchup_ts(m) > anchor_ts:
             return i
     return len(ctx_data)
+
+
+def _catchup_newest_within_budget(blocks: list, budget: int = _CATCHUP_MAX_CHARS):
+    """Keep the newest rendered messages whose total fits the budget.
+
+    Returns ``(kept, omitted)``. The newest message is always kept; one
+    larger than the whole budget is cut to it.
+    """
+    kept, used = [], 0
+    for block in reversed(blocks):
+        if used + len(block) > budget:
+            if not kept:
+                kept.append(block[:budget] + "\n[... truncated ...]\n</message>")
+            break
+        kept.append(block)
+        used += len(block)
+    kept.reverse()
+    return kept, len(blocks) - len(kept)
 
 
 class LLMClaudeCodeMixin(
@@ -668,22 +692,27 @@ class LLMClaudeCodeMixin(
                 return ""
 
             # Format as XML block
-            lines = ["<catch_up_context>",
-                     "New messages from other participants since your last response:"]
-            count = 0
+            blocks = []
             for m in filtered:
                 content = m.get("content", "")
                 if not content or not isinstance(content, str):
                     continue
                 role = m.get("role", "user")
-                lines.append(f"<message role=\"{role}\">\n{content}\n</message>")
-                count += 1
+                blocks.append(f"<message role=\"{role}\">\n{content}\n</message>")
+            if not blocks:
+                return ""
+            kept, omitted = _catchup_newest_within_budget(blocks)
+            lines = ["<catch_up_context>",
+                     "New messages from other participants since your last response:"]
+            if omitted:
+                lines.append(
+                    f"({omitted} earlier messages omitted to keep this prompt "
+                    "small; use read_history to consult them.)")
+            lines.extend(kept)
             lines.append("</catch_up_context>")
 
-            if count == 0:
-                return ""
-
-            logger.info("[claude-code] catch-up: %d messages for %s", count, agent_name)
+            logger.info("[claude-code] catch-up: %d messages for %s (%d older omitted)",
+                        len(kept), agent_name, omitted)
             return "\n".join(lines)
         except Exception as e:
             logger.warning("[claude-code] catch-up failed: %s", e)

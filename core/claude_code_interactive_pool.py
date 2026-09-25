@@ -1377,6 +1377,51 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         ).start()
         return True
 
+    def send_queued(self, state: InteractiveContainer, text: str) -> bool:
+        """Submit one message into a running turn WITHOUT interrupting it.
+
+        A delegate, a background result or a due wake-up is submitted the
+        moment it arrives: paste + Enter, never Escape, so the CLI takes it
+        into its running turn (or right behind it) like text typed while the
+        model works. Only a user message interrupts (send_interrupt). Each
+        message is submitted on its own, so nothing piles up until the turn
+        ends. Submission is verified in the background for every provider:
+        the running turn keeps the TUI busy and a synchronous proof would
+        hold the delivery thread for the whole turn.
+        """
+        text = self._composer_safe_text(text)
+        state.last_error = ""
+        if not self._is_alive(state.name):
+            state.last_error = f"Container {state.name} is not running"
+            return False
+        self._cancel_copy_mode(state)
+        self._remember_injected_prompt(state, text)
+        event_service = self._remember_injected_prompt_for_event_service(
+            state, text)
+        submit_marker = (0, 0)
+        if event_service is not None:
+            try:
+                submit_marker = event_service.submission_marker(
+                    state.session_token)
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "Could not mark CCI queued submission", exc_info=True)
+                event_service = None
+        if not self._paste_text(state, text):
+            return False
+        settle = self._paste_settle_seconds()
+        if settle > 0:
+            time.sleep(settle)
+        if not self.send_keys(state, ["Enter"]):
+            return False
+        threading.Thread(
+            target=self._verify_submitted, args=(state, text),
+            kwargs={"event_service": event_service,
+                    "submit_marker": submit_marker},
+            name="cci-verify-queued", daemon=True,
+        ).start()
+        return True
+
     def force_stop(self, state: InteractiveContainer) -> bool:
         return self.send_keys(state, list(self._CLEAR_INPUT_KEYS))
 

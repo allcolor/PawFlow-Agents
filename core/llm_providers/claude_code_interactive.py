@@ -108,6 +108,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     for m in (messages or [])
                     if getattr(m, "role", "") == "user")
                 if mid)
+            self._cci_submit_followups(pool, state)
 
             try:
                 coord = _CCITurnCoordinator(
@@ -244,6 +245,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     user_id: str, conversation_id: str,
                     initial_context: bool = False, agent_name: str = "",
                     state=None) -> str:
+        self._cci_live_followups = []
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         if tools:
             system_prompt = append_cli_mcp_system_prompt(system_prompt)
@@ -317,6 +319,11 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         any msg_id the session has already pasted (dedup — the same drained
         message must never be submitted twice).
 
+        Only the FIRST not-yet-submitted message is returned: each message is
+        its own submission. The others are stashed on
+        ``self._cci_live_followups`` as ``(msg_id, text)`` and submitted one
+        by one right after the prompt went in (``_cci_submit_followups``).
+
         Side effects: stashes the rendered msg_ids on
         ``self._cci_pending_live_msg_ids`` (recorded on the session by the
         caller AFTER the paste succeeds) and sets
@@ -339,6 +346,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             getattr(m, "msg_id", "") in submitted for m in tail)
         rendered_ids = []
         parts = []
+        followups = []
         for msg in tail:
             mid = getattr(msg, "msg_id", "")
             if mid and mid in submitted:
@@ -347,11 +355,35 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             text = rendered.strip() if isinstance(rendered, str) else ""
             if not text:
                 continue
+            if parts:
+                followups.append((mid, text))
+                continue
             parts.append(text)
             if mid:
                 rendered_ids.append(mid)
         self._cci_pending_live_msg_ids = rendered_ids
+        self._cci_live_followups = followups
         return "\n\n".join(parts)
+
+    def _cci_submit_followups(self, pool, state) -> None:
+        """Submit the tail messages after the first, one paste + Enter each.
+
+        Called once the turn's prompt went in. A follow-up that cannot be
+        pasted is left out of ``submitted_msg_ids`` so it is never counted
+        as conveyed.
+        """
+        followups = getattr(self, "_cci_live_followups", None) or []
+        self._cci_live_followups = []
+        failed = []
+        for mid, text in followups:
+            if not self._cli_submit_queued(pool, state, text, mid):
+                failed.append(mid)
+        if failed:
+            submitted = getattr(state, "submitted_msg_ids", None) or set()
+            submitted.difference_update(failed)
+            logger.error(
+                "[cci] %d follow-up message(s) not submitted to %s: %s",
+                len(failed), getattr(state, "name", "?"), failed)
 
     def _cci_materialize_images(self, messages, workdir: str, container_workdir: str,
                                 user_id: str, conversation_id: str) -> list[str]:
@@ -432,6 +464,36 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         if ok:
             self._had_preempts_this_turn = True
         return ok
+
+    def _cci_send_queued_message(self, text: str, **kwargs):
+        state = self._cci_session_state(
+            user_id=kwargs.get("user_id") or "",
+            conversation_id=kwargs.get("conversation_id") or "",
+            agent_name=kwargs.get("agent_name") or "",
+        )
+        if not state:
+            return False
+        return self._cli_submit_queued(
+            InteractiveClaudeCodePool.instance(), state, text,
+            kwargs.get("msg_id") or "")
+
+    def _cli_submit_queued(self, pool, state, text: str, msg_id: str) -> bool:
+        """Submit one non-user message into the live session, uninterrupted.
+
+        The message is recorded as conveyed and the turn as preempted only
+        once the paste went in, so the final drain persists it without
+        re-triggering a turn and no later prompt build pastes it again.
+        """
+        if not (text or "").strip() or not pool.send_queued(state, text):
+            return False
+        self._had_preempts_this_turn = True
+        if msg_id:
+            submitted = getattr(state, "submitted_msg_ids", None)
+            if submitted is None:
+                submitted = set()
+                state.submitted_msg_ids = submitted
+            submitted.add(msg_id)
+        return True
 
     def _cci_preempt_prompt(self, text: str, attachments: list,
                             state, user_id: str, conversation_id: str,

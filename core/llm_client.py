@@ -819,6 +819,24 @@ class LLMClient(
             return fn(text, attachments, **kwargs)
         return fn(text, attachments)
 
+    def send_queued_message(self, text: str, **kwargs) -> bool:
+        """Submit a non-user message into a live CLI turn without interrupting.
+
+        Delegates, background results and due wake-ups are submitted at once,
+        one message per paste (paste + Enter, no Escape). Only the tmux
+        interactive providers can do this; every other provider returns False
+        and its message waits in the PendingQueue for the next iteration.
+        """
+        if self.provider == "claude-code-interactive":
+            fn = getattr(self, "_cci_send_queued_message", None)
+        elif self.provider == "codex-interactive":
+            fn = getattr(self, "_codex_interactive_send_queued_message", None)
+        else:
+            return False
+        if fn is None:
+            return False
+        return bool(fn(text, **kwargs))
+
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "LLMClient":
         """Create from a config dict (may be LazyResolveDict).

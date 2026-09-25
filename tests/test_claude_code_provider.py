@@ -1397,6 +1397,32 @@ class TestCatchupSurvivesCompaction(unittest.TestCase):
         self.assertEqual(
             self.client._build_catchup_context("conv", self.AGENT), "")
 
+    def test_backlog_keeps_only_the_newest_messages(self):
+        # An agent idle for hours: thousands of team messages since its last
+        # reply. Pasted whole they never get submitted.
+        from core.llm_providers import claude_code as cc
+        self.ctx.append(self._own_delegated_reply("r0", 150.0))
+        self.ctx.extend(
+            _catchup_msg(f"n{i}", 200.0 + i, f"team news {i:04d} " + "x" * 1000,
+                         {"type": "agent", "name": "GameDev"})
+            for i in range(2600))
+        text = self.client._build_catchup_context("conv", self.AGENT)
+        self.assertLess(len(text), cc._CATCHUP_MAX_CHARS + 500)
+        self.assertIn("team news 2599", text)
+        self.assertNotIn("team news 0000", text)
+        self.assertIn("earlier messages omitted", text)
+        self.assertIn("read_history", text)
+
+    def test_single_oversized_message_is_cut_to_budget(self):
+        from core.llm_providers.claude_code import _catchup_newest_within_budget
+        kept, omitted = _catchup_newest_within_budget(
+            ["<message>a</message>", "<message>" + "y" * 500 + "</message>"],
+            budget=100)
+        self.assertEqual(omitted, 1)
+        self.assertEqual(len(kept), 1)
+        self.assertTrue(kept[0].endswith("</message>"))
+        self.assertLess(len(kept[0]), 200)
+
 
 class TestProviderInProviders(unittest.TestCase):
     """Test that claude-code and gemini-cli are in PROVIDERS."""

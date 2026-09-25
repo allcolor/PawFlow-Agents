@@ -567,6 +567,18 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         self._check_native_compaction(state)
         return sent
 
+    def send_queued(self, state: InteractiveContainer, text: str) -> bool:
+        self._check_native_compaction(state)
+        if not self._leave_backtrack_overlay(state):
+            return False
+        try:
+            sent = super().send_queued(state, text)
+        except Exception:
+            self._check_native_compaction(state)
+            raise
+        self._check_native_compaction(state)
+        return sent
+
     def _check_native_compaction(self, state: InteractiveContainer) -> None:
         """Preserve compaction handoff across readiness and transport failures."""
         try:

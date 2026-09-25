@@ -524,9 +524,10 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
             # uses — no more "BG tool injected but agent never woke"
             # special-casing.
             try:
-                from core.pending_queue import PendingQueue
-                PendingQueue.for_agent(conv_id, agent_name or "").enqueue(
-                    msg, source=f"bg_tool:{tool_name}")
+                from tasks.ai._live_submit import submit_or_queue
+                submit_or_queue(
+                    conv_id, agent_name or "", msg, f"bg_tool:{tool_name}",
+                    user_id=task.get("user_id", "") or "", wake=False)
             except Exception as _qe:
                 logger.warning("[bg-tool] PendingQueue.enqueue failed: %s", _qe)
         except Exception as e:

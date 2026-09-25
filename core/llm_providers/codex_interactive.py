@@ -262,6 +262,7 @@ class LLMCodexInteractiveMixin:
                         for m in (messages or [])
                         if getattr(m, "role", "") == "user")
                     if mid)
+                self._cci_submit_followups(pool, state)
                 coord = _CodexInteractiveTurnCoordinator(
                     event_service, state.session_token, callback=callback,
                     thinking_callback=thinking_callback,
@@ -401,6 +402,24 @@ class LLMCodexInteractiveMixin:
         if ok:
             self._had_preempts_this_turn = True
         return ok
+
+    def _codex_interactive_send_queued_message(self, text: str, **kwargs):
+        state = self._codex_interactive_session_state(
+            user_id=kwargs.get("user_id") or "",
+            conversation_id=kwargs.get("conversation_id") or "",
+            agent_name=kwargs.get("agent_name") or "")
+        if not state:
+            return False
+        from core.llm_client import CCCompactDetected
+
+        try:
+            return self._cli_submit_queued(
+                CodexInteractivePool.instance(), state, text,
+                kwargs.get("msg_id") or "")
+        except CCCompactDetected:
+            # The streaming coordinator owns native compaction; the message
+            # stays queued for the compacted restart.
+            return False
 
     def cancel_codex_interactive(self, force: bool = False):
         if not force:

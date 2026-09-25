@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.292] — 2026-09-25
+
 ### Fixed
 
 - A delegate that wakes a Claude Code or Codex interactive agent whose CLI
@@ -18,11 +20,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the delegate was never delivered. The woken turn now carries the
   delegate's stored row itself, and the catch-up skips rows the prompt
   already carries.
-
-## [1.0.0-beta.291] — 2026-09-25
-
-### Fixed
-
 - A healthy durable store (workflow runs, flow runs, A2A, confirmations,
   todos, scratchpads, UI surfaces, media projects, workflow proposals and
   parent invocations, ScratchDirs) could be disabled at startup as

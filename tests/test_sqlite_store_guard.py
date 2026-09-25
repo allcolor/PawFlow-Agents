@@ -1,4 +1,5 @@
 """Fail-closed behaviour of durable SQLite stores on a damaged main file."""
+import gc
 import logging
 import sqlite3
 from pathlib import Path
@@ -17,6 +18,7 @@ from core.scratchpad_store import ScratchpadStore
 from core.sqlite_store_guard import (
     SqliteStoreGuard,
     SqliteStoreUnavailableError,
+    closing_connection,
     is_corruption_error,
     preflight_main_file,
 )
@@ -380,3 +382,91 @@ def test_every_core_sqlite_connect_site_has_an_explicit_policy():
     for relative in guarded:
         source = (core / relative).read_text(encoding="utf-8")
         assert "SqliteStoreGuard" in source, relative
+
+
+def _is_closed(connection):
+    try:
+        connection.execute("SELECT 1")
+    except sqlite3.ProgrammingError:
+        return True
+    return False
+
+
+def test_closing_connection_commits_or_rolls_back_then_closes(tmp_path):
+    database = tmp_path / "t.sqlite3"
+    connection = sqlite3.connect(database)
+    with closing_connection(connection) as active:
+        active.execute("CREATE TABLE t(x)")
+        active.execute("INSERT INTO t VALUES (1)")
+    assert _is_closed(connection)
+
+    connection = sqlite3.connect(database)
+    with pytest.raises(RuntimeError):
+        with closing_connection(connection) as active:
+            active.execute("INSERT INTO t VALUES (2)")
+            raise RuntimeError("abort")
+    assert _is_closed(connection)
+
+    check = sqlite3.connect(database)
+    assert check.execute("SELECT x FROM t").fetchall() == [(1,)]
+    check.close()
+
+
+@pytest.mark.parametrize("name,factory", [
+    ("workflow_runs", lambda path: WorkflowRunStore(path)),
+    ("flow_runs", lambda path: FlowRunStore(
+        path, before_live_write=lambda: None)),
+    ("media_projects", lambda path: MediaProjectStore(path)),
+    ("a2a", lambda path: A2AStore(path)),
+    ("workflow_proposals", lambda path: WorkflowProposalStore(
+        path, before_live_write=lambda: None)),
+    ("confirmations", lambda path: UserInteractionStore(path)),
+    ("workflow_parent_invocations",
+     lambda path: WorkflowParentInvocationStore(path)),
+])
+def test_store_operations_close_every_connection(
+        tmp_path, monkeypatch, name, factory):
+    opened = []
+    real_connect = sqlite3.connect
+
+    def tracking_connect(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", tracking_connect)
+    store = factory(tmp_path / f"{name}.sqlite3")
+    with store._connect() as connection:
+        connection.execute("SELECT 1")
+
+    assert store.available is True
+    assert opened
+    assert all(_is_closed(connection) for connection in opened)
+
+
+def test_reopened_store_does_not_race_a_lingering_checkpoint(tmp_path):
+    """Regression: a store left unclosed connections behind.
+
+    They were closed by the cyclic garbage collector at an arbitrary moment;
+    that last close checkpointed the WAL into the main file while the next
+    store's ``immutable=1`` preflight read it, which intermittently reported
+    "database disk image is malformed" on a healthy file.
+    """
+    database = tmp_path / "parent.sqlite3"
+    flowfile = FlowFile(content=b"candidate")
+    parent = {
+        "invocation_id": "wfi_parent",
+        "instance_id": "deployment-1",
+        "task_id": "review",
+        "flowfile_process_id": flowfile.process_id,
+    }
+    gc.disable()
+    try:
+        store = WorkflowParentInvocationStore(database)
+        store.create(parent=parent, flowfile=flowfile)
+        assert not Path(str(database) + "-wal").exists()
+        reopened = WorkflowParentInvocationStore(database)
+    finally:
+        gc.enable()
+    assert reopened.available is True
+    assert reopened.get("wfi_parent")["task_id"] == "review"

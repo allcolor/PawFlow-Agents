@@ -7,13 +7,15 @@ import json
 import sqlite3
 import threading
 import time
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
 
 import core.paths as _paths
 from core import FlowFile
 from core.resource_identity import ResourceRef
-from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
+from core.sqlite_store_guard import (
+    SqliteStoreGuard, SqliteStoreUnavailableError, closing_connection)
 
 MAX_FLOW_INVOCATION_DEPTH = 8
 _TERMINAL_STATES = frozenset({"delivered", "cancelled"})
@@ -113,14 +115,14 @@ class WorkflowParentInvocationStore:
         return self._database_path_override or (
             _paths.RUNTIME_DIR / "workflow_parent_invocations.sqlite3")
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
         self._guard.require_available()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.database_path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 10000")
         connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return closing_connection(connection)
 
     def _initialize(self) -> None:
         with self._lock, self._connect() as connection:

@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import AbstractContextManager
 
 import core.paths as _paths
 from core.scratchdir_models import (
@@ -17,6 +18,7 @@ from core.scratchdir_models import (
     validate_quotas,
     validate_ttl,
 )
+from core.sqlite_store_guard import closing_connection
 
 _CORRUPTION_MARKERS = (
     "unsupported file format",
@@ -62,7 +64,7 @@ class ScratchDirStore:
     def _database_path(self):
         return _paths.SCRATCHDIRS_DIR / "scratchdirs.sqlite3"
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._database_path)
         connection.row_factory = sqlite3.Row
@@ -70,7 +72,7 @@ class ScratchDirStore:
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = FULL")
         connection.execute("PRAGMA cell_size_check = ON")
-        return connection
+        return closing_connection(connection)
 
     @staticmethod
     def _is_corruption(exc: sqlite3.DatabaseError) -> bool:

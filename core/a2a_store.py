@@ -15,6 +15,7 @@ import secrets
 import sqlite3
 import threading
 import time
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -31,7 +32,8 @@ from core.standard_api_config import (
     normalize_standard_api_update,
     standard_api_material_changed,
 )
-from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
+from core.sqlite_store_guard import (
+    SqliteStoreGuard, SqliteStoreUnavailableError, closing_connection)
 
 
 _CONTEXT_POLICIES = frozenset({"isolated", "shared"})
@@ -71,7 +73,7 @@ class A2AStore(StandardApiStoreMixin, TurnMachineMixin, TurnJournalMixin,
     def database_path(self) -> Path:
         return self._database_path_override or (_paths.SYSTEM_DIR / "a2a.sqlite3")
 
-    def _connect(self) -> sqlite3.Connection:
+    def _open(self) -> sqlite3.Connection:
         self._guard.require_available()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.database_path)
@@ -79,6 +81,9 @@ class A2AStore(StandardApiStoreMixin, TurnMachineMixin, TurnJournalMixin,
         connection.execute("PRAGMA busy_timeout = 5000")
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
+
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
+        return closing_connection(self._open())
 
     def _initialize(self) -> None:
         with self._lock, self._connect() as connection:

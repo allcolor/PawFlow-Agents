@@ -9,12 +9,14 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import core.paths as _paths
-from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
+from core.sqlite_store_guard import (
+    SqliteStoreGuard, SqliteStoreUnavailableError, closing_connection)
 
 PLANNER_DRAFTING = "planner_drafting"
 USER_REVIEW = "user_review"
@@ -99,14 +101,14 @@ class WorkflowProposalStore:
         """Return whether the store is safe to read or write."""
         return self._guard.available
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
         self._guard.require_available()
         connection = sqlite3.connect(
             str(self.database_path), timeout=30, isolation_level=None)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return closing_connection(connection)
 
     def _initialize(self) -> None:
         with self._connect() as connection:

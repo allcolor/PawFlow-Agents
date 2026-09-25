@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
 
 import core.paths as _paths
-from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
+from core.sqlite_store_guard import (
+    SqliteStoreGuard, SqliteStoreUnavailableError, closing_connection)
 from core.ui_surface import validate_ui_surface
 
 
@@ -73,13 +75,13 @@ class UiSurfaceStore:
                     ON ui_surfaces(user_id, conversation_id, updated_at);
                 """)
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
         self._guard.require_available()
         connection = sqlite3.connect(
             str(self.database_path), timeout=30, isolation_level=None)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return closing_connection(connection)
 
     def upsert(
         self, surface: dict[str, Any], *, user_id: str,

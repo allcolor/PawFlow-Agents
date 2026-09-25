@@ -45,6 +45,26 @@ def is_store_failure(exc: sqlite3.DatabaseError) -> bool:
     )
 
 
+@contextmanager
+def closing_connection(connection: sqlite3.Connection):
+    """Run one ``with connection:`` transaction, then close the connection.
+
+    ``sqlite3.Connection`` used as a context manager only commits or rolls
+    back; it never closes. An unclosed connection lingers until the cyclic
+    garbage collector finalizes it, and its last close checkpoints the WAL
+    into the main file at an arbitrary moment and on an arbitrary thread --
+    possibly while ``preflight_main_file`` reads that file with
+    ``immutable=1`` (no locking), which then reports a healthy store as
+    malformed. Closing deterministically keeps checkpoints inside the
+    store's own operations.
+    """
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
+
+
 def describe_artifacts(database: Path) -> str:
     """Describe the preserved database, WAL and SHM without changing them."""
     artifacts = (
@@ -176,6 +196,7 @@ __all__ = [
     "CORRUPTION_MARKERS",
     "SqliteStoreGuard",
     "SqliteStoreUnavailableError",
+    "closing_connection",
     "describe_artifacts",
     "is_corruption_error",
     "is_store_failure",

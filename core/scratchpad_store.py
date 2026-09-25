@@ -7,11 +7,13 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import core.paths as _paths
-from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
+from core.sqlite_store_guard import (
+    SqliteStoreGuard, SqliteStoreUnavailableError, closing_connection)
 
 
 DEFAULT_TTL_HOURS = 168
@@ -53,13 +55,13 @@ class ScratchpadStore:
     def _database_path(self) -> Path:
         return _paths.SCRATCHPADS_DIR / "scratchpads.sqlite3"
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
         self._guard.require_available()
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._database_path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 5000")
-        return connection
+        return closing_connection(connection)
 
     def _initialize(self) -> None:
         with self._lock, self._connect() as connection:

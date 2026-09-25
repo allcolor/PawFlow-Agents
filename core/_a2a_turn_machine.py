@@ -133,7 +133,7 @@ class TurnMachineMixin:
     @contextmanager
     def _immediate(self):
         """One explicit BEGIN IMMEDIATE transaction (cross-process safety)."""
-        connection = self._connect()
+        connection = self._open()
         connection.isolation_level = None
         try:
             connection.execute("BEGIN IMMEDIATE")

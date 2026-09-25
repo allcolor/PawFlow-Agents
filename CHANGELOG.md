@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A healthy durable store (workflow runs, flow runs, A2A, confirmations,
+  todos, scratchpads, UI surfaces, media projects, workflow proposals and
+  parent invocations, ScratchDirs) could be disabled at startup as
+  "database disk image is malformed". Their connections were never closed,
+  only committed, so the garbage collector closed them later; that close
+  rewrote the database file while the startup check was reading it. Each
+  operation now closes its connection.
+
 ## [1.0.0-beta.290] — 2026-09-25
 
 ### Fixed

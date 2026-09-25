@@ -38,12 +38,14 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import AbstractContextManager
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import core.paths as _paths
-from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
+from core.sqlite_store_guard import (
+    SqliteStoreGuard, SqliteStoreUnavailableError, closing_connection)
 
 logger = logging.getLogger(__name__)
 
@@ -319,12 +321,12 @@ class UserInteractionStore:
         """Return whether the store is safe to read or write."""
         return self._guard.available
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
         self._guard.require_available()
         connection = sqlite3.connect(self._database_path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
-        return connection
+        return closing_connection(connection)
 
     def _initialize(self) -> None:
         with self._lock, self._connect() as connection:

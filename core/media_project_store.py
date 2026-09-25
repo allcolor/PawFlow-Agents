@@ -6,12 +6,14 @@ import json
 import sqlite3
 import threading
 import uuid
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
 
 import core.paths as _paths
 from core.media_studio import canonical_digest, utc_now
-from core.sqlite_store_guard import SqliteStoreGuard, SqliteStoreUnavailableError
+from core.sqlite_store_guard import (
+    SqliteStoreGuard, SqliteStoreUnavailableError, closing_connection)
 
 
 PROJECT_STATUSES = frozenset({"active", "archived"})
@@ -97,7 +99,7 @@ class MediaProjectStore:
         return self._database_path_override or (
             _paths.RUNTIME_DIR / "media_projects.sqlite3")
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
         self._guard.require_available()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(
@@ -106,7 +108,7 @@ class MediaProjectStore:
         connection.execute("PRAGMA busy_timeout = 30000")
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return closing_connection(connection)
 
     def _initialize(self) -> None:
         with self._lock, self._connect() as connection:

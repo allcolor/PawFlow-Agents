@@ -75,6 +75,14 @@ database on their own: the file is evidence.
   every later access. UI surfaces map it to HTTP 503; server route discovery
   and CLI cold-start context assembly treat unavailable optional stores as
   empty.
+- Short-lived connection stores open one connection per operation through
+  `core.sqlite_store_guard.closing_connection`, which commits or rolls back
+  and then closes it. A `with sqlite3.connect(...)` block alone never closes:
+  the connection lingers until the cyclic garbage collector finalizes it, and
+  that last close checkpoints the WAL into the main file at an arbitrary
+  moment, on an arbitrary thread. The `immutable=1` check takes no lock, so a
+  checkpoint running during it made a healthy store report "database disk
+  image is malformed" and trip.
 - `data/runtime/scratchdirs/scratchdirs.sqlite3` holds disposable metadata
   only. A proven corruption signature quarantines the database and its
   WAL/SHM sidecars before an empty store is created.

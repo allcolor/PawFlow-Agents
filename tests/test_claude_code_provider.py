@@ -1374,6 +1374,29 @@ class TestCatchupSurvivesCompaction(unittest.TestCase):
         self.assertEqual(
             self.client._build_catchup_context("conv", self.AGENT), "")
 
+    def _own_delegated_reply(self, msg_id, ts):
+        return {"role": "assistant", "msg_id": msg_id, "ts": ts,
+                "content": "GD7 reply to GD2",
+                "source": {"type": "agent_delegate", "from": self.AGENT,
+                           "to": "GameDev2", "kind": "reply"}}
+
+    def test_baseline_starts_after_own_delegated_reply(self):
+        # Every agent run clones the client, so each run starts from the
+        # baseline. A reply written inside a delegation is the agent's own.
+        self.ctx.append(self._own_delegated_reply("r0", 150.0))
+        self.ctx.append(_catchup_msg("n0", 160.0, "fresh news",
+                                     {"type": "agent", "name": "GameDev"}))
+        text = self.client._build_catchup_context("conv", self.AGENT)
+        self.assertIn("fresh news", text)
+        self.assertNotIn("old 9", text)
+        self.assertNotIn("GD7 reply to GD2", text)
+
+    def test_own_delegated_reply_is_never_echoed_back(self):
+        self.client._build_catchup_context("conv", self.AGENT)
+        self.ctx.append(self._own_delegated_reply("r1", 200.0))
+        self.assertEqual(
+            self.client._build_catchup_context("conv", self.AGENT), "")
+
 
 class TestProviderInProviders(unittest.TestCase):
     """Test that claude-code and gemini-cli are in PROVIDERS."""

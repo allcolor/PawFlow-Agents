@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A Claude Code or Codex interactive agent that works through delegations no
+  longer receives the whole team backlog again with every prompt. The
+  catch-up block (messages from other participants since the agent's last
+  response) recognised the agent's own rows only when they were written as
+  `agent`; replies written inside a delegation (`agent_delegate`, `from`)
+  were not, so the starting point stayed on an old reply and each prompt
+  re-sent everything since, the agent's own delegated replies included.
+  A Codex agent reached ~1M characters per prompt and failed with "Your
+  input exceeds the context window of this model".
+
 ## [1.0.0-beta.288] — 2026-09-24
 
 ### Fixed

@@ -706,6 +706,14 @@ not receive the full context or tool instructions again; PawFlow sends only the
 latest turn delta, any current attachment references, and a narrow catch-up block
 containing new messages from other participants since the agent's last response.
 
+"The agent's last response" covers both ways an agent writes its rows: as
+itself (`source.type == "agent"`, `name`) and inside a delegation
+(`source.type == "agent_delegate"`, `from`). Every agent run clones its LLM
+client, so each run starts the catch-up from that last own row; a delegated
+reply that was not recognised as its own kept the start on an older reply,
+and every prompt re-sent the whole backlog -- the agent's own delegated
+replies included -- until the model rejected the context.
+
 ### Multi-message drain and msg_id dedup
 
 The live-session delta is NOT just the newest user message. A retrigger turn

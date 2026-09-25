@@ -35,6 +35,26 @@ def _catchup_ts(message: dict) -> float:
         return 0.0
 
 
+def _catchup_is_own(source: dict, agent_name: str) -> bool:
+    """Whether ``agent_name`` wrote the context row with this source.
+
+    An agent answering a delegation writes its rows as ``agent_delegate``
+    with ``from`` naming itself and no ``name`` at all. Reading only
+    ``type == "agent"`` missed every one of them: the catch-up baseline
+    stayed on the last non-delegated reply, and each turn re-sent
+    everything since -- the agent's own delegated replies included, as
+    "new messages from other participants" (2026-09-25: a Codex agent
+    working through delegations received ~1M characters per prompt until
+    the model rejected its context).
+    """
+    src_type = source.get("type", "")
+    if src_type == "agent":
+        return source.get("name", "") == agent_name
+    if src_type == "agent_delegate":
+        return bool(agent_name) and source.get("from", "") == agent_name
+    return False
+
+
 def _catchup_resume_index(ctx_data: list, anchor: tuple) -> int:
     """Index of the first message after the catch-up anchor.
 
@@ -608,8 +628,7 @@ class LLMClaudeCodeMixin(
                 # Baseline: everything after our last own message
                 last_own = -1
                 for i, m in enumerate(ctx_data):
-                    src = m.get("source") or {}
-                    if src.get("type") == "agent" and src.get("name") == agent_name:
+                    if _catchup_is_own(m.get("source") or {}, agent_name):
                         last_own = i
                 start = (last_own + 1) if last_own >= 0 else len(ctx_data)
             else:
@@ -630,9 +649,8 @@ class LLMClaudeCodeMixin(
             for m in new_msgs:
                 src = m.get("source") or {}
                 src_type = src.get("type", "")
-                src_name = src.get("name", "")
                 # Skip our own agent's messages (CC already has them)
-                if src_type == "agent" and src_name == agent_name:
+                if _catchup_is_own(src, agent_name):
                     continue
                 # Skip user messages directed at this agent (CC already has them)
                 if src_type == "user":

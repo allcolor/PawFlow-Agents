@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.291] — 2026-09-25
+
 ### Fixed
 
 - A healthy durable store (workflow runs, flow runs, A2A, confirmations,
@@ -15,11 +17,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   only committed, so the garbage collector closed them later; that close
   rewrote the database file while the startup check was reading it. Each
   operation now closes its connection.
-
-## [1.0.0-beta.290] — 2026-09-25
-
-### Fixed
-
 - A delegate, a background result or a due wake-up reaches a busy Claude
   Code or Codex interactive agent at once. It is submitted into the running
   session on its own (paste + Enter, no interruption: only a user message

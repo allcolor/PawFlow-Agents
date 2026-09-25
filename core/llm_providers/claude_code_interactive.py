@@ -274,7 +274,10 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             else:
                 parts.append("Attachments:\n" + "\n".join(image_lines))
         if not initial_context:
-            catchup = self._cci_catchup_context(conversation_id, agent_name)
+            catchup = self._cci_catchup_context(
+                conversation_id, agent_name,
+                exclude_msg_ids={getattr(m, "msg_id", "")
+                                 for m in (messages or [])} - {""})
             if catchup:
                 parts.append(catchup)
             current = self._cci_live_text(messages, state=state)
@@ -298,14 +301,16 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 rendered, messages, conversation_id, agent_name)
         return rendered
 
-    def _cci_catchup_context(self, conversation_id: str, agent_name: str = "") -> str:
+    def _cci_catchup_context(self, conversation_id: str, agent_name: str = "",
+                             exclude_msg_ids=()) -> str:
         agent = agent_name or getattr(self, "_cci_active_agent_name", "") or getattr(self, "_agent_name", "") or ""
         if not conversation_id or not agent:
             return ""
         builder = getattr(self, "_build_catchup_context", None)
         if builder is None:
             return ""
-        return builder(conversation_id, agent) or ""
+        return builder(conversation_id, agent,
+                       exclude_msg_ids=exclude_msg_ids) or ""
 
     def _cci_live_text(self, messages, state=None) -> str:
         """Return every not-yet-submitted trailing user text for a live session.

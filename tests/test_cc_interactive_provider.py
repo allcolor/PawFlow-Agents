@@ -1344,7 +1344,7 @@ def test_live_interactive_prompt_includes_multi_agent_catchup(tmp_path):
     from core.llm_client import LLMMessage
 
     client = LLMClient("claude-code-interactive")
-    client._build_catchup_context = lambda cid, agent: (
+    client._build_catchup_context = lambda cid, agent, **_kw: (
         "<catch_up_context>\n"
         "New messages from other participants since your last response:\n"
         "<message role=\"user\">\n[Agent reviewer]: done\n</message>\n"
@@ -1370,7 +1370,7 @@ def test_live_interactive_prompt_refuses_an_empty_paste(tmp_path):
     from core.llm_client import LLMClientError
 
     client = LLMClient("claude-code-interactive")
-    client._build_catchup_context = lambda cid, agent: ""
+    client._build_catchup_context = lambda cid, agent, **_kw: ""
 
     with pytest.raises(LLMClientError, match="nothing to submit"):
         client._cci_prompt(
@@ -2248,7 +2248,7 @@ def test_cc_interactive_preempt_sends_catchup_and_marks_handled(monkeypatch):
     )
 
     client = LLMClient("claude-code-interactive")
-    client._build_catchup_context = lambda cid, agent: "<catch_up_context>\n[Agent qwen]: FYI\n</catch_up_context>"
+    client._build_catchup_context = lambda cid, agent, **_kw: "<catch_up_context>\n[Agent qwen]: FYI\n</catch_up_context>"
 
     assert client.send_user_message(
         "answer this", user_id="uid", conversation_id="conv", agent_name="assistant") is True

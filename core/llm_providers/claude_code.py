@@ -616,7 +616,8 @@ class LLMClaudeCodeMixin(
             + "\n</system_instructions>\n\n" + user_text
         )
 
-    def _build_catchup_context(self, conv_id: str, agent_name: str) -> str:
+    def _build_catchup_context(self, conv_id: str, agent_name: str,
+                               exclude_msg_ids=()) -> str:
         """Build catch-up text from messages other agents sent since our last turn.
 
         Reads the PARENT conversation's context for this agent (sub-agents
@@ -625,6 +626,7 @@ class LLMClaudeCodeMixin(
         (tracked in self._cc_catchup_anchor). Returns formatted text block or "".
         Also moves self._cc_catchup_anchor so the same messages aren't sent
         twice (shared between initial, preempt, and inter-turn catch-up).
+        ``exclude_msg_ids`` are rows the caller's prompt already carries.
         """
         if not conv_id:
             return ""
@@ -671,6 +673,8 @@ class LLMClaudeCodeMixin(
             # Messages from this agent or user→this agent are already in CC's session
             filtered = []
             for m in new_msgs:
+                if m.get("msg_id") and m.get("msg_id") in exclude_msg_ids:
+                    continue
                 src = m.get("source") or {}
                 src_type = src.get("type", "")
                 # Skip our own agent's messages (CC already has them)

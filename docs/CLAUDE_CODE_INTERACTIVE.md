@@ -720,6 +720,20 @@ agent at `read_history`. An agent idle for hours otherwise received the whole
 team backlog in one paste (2634 messages, 2.5 M characters), which Codex
 never submitted.
 
+A delegate that wakes an agent whose CLI session is live does not depend on
+the catch-up. A delegate wake is never re-injected from the FlowFile body
+(the delegator already wrote the row into the agent's context), and a live
+session loads no context, so the row used to reach the CLI only through the
+catch-up. Any reply written between the delegate's arrival and the prompt
+-- for instance to another delegate live-submitted meanwhile -- moved the
+catch-up start past it: the prompt came out empty, the turn failed with
+"nothing to submit" and the delegate was lost. `_inject_cli_delegate_row`
+(`tasks/ai/_agentctx_p2.py`) now adds the canonical row, found by `msg_id`,
+to the turn's messages (memory only; it is already persisted), and
+`_cci_prompt` passes the `msg_id`s of its own messages to the catch-up as
+`exclude_msg_ids`, so the row is sent once. If the row is not persisted yet,
+the catch-up still carries it.
+
 ### Non-user messages are submitted on arrival, one at a time
 
 A delegate, a background result (`background_tool`) or a wake-up that falls

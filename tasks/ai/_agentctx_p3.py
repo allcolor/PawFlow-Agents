@@ -52,6 +52,8 @@ class _PACPhase3Mixin:
         # Simplest contract: our ctx is authoritative on load. Skip.
         st._skip_user_inject = bool(
             st._ms_src or getattr(st, "skip_current_user_inject", False))
+        if st._ms_src and getattr(st, "_cli_has_session", False):
+            self._inject_cli_delegate_row(st)
 
         if (st.user_text.strip() or st.attachments) and not st._skip_user_inject:
             if st.attachments:

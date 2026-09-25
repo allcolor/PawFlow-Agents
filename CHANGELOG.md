@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A delegate that wakes a Claude Code or Codex interactive agent whose CLI
+  session is live is always in the prompt. It used to reach the CLI only
+  through the catch-up block (messages since the agent's last reply); a
+  reply written meanwhile, e.g. to another delegate live-submitted during
+  the turn's preparation, moved that start past it. The turn then failed
+  with "Claude Code session lost: no new message for the live CLI session:
+  this turn has nothing to submit", the session marker was cleared, and
+  the delegate was never delivered. The woken turn now carries the
+  delegate's stored row itself, and the catch-up skips rows the prompt
+  already carries.
+
 ## [1.0.0-beta.291] — 2026-09-25
 
 ### Fixed

@@ -37,6 +37,39 @@ class _PACPhase2Mixin:
         """
         st._context_is_delta = True
 
+    def _inject_cli_delegate_row(self, st):
+        """Put the delegate that woke this turn into a live CLI's messages.
+
+        A delegate wake is never re-injected from the FlowFile body: the
+        delegator already wrote the row into this agent's context. A live
+        CLI session loads no context, though, so the row reached the CLI
+        only through the catch-up block, which starts after the agent's
+        last reply. Any reply written between the delegate's arrival and
+        this prompt moved that start past it (2026-09-25: a delegate
+        live-submitted meanwhile was answered first); the prompt came out
+        empty, the turn failed with "nothing to submit" and the delegate
+        was never delivered. The canonical row is added in memory only --
+        it is already persisted.
+        """
+        msg_id = st.flowfile.get_attribute("_user_msg_id") or (
+            st.body_json.get("msg_id", "") if st.body_json else "")
+        if not msg_id or any(
+                getattr(m, "msg_id", "") == msg_id for m in st.messages):
+            return
+        from core.conversation_store import ConversationStore
+        rows = ConversationStore.instance().load_agent_context(
+            st.conversation_id, st._context_agent) or []
+        row = next((r for r in reversed(rows)
+                    if r.get("msg_id") == msg_id), None)
+        if row is None:
+            logger.warning(
+                "[context:%s] delegate msg_id=%s not in %s's context yet; "
+                "the catch-up block carries it",
+                st.conversation_id[:8], msg_id, st._context_agent)
+            return
+        st.messages.extend(self._deserialize_messages(
+            [row], conversation_id=st.conversation_id))
+
     def _load_cold_cli_context(self, st):
         """Load the full PawFlow context a cold CLI process must receive.
 

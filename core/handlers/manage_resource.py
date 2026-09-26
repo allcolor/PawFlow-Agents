@@ -198,6 +198,19 @@ class ManageResourceHandler(ToolHandler):
                     except ValueError as ve:
                         return f"Error: {ve}"
 
+                joins_conversation = rtype == "agent" and bool(self._conversation_id)
+                agent_llm_service = ""
+                if joins_conversation:
+                    # Validate membership inputs before anything is written:
+                    # a definition stored without its conversation membership
+                    # is an agent nobody can address.
+                    agent_llm_service = str(
+                        (data.get("llm_service") if isinstance(data, dict) else "")
+                        or self._llm_service or "")
+                    if not agent_llm_service:
+                        return (f"Error: llm_service is required to add agent "
+                                f"'{name}' to this conversation")
+
                 if scope == "conversation" and self._conversation_id:
                     if rtype == "task_def":
                         from core.conversation_store import ConversationStore
@@ -208,21 +221,13 @@ class ManageResourceHandler(ToolHandler):
                     else:
                         store.create(rtype, name, user_id, data,
                                      conversation_id=self._conversation_id)
-                        if rtype == "agent":
-                            from core.conv_agent_config import add_agent_to_conv
-                            add_agent_to_conv(
-                                self._conversation_id, name,
-                                llm_service=self._llm_service or "",
-                            )
                 else:
                     store.create(rtype, name, user_id, data)
-                    if rtype == "agent" and self._conversation_id:
-                        from core.conv_agent_config import add_agent_to_conv
-                        add_agent_to_conv(
-                            self._conversation_id, name,
-                            llm_service=self._llm_service or "",
-                        )
-                if rtype != "skill":
+                if joins_conversation:
+                    self._add_agent_member(name, data, agent_llm_service)
+                # Creating an agent adds a member; it never changes which
+                # agent the conversation has selected.
+                if rtype not in ("skill", "agent"):
                     self._activate_resource(rtype, name)
                 creator = f" (by {self._agent_name})" if self._agent_name else ""
                 return f"Created {rtype} '{name}' (scope: {scope}).{creator}"
@@ -285,11 +290,11 @@ class ManageResourceHandler(ToolHandler):
             elif action == "delete":
                 if not name:
                     return "Error: 'name' is required for delete"
+                existing = store.get_any(
+                    rtype, name, user_id,
+                    conversation_id=self._conversation_id)
                 # Ownership check for agent/skill deletion
                 if rtype in ("agent", "skill"):
-                    existing = store.get_any(
-                        rtype, name, user_id,
-                        conversation_id=self._conversation_id)
                     if existing:
                         if (self._agent_name
                                 and existing.get("_scope") != "conversation"):
@@ -304,15 +309,24 @@ class ManageResourceHandler(ToolHandler):
                                     f"'{created_by}' — you can only delete "
                                     f"resources you created.")
                 delete_kwargs = {}
-                if (rtype == "skill" and existing.get("_scope") == "conversation"
+                # Delete in the scope the resource actually lives in: without
+                # the conversation_id a conversation-scoped resource is looked
+                # up in the user scope and reported "not found".
+                if (existing and existing.get("_scope") == "conversation"
                         and self._conversation_id):
                     delete_kwargs["conversation_id"] = self._conversation_id
+                if rtype == "agent" and self._conversation_id:
+                    refusal = self._agent_member_removal_refusal(name)
+                    if refusal:
+                        return f"Error: {refusal}"
                 if store.delete(rtype, name, user_id, **delete_kwargs):
                     if rtype == "skill":
                         from core.skill_lifecycle import remove_skill_assignments
                         remove_skill_assignments(
                             name, user_id, self._conversation_id,
                             resource_store=store, source="skill_delete")
+                    if rtype == "agent" and self._conversation_id:
+                        self._remove_agent_member(name)
                     return f"Deleted {rtype} '{name}'."
                 return f"{rtype} '{name}' not found."
 
@@ -544,6 +558,49 @@ class ManageResourceHandler(ToolHandler):
 
         except (ValueError, KeyError) as e:
             return f"Error: {e}"
+
+    def _add_agent_member(self, name: str, data: Dict[str, Any],
+                          llm_service: str) -> None:
+        """Register a freshly created agent definition in this conversation."""
+        from core.conv_agent_config import add_agent_to_conv
+        spec = data if isinstance(data, dict) else {}
+        add_agent_to_conv(
+            self._conversation_id, name,
+            llm_service=llm_service,
+            definition=name,
+            model=str(spec.get("model") or ""),
+            tools=list(spec.get("tools") or []),
+            max_depth=int(spec.get("max_depth") or 0),
+            user_id=self._user_id,
+        )
+
+    def _agent_member_removal_refusal(self, name: str) -> str:
+        """Why removing ``name`` would leave the conversation without an agent."""
+        from core.conv_agent_config import get_all_agent_configs
+        configs = get_all_agent_configs(self._conversation_id)
+        if name in configs and not [key for key in configs if key != name]:
+            return (f"cannot delete agent '{name}': it is this "
+                    "conversation's only agent")
+        return ""
+
+    def _remove_agent_member(self, name: str) -> None:
+        """Drop a deleted agent from this conversation's members.
+
+        The selected agent is never left pointing at the deleted one; the
+        caller has already refused removing the only member.
+        """
+        from core.conv_agent_config import (
+            get_all_agent_configs, remove_agent_config)
+        from core.conversation_store import ConversationStore
+        configs = get_all_agent_configs(self._conversation_id)
+        if name not in configs:
+            return
+        remove_agent_config(self._conversation_id, name)
+        cs = ConversationStore.instance()
+        active = cs.get_extra(self._conversation_id, "active_resources") or {}
+        if active.get("agent") == name:
+            active["agent"] = next(key for key in configs if key != name)
+            cs.set_extra(self._conversation_id, "active_resources", active)
 
     def _activate_resource(self, rtype: str, name: str):
         """Add resource to conversation's active_resources."""

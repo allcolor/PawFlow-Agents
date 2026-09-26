@@ -69,6 +69,7 @@ def test_ephemeral_interactive_stream_is_isolated_and_destroyed_on_send_error(
     pool = SimpleNamespace(
         ensure_started=ensure_started, touch=lambda _state: None,
         begin_turn=lambda _state: None, end_turn=lambda _state: None,
+        reclaim_unread_submissions=lambda _state: set(),
         send_text=lambda _state, _prompt: False,
         destroy_ephemeral=lambda item: destroyed.append(item))
     monkeypatch.setattr(
@@ -107,6 +108,7 @@ def test_claude_provider_releases_request_lease_when_coordinator_raises(
         ensure_started=lambda *_args, **_kwargs: state,
         touch=lambda _state: None,
         begin_turn=lambda _state: None, end_turn=lambda _state: None,
+        reclaim_unread_submissions=lambda _state: set(),
         send_text=lambda _state, _prompt: True,
         send_interrupt=lambda _state, _text: True,
         destroy_ephemeral=lambda _state: None)
@@ -163,6 +165,7 @@ def test_claude_provider_kills_native_session_when_compaction_hook_fires(
         ensure_started=lambda *_args, **_kwargs: state,
         touch=lambda _state: None,
         begin_turn=lambda _state: None, end_turn=lambda _state: None,
+        reclaim_unread_submissions=lambda _state: set(),
         send_text=lambda _state, _prompt: True,
         send_interrupt=lambda _state, _text: True,
         destroy_ephemeral=lambda _state: None,

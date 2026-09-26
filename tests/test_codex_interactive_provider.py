@@ -170,6 +170,7 @@ def test_ephemeral_stream_is_destroyed_when_prompt_send_fails(monkeypatch):
         ensure_started=ensure_started,
         begin_turn=lambda _state: None,
         end_turn=lambda _state: None,
+        reclaim_unread_submissions=lambda _state: set(),
         send_text=lambda _state, _prompt: False,
         destroy_ephemeral=lambda item: destroyed.append(item),
     )
@@ -217,6 +218,7 @@ def test_codex_provider_releases_request_lease_when_coordinator_raises(
         ensure_started=lambda *_args, **_kwargs: state,
         begin_turn=begin_turn,
         end_turn=end_turn,
+        reclaim_unread_submissions=lambda _state: set(),
         touch=lambda _state: None,
         send_text=lambda _state, _prompt: True,
         send_interrupt=lambda _state, _text: True,
@@ -275,6 +277,7 @@ def test_codex_provider_kills_native_session_when_compaction_hook_fires(
         ensure_started=lambda *_args, **_kwargs: state,
         begin_turn=lambda _state: None,
         end_turn=lambda _state: None,
+        reclaim_unread_submissions=lambda _state: set(),
         touch=lambda _state: None,
         send_text=lambda _state, _prompt: True,
         send_interrupt=lambda _state, _text: True,

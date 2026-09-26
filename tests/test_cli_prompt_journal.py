@@ -86,6 +86,46 @@ def test_claude_code_text_quoted_in_a_tool_result_is_not_evidence(cc):
                           "PROBE-B marker", since) == ""
 
 
+# Shape Claude Code journaled at 2026-09-26 14:11:12Z (GameDev2): the inline
+# pieces verbatim, the collapsed rest wrapped in <pasted_content> tags.
+PASTED = ("GD4 -> GD2 BLOCKER\n\n=== 1) LA MESURE ===\n```\n  ANNONCE 91\n"
+          "```\nJ'ATTENDS UNE PAIRE STABLE. ***")
+CC_CHIP_PROMPT = {"type": "user", "message": {"role": "user", "content": (
+    "GD4 -> GD2 BLOCKER\n\n=== 1) LA MESURE ===\n\n<pasted_content id=\"cc5d\">"
+    "\n\n```\n  ANNONCE 91\n```\nJ'ATTENDS UNE PAIRE STABLE. ***\n"
+    "</pasted_content id=\"cc5d\">\n")}}
+
+
+def test_a_message_partly_collapsed_into_a_chip_is_processed(cc):
+    workdir, transcript = cc
+    _append(transcript)
+    since = journal.mark(journal.CLAUDE_CODE, str(workdir))
+    _append(transcript, CC_CHIP_PROMPT)
+
+    assert journal.status(journal.CLAUDE_CODE, str(workdir),
+                          PASTED, since) == journal.PROCESSED
+
+
+def test_a_queued_message_collapsed_into_a_chip_is_processed(cc):
+    workdir, transcript = cc
+    _append(transcript)
+    since = journal.mark(journal.CLAUDE_CODE, str(workdir))
+    wrapped = '<pasted_content id="ab12">\n' + PASTED + '\n</pasted_content id="ab12">'
+    _append(transcript,
+            {"type": "queue-operation", "operation": "enqueue",
+             "content": wrapped},
+            {"type": "attachment", "attachment": {
+                "type": "queued_command", "prompt": wrapped}})
+
+    assert journal.status(journal.CLAUDE_CODE, str(workdir),
+                          PASTED, since) == journal.PROCESSED
+
+
+def test_a_chip_boundary_inside_a_word_still_matches():
+    journaled = 'ANNON<pasted_content id="x1">CE 91</pasted_content id="x1">'
+    assert journal.same_message(journal.normalize("ANNONCE 91"), journaled)
+
+
 def test_evidence_written_before_the_mark_does_not_count(cc):
     workdir, transcript = cc
     _append(transcript, CC_ENQUEUE, CC_ABSORBED)

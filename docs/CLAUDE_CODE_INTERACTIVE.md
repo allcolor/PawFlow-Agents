@@ -770,8 +770,12 @@ Both CLIs keep queued messages separate and in order.
 `core/cli_prompt_journal.py` reads those files, which live in the session
 directory PawFlow owns: `mark()` records where each journal ends before a
 paste, `status()` reads only the complete lines appended since and matches
-the whitespace-normalised full text (a `tool_result` or an assistant message
-quoting the text is never evidence).
+the normalised full text (a `tool_result` or an assistant message quoting the
+text is never evidence). `normalize()` drops all whitespace and the
+`<pasted_content id="..">` / `</pasted_content id="..">` tags Claude Code
+journals around the part of a long paste it collapsed into a chip: with only
+whitespace folded, such a message never matched, stayed "unread" forever and
+broke the next turn (GameDev2, 2026-09-26 14:12Z).
 
 - Every send (`send_text`, `send_interrupt`, `send_queued`) takes the
   session's `send_lock`: one paste at a time, a user interrupt included.
@@ -793,6 +797,13 @@ quoting the text is never evidence).
   instead of an orphan capture. Past
   `PAWFLOW_CCI_POST_STOP_UNREAD_SUBMISSION_CAP_SECONDS` (default 30) the turn
   finishes and the unread message is resubmitted by the retrigger.
+- Before a new turn builds its prompt, `reclaim_unread_submissions()` stops
+  tracking every accepted-but-unread message and removes its msg_id from
+  `submitted_msg_ids`, so the turn pastes it again instead of skipping it as
+  already submitted and failing with "nothing to submit".
+- A turn refused with "nothing to submit" pasted nothing, so it keeps the
+  session marker (`claude_session:<agent>`) like a transport kill; only other
+  resume failures forget the session.
 
 ### A dead event stream replaces the session
 

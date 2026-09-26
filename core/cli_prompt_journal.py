@@ -29,6 +29,7 @@ history.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,11 +44,21 @@ CODEX = "codex-interactive"
 _MAX_READ_BYTES = 64 * 1024 * 1024
 # Only the most recently written journals can receive a new message.
 _RECENT_FILES = 4
+# Claude Code collapses a long paste into a chip and journals its text
+# wrapped in these tags (measured 2026-09-26, GameDev2 14:10:59Z:
+# '<pasted_content id="cc5d">' ... '</pasted_content id="cc5d">').
+_PASTED_CONTENT_TAG = re.compile(r'</?pasted_content(?:\s+id="[^"]*")?\s*>')
 
 
 def normalize(text: str) -> str:
-    """Whitespace-insensitive form: the TUIs rewrap and trim pasted text."""
-    return " ".join((text or "").split())
+    """Comparable form of a pasted message.
+
+    The TUIs rewrap and trim pasted text, and Claude Code wraps the part it
+    collapsed into a chip in ``<pasted_content>`` tags, possibly between two
+    inline pieces with no whitespace of its own. So the tags and ALL
+    whitespace are dropped: a paste split mid-word still compares equal.
+    """
+    return "".join(_PASTED_CONTENT_TAG.sub("", text or "").split())
 
 
 def same_message(expected: str, candidate: str) -> bool:

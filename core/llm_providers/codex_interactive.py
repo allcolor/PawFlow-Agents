@@ -233,6 +233,7 @@ class LLMCodexInteractiveMixin:
             self._codex_interactive_active_service_id = (
                 getattr(self, "_agent_service", "") or "")
             self._had_preempts_this_turn = False
+            pool.reclaim_unread_submissions(state)
 
             prompt = self._cci_prompt(
                 messages, tools, state.workdir, state.container_workdir,

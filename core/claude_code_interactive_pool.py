@@ -1415,6 +1415,34 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             return False
         return None
 
+    def reclaim_unread_submissions(self, state: InteractiveContainer) -> set:
+        """Stop tracking accepted-but-unread messages; return their msg_ids.
+
+        Called before a new turn's prompt is built. The final drain kept the
+        rescue copy of every such message (``submission_processed`` False)
+        and re-triggered with it, but the msg_id was still in
+        ``submitted_msg_ids``, so the prompt skipped it as already pasted:
+        the turn had nothing to submit and failed, and the message was never
+        delivered (GameDev2, 2026-09-26 14:12Z and 14:15Z). Forgetting them
+        here makes the new turn paste them again.
+        """
+        unread = self.unprocessed_submissions(state)
+        ids = {submission.msg_id for submission in unread
+               if submission.msg_id}
+        with state.send_lock:
+            state.pending_submissions[:] = [
+                submission for submission in state.pending_submissions
+                if not any(submission is gone for gone in unread)]
+            submitted = getattr(state, "submitted_msg_ids", None)
+            if submitted:
+                submitted.difference_update(ids)
+        if unread:
+            logging.getLogger(__name__).warning(
+                "[cci] %s: %d accepted message(s) never read by the model "
+                "-- submitting again: %s", state.name, len(unread),
+                sorted(ids))
+        return ids
+
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
         with state.send_lock:
             return self._send_interrupt_locked(state, text)

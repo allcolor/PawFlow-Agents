@@ -270,3 +270,72 @@ def test_providers_without_journals_keep_the_preempt_flag():
     client = types.SimpleNamespace()
     assert _preempt_handled_verdict(client, _msg("m"), True) is True
     assert _preempt_handled_verdict(client, _msg("m"), False) is False
+
+
+# -- an unread message is submitted again by the next turn ---------------------
+
+def test_the_next_turn_resubmits_an_accepted_message_the_model_never_read(
+        tmp_path):
+    """GameDev2 2026-09-26 14:12Z: the final drain re-triggered with the
+    unread messages, but they were still recorded as pasted, so the prompt
+    skipped them and the turn failed with "nothing to submit"."""
+    from core import cli_prompt_journal
+    from core.llm_client import LLMMessage
+    from core.llm_providers.claude_code_interactive import (
+        LLMClaudeCodeInteractiveMixin)
+
+    state = _state(tmp_path, "claude-code-interactive")
+    transcript = tmp_path / "projects" / "-cc" / "s.jsonl"
+    _append(transcript, {"type": "user", "message": {"content": "earlier"}})
+    pool = InteractiveClaudeCodePool.__new__(InteractiveClaudeCodePool)
+    since = cli_prompt_journal.mark(state.provider, state.workdir)
+    pool.track_submission(state, "read one", since, "m-read")
+    pool.track_submission(state, "never read", since, "m-unread")
+    state.submitted_msg_ids = {"m-read", "m-unread", "m-older"}
+    _append(transcript, {"type": "attachment", "attachment": {
+        "type": "queued_command", "prompt": "read one"}})
+    assert pool.submission_processed(state, "m-unread") is False
+
+    assert pool.reclaim_unread_submissions(state) == {"m-unread"}
+
+    assert state.pending_submissions == []
+    assert state.submitted_msg_ids == {"m-read", "m-older"}
+    provider = LLMClaudeCodeInteractiveMixin.__new__(
+        LLMClaudeCodeInteractiveMixin)
+    text = provider._cci_live_text(
+        [LLMMessage(role="user", content="read one", msg_id="m-read",
+                    conversation_id="c"),
+         LLMMessage(role="user", content="never read", msg_id="m-unread",
+                    conversation_id="c")],
+        state=state)
+    assert text == "never read"
+
+
+def test_nothing_is_reclaimed_when_every_message_was_read(tmp_path):
+    from core import cli_prompt_journal
+
+    state = _state(tmp_path, "claude-code-interactive")
+    transcript = tmp_path / "projects" / "-cc" / "s.jsonl"
+    _append(transcript, {"type": "user", "message": {"content": "earlier"}})
+    pool = InteractiveClaudeCodePool.__new__(InteractiveClaudeCodePool)
+    since = cli_prompt_journal.mark(state.provider, state.workdir)
+    pool.track_submission(state, "read one", since, "m-read")
+    state.submitted_msg_ids = {"m-read"}
+    _append(transcript, {"type": "user", "message": {"content": (
+        '<pasted_content id="cc5d">\nread one\n</pasted_content id="cc5d">')}})
+
+    assert pool.reclaim_unread_submissions(state) == set()
+    assert state.submitted_msg_ids == {"m-read"}
+    assert pool.submission_processed(state, "m-read") is True
+
+
+def test_an_empty_delta_does_not_forget_the_live_session():
+    """"nothing to submit" is raised before any paste: the CLI session is
+    intact, so its claude_session marker must survive the failed turn."""
+    from pathlib import Path
+
+    src = Path("tasks/ai/_alc_llm_turn.py").read_text(encoding="utf-8")
+    body = src.split("st._is_transport_kill = (")[1].split("return _ALC_BREAK")[0]
+
+    assert '"nothing to submit" in st.err_str' in body
+    assert "if not st._keep_session:" in body

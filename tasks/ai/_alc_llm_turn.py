@@ -532,13 +532,17 @@ class _ALCLlmTurnMixin:
                     or "stream interrupted" in st.err_str.lower()
                     or "broken pipe" in st.err_str.lower()
                 )
+                # An empty delta was refused before anything was pasted: the
+                # live session is untouched and must not be forgotten.
+                st._keep_session = (st._is_transport_kill
+                                    or "nothing to submit" in st.err_str)
                 logger.error(
                     "[claude-code] resume failed (%s) — "
                                 "hard-fail (silent context replace forbidden) "
                                 "[transport_kill=%s, session_preserved=%s]",
                     st.err_str[:200], st._is_transport_kill,
-                    st._is_transport_kill)
-                if not st._is_transport_kill:
+                    st._keep_session)
+                if not st._keep_session:
                     try:
                         from core.conversation_store import ConversationStore
                         st._an = st.ctx["active_agent_name"]

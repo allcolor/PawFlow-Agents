@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A long message pasted into a Claude Code agent was never recognised as
+  read: the CLI journals the collapsed part inside `<pasted_content>` tags,
+  which the journal comparison did not strip. The next turn then found the
+  message already submitted, failed with "nothing to submit", dropped the
+  live session and never delivered it. The tags are now ignored, an unread
+  message is pasted again by the next turn, and a "nothing to submit" failure
+  keeps the session.
+
 ## [1.0.0-beta.293] — 2026-09-26
 
 ### Added

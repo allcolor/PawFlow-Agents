@@ -75,9 +75,26 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
     """Streaming agent execution + sync + side channels."""
 
     @staticmethod
+    def _cancel_running_tools(conversation_id: str, agent_name: str) -> None:
+        """Cancel every tool call the agent has in flight on its relays.
+
+        A user message interrupts: the CLI's Escape stops the model's turn,
+        but a relay command it launched (a long bash, a script) kept running
+        until this was also called on the interrupt path.
+        """
+        try:
+            from services.tool_relay_service import ToolRelayService
+            ToolRelayService.cancel_agent(conversation_id, agent_name or "")
+        except Exception:
+            logger.warning("[agent:%s] tool relay cancel failed for %s",
+                           conversation_id[:8], agent_name or "default",
+                           exc_info=True)
+
+    @staticmethod
     def _deliver_to_captured_tmux(conversation_id: str, agent_name: str,
                                   text: str, *, attachments: list = None,
-                                  user_id: str = "") -> bool:
+                                  user_id: str = "",
+                                  interrupt: bool = True) -> bool:
         """Type a user message into a tmux session working outside a worker.
 
         Reached only when a turn marker says the agent is busy while nothing
@@ -91,6 +108,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
         Attachments use the same scoped prompt materialization as a worker's
         live preempt. A captured turn has no registered provider client, but
         that must not downgrade a multimodal message to a text-only paste.
+        ``interrupt=False`` (a /nimsg) submits without Escape and without
+        cancelling the running tools, like a delegate.
         Returns True when the complete prompt reached the live container.
         """
         if not conversation_id or not ((text or "").strip() or attachments):
@@ -126,7 +145,12 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                     agent_name)
             # This tmux is visibly running: a normal send waits behind that turn.
             # Escape + receipt-verified Enter is the live-preempt path.
-            if not pool.send_interrupt(state, prompt):
+            if interrupt:
+                AgentStreamingMixin._cancel_running_tools(
+                    conversation_id, agent_name)
+                if not pool.send_interrupt(state, prompt):
+                    return False
+            elif not pool.send_queued(state, prompt):
                 return False
         except Exception:
             logger.debug("captured-tmux delivery failed", exc_info=True)
@@ -204,6 +228,9 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         _user_msg_id = _body.get("msg_id", "")
+        # /nimsg: a user message submitted WITHOUT interrupting the agent. It
+        # is delivered like a delegate: no Escape, no tool call cancelled.
+        _no_interrupt = bool(_body.get("no_interrupt"))
         # Set ONLY by the programmatic runtime API (before stamping): those
         # transports retry on lost acks, so their ingress is idempotent and
         # acknowledged AFTER the durable write (B1-O: accepted = durably
@@ -952,9 +979,44 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                     _running_mode.get("type"),
                     _running_mode.get("source_agent") or "-")
 
-            if (_active_client and getattr(_active_client, 'supports_live_preempt', False)
-                    and hasattr(_active_client, 'send_user_message')
-                    and _user_text and _modes_match):
+            _live_cli = bool(
+                _active_client
+                and getattr(_active_client, 'supports_live_preempt', False)
+                and hasattr(_active_client, 'send_user_message'))
+            # Submitted now WITHOUT interrupting: a /nimsg, or an agent trigger
+            # of another mode. Queued, it waited for the whole CLI turn (a CLI
+            # turn is one PawFlow iteration, nothing drains it before the end).
+            # An external_request turn stays closed: its context belongs to an
+            # external caller.
+            _submit_quietly = (
+                _live_cli and _user_text and not _body.get("attachments")
+                and _running_mode.get("type") != "external_request"
+                and (_no_interrupt or not _modes_match))
+            if _submit_quietly:
+                _quiet = _ensure_stamped_user() or {}
+                if _active_client.send_queued_message(
+                        _user_text, user_id=_uid,
+                        conversation_id=conversation_id, agent_name=_target,
+                        msg_id=str(_quiet.get("msg_id") or "")):
+                    _queue_pending_user(source="preempt_rescue", publish=False)
+                    logger.info(
+                        "[agent:%s] submitted to the running %s without "
+                        "interrupting it", conversation_id[:8],
+                        _target or "default")
+                    flowfile.set_content(json.dumps({
+                        "status": "accepted", "conversation_id": conversation_id,
+                        "message_count": _ack_message_count(),
+                        "server_start_time": SERVER_START_TIME,
+                        "wait_for_done": False}).encode("utf-8"))
+                    flowfile.set_attribute("agent.conversation_id", conversation_id)
+                    return [flowfile]
+                logger.warning(
+                    "[agent:%s] %s did not accept the message; queuing it",
+                    conversation_id[:8], _target or "default")
+            elif _live_cli and _user_text and _modes_match:
+                # A user message interrupts: every tool call the agent has in
+                # flight is cancelled before the message goes in.
+                self._cancel_running_tools(conversation_id, _target)
                 _attachments = _body.get("attachments", [])
                 if _active_client.send_user_message(
                     _user_text,
@@ -1014,7 +1076,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             if (_active_client
                     and not getattr(_active_client, 'supports_live_preempt', False)
                     and hasattr(_active_client, 'abort')
-                    and _user_text and _modes_match):
+                    and _user_text and _modes_match and not _no_interrupt):
                 # Soft preempt (API) : si le worker est entre iterations
                 # (tool call en cours, ou idle) il n'y a AUCUNE connexion HTTP
                 # active (_active_http_conn est None). Tuer le thread puis
@@ -1104,7 +1166,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 # working. The live container is still typeable: type into it.
                 if self._deliver_to_captured_tmux(
                         conversation_id, _target, _user_text,
-                        attachments=_attachments_body, user_id=_uid):
+                        attachments=_attachments_body, user_id=_uid,
+                        interrupt=not _no_interrupt):
                     ack = json.dumps({
                         "status": "accepted",
                         "conversation_id": conversation_id,

@@ -36,7 +36,8 @@ def _bare_pool(cls, keys, pastes):
 def test_send_queued_pastes_and_submits_without_escape(cls):
     keys, pastes = [], []
     pool = _bare_pool(cls, keys, pastes)
-    state = SimpleNamespace(name="c", last_error="", session_token="t")
+    state = SimpleNamespace(name="c", last_error="", session_token="t",
+                            send_lock=threading.RLock())
 
     assert pool.send_queued(state, "[GameDev2 to agent GameDev7]: go") is True
 
@@ -48,7 +49,8 @@ def test_send_queued_fails_when_the_paste_fails():
     keys = []
     pool = _bare_pool(InteractiveClaudeCodePool, keys, [])
     pool._paste_text = lambda state, text: False
-    state = SimpleNamespace(name="c", last_error="", session_token="t")
+    state = SimpleNamespace(name="c", last_error="", session_token="t",
+                            send_lock=threading.RLock())
 
     assert pool.send_queued(state, "x") is False
     assert keys == []
@@ -73,8 +75,9 @@ def wired(monkeypatch):
         "tasks.ai.agent_loop.AgentLoopTask.wake_agent",
         lambda cid, agent, **kw: wakes.append((agent, kw.get("even_if_active"))))
     inst = SimpleNamespace(_active_contexts_lock=threading.Lock(),
-                           _active_claude_client={})
+                           _active_claude_client={}, _active_contexts={})
     monkeypatch.setattr("tasks.ai.agent_loop.AgentLoopTask._live_instance", inst)
+    monkeypatch.setattr(live_submit.time, "sleep", lambda _s: None)
     return SimpleNamespace(queue=queue, wakes=wakes, inst=inst)
 
 
@@ -122,6 +125,46 @@ def test_failed_submission_falls_back_to_queue_and_wake(wired):
                              "delegate_reply", "u", True, "", True)
     assert wired.queue.items == [("d1", "delegate_reply")]
     assert wired.wakes == [("GameDev7", True)]
+
+
+class _FlakyClient(_Client):
+    """Refuses the first paste, accepts the next one."""
+
+    def send_queued_message(self, text, **kw):
+        self.sent.append((text, kw.get("msg_id")))
+        return len(self.sent) > 1
+
+
+def test_a_refused_submission_is_retried_while_the_turn_runs(wired):
+    client = _FlakyClient()
+    wired.inst._active_claude_client["conv:GameDev7"] = client
+    live_submit._submit_live(client, "conv", "GameDev7", _msg(),
+                             "delegate_reply", "u", True, "", True)
+    assert len(client.sent) == 2
+    assert wired.queue.items == [("d1", "preempt_rescue")]
+    assert wired.wakes == []
+
+
+def test_a_message_that_would_cross_the_threshold_compacts_first(wired):
+    ctx = {"max_context_size": 1000, "_compact_trigger_fraction": 0.9,
+           "_context_usage_cache": {"used": 895}, "chars_per_token": 4}
+    wired.inst._active_contexts["conv:GameDev7"] = ctx
+    client = _Client()
+    live_submit._submit_live(client, "conv", "GameDev7", _msg(),
+                             "delegate_reply", "u", True, "", True)
+    assert client.sent == [], "nothing is pasted before the compaction"
+    assert ctx["_compact_before_submit"] is True
+    assert wired.queue.items == [("d1", "delegate_reply")]
+
+
+def test_a_message_under_the_threshold_is_submitted(wired):
+    wired.inst._active_contexts["conv:GameDev7"] = {
+        "max_context_size": 100000, "_compact_trigger_fraction": 0.9,
+        "_context_usage_cache": {"used": 1000}}
+    client = _Client()
+    live_submit._submit_live(client, "conv", "GameDev7", _msg(),
+                             "delegate_reply", "u", True, "", True)
+    assert len(client.sent) == 1
 
 
 def test_running_cli_agent_is_found_case_insensitively(wired):

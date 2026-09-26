@@ -105,7 +105,7 @@ class _FakePool:
         self.sent = []
         self.fail = set(fail)
 
-    def send_queued(self, state, text):
+    def send_queued(self, state, text, *, msg_id=""):
         self.sent.append(text)
         return text not in self.fail
 

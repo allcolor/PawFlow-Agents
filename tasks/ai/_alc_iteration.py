@@ -105,6 +105,9 @@ class _ALCIterationMixin:
                 st._agent_client_cfg.get("compact_threshold_pct", 0))
         except (AttributeError, TypeError):
             st._trigger_frac = 0.0
+        # Read by deliveries that happen outside this loop (a message pasted
+        # into the live CLI): they check the same threshold before submitting.
+        st.ctx["_compact_trigger_fraction"] = st._trigger_frac
 
         st._with_provider_system_prompt = lambda stored_msgs: self._alc_with_provider_system_prompt(st, stored_msgs)
 

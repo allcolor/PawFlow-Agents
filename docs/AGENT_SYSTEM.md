@@ -310,6 +310,17 @@ Agents can be created through:
 - The `manage_resource` tool (the agent can create other agents)
 - The admin UI
 
+When `manage_resource` creates an agent from inside a conversation, the new
+definition also becomes a member of that conversation, with the
+`llm_service`, `model`, `tools` and `max_depth` given in `data`. When
+`data` names no `llm_service`, the member inherits the calling agent's
+service; with neither, the call fails before anything is written. Creating a
+member never changes the conversation's selected agent. Deleting an agent
+reaches the scope the definition lives in (a conversation-scoped definition
+is deleted from its conversation) and removes the member from the
+conversation; if it was the selected agent, another member is selected, and
+deleting the only member is refused before anything is deleted.
+
 ### LLM Service Reference
 
 The `llm_service` field points to an LLM-capable service: a direct
@@ -1290,9 +1301,35 @@ nothing.
 
 ### Queue Behavior
 
-If a user sends a message while the agent is already running:
-- For Claude Code providers: the message is injected directly into the active session (preemption).
-- For API providers: the message is queued in memory (`_pending_user_msgs`). After the current turn completes, a `PollScheduler` delay triggers processing of queued messages.
+Messages reaching an agent that is already running follow the same rules for
+every LLM service, API or CLI:
+
+| Message | Delivery |
+|---|---|
+| user | at once, WITH interrupt: every tool call the agent has in flight (relay commands included) is cancelled, then the message is submitted |
+| user via `/nimsg` (`"no_interrupt": true`) | at once, without interrupt |
+| delegate, delegate result | at once, without interrupt |
+| system: due wake-up, background tool result | at once, without interrupt |
+
+- Each submission carries one message; several are submitted one after the
+  other in arrival order. An API agent receives the messages pending at its
+  next model call as distinct messages, in order.
+- Nothing waits for the end of the turn. A live CLI (Claude Code, Codex
+  interactive) gets the message pasted at once (`tasks/ai/_live_submit.py`,
+  `send_queued_message`); a paste the CLI does not accept is retried after 2 s
+  and 5 s before the queue takes over. An agent trigger of another mode is
+  submitted without interrupt instead of waiting; only an `external_request`
+  turn, whose context belongs to an external caller, is never entered.
+- Before every submission the compaction threshold is checked
+  (`tasks/ai/_delivery_limits.py`): a message that would cross it is not
+  pasted, the running turn compacts (interrupting and restarting the CLI on the
+  compacted context) and the message is delivered after.
+- When the messages a CLI accepted but its model has not read exceed 10 % of
+  the agent's context and the oldest has waited more than 60 s, a tool call is
+  blocking them: the agent's running tool calls are cancelled, so the CLI
+  reaches its next step and reads them.
+- Whether a pasted message was read is proven from the CLI's own session
+  journal (see `docs/CLAUDE_CODE_INTERACTIVE.md`), never assumed.
 
 `schedule_continuation` wake-ups are agent-qualified one-shot handoffs. When a
 continuation or explicit scheduled reminder becomes due during its target's turn,

@@ -352,11 +352,13 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                             "after tmux prompt submit")
                 elif (self._stop_seen and
                       time.time() - self._post_stop_last_event_at >=
-                      _POST_STOP_IDLE_DRAIN_SECONDS):
+                      _POST_STOP_IDLE_DRAIN_SECONDS
+                      and not self._submissions_still_owed()):
                     self._finish_turn_if_ready()
                     break
                 self._probe_liveness(started_at)
                 self._probe_pane_blocker(started_at)
+                self._probe_backlog()
                 self._raise_if_failed_exchange_overdue()
                 continue
 
@@ -432,6 +434,7 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                         raise _failed_exchange_error(
                             self._failed_exchange_detail, "Codex gave up")
                     self._stop_seen = True
+                    self._stop_seen_at = self._stop_seen_at or time.time()
                     self._post_stop_last_event_at = time.time()
                 elif hook_name == "UserPromptSubmit":
                     # A reused WebSocket has no new HTTP sampling request.

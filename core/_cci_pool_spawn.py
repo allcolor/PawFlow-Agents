@@ -16,6 +16,7 @@ import os
 import shlex
 import socket
 import subprocess  # nosec B404
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -49,6 +50,19 @@ def docker_cmd():
     after the spawn methods moved here."""
     import core.claude_code_interactive_pool as _pool
     return _pool.docker_cmd()
+
+
+@dataclass
+class PendingSubmission:
+    """A message the CLI accepted and the model has not read yet.
+
+    ``since`` is the journal mark taken before its paste
+    (core.cli_prompt_journal); ``text`` is exactly what was pasted.
+    """
+    text: str
+    since: object
+    msg_id: str = ""
+    accepted_at: float = field(default_factory=time.time)
 
 
 @dataclass
@@ -88,6 +102,15 @@ class InteractiveContainer:
     # context, catchup, or live tail). A prompt build never re-pastes one
     # of these — dedup for the multi-message drain / retrigger path.
     submitted_msg_ids: set = field(default_factory=set)
+    # One paste at a time: a user interrupt, a queued delegate and a turn
+    # prompt must never interleave their keystrokes in the same composer.
+    # Re-entrant because provider overrides call the base send under it.
+    send_lock: threading.RLock = field(default_factory=threading.RLock)
+    # Accepted-but-unread submissions, oldest first. A message leaves only
+    # when its journal shows the model read it (see unprocessed_submissions).
+    pending_submissions: list = field(default_factory=list)
+    # msg_ids whose journal proved the model read them.
+    processed_msg_ids: set = field(default_factory=set)
     # Credential-pool coordinates captured at spawn so teardown can release the
     # exclusive slot (1 login = 1 live container) and recover any CLI-rotated
     # OAuth refresh_token back to the right pool slot. Defaults keep back-compat

@@ -7,6 +7,8 @@ prompt until the idle-pane probe failed it a minute later ("went back to its
 prompt without answering and without a Stop hook").
 """
 
+import threading
+
 import core.claude_code_interactive_pool as ccip
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.codex_interactive_pool import CodexInteractivePool
@@ -26,6 +28,7 @@ class _State:
     session_token = "sess"
     last_error = ""
     prompt_ready = True
+    send_lock = threading.RLock()
 
 
 class _Clock:

@@ -567,15 +567,17 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         self._check_native_compaction(state)
         return sent
 
-    def send_queued(self, state: InteractiveContainer, text: str) -> bool:
+    def send_queued(self, state: InteractiveContainer, text: str, *,
+                    msg_id: str = "") -> bool:
         self._check_native_compaction(state)
-        if not self._leave_backtrack_overlay(state):
-            return False
-        try:
-            sent = super().send_queued(state, text)
-        except Exception:
-            self._check_native_compaction(state)
-            raise
+        with state.send_lock:
+            if not self._leave_backtrack_overlay(state):
+                return False
+            try:
+                sent = super().send_queued(state, text, msg_id=msg_id)
+            except Exception:
+                self._check_native_compaction(state)
+                raise
         self._check_native_compaction(state)
         return sent
 
@@ -619,15 +621,21 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
 
     def _verify_submitted(self, state: InteractiveContainer, text: str, *,
                           event_service=None,
-                          submit_marker=(0, 0)):
+                          submit_marker=(0, 0),
+                          journal_since=None):
         """Prove submission, retrying only a visibly stranded pasted chip.
 
         Codex collapses pasted text into a chip, so the inherited
         fragment-absence rule is never valid here. Production submission is
         confirmed only by the exact UserPromptSubmit digest or the corresponding
-        MITM request. Pane state can authorize an Enter retry only when the
-        structurally recognised composer still holds the pasted chip. Unknown
-        chrome, a stale transcript and a running turn never authorize input.
+        MITM request -- or by Codex's own journal: its history.jsonl holds a
+        message from the Enter that accepted it. Behind a running tool the
+        hook comes only when the model reads the message (measured
+        2026-09-26: two minutes later), so without the journal a correctly
+        queued message was declared unsubmitted. Pane state can authorize an
+        Enter retry only when the structurally recognised composer still
+        holds the pasted chip. Unknown chrome, a stale transcript and a
+        running turn never authorize input.
         """
         configured = os.environ.get("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "")
         try:
@@ -665,6 +673,11 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                     logger.debug(
                         "[codex-interactive] prompt submission confirmed for "
                         "%s by %s", state.name, proof)
+                    return True
+                if self._journal_status(state, text, journal_since):
+                    logger.debug(
+                        "[codex-interactive] prompt submission confirmed for "
+                        "%s by its journal", state.name)
                     return True
                 if proof == "fragment":
                     state.last_error = (
@@ -760,6 +773,8 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         while True:
             last_holds = None
             for _ in range(polls):
+                if self._journal_status(state, text, journal_since):
+                    return True
                 pane = self._pane_text(state.name)
                 holds = self._pane_holds_unsent_paste(pane) if pane else None
                 last_holds = holds

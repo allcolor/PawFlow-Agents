@@ -148,3 +148,35 @@ def test_woken_prompt_sends_the_delegate_once():
             [msg], None, "/w", "/cw", "u", "conv",
             initial_context=False, agent_name=AGENT, state=_live_state())
     assert prompt.count("GD4 -> GD2. my claim [2] falls") == 1
+
+
+def _user_turn(text):
+    return LLMMessage(role="user", content=text, msg_id="u1",
+                      source={"type": "user"}, conversation_id="conv")
+
+
+def test_a_live_submitted_delegate_is_not_shown_again_in_the_catch_up():
+    # 2026-09-26: delegates submitted live during a turn came back in the
+    # next prompt's catch-up block, so the agent received each one twice.
+    rows = CONTEXT[:3]
+    state = _live_state()
+    state.submitted_msg_ids.add("gd5")
+    client = LLMClient("claude-code-interactive")
+    with _store(rows):
+        prompt = client._cci_prompt(
+            [_user_turn("next question")], None, "/w", "/cw", "u", "conv",
+            initial_context=False, agent_name=AGENT, state=state)
+    assert "GD5 -> GD2. clarification adopted" not in prompt
+    assert "GD4 -> GD2. my claim [2] falls" in prompt
+
+
+def test_a_preempt_does_not_repeat_live_submitted_delegates():
+    rows = CONTEXT[:3]
+    state = _live_state()
+    state.submitted_msg_ids.add("gd5")
+    client = LLMClient("claude-code-interactive")
+    with _store(rows):
+        prompt = client._cci_preempt_prompt(
+            "stop, look at this", [], state, "u", "conv", AGENT)
+    assert "GD5 -> GD2. clarification adopted" not in prompt
+    assert prompt.endswith("stop, look at this")

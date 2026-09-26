@@ -11,7 +11,7 @@ from core.codex_interactive_pool import CodexInteractivePool
 from core.llm_providers._codex_interactive_turn import (
     _CodexInteractiveTurnCoordinator)
 from core.llm_providers.claude_code_interactive import (
-    LLMClaudeCodeInteractiveMixin)
+    LLMClaudeCodeInteractiveMixin, unblock_backlog)
 from core.llm_providers.cli_shared import LLMCliSharedMixin
 
 logger = logging.getLogger(__name__)
@@ -273,6 +273,10 @@ class LLMCodexInteractiveMixin:
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name),
                     pane_callback=lambda: pool._pane_text(state.name),
+                    submissions_callback=lambda: len(
+                        pool.unprocessed_submissions(state)),
+                    backlog_callback=lambda: unblock_backlog(
+                        pool, state, conversation_id, agent_name),
                     context_tokens_callback=lambda tokens: (
                         self.record_codex_live_context(
                             state, conversation_id, agent_name, tokens,
@@ -337,6 +341,10 @@ class LLMCodexInteractiveMixin:
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name),
                     pane_callback=lambda: pool._pane_text(state.name),
+                    submissions_callback=lambda: len(
+                        pool.unprocessed_submissions(state)),
+                    backlog_callback=lambda: unblock_backlog(
+                        pool, state, conversation_id, agent_name),
                     context_tokens_callback=lambda tokens: (
                         self.record_codex_live_context(
                             state, conversation_id, agent_name, tokens,
@@ -420,6 +428,13 @@ class LLMCodexInteractiveMixin:
             # The streaming coordinator owns native compaction; the message
             # stays queued for the compacted restart.
             return False
+
+    def _codex_interactive_submission_processed(self, msg_id: str):
+        state = self._codex_interactive_session_state()
+        if not state:
+            return None
+        return CodexInteractivePool.instance().submission_processed(
+            state, msg_id)
 
     def cancel_codex_interactive(self, force: bool = False):
         if not force:

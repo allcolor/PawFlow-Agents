@@ -13,6 +13,15 @@ const HELP_DATA = {
     short: t('commandShort.2'),
     detail: 'Send a message to a specific agent or task without changing the active agent.\n\nExamples:\n  /msg @grok Explain this code\n  /msg @ALL What do you think?\n  /msg @t_8953b308 Check the latest post\n  /msg @"Agent With Spaces" Hello',
   },
+  '/nimsg': {
+    usage: '/nimsg [@agent] <message>',
+    short: 'Send a message to an agent without interrupting it',
+    detail: 'Send a message to an agent without interrupting its current work.\n\n'
+      + 'A normal message interrupts: the agent\'s running tool calls are cancelled and it reads the message at once. '
+      + '/nimsg submits the message the way a delegate or a background result is submitted: nothing is cancelled, '
+      + 'and the agent reads it at its next step. Without @agent the selected agent is used.\n\n'
+      + 'Examples:\n  /nimsg @claude FYI the build is green\n  /nimsg note for later: check the logs',
+  },
   '/btw': {
     usage: '/btw [@agent|ALL] <question>',
     short: t('commandShort.3'),

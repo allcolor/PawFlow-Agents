@@ -754,6 +754,56 @@ a CLI turn is a single PawFlow iteration, so nothing drained the queue in
 between, and delegates arrived up to 20 minutes late. Only a user message
 interrupts (`send_interrupt`: Escape, then paste + Enter).
 
+### Accepted and read: proven from the CLI's own journals
+
+A message pasted behind a running step goes through two states, and the
+hooks report them inconsistently (measured 2026-09-26, a message pasted
+during a blocking `sleep`):
+
+| | Claude Code | Codex |
+|---|---|---|
+| `UserPromptSubmit` hook | on Enter (accepted) | only when the model reads it, minutes later |
+| accepted | `queue-operation` `enqueue` in `projects/<slug>/<session>.jsonl` | a `history.jsonl` line |
+| read by the model | `queued_command` attachment, or a `user` line for a prompt that starts a turn | a `user` `message` `response_item` in `sessions/**/rollout-*.jsonl` |
+
+Both CLIs keep queued messages separate and in order.
+`core/cli_prompt_journal.py` reads those files, which live in the session
+directory PawFlow owns: `mark()` records where each journal ends before a
+paste, `status()` reads only the complete lines appended since and matches
+the whitespace-normalised full text (a `tool_result` or an assistant message
+quoting the text is never evidence).
+
+- Every send (`send_text`, `send_interrupt`, `send_queued`) takes the
+  session's `send_lock`: one paste at a time, a user interrupt included.
+- The journal is proof in both receipt verifiers, next to the hook and the
+  MITM request. A Codex message queued behind a tool is therefore accepted
+  on Enter instead of being declared "not confirmed" 45 s later.
+- `send_queued` returns only once the message is accepted (it used to verify
+  in a background thread whose result nobody read), then records it in
+  `pending_submissions`. `unprocessed_submissions()` drops each one whose
+  journal shows it was read, and `LLMClient.cli_submission_processed(msg_id)`
+  answers True, False or None (untracked).
+- The final drain decides per message (`_preempt_handled_verdict`): the
+  rescue copy of a pasted message is dropped only once the model read it.
+  The turn-wide `_had_preempts_this_turn` flag, which only meant "a paste was
+  accepted", decides only for untracked messages.
+- After the `Stop` hook the coordinator keeps the turn open while an accepted
+  message is unread (`submissions_callback`, checked once a second): the CLI
+  submits it right after the Stop, and this turn owns that continuation
+  instead of an orphan capture. Past
+  `PAWFLOW_CCI_POST_STOP_UNREAD_SUBMISSION_CAP_SECONDS` (default 30) the turn
+  finishes and the unread message is resubmitted by the retrigger.
+
+### A dead event stream replaces the session
+
+When a session's event queue overflows, the event service marks it
+`unreliable` and rejects every later event of that session, receipts
+included. The session never recovers on its own (2026-09-26, GameDev7: every
+turn after the overflow failed). `ensure_started` now treats such a session
+like a dead tmux and recreates the container; `send_queued` and
+`send_interrupt` refuse to paste into it, so the message stays queued for the
+turn that runs on the new session.
+
 ### Multi-message drain and msg_id dedup
 
 The live-session delta is NOT just the newest user message. A retrigger turn

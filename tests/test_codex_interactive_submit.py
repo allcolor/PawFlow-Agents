@@ -15,6 +15,7 @@ pasted text -- is left on the fragment heuristic unchanged.
 """
 
 import os
+import threading
 from types import SimpleNamespace
 
 import core.claude_code_interactive_pool as ccip
@@ -54,6 +55,7 @@ RUNNING_PANE = SUBMITTED_PANE + "\n  Working (Esc to interrupt)\n"
 class _State:
     name = "pawflow-codex-int-test"
     session_token = "sess"
+    send_lock = threading.RLock()
 
 
 def _harness(pool, panes, monkeypatch):

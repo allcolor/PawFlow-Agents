@@ -118,7 +118,10 @@ function cmdAgent(text, parts) {
   return true;
 }
 
-function cmdMsg(text) {
+// options.noInterrupt (/nimsg): the agent is not interrupted -- no tool call
+// is cancelled, the message is submitted like a delegate's.
+function cmdMsg(text, options) {
+  const noInterrupt = !!(options && options.noInterrupt);
   const margs = parseQuotedArgs(text);
   let target, msgText;
   if (margs[1] && margs[1].startsWith('@')) {
@@ -136,9 +139,12 @@ function cmdMsg(text) {
   }
   if (!target) { addMsg('system', t('msgUsage')); }
   else if (!msgText) { addMsg('system', t('msgTargetUsage', { target: target })); }
+  else if (noInterrupt && (/^t_[0-9a-f]+$/.test(target) || target.toUpperCase() === 'ALL')) {
+    addMsg('system', '/nimsg needs one agent: /nimsg [@agent] <message>');
+  }
   else if (/^t_[0-9a-f]+$/.test(target)) { cmdTaskMsg(target, msgText); }
   else if (target.toUpperCase() === 'ALL') { cmdAgentMsgAll(msgText); }
-  else { cmdAgentMsg(target, msgText); }
+  else { cmdAgentMsg(target, msgText, { noInterrupt: noInterrupt }); }
   return true;
 }
 
@@ -305,7 +311,7 @@ function cmdAgentSetname(realName, nickname) {
   });
 }
 
-function cmdAgentMsg(agentName, text) {
+function cmdAgentMsg(agentName, text, options) {
   if (pendingFiles.some(f => f.uploading)) {
     addMsg('system', t('filesUploadingWait')); return;
   }
@@ -327,6 +333,7 @@ function cmdAgentMsg(agentName, text) {
   document.getElementById('status').textContent = t('sending');
 
   const body = { message: text, target_agent: agentName };
+  if (options && options.noInterrupt) body.no_interrupt = true;
   if (conversationId) body.conversation_id = conversationId;
   if (attachments.length > 0) body.attachments = attachments;
   const ttlVal = parseInt(document.getElementById('ttlSelect').value, 10);

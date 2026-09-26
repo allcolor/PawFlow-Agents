@@ -33,6 +33,11 @@ class _Pool:
     def __init__(self, container=None):
         self.container = container
         self.typed = []
+        self.queued = []
+
+    def send_queued(self, state, text, *, msg_id=""):
+        self.queued.append(text)
+        return True
 
     def find_live_by_conv_agent(self, _conv, _agent):
         return self.container
@@ -65,6 +70,36 @@ def test_message_is_typed_into_the_live_tmux(wired):
     assert AgentStreamingMixin._deliver_to_captured_tmux(
         "80c37670", "claude", "hello") is True
     assert [t for _s, t in pool.typed] == ["hello"]
+
+
+def test_a_user_message_cancels_the_running_tools_then_interrupts(
+        wired, monkeypatch):
+    holder, pool = wired
+    holder["live"] = object()
+    cancelled = []
+    monkeypatch.setattr(
+        "services.tool_relay_service.ToolRelayService.cancel_agent",
+        lambda cid, agent, **kw: cancelled.append((cid, agent)))
+
+    assert AgentStreamingMixin._deliver_to_captured_tmux(
+        "80c37670", "claude", "stop that") is True
+    assert cancelled == [("80c37670", "claude")]
+    assert [t for _s, t in pool.typed] == ["stop that"]
+
+
+def test_a_nimsg_is_submitted_without_interrupting(wired, monkeypatch):
+    holder, pool = wired
+    holder["live"] = object()
+    cancelled = []
+    monkeypatch.setattr(
+        "services.tool_relay_service.ToolRelayService.cancel_agent",
+        lambda cid, agent, **kw: cancelled.append((cid, agent)))
+
+    assert AgentStreamingMixin._deliver_to_captured_tmux(
+        "80c37670", "claude", "fyi", interrupt=False) is True
+    assert cancelled == []
+    assert pool.typed == []
+    assert pool.queued == ["fyi"]
 
 
 def test_no_live_proxy_session_means_no_injection(wired):

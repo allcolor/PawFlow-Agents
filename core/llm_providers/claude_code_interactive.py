@@ -28,6 +28,13 @@ from core.llm_providers._cci_turn import (  # noqa: E402,F401 -- re-exported for
     _NO_PROXY_EVENT_TIMEOUT_SECONDS,
 )
 
+
+def unblock_backlog(pool, state, conversation_id: str, agent_name: str) -> bool:
+    """The backlog rule for a live CLI turn (tasks/ai/_delivery_limits.py)."""
+    from tasks.ai._delivery_limits import unblock_backlog as _unblock
+    return _unblock(pool, state, conversation_id, agent_name)
+
+
 class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
     """Claude Code interactive provider using a transparent MITM proxy."""
 
@@ -123,7 +130,11 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     emitted_tool_result_ids=state.emitted_tool_result_ids,
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name),
-                    pane_callback=lambda: pool._pane_text(state.name))
+                    pane_callback=lambda: pool._pane_text(state.name),
+                    submissions_callback=lambda: len(
+                        pool.unprocessed_submissions(state)),
+                    backlog_callback=lambda: unblock_backlog(
+                        pool, state, conversation_id, agent_name))
                 response = coord.run(getattr(self, "_abort", None))
             except CCCompactDetected:
                 pool.kill_session(
@@ -194,7 +205,11 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     emitted_tool_result_ids=state.emitted_tool_result_ids,
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name),
-                    pane_callback=lambda: pool._pane_text(state.name))
+                    pane_callback=lambda: pool._pane_text(state.name),
+                    submissions_callback=lambda: len(
+                        pool.unprocessed_submissions(state)),
+                    backlog_callback=lambda: unblock_backlog(
+                        pool, state, conversation_id, agent_name))
                 response = coord.run(getattr(self, "_abort", None))
             except CCCompactDetected:
                 pool.kill_session(
@@ -274,10 +289,15 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             else:
                 parts.append("Attachments:\n" + "\n".join(image_lines))
         if not initial_context:
+            # Rows the prompt carries and rows already pasted into this
+            # session (a delegate submitted live) are not catch-up: showing
+            # them again delivered every live-submitted message twice.
             catchup = self._cci_catchup_context(
                 conversation_id, agent_name,
-                exclude_msg_ids={getattr(m, "msg_id", "")
-                                 for m in (messages or [])} - {""})
+                exclude_msg_ids=({getattr(m, "msg_id", "")
+                                  for m in (messages or [])}
+                                 | set(getattr(state, "submitted_msg_ids",
+                                               None) or ())) - {""})
             if catchup:
                 parts.append(catchup)
             current = self._cci_live_text(messages, state=state)
@@ -485,11 +505,13 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
     def _cli_submit_queued(self, pool, state, text: str, msg_id: str) -> bool:
         """Submit one non-user message into the live session, uninterrupted.
 
-        The message is recorded as conveyed and the turn as preempted only
-        once the paste went in, so the final drain persists it without
-        re-triggering a turn and no later prompt build pastes it again.
+        The message is recorded as conveyed only once the CLI accepted it, so
+        no later prompt build pastes it again. Whether the final drain may
+        drop its rescue copy is decided per message, from the session
+        journal (``cli_submission_processed``), not from this acceptance.
         """
-        if not (text or "").strip() or not pool.send_queued(state, text):
+        if (not (text or "").strip()
+                or not pool.send_queued(state, text, msg_id=msg_id)):
             return False
         self._had_preempts_this_turn = True
         if msg_id:
@@ -500,10 +522,20 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             submitted.add(msg_id)
         return True
 
+    def _cci_submission_processed(self, msg_id: str):
+        state = self._cci_session_state()
+        if not state:
+            return None
+        return InteractiveClaudeCodePool.instance().submission_processed(
+            state, msg_id)
+
     def _cci_preempt_prompt(self, text: str, attachments: list,
                             state, user_id: str, conversation_id: str,
                             agent_name: str = "") -> str:
-        catchup = self._cci_catchup_context(conversation_id, agent_name)
+        catchup = self._cci_catchup_context(
+            conversation_id, agent_name,
+            exclude_msg_ids=set(getattr(state, "submitted_msg_ids", None)
+                                or ()) - {""})
         if not attachments:
             return "\n\n".join(part for part in (catchup, text) if part).strip()
         from core.llm_client import LLMMessage

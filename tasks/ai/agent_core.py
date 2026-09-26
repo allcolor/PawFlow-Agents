@@ -11,7 +11,7 @@ from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
 
 from tasks.ai._alc_base import (  # noqa: F401
     _ALCState, _ALC_BREAK, _ALC_CONTINUE, _strip_context_ack, _preempt_rescue_requires_retrigger,
-    _apply_bg_results, _svc_rates, _svc_subscription, _record_response_usage,
+    _preempt_handled_verdict, _apply_bg_results, _svc_rates, _svc_subscription, _record_response_usage,
     _usage_cost_usd, _check_budget, _CONTEXT_ACK_PATTERNS)
 from tasks.ai._alc_closures1 import _ALCClosures1Mixin
 from tasks.ai._alc_closures2 import _ALCClosures2Mixin
@@ -433,7 +433,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                 m for m in st._new_user_msgs
                 if _preempt_rescue_requires_retrigger(
                     m, st._provider_response_completed_at, st._client_provider,
-                    st._had_preempts)
+                    _preempt_handled_verdict(st.client, m, st._had_preempts))
             ]
             if st._new_user_msgs and (not st._had_preempts or st._unhandled_user_msgs):
                 st._retrigger_msgs = (

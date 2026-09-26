@@ -25,7 +25,9 @@ import logging
 import uuid
 
 from core.docker_utils import docker_cmd
-from core._cci_pool_spawn import InteractiveContainer, _InteractiveContainerSpawnMixin
+from core import cli_prompt_journal
+from core._cci_pool_spawn import (
+    InteractiveContainer, PendingSubmission, _InteractiveContainerSpawnMixin)
 # _paths kept as a module attribute: tests patch pool_mod._paths.CLAUDE_SESSIONS_DIR
 # (the spawn methods now live in _cci_pool_spawn but read the same core.paths).
 import core.paths as _paths  # noqa: F401
@@ -217,6 +219,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         # and managed launch revision are compared on the live state instead.
         compatible = existing is None or self._session_compatible(
             existing, client)
+        # A session whose event stream overflowed can no longer report a
+        # single event: every later turn on it fails (2026-09-26, GameDev7).
+        stream_dead = bool(existing and container_alive and tmux_alive
+                           and self._event_stream_dead(existing))
         dead_existing = None
         stopped_existing = None
         with self._lock:
@@ -227,7 +233,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 current.last_used = time.time()
                 return current
             if (existing is not None and container_alive and tmux_alive
-                    and compatible):
+                    and compatible and not stream_dead):
                 existing.last_used = time.time()
                 return existing
             if existing is not None:
@@ -245,7 +251,12 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             self._kill_container(stopped_existing.name)
             self._unregister_event_session(stopped_existing)
         if dead_existing is not None:
-            if tmux_alive and not compatible:
+            if stream_dead:
+                logger.warning(
+                    "[cci-live] event stream of %s is dead (%s); recreating "
+                    "the interactive session", dead_existing.name,
+                    self._event_stream_error(dead_existing))
+            elif tmux_alive and not compatible:
                 logger.info(
                     "[cci-live] live session %s was launched for %s/%s and "
                     "cannot serve %s; recreating it",
@@ -512,6 +523,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         return sessions
 
     def send_text(self, state: InteractiveContainer, text: str) -> bool:
+        with state.send_lock:
+            return self._send_text_locked(state, text)
+
+    def _send_text_locked(self, state: InteractiveContainer, text: str) -> bool:
         text = self._composer_safe_text(text)
         state.last_error = ""
         if not self._is_alive(state.name):
@@ -568,6 +583,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         # therefore fails visibly and leaves the single paste untouched.
         settle = self._paste_settle_seconds()
         before = self._pane_text(state.name)
+        journal_since = self._journal_mark(state)
         if not self._paste_text(state, text):
             return False
         # Let the TUI finish ingesting the paste before pressing Enter: an
@@ -596,7 +612,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 time.sleep(delay)
         verified = self._verify_submitted(
             state, text, event_service=event_service,
-            submit_marker=submit_marker)
+            submit_marker=submit_marker, journal_since=journal_since)
         if verified is False:
             if not state.last_error:
                 state.last_error = "prompt submission was not confirmed"
@@ -963,7 +979,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
 
     def _verify_submitted(self, state: InteractiveContainer, text: str, *,
                           event_service=None,
-                          submit_marker=(0, 0)):
+                          submit_marker=(0, 0),
+                          journal_since=None):
         """Post-submit check with spaced Enter retries.
 
         Despite the settle delay, an Enter can still be coalesced into the
@@ -976,6 +993,9 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         Without one (isolated diagnostics/tests) poll the pane: a running
         marker means the prompt was accepted; an idle prompt with the pasted
         text still visible means the Enter was swallowed — press it again.
+        In both, the CLI's own journal holding the message (taken from
+        ``journal_since``) is proof too, and the one that survives a lost
+        hook or a dead event stream.
         """
         try:
             window = float(os.environ.get(
@@ -987,7 +1007,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         fragment = self._submit_probe_fragment(text)
         if event_service is not None:
             return self._verify_submitted_by_receipt(
-                state, text, fragment, window, event_service, submit_marker)
+                state, text, fragment, window, event_service, submit_marker,
+                journal_since=journal_since)
         interval = 0.3
         # An Enter inside the TUI's paste-detection window is a pasted
         # newline, not a submit: three retries 0.3 s apart (observed
@@ -998,6 +1019,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         retries = 0
         log = logging.getLogger(__name__)
         for _ in range(polls):
+            if self._journal_status(state, text, journal_since):
+                return True
             pane = self._pane_text(state.name)
             if pane:
                 holds = self._pane_holds_unsent_paste(pane)
@@ -1080,7 +1103,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
 
     def _verify_submitted_by_receipt(self, state: InteractiveContainer,
                                      text: str, fragment: str, window: float,
-                                     event_service, submit_marker):
+                                     event_service, submit_marker, *,
+                                     journal_since=None):
         """Prove the submit with the UserPromptSubmit receipt.
 
         Incident 2026-09-23: a prompt stayed in the input box after three
@@ -1110,6 +1134,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 after_submit=after_submit, after_request=after_request,
                 timeout=max(0.0, min(retry_gap, remaining)))
             if proof in ("hook", "request"):
+                return True
+            if self._journal_status(state, text, journal_since):
                 return True
             if proof == "fragment":
                 state.last_error = (
@@ -1294,11 +1320,113 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return None
 
+    # ── Submission evidence from the CLI's own journals ────────────────
+
+    @staticmethod
+    def _event_session(state: InteractiveContainer):
+        try:
+            from services.cc_interactive_event_service import (
+                get_or_create_cc_interactive_event_service)
+            return get_or_create_cc_interactive_event_service()[2].session_state(
+                state.session_token)
+        except Exception:
+            # Isolated transport diagnostics may have no event service.
+            logger.debug("[cci] no event service for %s", state.name,
+                         exc_info=True)
+            return None
+
+    def _event_stream_dead(self, state: InteractiveContainer) -> bool:
+        events = self._event_session(state)
+        return bool(events is not None and getattr(events, "unreliable", False))
+
+    def _event_stream_error(self, state: InteractiveContainer) -> str:
+        events = self._event_session(state)
+        return str(getattr(events, "error", "") or "unreliable")
+
+    def _refuse_dead_stream(self, state: InteractiveContainer) -> bool:
+        """True (with last_error) when nothing pasted here could be observed."""
+        if not self._event_stream_dead(state):
+            return False
+        state.last_error = (
+            f"event stream of {state.name} is dead "
+            f"({self._event_stream_error(state)}); the session is replaced "
+            "on the next turn")
+        return True
+
+    @staticmethod
+    def _journal_mark(state: InteractiveContainer):
+        """Where the session's journals end now; None when unsupported."""
+        provider = getattr(state, "provider", "")
+        if not cli_prompt_journal.supported(provider) or not state.workdir:
+            return None
+        try:
+            return cli_prompt_journal.mark(provider, state.workdir)
+        except OSError:
+            logger.warning("[cci] cannot mark the journals of %s", state.name,
+                           exc_info=True)
+            return None
+
+    @staticmethod
+    def _journal_status(state: InteractiveContainer, text: str, since) -> str:
+        if since is None:
+            return ""
+        try:
+            return cli_prompt_journal.status(
+                state.provider, state.workdir, text, since)
+        except OSError:
+            logger.warning("[cci] cannot read the journals of %s", state.name,
+                           exc_info=True)
+            return ""
+
+    def track_submission(self, state: InteractiveContainer, text: str,
+                         since, msg_id: str = "") -> None:
+        """Remember an accepted paste until its journal shows it was read."""
+        if since is None:
+            return
+        with state.send_lock:
+            state.pending_submissions.append(PendingSubmission(
+                text=text, since=since, msg_id=msg_id or ""))
+
+    def unprocessed_submissions(self, state: InteractiveContainer) -> list:
+        """Accepted submissions the model has not read yet, oldest first."""
+        with state.send_lock:
+            pending = list(state.pending_submissions)
+        read = [
+            submission for submission in pending
+            if (self._journal_status(state, submission.text, submission.since)
+                == cli_prompt_journal.PROCESSED)]
+        with state.send_lock:
+            state.pending_submissions[:] = [
+                submission for submission in state.pending_submissions
+                if not any(submission is done for done in read)]
+            state.processed_msg_ids.update(
+                submission.msg_id for submission in read if submission.msg_id)
+            return list(state.pending_submissions)
+
+    def submission_processed(self, state: InteractiveContainer,
+                             msg_id: str):
+        """True/False when this session tracked ``msg_id``; None otherwise."""
+        if not msg_id:
+            return None
+        pending = self.unprocessed_submissions(state)
+        if msg_id in state.processed_msg_ids:
+            return True
+        if any(submission.msg_id == msg_id for submission in pending):
+            return False
+        return None
+
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
+        with state.send_lock:
+            return self._send_interrupt_locked(state, text)
+
+    def _send_interrupt_locked(self, state: InteractiveContainer,
+                               text: str) -> bool:
         text = self._composer_safe_text(text)
         state.last_error = ""
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
+            return False
+        if self._refuse_dead_stream(state):
             return False
         self._cancel_copy_mode(state)
         canonical_input = self._PREPARE_INTERRUPT_BEFORE_PASTE
@@ -1330,6 +1458,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 logging.getLogger(__name__).debug(
                     "Could not mark CCI interrupt submission", exc_info=True)
                 event_service = None
+        journal_since = self._journal_mark(state)
         if not self._paste_text(state, text):
             return False
         if not canonical_input and not self.send_keys(state, ["Escape"]):
@@ -1363,7 +1492,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         if self._VERIFY_INTERRUPT_SYNCHRONOUS:
             verified = self._verify_submitted(
                 state, text, event_service=event_service,
-                submit_marker=submit_marker)
+                submit_marker=submit_marker, journal_since=journal_since)
             if verified is False:
                 if not state.last_error:
                     state.last_error = "interrupt prompt submission was not confirmed"
@@ -1372,12 +1501,14 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         threading.Thread(
             target=self._verify_submitted, args=(state, text),
             kwargs={"event_service": event_service,
-                    "submit_marker": submit_marker},
+                    "submit_marker": submit_marker,
+                    "journal_since": journal_since},
             name="cci-verify-submit", daemon=True,
         ).start()
         return True
 
-    def send_queued(self, state: InteractiveContainer, text: str) -> bool:
+    def send_queued(self, state: InteractiveContainer, text: str, *,
+                    msg_id: str = "") -> bool:
         """Submit one message into a running turn WITHOUT interrupting it.
 
         A delegate, a background result or a due wake-up is submitted the
@@ -1385,14 +1516,26 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         into its running turn (or right behind it) like text typed while the
         model works. Only a user message interrupts (send_interrupt). Each
         message is submitted on its own, so nothing piles up until the turn
-        ends. Submission is verified in the background for every provider:
-        the running turn keeps the TUI busy and a synchronous proof would
-        hold the delivery thread for the whole turn.
+        ends.
+
+        Returns True once the CLI ACCEPTED the message -- its journal holds
+        it, or the receipt proves it -- so the next message is never pasted
+        on top of this one. Acceptance is immediate even behind a blocking
+        tool. Whether the model READ it is proven later, from the same
+        journal (``unprocessed_submissions``): Codex reports nothing until
+        then, which used to fail these sends 45 s after a correct paste.
         """
+        with state.send_lock:
+            return self._send_queued_locked(state, text, msg_id)
+
+    def _send_queued_locked(self, state: InteractiveContainer, text: str,
+                            msg_id: str) -> bool:
         text = self._composer_safe_text(text)
         state.last_error = ""
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
+            return False
+        if self._refuse_dead_stream(state):
             return False
         self._cancel_copy_mode(state)
         self._remember_injected_prompt(state, text)
@@ -1407,6 +1550,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 logging.getLogger(__name__).debug(
                     "Could not mark CCI queued submission", exc_info=True)
                 event_service = None
+        journal_since = self._journal_mark(state)
         if not self._paste_text(state, text):
             return False
         settle = self._paste_settle_seconds()
@@ -1414,12 +1558,14 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             time.sleep(settle)
         if not self.send_keys(state, ["Enter"]):
             return False
-        threading.Thread(
-            target=self._verify_submitted, args=(state, text),
-            kwargs={"event_service": event_service,
-                    "submit_marker": submit_marker},
-            name="cci-verify-queued", daemon=True,
-        ).start()
+        accepted = self._verify_submitted(
+            state, text, event_service=event_service,
+            submit_marker=submit_marker, journal_since=journal_since)
+        if accepted is False:
+            if not state.last_error:
+                state.last_error = "queued message was not accepted"
+            return False
+        self.track_submission(state, text, journal_since, msg_id)
         return True
 
     def force_stop(self, state: InteractiveContainer) -> bool:

@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `/nimsg [@agent] <message>` sends a user message that does not interrupt
+  the agent: nothing is cancelled, and it is submitted the way a delegate is.
+
+### Fixed
+
+- A user message sent to a busy Claude Code or Codex agent stopped the
+  model's turn but not the relay commands it had launched; every tool call in
+  flight is now cancelled first.
+- A message to a busy CLI agent could wait for the end of its turn: an agent
+  trigger of another mode, and a paste the CLI did not accept, were queued
+  until then. They are now submitted at once (a refused paste is retried
+  twice). A message whose submission would cross the compaction threshold
+  makes the turn compact first.
+- Messages a CLI accepted but could not read behind a blocking tool call now
+  cancel that tool call once they exceed 10 % of the context and have waited
+  more than a minute.
+- Delegates submitted live into a CLI agent were shown to it a second time in
+  the catch-up block of its next prompt.
+- Patching one message of a large multi-agent conversation held the
+  conversation lock for up to 25 s: every agent's context was decoded in full
+  to look for a row it did not hold. Segments that do not contain the message
+  id are now skipped without decoding.
+- `manage_resource` could not create an agent from inside a conversation:
+  adding it to the conversation failed on a missing definition, and would
+  have used the calling agent's LLM service instead of the one requested.
+  The new agent is now added with its requested service, model, tools and
+  depth, without changing the conversation's selected agent. Deleting a
+  conversation-scoped agent no longer answers "not found"; the agent also
+  leaves the conversation, and the only member cannot be deleted.
+- A message submitted to a busy Codex agent behind a running tool was
+  reported "not confirmed" after 45 s, although Codex had accepted it:
+  Codex fires its submit hook only when the model reads the message. Claude
+  Code and Codex submissions are now proven from the CLIs' own session
+  journals, which record acceptance and reading per message.
+- A message pasted into a busy Claude Code or Codex agent could be lost: the
+  paste was reported successful before any proof, and the end of the turn
+  then treated it as answered. It now counts as handled only once the CLI's
+  journal shows its model read it; the turn stays open up to 30 s after
+  `Stop` for that, and an unread message is resubmitted.
+- Pastes into one interactive session (user interrupt, delegate, turn prompt)
+  no longer interleave.
+- After its event queue overflowed, an interactive session rejected every
+  later event and every later turn of that agent failed. The session is now
+  replaced on the next turn, and nothing is pasted into it meanwhile.
+- A relay command still running when the relay reconnected ran a second
+  time: the server retries such a request, and the relay did not remember
+  commands across connections. The first run's result was also lost on the
+  dead connection. The relay now runs a request at most once, answers a retry
+  with the first run's result, and always sends results on its current
+  connection. A forced watchdog reconnect logs what the connection was doing.
+
 ## [1.0.0-beta.292] — 2026-09-25
 
 ### Fixed

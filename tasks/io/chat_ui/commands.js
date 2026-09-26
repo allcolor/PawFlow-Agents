@@ -70,6 +70,7 @@ const _CMD_HANDLERS = {
   '/stop':        (text, parts, cmd) => cmdForceStop(text, parts),
   '/agent':       (text, parts, cmd) => cmdAgent(text, parts),
   '/msg':         (text, parts, cmd) => cmdMsg(text),
+  '/nimsg':       (text, parts, cmd) => cmdMsg(text, { noInterrupt: true }),
   '/btw':         (text, parts, cmd) => cmdBtw(text),
   '/setname':     (text, parts, cmd) => cmdSetname(text),
 

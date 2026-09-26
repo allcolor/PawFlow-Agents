@@ -16,10 +16,16 @@ API agents keep the queue: their loop drains it at every iteration.
 
 import logging
 import threading
+import time
 
 logger = logging.getLogger(__name__)
 
 _LIVE_SUBMIT_PROVIDERS = frozenset({"claude-code-interactive", "codex-interactive"})
+
+# A message the CLI did not accept is tried again shortly (the composer may be
+# redrawing, a paste may have been swallowed) before it falls back to the
+# queue, which a CLI only drains when its turn ends.
+_RETRY_DELAYS_SECONDS = (2.0, 5.0)
 
 # One lock per (conversation, agent): submissions reach the tmux in arrival
 # order, one paste + Enter at a time.
@@ -78,16 +84,36 @@ def submit_or_queue(conversation_id: str, agent_name: str, message: dict,
 def _submit_live(client, conversation_id, agent_name, message, source,
                  user_id, wake, wake_reason, even_if_active) -> None:
     msg_id = message.get("msg_id") or ""
+    from tasks.ai._delivery_limits import submission_needs_compaction
+    ok = False
     with _submit_lock(conversation_id, agent_name):
-        try:
-            ok = client.send_queued_message(
-                message["content"], user_id=user_id,
-                conversation_id=conversation_id, agent_name=agent_name,
-                msg_id=msg_id)
-        except Exception:
-            logger.warning("[live-submit] submission to %s/%s failed",
-                           conversation_id[:8], agent_name, exc_info=True)
-            ok = False
+        # Before every submission: compact first when this message would
+        # cross the threshold. The running turn compacts (interrupting the
+        # CLI) and the queued message reaches the compacted session.
+        if submission_needs_compaction(
+                conversation_id, agent_name, message["content"]):
+            _queue(conversation_id, agent_name, message, source,
+                   user_id, wake, wake_reason, even_if_active)
+            return
+        for attempt, delay in enumerate((0.0, *_RETRY_DELAYS_SECONDS)):
+            if delay:
+                time.sleep(delay)
+                if _active_cli_client(conversation_id, agent_name) is not client:
+                    break  # the turn ended: the queue path takes over
+            try:
+                ok = client.send_queued_message(
+                    message["content"], user_id=user_id,
+                    conversation_id=conversation_id, agent_name=agent_name,
+                    msg_id=msg_id)
+            except Exception:
+                logger.warning("[live-submit] submission to %s/%s failed",
+                               conversation_id[:8], agent_name, exc_info=True)
+                ok = False
+            if ok:
+                break
+            logger.warning(
+                "[live-submit] %s not accepted by %s/%s (attempt %d)",
+                msg_id, conversation_id[:8], agent_name, attempt + 1)
     if ok:
         logger.info("[live-submit] %s submitted to the running %s/%s (source=%s)",
                     msg_id, conversation_id[:8], agent_name, source)

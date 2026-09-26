@@ -9,6 +9,7 @@ All commands are typed in the chat input, prefixed with `/`. Domain commands use
 | `/help` | List commands or get detailed help |
 | `/agent` | Manage AI agents |
 | `/msg` | Send message to a specific agent or task |
+| `/nimsg` | Send a message to an agent without interrupting it |
 | `/btw` | Side-channel question (no interruption) |
 | `/call` | Call a tool directly |
 | `/audio` | Generate audio or music |
@@ -129,6 +130,25 @@ Send a message to a specific agent or running task without changing the active a
 /msg @ALL What do you think?
 /msg @t_8953b308 Check the latest post
 /msg @"Agent With Spaces" Hello
+```
+
+### /nimsg
+
+```
+/nimsg [@agent] <message>
+```
+
+Send a user message that does NOT interrupt the agent. A normal message to a
+busy agent interrupts it: its running tool calls are cancelled and it reads
+the message at once. `/nimsg` is submitted the way a delegate or a background
+result is: nothing is cancelled, and the agent reads it at its next step (for
+an API agent, at its next model call). Without `@agent` the selected agent is
+used; `@ALL` and task targets are refused. The request carries
+`"no_interrupt": true` (see the delivery rules in `docs/AGENT_SYSTEM.md`).
+
+```
+/nimsg @claude FYI the build is green
+/nimsg note for later: check the logs
 ```
 
 ### /btw

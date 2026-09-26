@@ -8,6 +8,7 @@ does not take as the user's instruction. Every turn-start prompt ends with the
 agent asked the user to confirm what they had just typed.
 """
 
+import threading
 import types
 
 import pytest
@@ -126,7 +127,8 @@ def test_send_records_and_pastes_the_escaped_text(monkeypatch, method):
     pool = _pool()
     remembered, pasted = [], []
     state = types.SimpleNamespace(name="pf-test", session_token="sess",
-                                  last_error="", prompt_ready=True)
+                                  last_error="", prompt_ready=True,
+                                  send_lock=threading.RLock())
     monkeypatch.setattr(pool, "_is_alive", lambda name: True)
     monkeypatch.setattr(pool, "_cancel_copy_mode", lambda s: None)
     monkeypatch.setattr(pool, "_prepare_prompt_input", lambda s: True)

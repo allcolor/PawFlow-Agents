@@ -866,6 +866,15 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             logger.debug(
                 "[codex-interactive] token recovery failed", exc_info=True)
 
+    # OpenAI does not invalidate a refresh_token when it rotates, so containers
+    # sharing a codex login never hold a dead one, and the Claude
+    # `.credentials.json` sync of the base pool does not apply here.
+    def _push_slot_tokens(self, state: InteractiveContainer) -> None:
+        return
+
+    def _sync_slot_credentials(self, state: InteractiveContainer) -> None:
+        return
+
     def list_sessions(self, *args, **kwargs) -> list[dict]:
         rows = super().list_sessions(*args, **kwargs)
         for row in rows:

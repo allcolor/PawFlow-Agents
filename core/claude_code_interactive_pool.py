@@ -302,6 +302,11 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             self._sessions[key] = state
             # Now tracked via _sessions; drop the in-flight reservation.
             self._release_slot_locked(service_id, claimed_idx)
+        # The launch may have renewed the slot (_setup_credentials refreshes a
+        # token close to expiry), which killed the refresh_token every other
+        # container on this login still holds. Hand them the new one now.
+        for sibling in self._slot_siblings(state):
+            self._push_slot_tokens(sibling)
         return state
 
     def _release_slot_locked(self, service_id: str, idx: int) -> None:
@@ -396,6 +401,67 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 user_id=state.user_id, conv_id=state.conv_id)
         except Exception:
             logger.debug("[cci-live] token recover failed", exc_info=True)
+
+    def _slot_siblings(self, state: InteractiveContainer) -> list:
+        """Every live container on the same login as ``state``, itself included."""
+        service_id = getattr(state, "service_id", "")
+        pool_idx = getattr(state, "svc_pool_idx", -1)
+        if not state or pool_idx < 0 or not service_id:
+            return []
+        with self._lock:
+            siblings = [s for s in self._sessions.values()
+                        if getattr(s, "service_id", "") == service_id
+                        and getattr(s, "svc_pool_idx", -1) == pool_idx]
+        if not any(s is state for s in siblings):
+            siblings.append(state)
+        return siblings
+
+    def _push_slot_tokens(self, state: InteractiveContainer) -> None:
+        """Best-effort: give a container the newest token its pool slot holds.
+
+        No-op for API-key mode, when the container's file is absent, or when
+        the file already holds the pool's token. Never raises.
+        """
+        if (not state or getattr(state, "svc_pool_idx", -1) < 0
+                or not getattr(state, "service_id", "")
+                or not getattr(state, "workdir", "")):
+            return
+        try:
+            from core.llm_providers._cc_credentials import (
+                push_pool_tokens_to_workdir)
+            push_pool_tokens_to_workdir(
+                state.workdir, state.service_id, state.svc_pool_idx,
+                user_id=state.user_id, conv_id=state.conv_id)
+        except Exception:
+            logger.debug("[cci-live] token push failed", exc_info=True)
+
+    def _sync_slot_credentials(self, state: InteractiveContainer) -> None:
+        """Before a submit, bring every container on this login to its newest token.
+
+        Containers share a login, and Anthropic's refresh_token is single-use:
+        once one CLI renews, every other container still holds a dead one and
+        fails with authentication_failed at its next renewal. So, in order:
+        copy back whatever any of them rotated (newer tokens only), renew the
+        slot centrally when it is close to expiry -- before the CLIs race each
+        other for it -- and write the result into every container's file,
+        which the CLI re-reads before renewing. Never raises.
+        """
+        siblings = self._slot_siblings(state)
+        if not siblings or not getattr(state, "workdir", ""):
+            return
+        for sibling in siblings:
+            self._recover_container_tokens(sibling)
+        try:
+            from core.llm_providers._cc_credentials import (
+                refresh_pool_slot_if_expiring)
+            refresh_pool_slot_if_expiring(
+                state.service_id, state.svc_pool_idx,
+                user_id=state.user_id, conv_id=state.conv_id)
+        except Exception:
+            logger.debug("[cci-live] central token renewal failed",
+                         exc_info=True)
+        for sibling in siblings:
+            self._push_slot_tokens(sibling)
 
     def find_session(self, user_id: str, conversation_id: str,
                      agent_name: str, service_id: str = "") -> Optional[InteractiveContainer]:
@@ -532,6 +598,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
             return False
+        self._sync_slot_credentials(state)
         # Cold-start race: the Claude Code TUI takes a moment to draw its
         # input box after `tmux new-session`. A paste + Enter that lands
         # before the box is interactive is silently dropped, leaving the
@@ -1456,6 +1523,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             return False
         if self._refuse_dead_stream(state):
             return False
+        self._sync_slot_credentials(state)
         self._cancel_copy_mode(state)
         canonical_input = self._PREPARE_INTERRUPT_BEFORE_PASTE
         if canonical_input and not self._prepare_prompt_input(state):
@@ -1565,6 +1633,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             return False
         if self._refuse_dead_stream(state):
             return False
+        self._sync_slot_credentials(state)
         self._cancel_copy_mode(state)
         self._remember_injected_prompt(state, text)
         event_service = self._remember_injected_prompt_for_event_service(
@@ -1846,6 +1915,11 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             survivors = list(self._sessions.values())
         for state in survivors:
             self._recover_container_tokens(state)
+        # Then the other direction, so a container whose CLI resumes on its
+        # own -- no submit, hence no pre-submit sync -- is never more than a
+        # tick behind a sibling's rotation. Free when nothing changed.
+        for state in survivors:
+            self._push_slot_tokens(state)
         # A container whose removal failed on an earlier tick is still running
         # a CLI no pool entry points at. Retry it here, where the failure is
         # cheap, instead of leaving it to adopt orphan turns for hours.

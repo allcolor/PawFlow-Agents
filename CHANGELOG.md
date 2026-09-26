@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Two Claude Code interactive agents sharing one login (for example in two
+  conversations) logged each other out: the refresh_token is single-use, so
+  when one CLI renewed, the other kept the dead one and failed with
+  `authentication_failed`. Before each submit, and on every sweeper tick,
+  every container on the login now receives the pool's newest token, which
+  the CLI re-reads before renewing; a slot close to expiry is renewed once by
+  PawFlow instead of by each CLI. A container's token is also copied back to
+  the pool only when it is newer, so a stale one no longer overwrites a
+  fresher rotation.
+
 ## [1.0.0-beta.294] — 2026-09-26
 
 ### Fixed

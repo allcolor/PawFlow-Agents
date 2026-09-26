@@ -20,6 +20,8 @@ affecting these callers exactly as they did in the original single module.
 import json
 import logging
 import os
+import stat
+import uuid
 from typing import Optional
 
 from core.llm_providers.cli_shared import (
@@ -250,6 +252,24 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
     return True
 
 
+def _pool_slot(service_id: str, pool_index: int, user_id: str = "",
+               conv_id: str = "") -> dict:
+    """The credential at ``pool_index``, or {} when the pool has none there."""
+    from core.llm_providers import claude_code_session as _facade
+    pool = _facade._load_credentials_pool(
+        service_id, user_id=user_id, conv_id=conv_id)
+    if 0 <= pool_index < len(pool):
+        return pool[pool_index]
+    return {}
+
+
+def _expiry(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def recover_tokens_from_workdir(workdir: str, service_id: str,
                                pool_index: int, user_id: str = "",
                                conv_id: str = "") -> bool:
@@ -279,6 +299,12 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
     The stale check, the persist and the memo are one critical section. Split
     apart, two ticks both read "not stale", both write, and the loser's
     snapshot puts back the token the winner had just replaced.
+
+    Several containers share one login, so a workdir can hold a token the
+    pool has already moved past: a sibling CLI rotated it after this file was
+    written. That token's refresh_token is dead, and copying it back would
+    log every container on the slot out. Only a token that expires LATER than
+    the pool's is copied; an older one is remembered as handled.
     """
     creds_path = os.path.join(workdir, ".credentials.json")
     if not os.path.exists(creds_path):
@@ -295,6 +321,14 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
         _signature = f"{new_access}\x1f{new_refresh}\x1f{new_expires}"
         with credentials_pool_lock():
             if token_recovery_is_stale(workdir, service_id, pool_index, _signature):
+                return False
+            _pooled = _expiry(_pool_slot(
+                service_id, pool_index, user_id, conv_id).get("expires_at"))
+            if _pooled > _expiry(new_expires):
+                note_token_recovered(workdir, service_id, pool_index, _signature)
+                logger.info(
+                    "[claude-code] workdir token older than pool[%s] for "
+                    "'%s'; not copied back", pool_index, service_id)
                 return False
             # _persist_tokens_to_service refuses invalid tokens (empty /
             # already-expired) and addresses pool_index directly when >= 0.
@@ -313,6 +347,137 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
     except Exception:
         logger.debug(
             "[claude-code] teardown token recovery failed", exc_info=True)
+        return False
+
+
+def _replace_file_atomically(path: str, text: str) -> None:
+    """Rewrite ``path`` so a concurrent reader sees the old or the new file.
+
+    The CLI inside the container reads this file whenever it checks its
+    token, so a half-written file must never be visible. The new file keeps
+    the old one's mode and owner: the CLI runs as the launcher's uid and may
+    have rewritten the file as that uid. Where the owner cannot be carried
+    over, the file is rewritten in place instead, which keeps it readable.
+    """
+    st = os.stat(path)
+    tmp = f"{path}.pawflow-{uuid.uuid4().hex}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(tmp, stat.S_IMODE(st.st_mode))
+        if hasattr(os, "chown"):
+            try:
+                os.chown(tmp, st.st_uid, st.st_gid)
+            except OSError:
+                if (st.st_uid, st.st_gid) != (os.getuid(), os.getgid()):
+                    os.unlink(tmp)
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(text)
+                    return
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def push_pool_tokens_to_workdir(workdir: str, service_id: str,
+                                pool_index: int, user_id: str = "",
+                                conv_id: str = "") -> bool:
+    """Hand a running CLI the newest token its login has in the pool.
+
+    The reverse of ``recover_tokens_from_workdir``. Containers sharing one
+    login each got their own copy of the slot at launch. When one CLI rotates
+    the single-use refresh_token, the others keep the dead one and fail with
+    authentication_failed the next time they renew. Claude Code stats
+    ``.credentials.json`` before every renewal and re-reads it when its mtime
+    changed, then skips the renewal when the token on disk is still valid --
+    so rewriting the file is enough; the CLI needs no restart.
+
+    Writes only when the pool's token expires later than the file's and is
+    itself valid. Returns True when the file was rewritten.
+    """
+    if pool_index < 0:
+        return False
+    creds_path = os.path.join(workdir, ".credentials.json")
+    if not os.path.exists(creds_path):
+        return False
+    try:
+        with credentials_pool_lock():
+            slot = _pool_slot(service_id, pool_index, user_id, conv_id)
+            access = slot.get("access_token", "")
+            refresh = slot.get("refresh_token", "")
+            expires = _expiry(slot.get("expires_at"))
+            if not _validate_oauth_token(access, refresh, expires):
+                return False
+            with open(creds_path, "r", encoding="utf-8") as f:
+                creds = json.load(f)
+            oauth = creds.get("claudeAiOauth")
+            if not isinstance(oauth, dict):
+                return False
+            if _expiry(oauth.get("expiresAt")) >= expires:
+                return False
+            oauth["accessToken"] = access
+            oauth["refreshToken"] = refresh
+            oauth["expiresAt"] = expires
+            _replace_file_atomically(creds_path, json.dumps(creds))
+            # What the file now holds is what the pool holds: the next
+            # recovery must not count it as a rotation to copy back.
+            note_token_recovered(workdir, service_id, pool_index,
+                                 f"{access}\x1f{refresh}\x1f{expires}")
+        logger.info(
+            "[claude-code] pushed pool[%s] token of '%s' to a live session",
+            pool_index, service_id)
+        return True
+    except Exception:
+        logger.warning(
+            "[claude-code] pushing pool[%s] token to %s failed",
+            pool_index, workdir, exc_info=True)
+        return False
+
+
+def refresh_pool_slot_if_expiring(service_id: str, pool_index: int,
+                                  user_id: str = "",
+                                  conv_id: str = "") -> bool:
+    """Renew one slot centrally before the CLIs sharing it renew it themselves.
+
+    Every container on a login got the same expiry, so their CLIs reach their
+    own renewal threshold together and race with one single-use
+    refresh_token: the loser is logged out. PawFlow renews earlier (the same
+    margin as a launch, ``_OAUTH_REFRESH_MIN_TTL_SEC``) under the per-slot
+    lock, and the caller pushes the result to every container on the slot.
+
+    Only when the pool allows PawFlow-managed refresh. A rejected or failed
+    renewal changes nothing here: the slot is left to the launch path, which
+    owns dropping dead credentials. Returns True when the slot was renewed.
+    """
+    import time as _time
+    from core.llm_providers import claude_code_session as _facade
+    from services.llm_credential_oauth import credential_pool_allows_refresh
+    if pool_index < 0:
+        return False
+    try:
+        if not credential_pool_allows_refresh(
+                service_id, user_id=user_id, conv_id=conv_id):
+            return False
+        slot = _pool_slot(service_id, pool_index, user_id, conv_id)
+        refresh = slot.get("refresh_token", "")
+        expires = _expiry(slot.get("expires_at"))
+        if not refresh or not expires:
+            return False
+        mixin = _facade.ClaudeCodeSessionMixin
+        remaining = expires / 1000 - _time.time()
+        if remaining >= mixin._OAUTH_REFRESH_MIN_TTL_SEC:
+            return False
+        logger.info("[claude-code] pool[%s] of '%s' expires in %.0fs; "
+                    "renewing before its CLIs do", pool_index, service_id,
+                    remaining)
+        mixin()._refresh_oauth_token_coordinated(
+            refresh, service_id=service_id, pool_index=pool_index,
+            user_id=user_id, conv_id=conv_id)
+        return True
+    except Exception as e:
+        logger.warning("[claude-code] central renewal of pool[%s] failed: %s",
+                       pool_index, e)
         return False
 
 

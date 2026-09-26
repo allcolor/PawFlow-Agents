@@ -1165,6 +1165,44 @@ onto the least-loaded slot (live containers + in-flight reservations counted
 per service). The only credential error left is the pool being empty —
 no `/cls` login configured at all.
 
+### One login, several containers: the single-use refresh_token
+
+Each container gets its own copy of the slot's token in
+`<workdir>/.credentials.json` at launch, and Anthropic's refresh_token is
+single-use. When one CLI renews its token, the old refresh_token is dead, and
+every other container on that login would fail with `authentication_failed`
+at its next renewal. PawFlow therefore keeps the containers of a slot in step,
+in both directions:
+
+- **Container to pool** — `recover_tokens_from_workdir` copies a CLI-rotated
+  token back (sweeper tick, teardown, before a submit), but only when it
+  expires *later* than the pool's. A file still holding a token the pool has
+  moved past is remembered as handled and never written back; before this
+  guard, a container launched before a sibling's rotation put the dead token
+  back into the pool.
+- **Pool to container** — `push_pool_tokens_to_workdir` rewrites a container's
+  file (atomically, same mode and owner, other fields kept) when the pool's
+  token expires later. Claude Code stats `.credentials.json` before every
+  renewal and re-reads it when its mtime changed, then skips the renewal when
+  the token on disk is still valid, so the running CLI needs no restart
+  (checked in the Claude Code 2.1.283 bundle).
+
+`_sync_slot_credentials` runs before every submit (`send_text`,
+`send_queued`, `send_interrupt`): it recovers from every container on the
+slot, calls `refresh_pool_slot_if_expiring` — when the pool allows
+PawFlow-managed refresh and less than `_OAUTH_REFRESH_MIN_TTL_SEC` (30 min)
+remains, PawFlow renews the slot itself under the per-slot lock, before the
+CLIs, which all got the same expiry, race each other for it — and pushes the
+result into every container's file. A launch pushes to the other containers
+on its slot (it may have renewed the token), and each sweeper tick pushes to
+the containers it keeps, so a CLI that resumes on its own is at most one tick
+behind. Codex interactive overrides both hooks as no-ops: OpenAI keeps the old
+refresh_token valid after a rotation.
+
+The window left is two CLIs renewing on their own in the same instant, for
+example in a turn that outlives the 30-minute margin. The central renewal
+makes it rare, not impossible.
+
 ## Live Debugging
 
 The chat UI action menu exposes `CC Interactive Tmux` for the selected agent. It

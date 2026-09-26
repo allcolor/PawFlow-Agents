@@ -426,6 +426,39 @@ def test_segmented_jsonl_patch_first_by_msg_id_rewrites_only_matching_segment(tm
     assert [row["content"] for row in log.iter_rows()] == ["one", "two", "patched"]
 
 
+def test_patch_never_decodes_a_segment_that_does_not_hold_the_row(
+        tmp_path, monkeypatch):
+    # 2026-09-26: a conversation patch scans the transcript and every agent's
+    # context; decoding whole logs that never held the row kept the
+    # conversation lock for 25 s.
+    log = SegmentedJsonl(tmp_path / "context.jsonl", max_rows=2)
+    log.append_dicts([{"msg_id": f"m{i}", "content": str(i)}
+                      for i in range(6)])
+    SegmentedJsonl.flush_append_handles(tmp_path / "context")
+    decoded = []
+    original = SegmentedJsonl._iter_file
+
+    def counting(path):
+        decoded.append(path.name)
+        return original(path)
+    monkeypatch.setattr(SegmentedJsonl, "_iter_file", staticmethod(counting))
+
+    assert log.patch_first_by_msg_id("absent", {"content": "x"}) is None
+    assert decoded == []
+    assert log.patch_first_by_msg_id("m1", {"content": "x"})["content"] == "x"
+    assert decoded == ["000000.jsonl"]
+
+
+def test_patch_finds_a_msg_id_json_escapes(tmp_path):
+    log = SegmentedJsonl(tmp_path / "context.jsonl", max_rows=10)
+    log.append_dicts([{"msg_id": "é/\"q", "content": "one"}])
+    SegmentedJsonl.flush_append_handles(tmp_path / "context")
+
+    patched = log.patch_first_by_msg_id("é/\"q", {"content": "two"})
+
+    assert patched and patched["content"] == "two"
+
+
 def test_segmented_jsonl_total_rows_rebuilds_from_segments_when_index_missing(tmp_path):
     path = tmp_path / "transcript.jsonl"
     log = SegmentedJsonl(path, max_rows=10)

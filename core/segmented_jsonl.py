@@ -430,8 +430,17 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
 
         fields = strip_secret_runtime_values(fields)
         paths = self._segment_paths()
+        needles = self._msg_id_needles(msg_id)
         for path in reversed(paths):
             self.flush_append_handles(path)
+            # Most patches look for a row that is not in this log at all (a
+            # conversation patches the transcript and EVERY agent's context).
+            # Decoding each segment's JSON only to learn that held the
+            # conversation lock for 25 s on a large conversation
+            # (2026-09-26). msg_id is stored in clear: skip segments whose
+            # bytes do not contain it.
+            if not self._segment_mentions(path, needles):
+                continue
             rows = list(self._iter_file(path))
             patched: Optional[Dict[str, Any]] = None
             changed = False
@@ -457,6 +466,23 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
                 self._replace_rows_in_path(path, rows)
             return patched
         return None
+
+    @staticmethod
+    def _msg_id_needles(msg_id: str) -> tuple:
+        """The msg_id as it may appear in a JSON line, however it was dumped."""
+        text = str(msg_id)
+        forms = (text, json.dumps(text)[1:-1],
+                 json.dumps(text, ensure_ascii=False)[1:-1])
+        return tuple(dict.fromkeys(form.encode("utf-8") for form in forms))
+
+    @staticmethod
+    def _segment_mentions(path: Path, needles: tuple) -> bool:
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except FileNotFoundError:
+            return False
+        return any(needle in data for needle in needles)
 
     def delete_by_msg_ids(self, msg_ids: set) -> int:
         """Delete rows matching msg_id/trace_id, rewriting touched segments only."""

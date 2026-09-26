@@ -9,7 +9,9 @@ from types import SimpleNamespace
 import pytest
 
 from pawflow_relay import _relay_actions
+from pawflow_relay import _relay_msg_loop
 from pawflow_relay._relay_msg_loop import ConnSession
+from pawflow_relay.command_ledger import CommandLedger
 from services._relay_http_response import RelayHttpResponseStream
 
 
@@ -61,8 +63,13 @@ def test_relay_http_proxy_reads_and_emits_bounded_chunks(monkeypatch):
     assert emitted[2] == ("end", None)
 
 
-def test_relay_message_loop_emits_http_response_frames():
+def test_relay_message_loop_emits_http_response_frames(monkeypatch):
     sent = []
+    # Frames go out on the relay's current connection (command_ledger).
+    ledger = CommandLedger()
+    ledger.attach(SimpleNamespace(), lambda _sock, frame: sent.append(frame),
+                  threading.Lock())
+    monkeypatch.setattr(_relay_msg_loop, "LEDGER", ledger)
     session = ConnSession.__new__(ConnSession)
     session.send_lock = threading.Lock()
     session.inflight_lock = threading.Lock()
@@ -80,7 +87,8 @@ def test_relay_message_loop_emits_http_response_frames():
     session.execute_command = execute_command
     session._run_command(
         {"action": "http_proxy"}, "req-http", SimpleNamespace(),
-        lambda _sock, frame: sent.append(frame))
+        lambda _sock, frame: pytest.fail("frames never go to the socket the "
+                                         "command arrived on"))
 
     messages = [json.loads(frame.decode("utf-8"))
                 for frame in sent]

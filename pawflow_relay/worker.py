@@ -431,7 +431,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     idle = time.time() - _last_activity[0]
                     if idle > _DEAD_TIMEOUT:
                         _socket_diag["local_close"] = f"watchdog idle={idle:.0f}s"
-                        sys.stderr.write(f"[FSRelay] Watchdog: no activity for {idle:.0f}s, forcing reconnect\n")
+                        # Neither a frame received nor a keepalive sent: say
+                        # what the loop could have been waiting on, so the
+                        # next forced reconnect has a cause, not a guess.
+                        sys.stderr.write(
+                            f"[FSRelay] Watchdog: no activity for {idle:.0f}s, "
+                            f"forcing reconnect (send_lock_held="
+                            f"{_send_lock.locked()} diag={_diag_summary()})\n")
                         _shutdown_socket(sock)
                         break
             _wd_thread = _threading.Thread(target=_watchdog, daemon=True, name="relay-watchdog")

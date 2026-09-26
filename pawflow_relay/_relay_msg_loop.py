@@ -29,6 +29,7 @@ from typing import Any, Callable, Optional
 
 from pawflow_relay.proc_registry import kill_inflight_proc
 from pawflow_relay._relay_session import close_frame_info
+from pawflow_relay.command_ledger import LEDGER, RUN, RUNNING
 
 
 #: Actions a person is waiting on right now: opening a terminal, a keystroke, a
@@ -137,6 +138,9 @@ class ConnSession:
         self.fence_lock = threading.Lock()
         self.disconnect_reason = "unknown"
         self.close_info = ""
+        # Results of commands still running from an earlier connection go
+        # out on this one from now on (see command_ledger).
+        LEDGER.attach(self.sock, self.ws_frame_send, self.send_lock)
 
     # ── Diagnostics ───────────────────────────────────────────────────
 
@@ -356,6 +360,20 @@ class ConnSession:
             with self.send_lock:
                 self.ws_frame_send(self.sock, resp)
             return
+        if request_id:
+            # The server retries a request whose connection dropped, with the
+            # same id. Never run it twice: a run still going answers the
+            # retry when it ends, a finished one answers from its record.
+            state = LEDGER.begin(request_id)
+            if state == RUNNING:
+                sys.stderr.write(
+                    f"[FSRelay] {msg.get('action', '?')} rid={request_id[:8]} "
+                    "is already running; its result will be sent on this "
+                    "connection\n")
+                return
+            if state != RUN:
+                self._send_result(state, msg.get("action", "?"), request_id)
+                return
         if msg.get("action") in _STREAM_IO_ACTIONS:
             # Ordered, one stream at a time -- and never inline: see
             # _STREAM_IO_ACTIONS. The per-stream queue keeps the byte order that
@@ -549,19 +567,34 @@ class ConnSession:
 
     def _reply_closed_terminal(self, request_id: str, session_id: str) -> None:
         """Answer a command aimed at a session that is already closed."""
-        try:
-            with self.send_lock:
-                self.ws_frame_send(self.sock, json.dumps({
-                    "type": "result",
-                    "request_id": request_id,
-                    "data": {"ok": False,
-                             "error": f"terminal session {session_id[:8]} is closed"},
-                }).encode("utf-8"))
-        except Exception as exc:
-            sys.stderr.write(
-                f"[FSRelay] closed-terminal reply failed: {exc}\n")
+        self._finish_and_send(json.dumps({
+            "type": "result",
+            "request_id": request_id,
+            "data": {"ok": False,
+                     "error": f"terminal session {session_id[:8]} is closed"},
+        }).encode("utf-8"), "closed-terminal", request_id)
         with self.inflight_lock:
             self.inflight_cmds.pop(request_id, None)
+
+    def _finish_and_send(self, frame: bytes, action: str, request_id: str) -> None:
+        """Record a command's result, then send it on the current connection."""
+        if request_id:
+            LEDGER.finish(request_id, frame)
+        self._send_result(frame, action, request_id)
+
+    def _send_result(self, frame: bytes, action: str, request_id: str) -> None:
+        try:
+            self.socket_diag["last_send"] = f"result:{action}:{request_id[:8]}"
+            LEDGER.send(frame)
+            self.socket_diag["last_send_error"] = ""
+        except Exception as send_err:
+            # Recorded: the server's retry of this request_id gets it on the
+            # next connection instead of running the command again.
+            self.socket_diag["last_send_error"] = (
+                f"result:{action}:{request_id[:8]}:{send_err}")
+            sys.stderr.write(
+                f"[FSRelay] result send failed: action={action} "
+                f"rid={request_id[:8]} err={send_err}\n")
 
     def _run_command_sync(self, msg: dict, request_id: str):
         # WebSocket sends and closes run inline (no pool or inflight tracking)
@@ -575,18 +608,7 @@ class ConnSession:
             "request_id": request_id,
             "data": result.get("data", result),
         }).encode("utf-8")
-        try:
-            with self.send_lock:
-                self.socket_diag["last_send"] = (
-                    f"result:{msg.get('action', '?')}:{request_id[:8]}")
-                self.ws_frame_send(self.sock, resp)
-                self.socket_diag["last_send_error"] = ""
-        except Exception as send_err:
-            self.socket_diag["last_send_error"] = (
-                f"result:{msg.get('action', '?')}:{request_id[:8]}:{send_err}")
-            sys.stderr.write(
-                f"[FSRelay] result send failed: action={msg.get('action', '?')} "
-                f"rid={request_id[:8]} err={send_err}\n")
+        self._finish_and_send(resp, msg.get("action", "?"), request_id)
 
     def _run_command(self, _msg, _rid, _sock, _send_fn):
         _action = _msg.get("action", "?")
@@ -602,8 +624,7 @@ class ConnSession:
                     "stream": stream,
                     "data": data,
                 }).encode("utf-8")
-                with self.send_lock:
-                    _send_fn(_sock, _frame)
+                LEDGER.send(_frame)
         elif _action in ("http_proxy", "http_fetch"):
             def _on_output(kind, data):
                 _frame = json.dumps({
@@ -612,8 +633,7 @@ class ConnSession:
                     "kind": kind,
                     "data": data,
                 }).encode("utf-8")
-                with self.send_lock:
-                    _send_fn(_sock, _frame)
+                LEDGER.send(_frame)
         try:
             _result = self.execute_command(_msg, on_output=_on_output)
             _resp = json.dumps({
@@ -628,16 +648,7 @@ class ConnSession:
                 "data": {"ok": False, "error": str(_e)},
             }).encode("utf-8")
         try:
-            with self.send_lock:
-                self.socket_diag["last_send"] = f"result:{_action}:{_rid[:8]}"
-                _send_fn(_sock, _resp)
-                self.socket_diag["last_send_error"] = ""
-        except Exception as _send_err:
-            self.socket_diag["last_send_error"] = (
-                f"result:{_action}:{_rid[:8]}:{_send_err}")
-            sys.stderr.write(
-                f"[FSRelay] result send failed: action={_action} "
-                f"rid={_rid[:8]} err={_send_err}\n")
+            self._finish_and_send(_resp, _action, _rid)
         finally:
             with self.inflight_lock:
                 self.inflight_cmds.pop(_rid, None)

@@ -14,8 +14,17 @@ import threading
 import time
 import types
 
+import pytest
+
 from pawflow_relay import _relay_msg_loop as ml
 from pawflow_relay._relay_msg_loop import ConnContext, ConnSession
+from pawflow_relay.command_ledger import CommandLedger
+
+
+@pytest.fixture(autouse=True)
+def _fresh_ledger(monkeypatch):
+    """The ledger is relay-wide; request ids repeat from test to test."""
+    monkeypatch.setattr(ml, "LEDGER", CommandLedger())
 
 
 def _frames_recv(frames):
@@ -333,7 +342,9 @@ def test_command_normal_submits_to_pool_and_tracks_inflight():
     assert s.inflight_cmds["p1"]["action"] == "read_file"
     # The wrapper runs the command and reports its result.
     sends = []
-    s.ws_frame_send = lambda _s, _f, opcode=0x1: sends.append((_f, opcode))
+    # Results go out on the relay's current connection (command_ledger).
+    ml.LEDGER.attach(s.sock, lambda _s, _f, opcode=0x1: sends.append((_f, opcode)),
+                     s.send_lock)
     fn()
     results = [json.loads(f) for f, _op in sends if b'"type": "result"' in f]
     assert results[0]["request_id"] == "p1"

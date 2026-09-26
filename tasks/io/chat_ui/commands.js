@@ -58,6 +58,9 @@ const _LOCAL_COMMANDS = new Set([
   '/claude-login-credentials', '/clc',
   '/terminal', '/term', '/code', '/relay-audio', '/desktop',
   '/port-forward', '/fwd', '/vm',
+  // Only the streaming POST carries no_interrupt; the server's agent_msg
+  // action would drop it (and did not know /nimsg at all).
+  '/nimsg',
 ]);
 
 // ── Command dispatch table ──────────────────────────────────────

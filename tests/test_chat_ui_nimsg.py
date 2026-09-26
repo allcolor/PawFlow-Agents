@@ -83,3 +83,45 @@ def test_nimsg_is_wired_and_documented():
     help_text = (CHAT_UI / "commands_help.js").read_text(encoding="utf-8")
     assert "'/nimsg':       (text, parts, cmd) => cmdMsg(text, { noInterrupt: true })" in commands
     assert "usage: '/nimsg [@agent] <message>'" in help_text
+
+
+_DISPATCH_HARNESS = r"""
+const vm = require('vm');
+const fs = require('fs');
+const sent = [];
+const serverCommands = [];
+const ctx = {
+  console, JSON, window: {}, nicknameMap: {},
+  selectedAgent: 'claude', conversationId: 'conv',
+  addMsg: () => ({}), t: (key) => key,
+  pendingFiles: [], renderAttachments: () => {},
+  sourceBadge: () => '', escapeHtml: (s) => s, renderUserAttachments: () => '',
+  clearStream: () => {}, connectSSE: () => {}, _checkServerRestart: () => {},
+  document: { getElementById: () => ({ value: '0', textContent: '' }) },
+  getAuthHeaders: () => ({}), API: '/api/agent',
+  action$: (name, body) => { serverCommands.push(body.text);
+    return { subscribe: () => {} }; },
+  fetch: (url, opts) => { sent.push(JSON.parse(opts.body));
+    return { then: () => ({ then: () => ({ catch: () => {} }) }) }; },
+};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx);
+vm.runInContext(`handleSlashCommand(${JSON.stringify(process.argv[3])})`, ctx)
+  .then(() => process.stdout.write(JSON.stringify({ sent, serverCommands })));
+"""
+
+
+def test_typed_nimsg_reaches_the_streaming_post_not_the_server_parser():
+    """The server parser does not know /nimsg: routed there, the webchat
+    answered 'Unknown command: /nimsg' (2026-09-26)."""
+    proc = subprocess.run(
+        ["node", "-e", _DISPATCH_HARNESS, str(CHAT_UI / "cmd_agent.js"),
+         str(CHAT_UI / "commands.js"), "/nimsg @GameDev7 FYI build is green"],
+        capture_output=True, text=True, timeout=30, check=True)
+    out = json.loads(proc.stdout)
+    assert out["serverCommands"] == []
+    assert out["sent"] == [{"message": "FYI build is green",
+                            "target_agent": "GameDev7",
+                            "no_interrupt": True,
+                            "conversation_id": "conv"}]

@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   live session and never delivered it. The tags are now ignored, an unread
   message is pasted again by the next turn, and a "nothing to submit" failure
   keeps the session.
+- `/nimsg` typed in the webchat answered "Unknown command": it was sent to
+  the server command parser, which does not know it, instead of the local
+  handler that posts the message with `no_interrupt`.
 
 ## [1.0.0-beta.293] — 2026-09-26
 

@@ -50,6 +50,10 @@ class _PACPhase2Mixin:
         empty, the turn failed with "nothing to submit" and the delegate
         was never delivered. The canonical row is added in memory only --
         it is already persisted.
+
+        The row is written through the conversation's async writer, which
+        may not have drained when this turn starts; the writer is flushed
+        once before concluding the row is missing.
         """
         msg_id = st.flowfile.get_attribute("_user_msg_id") or (
             st.body_json.get("msg_id", "") if st.body_json else "")
@@ -57,10 +61,19 @@ class _PACPhase2Mixin:
                 getattr(m, "msg_id", "") == msg_id for m in st.messages):
             return
         from core.conversation_store import ConversationStore
-        rows = ConversationStore.instance().load_agent_context(
-            st.conversation_id, st._context_agent) or []
-        row = next((r for r in reversed(rows)
-                    if r.get("msg_id") == msg_id), None)
+
+        def _find_row():
+            rows = ConversationStore.instance().load_agent_context(
+                st.conversation_id, st._context_agent) or []
+            return next((r for r in reversed(rows)
+                         if r.get("msg_id") == msg_id), None)
+
+        row = _find_row()
+        if row is None:
+            from core.conversation_writer import ConversationWriter
+            ConversationWriter.for_conversation(st.conversation_id).flush(
+                timeout=10.0)
+            row = _find_row()
         if row is None:
             logger.warning(
                 "[context:%s] delegate msg_id=%s not in %s's context yet; "

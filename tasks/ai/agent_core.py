@@ -632,7 +632,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                         st._inst, st.conversation_id,
                                         st._src_agent, st.user_id,
                                         st._reply_text, st._reply_mid,
-                                        source=st._reply_src)
+                                        source=st._reply_src,
+                                        pre_persisted=False)
                         except Exception as _dre:
                             logger.error(
                                 "[delegate-reply] wake/preempt failed: %s", _dre,

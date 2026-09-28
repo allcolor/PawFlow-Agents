@@ -731,8 +731,23 @@ catch-up start past it: the prompt came out empty, the turn failed with
 (`tasks/ai/_agentctx_p2.py`) now adds the canonical row, found by `msg_id`,
 to the turn's messages (memory only; it is already persisted), and
 `_cci_prompt` passes the `msg_id`s of its own messages to the catch-up as
-`exclude_msg_ids`, so the row is sent once. If the row is not persisted yet,
-the catch-up still carries it.
+`exclude_msg_ids`, so the row is sent once. The row goes through the
+conversation's async writer, so when it is not in the context yet the writer
+is flushed once and the lookup repeated; only a row still missing after that
+is left to the catch-up.
+
+The wake itself must leave a row behind. `SpawnAgentsHandler._wake_caller`
+takes `pre_persisted` (default `True`): a caller that already wrote the
+`msg_id` row (`_deliver_to_caller`, the shared delegate) keeps
+`skip_pre_persist`, so ingress does not write it twice. The reply to a
+delegate that wakes an idle caller (`agent_core`) mints its `msg_id` and
+writes nothing, so it passes `pre_persisted=False`: streaming ingress then
+persists the row with its `agent_delegate` source, routed privately like
+the drained row of the preempt path. Before this, every such wake set
+`skip_pre_persist` anyway. The `msg_id` had no row anywhere, so the reply
+never reached the caller's context. A live Claude Code caller whose
+catch-up had nothing new then failed with "nothing to submit"
+(2026-09-28, GameDev2).
 
 ### Non-user messages are submitted on arrival, one at a time
 

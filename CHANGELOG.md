@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A delegate's reply that woke an idle caller was never saved: the wake
+  gave the reply a message id but wrote no message for it. The caller's
+  context never received the reply. A live Claude Code caller with nothing
+  else new then failed with "Claude Code session lost: … nothing to
+  submit". The reply is now saved when it is delivered, like a reply that
+  reaches a caller while it is running. A live CLI turn also waits for that
+  write to land before looking the row up.
+
 ## [1.0.0-beta.296] — 2026-09-28
 
 ### Fixed

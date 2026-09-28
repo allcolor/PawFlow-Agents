@@ -8,8 +8,15 @@ turn was being prepared, GD5's delegate was live-submitted and answered;
 that reply moved the catch-up start past GD4's delegate. The prompt came
 out empty, the turn failed with "nothing to submit", the Claude session
 marker was wiped and GD4's delegate was never delivered.
+
+Incident 2026-09-28 06:07Z (GameDev2): GD7 answered GD2's delegate and
+woke the idle GD2. That reply wake minted a msg_id but never wrote its row
+(the wake told ingress to skip its pre-persist), so the row existed in no
+context, the catch-up had nothing new, and the turn again failed with
+"nothing to submit". Every idle-caller reply wake had lost its row.
 """
 
+import inspect
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -54,6 +61,13 @@ def _store(rows):
                  return_value=store)
 
 
+def _writer(on_flush=None):
+    writer = MagicMock()
+    writer.flush.side_effect = lambda timeout: (on_flush and on_flush()) or True
+    return patch("core.conversation_writer.ConversationWriter.for_conversation",
+                 return_value=writer), writer
+
+
 class _Phase(_PACPhase2Mixin, AgentSerializationMixin):
     pass
 
@@ -90,9 +104,60 @@ def test_wake_row_is_not_added_twice():
 
 def test_row_not_yet_persisted_leaves_the_catch_up_in_charge():
     st = _wake_state(msg_id="not-written-yet")
-    with _store(CONTEXT):
+    writer_patch, writer = _writer()
+    with _store(CONTEXT), writer_patch:
         _Phase()._inject_cli_delegate_row(st)
     assert st.messages == []
+    writer.flush.assert_called_once()
+
+
+def test_row_still_in_the_writer_queue_is_found_after_a_flush():
+    rows = list(CONTEXT[:1])
+    st = _wake_state()
+    writer_patch, writer = _writer(on_flush=lambda: rows.append(CONTEXT[1]))
+    with _store(rows), writer_patch:
+        _Phase()._inject_cli_delegate_row(st)
+    assert [m.msg_id for m in st.messages] == ["gd4"]
+    writer.flush.assert_called_once()
+
+
+def test_row_already_on_disk_needs_no_flush():
+    st = _wake_state()
+    writer_patch, writer = _writer()
+    with _store(CONTEXT), writer_patch:
+        _Phase()._inject_cli_delegate_row(st)
+    writer.flush.assert_not_called()
+
+
+def _woken_flowfile(**kwargs):
+    from core.handlers.resource_agent import SpawnAgentsHandler
+    inst = MagicMock()
+    with patch("threading.Thread") as thread:
+        SpawnAgentsHandler._wake_caller(
+            inst, "conv", AGENT, "u", "GD7's reply", "reply-mid",
+            source={"type": "agent_delegate", "from": "GameDev7",
+                    "to": AGENT, "kind": "reply"}, **kwargs)
+    return thread.call_args.kwargs["args"][0]
+
+
+def test_wake_of_a_pre_persisted_row_skips_ingress_persist():
+    assert _woken_flowfile().get_attribute("skip_pre_persist") == "1"
+
+
+def test_wake_of_an_unwritten_row_lets_ingress_persist_it():
+    ff = _woken_flowfile(pre_persisted=False)
+    assert not ff.get_attribute("skip_pre_persist")
+    assert '"agent_delegate"' in ff.get_attribute("message_source")
+
+
+def test_idle_delegate_reply_wake_does_not_claim_a_persisted_row():
+    # agent_core mints the reply msg_id and writes no row itself.
+    from tasks.ai.agent_core import AgentCoreMixin
+    src = inspect.getsource(AgentCoreMixin._run_agent_loop_inner)
+    done = src[src.index("# If this was a delegate-reply turn"):]
+    wake = done[done.index("SpawnAgentsHandler._wake_caller("):]
+    wake = wake[:wake.index(")\n")]
+    assert "pre_persisted=False" in wake
 
 
 def _live_state():

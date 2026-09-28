@@ -574,11 +574,15 @@ class _SpawnDeliveryMixin:
 
     @staticmethod
     def _wake_caller(inst, conv_id, caller_agent, user_id, text, msg_id,
-                     source=None):
+                     source=None, pre_persisted=True):
         """Wake an idle caller by running a fresh agent loop with the
         result as the user input. `source` (if given) identifies the
         trigger so the agent loop can set ctx._turn_mode accordingly
-        (e.g. agent_delegate → delegate_reply mode auto-tags the flush)."""
+        (e.g. agent_delegate → delegate_reply mode auto-tags the flush).
+
+        ``pre_persisted`` says the caller already wrote the ``msg_id`` row.
+        When False, streaming ingress persists it (private agent_delegate
+        routing) like any other ingress message."""
         try:
             from core import FlowFile
             body = json.dumps({
@@ -590,11 +594,14 @@ class _SpawnDeliveryMixin:
             ff = FlowFile(body.encode("utf-8"))
             ff.set_attribute("http.auth.principal", user_id)
             ff.set_attribute("target_agent", caller_agent)
-            # The caller already pre-persisted the nudge via writer
-            # (see _deliver_to_caller / _deliver_shared_delegate) — tell
-            # agent_streaming.py to skip its own pre-persist so we don't
-            # write the same msg_id twice.
-            ff.set_attribute("skip_pre_persist", "1")
+            # A caller that pre-persisted the nudge via writer (see
+            # _deliver_to_caller / _deliver_shared_delegate) tells
+            # agent_streaming.py to skip its own pre-persist so the same
+            # msg_id is not written twice. A caller that did not must let
+            # ingress write it: skipping it left the msg_id with no row at
+            # all, and a live CLI caller woke with nothing to submit.
+            if pre_persisted:
+                ff.set_attribute("skip_pre_persist", "1")
             if source:
                 ff.set_attribute("message_source", json.dumps(source))
             # Run in a thread so we don't block the completion callback

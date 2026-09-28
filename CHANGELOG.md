@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- In a conversation where an agent's name differs from its definition's
+  (e.g. `GameDev2` running `claude`), View definition and Edit definition
+  in the agent menu failed with "agent 'GameDev2' not found": they looked
+  up the instance name as a definition. They now open the definition the
+  instance runs.
+
 ## [1.0.0-beta.297] — 2026-09-28
 
 ### Fixed

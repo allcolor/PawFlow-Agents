@@ -180,7 +180,7 @@ function _renderResourcesData(data) {
         // Resource polling must not touch the context gauge. The gauge is
         // updated only by live context events and the explicit /context view.
         liveHtml += '<div' + _resourceRowAttr('agent', a.scope, aName) + ' data-agent-name="' + aNameAttr + '" style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"'
-          + ' oncontextmenu="showAgentMenu(event,' + _pfpJsArg(aName) + ',' + _pfpJsArg(a.scope || '') + ',' + (a.autoconv ? 'true' : 'false') + ',' + _pfpJsArg(aRuntime) + ');return false;">'
+          + ' oncontextmenu="showAgentMenu(event,' + _pfpJsArg(aName) + ',' + _pfpJsArg(a.scope || '') + ',' + (a.autoconv ? 'true' : 'false') + ',' + _pfpJsArg(aRuntime) + ',' + _pfpJsArg(a.definition || aName) + ');return false;">'
           + '<span style="cursor:pointer;color:' + primaryColor + ';font-size:11px;" title="' + _pfpAttr(primaryTitle) + '"'
           + ' onclick="_selectAgentAndRefresh(this.dataset.n)" data-n="' + aNameAttr + '">' + primaryArrow + '</span>'
           + _scopeBadge(a.scope)

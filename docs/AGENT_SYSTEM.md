@@ -321,6 +321,13 @@ is deleted from its conversation) and removes the member from the
 conversation; if it was the selected agent, another member is selected, and
 deleting the only member is refused before anything is deleted.
 
+A conversation member is an instance of a definition, and its name may
+differ from the definition's (instance `GameDev2` running definition
+`claude`). `list_resources` returns each member's `definition`. In the
+webchat, the agent context menu's View definition and Edit definition
+entries open that definition. Every other entry (conversation config,
+tool/MCP overrides, skills, select) acts on the instance.
+
 ### LLM Service Reference
 
 The `llm_service` field points to an LLM-capable service: a direct

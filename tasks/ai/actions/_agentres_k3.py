@@ -97,6 +97,9 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
                     assigned_names.append(skill_name)
             entry = {
                 "name": aname,
+                # The instance's definition: its View/Edit definition menu
+                # opens this, not the instance name (GameDev2 -> claude).
+                "definition": a.get("name") or aname,
                 "description": a.get("description", ""),
                 "scope": a.get("_scope", ""),
                 "active": active.get("agent") == aname,

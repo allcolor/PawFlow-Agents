@@ -416,7 +416,10 @@ function _saveAgentHooksDialog() {
   });
 }
 
-function showAgentMenu(e, name, scope, autoconv, runtimeKind) {
+function showAgentMenu(e, name, scope, autoconv, runtimeKind, definition) {
+  // `name` is the conversation instance; the definition entries open the
+  // agent definition it runs, which may have another name.
+  const defName = definition || name;
   e.preventDefault();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
@@ -431,8 +434,8 @@ function showAgentMenu(e, name, scope, autoconv, runtimeKind) {
   };
   const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;'; menu.appendChild(s); };
 
-  item('\u{1F441} ' + t('viewDefinitionMenu'), () => showResourceEditor('agent', name, true));
-  if (_canEditScope(scope)) item('\u270F ' + t('editDefinitionMenu'), () => showResourceEditor('agent', name));
+  item('\u{1F441} ' + t('viewDefinitionMenu'), () => showResourceEditor('agent', defName, true));
+  if (_canEditScope(scope)) item('\u270F ' + t('editDefinitionMenu'), () => showResourceEditor('agent', defName));
   item('\u2699 ' + t('configureConversationMenu'), () => _showAgentConvConfigDialog(name));
   if (runtimeKind === 'workflow') {
     item('\u{1F4CA} ' + t('workflowRunsMenu'), () => showWorkflowRunInspector(name));

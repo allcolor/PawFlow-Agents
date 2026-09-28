@@ -166,6 +166,15 @@ function _toolOriginBadge(extra, toolName) {
 
 function sourceBadge(source) {
   if (!source) return '';
+  // A delegate reply carries its author as `from` and its addressee as `to`,
+  // not `name`/`reply_to`. It is still an agent speaking: when the durable row
+  // reclaims the live token bubble, an empty badge here erased the
+  // "Agent via service" header the stream had already drawn.
+  if (source.type === 'agent_delegate') {
+    source = Object.assign({}, source, {
+      type: 'agent', name: source.from || '', reply_to: source.to || '',
+    });
+  }
   const name = source.name ? displayAgentName(source.name) : '';
   const svc = source.llm_service || '';
   if (source.type === 'agent') {

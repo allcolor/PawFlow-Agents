@@ -550,6 +550,8 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                     return
 
             if entry is None or not entry.ws_handler:
+                logger.warning("[ws] rejected %s on %s: no WebSocket route registered",
+                               _remote, path)
                 sock.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
                 sock.close()
                 return

@@ -730,7 +730,7 @@ class TestAgentServiceActions:
     def test_service_install_rejects_concurrent_prepare_install(self):
         from core import ServiceFactory
         from core.base_service import BaseService
-        from core.service_install import update_install_state
+        from core.service_install import _PROCESS_TOKEN, update_install_state
         from tasks.ai.actions.service_flow import _handle_service_flow
 
         calls = []
@@ -758,6 +758,7 @@ class TestAgentServiceActions:
             service_type="busyPrepareInstallTestService",
             phase="downloading_models",
             message="Download in progress",
+            owner_process=_PROCESS_TOKEN,
         )
         ff = self._make_flowfile({
             "action": "service_install",
@@ -772,6 +773,56 @@ class TestAgentServiceActions:
         assert data["install_state"]["status"] == "installing"
         assert data["install_state"]["phase"] == "downloading_models"
         assert calls == []
+
+    def test_service_install_discards_installing_state_of_dead_process(self):
+        # A server restart mid-install leaves status=installing on disk.
+        # Nothing will finish it, so it must not block every later install.
+        from core import ServiceFactory
+        from core.base_service import BaseService
+        from core.service_install import _PROCESS_TOKEN, update_install_state
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        calls = []
+
+        class StaleInstallTestService(BaseService):
+            TYPE = "staleInstallTestService"
+
+            def get_parameter_schema(self):
+                return {}
+
+            def prepare_install(self, reporter=None):
+                calls.append("prepare")
+                return {"ok": True}
+
+            def _create_connection(self):
+                return {"ok": True}
+
+            def _close_connection(self):
+                pass
+
+        ServiceFactory.register(StaleInstallTestService)
+        update_install_state(
+            "user", "testuser", "stale",
+            status="installing",
+            service_type="staleInstallTestService",
+            phase="registering",
+            message="Registering service",
+            owner_process="previous-server-process",
+        )
+        ff = self._make_flowfile({
+            "action": "service_install",
+            "service_type": "staleInstallTestService",
+            "service_name": "stale",
+        })
+
+        result = _handle_service_flow(None, "service_install", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        assert "error" not in data
+        assert data["installed"] is True
+        assert data["install_state"]["status"] == "ready"
+        assert data["install_state"]["owner_process"] == _PROCESS_TOKEN
+        assert calls == ["prepare"]
 
     def test_service_install_status_log_and_cancel_actions(self):
         from core.file_store import FileStore

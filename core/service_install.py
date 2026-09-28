@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 _INSTALL_LOCKS: Dict[str, threading.RLock] = {}
 _INSTALL_LOCKS_GUARD = threading.Lock()
 _TERMINAL_STATUSES = {"ready", "failed", "cancelled"}
+# Identifies this server process in persisted install state. An "installing"
+# state stamped by another process was interrupted (restart, crash): nothing
+# will ever finish it, so it must not block the next install.
+_PROCESS_TOKEN = uuid.uuid4().hex
 
 
 _INSTALL_HINTS = {
@@ -242,9 +247,14 @@ def service_install_session(scope: str, scope_id: str, service_id: str,
     if not lock.acquire(blocking=False):
         raise ServiceError(f"Service installation already running: {service_id}")
     state = read_install_state(scope, scope_id, service_id)
-    if state.get("status") == "installing":
+    if (state.get("status") == "installing"
+            and state.get("owner_process") == _PROCESS_TOKEN):
         lock.release()
         raise ServiceError(f"Service installation already running: {service_id}")
+    if state.get("status") == "installing":
+        logger.warning(
+            "[service-install:%s] discarding stale 'installing' state left by "
+            "another server process (phase=%s)", service_id, state.get("phase"))
     try:
         update_install_state(
             scope, scope_id, service_id,
@@ -254,6 +264,7 @@ def service_install_session(scope: str, scope_id: str, service_id: str,
             message="Preparing service installation",
             progress=0.0,
             cancel_requested=False,
+            owner_process=_PROCESS_TOKEN,
         )
         yield
     except Exception as exc:

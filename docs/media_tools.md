@@ -435,7 +435,9 @@ the configured Whisper STT model. Supertonic uses the same hook to prepare a
 managed Python runtime before first use. PawFlow persists the latest install
 state for each service (`not_installed`, `installing`, `ready`, `failed`, or
 `cancelled`), includes it in `list_services`, writes a JSONL install log, rejects
-duplicate concurrent installs for the same service, and exposes
+duplicate concurrent installs for the same service (the persisted state records
+the owning server process, so an `installing` state left behind by a restart
+or crash is discarded instead of blocking the next install), and exposes
 `service_install_status`, `service_install_log`, and best-effort
 `service_install_cancel` actions for UI retry/debug flows. Pass `download=true`
 to `service_install_log` from a conversation context to export the log as a

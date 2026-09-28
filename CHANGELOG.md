@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A relay could stay disconnected forever, with every WebSocket handshake
+  answering `400 Bad Request`: a server restart in the middle of a service
+  install left its state at `installing` on disk, and every later install of
+  that service was refused as "already running". Install state now records
+  the server process that owns it; an `installing` state left by another
+  process is discarded. The relay also stops treating a `service_install`
+  error reply as success, and the server logs a WebSocket upgrade refused for
+  an unregistered route.
+
 ## [1.0.0-beta.295] — 2026-09-26
 
 ### Fixed

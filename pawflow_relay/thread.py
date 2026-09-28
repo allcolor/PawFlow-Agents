@@ -168,12 +168,17 @@ class RelayThread(_RelayDockerMixin, _RelayHostHelperMixin):
 
     def _install_service(self, *, retry=False):
         call = self._api_retry if retry else self._api
-        call("POST", "/api/ui", {
+        result = call("POST", "/api/ui", {
             "action": "service_install",
             "service_type": "relay",
             "service_name": self.relay_id,
             "config_str": self._service_config_str(),
         })
+        # The server reports install failures as HTTP 200 + {"error": ...};
+        # ignoring it leaves /ws/relay/<id> unregistered and every handshake
+        # answering 400 with no hint why.
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(f"service_install {self.relay_id} failed: {result['error']}")
 
     def _reregister_service(self):
         """Re-register the relay service on the server (keeps same port/token).

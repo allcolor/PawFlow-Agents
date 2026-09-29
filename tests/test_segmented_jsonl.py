@@ -280,6 +280,57 @@ def test_role_row_counts_upgrade_v1_index_without_decoding_canonical_rows(
     assert [segment["role_rows"] for segment in upgraded["segments"]] == [1, 1]
 
 
+def _lose_unflushed_counts(tmp_path, kept_rows):
+    """Rewrite index.json as a restart finds it: counts from an older flush."""
+    SegmentedJsonl.close_all_append_handles()
+    segment = tmp_path / "transcript" / "000000.jsonl"
+    kept = segment.read_bytes().splitlines(keepends=True)[:kept_rows]
+    index_path = tmp_path / "transcript" / "index.json"
+    stale = json.loads(index_path.read_text(encoding="utf-8"))
+    stale["segments"][0].update(rows=kept_rows, role_rows=kept_rows,
+                                bytes=sum(len(line) for line in kept))
+    stale["total_rows"] = kept_rows
+    index_path.write_text(json.dumps(stale), encoding="utf-8")
+    SegmentedJsonl.invalidate_index_cache(tmp_path)
+
+
+def test_role_row_counts_recount_segments_whose_size_drifted(tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    SegmentedJsonl(path, max_rows=10).append_dicts(
+        _msg(content=str(i)) for i in range(4))
+    _lose_unflushed_counts(tmp_path, kept_rows=2)
+
+    # The next process appends on top of the stale counts before any read.
+    log = SegmentedJsonl(path, max_rows=10)
+    log.append_dicts([_msg(content="4")])
+    counts = log.role_rows_by_path()
+
+    assert list(counts.values()) == [5]
+    assert log.total_rows() == 5
+    on_disk = json.loads(
+        (tmp_path / "transcript" / "index.json").read_text(encoding="utf-8"))
+    segment = tmp_path / "transcript" / "000000.jsonl"
+    assert on_disk["segments"][0]["rows"] == 5
+    assert on_disk["segments"][0]["role_rows"] == 5
+    assert on_disk["segments"][0]["bytes"] == segment.stat().st_size
+
+
+def test_role_row_counts_verify_sizes_once_per_loaded_index(monkeypatch, tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    SegmentedJsonl(path, max_rows=10).append_dicts(
+        _msg(content=str(i)) for i in range(3))
+    _lose_unflushed_counts(tmp_path, kept_rows=1)
+    log = SegmentedJsonl(path, max_rows=10)
+    assert list(log.role_rows_by_path().values()) == [3]
+
+    def fail_count(_path):
+        raise AssertionError("a verified index must not be recounted")
+
+    monkeypatch.setattr(SegmentedJsonl, "_count_rows", staticmethod(fail_count))
+    log.append_dicts([_msg(content="3")])
+    assert list(log.role_rows_by_path().values()) == [4]
+
+
 def test_segmented_jsonl_append_reuses_hot_segment_handle(tmp_path):
     path = tmp_path / "transcript.jsonl"
     log = SegmentedJsonl(path, max_rows=10)

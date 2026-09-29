@@ -61,7 +61,10 @@ scanner to select candidate segment files before the normal decoder and trace
 composer run. Segment index version 2 stores exact display-row counts, so
 absolute result indices and direct index windows do not require decoding
 skipped prefixes; version-1 indexes are upgraded once with a lightweight
-row-prefix scan. Encrypted logs use the same non-plaintext row counts for
+row-prefix scan. The index is a cache flushed every few rows, so a restart
+loses the latest counts: the first count lookup per loaded index recounts
+any segment whose file size differs from its recorded bytes.
+Encrypted logs use the same non-plaintext row counts for
 direct index windows, while search falls back to the exact windowed scan and
 never persists plaintext search data.
 

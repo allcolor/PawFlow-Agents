@@ -39,6 +39,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A restart lost the transcript row counts appended since the segment index
+  was last flushed, and nothing ever corrected them. Every message index past
+  the first affected segment then pointed at the wrong message, and on the
+  largest conversation each filtered `read_history` search fell back to a
+  full scan (20 to 85 s) while rebuilding the search index again. The first
+  count lookup after loading a segment index now recounts any segment whose
+  file size differs from its recorded size: 0.3 s once on a 2 GB
+  transcript.
+
 - Two saves of the same service scope at once (common right after a
   restart) could fail with "Failed to save service ... No such file or
   directory: <id>.tmp": both wrote the same temporary file and the first

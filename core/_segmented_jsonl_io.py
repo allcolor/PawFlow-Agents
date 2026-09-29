@@ -298,18 +298,22 @@ class _SegmentedJsonlIOMixin:
         return isinstance(row, dict) and bool(row.get("role"))
 
     @classmethod
-    def _count_role_rows(cls, path: Path) -> int:
-        """Count display rows without decoding ordinary message payloads.
+    def _count_rows(cls, path: Path) -> tuple[int, int]:
+        """Count ``(rows, display rows)`` without decoding ordinary payloads.
 
         Canonical messages serialize ``role`` first. Only reordered or nested
         occurrences take the slower JSON path; trace updates have no top-level
         role and are therefore excluded exactly.
         """
+        rows = 0
         count = 0
         try:
             with open(path, "rb") as fh:
                 for raw in fh:
                     stripped = raw.lstrip()
+                    if not stripped.strip():
+                        continue
+                    rows += 1
                     if (stripped.startswith(_ROLE_STRING_PREFIX)
                             and len(stripped) > len(_ROLE_STRING_PREFIX)
                             and stripped[len(_ROLE_STRING_PREFIX)] != ord('"')):
@@ -322,17 +326,39 @@ class _SegmentedJsonlIOMixin:
                         if isinstance(row, dict) and row.get("role"):
                             count += 1
         except FileNotFoundError:
-            return 0
-        return count
+            return 0, 0
+        return rows, count
+
+    @classmethod
+    def _count_role_rows(cls, path: Path) -> int:
+        return cls._count_rows(path)[1]
 
     def role_rows_by_path(self) -> Dict[Path, int]:
-        """Return exact display-row counts, upgrading old indexes once."""
+        """Return exact display-row counts, upgrading old indexes once.
+
+        index.json is a cache flushed every few rows, so a restart (or an
+        evicted dirty cache entry) loses the counts appended since the last
+        flush, and every display index past a stale segment points at the
+        wrong row. Appends keep adding to the stale counts, but the segment's
+        recorded ``bytes`` stays short of its file by the lost rows: once per
+        loaded index, a segment whose size disagrees is recounted. One stat
+        per segment, no glob and no append-path cost.
+        """
         self._flush_own_append_handles()
         index = self._load_index()
+        verify = not self._index_verified()
         changed = False
         counts: Dict[Path, int] = {}
         for item in index.get("segments") or []:
             path = self.segment_dir / str(item.get("file") or "")
+            if verify:
+                size = path.stat().st_size if path.exists() else 0
+                if item.get("bytes") is None or int(item["bytes"]) != size:
+                    rows, role_rows = self._count_rows(path)
+                    item["rows"] = rows
+                    item["role_rows"] = role_rows
+                    item["bytes"] = size
+                    changed = True
             try:
                 count = int(item["role_rows"])
             except (KeyError, TypeError, ValueError):
@@ -341,9 +367,14 @@ class _SegmentedJsonlIOMixin:
                 changed = True
             counts[path] = count
         if changed:
+            index["total_rows"] = sum(
+                int(item.get("rows") or 0)
+                for item in index.get("segments") or [])
             index["version"] = _SEGMENT_INDEX_VERSION
             self._remember_index(index, flushed=True)
             self._write_index(index)
+        if verify:
+            self._mark_index_verified()
         return counts
 
     @staticmethod

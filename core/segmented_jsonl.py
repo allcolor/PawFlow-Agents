@@ -876,6 +876,22 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
                 state["last_rows"] = total
             self._trim_index_cache_locked()
 
+    def _index_verified(self) -> bool:
+        """Whether the cached index was checked against its segment sizes.
+
+        The flag lives in the cache entry, not in index.json: a fresh load
+        from disk (restart, eviction, invalidation) starts unverified.
+        """
+        with _INDEX_CACHE_LOCK:
+            state = _INDEX_CACHE.get(self._cache_key())
+            return bool(state and state.get("verified"))
+
+    def _mark_index_verified(self) -> None:
+        with _INDEX_CACHE_LOCK:
+            state = _INDEX_CACHE.get(self._cache_key())
+            if state is not None:
+                state["verified"] = True
+
     @staticmethod
     def _trim_index_cache_locked() -> None:
         limit = max(1, _INDEX_CACHE_MAX)

@@ -321,6 +321,20 @@ Synthetic 60k-message conversation, same query and identical output: 0.066 s
 indexed against 1.08 s scanned; the full reindex took 1.6 s. The incremental
 refresh measured on production was 0.1 s.
 
+After the hotpatch, every filtered search in the largest conversation still
+scanned (20 to 85 s) and rebuilt its index in the background. The segment
+index said 465,143 display rows; the transcript held 465,289. `index.json` is
+a cache flushed every few rows, so each restart lost the counts appended since
+its last flush, and appends then kept adding to the stale base. The full
+reindex counts real rows, so its watermark stayed above `display_row_count`
+and every search read as a shrunken transcript. The same stale counts shifted
+every `load_window_by_index` past the first drifted segment. A segment's
+recorded `bytes` stays short of its file by the lost rows, so
+`role_rows_by_path` now recounts a segment whose size disagrees, once per
+loaded index (a stat per listed segment, no glob, nothing on the append
+path). On a copy of that transcript: 18 of 140 segments recounted in 0.29 s,
+result equal to a full recount; later calls take 2 ms.
+
 ## Configuration
 
 | Variable | Default | Meaning |

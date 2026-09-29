@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 from core._conversation_store_base import (  # noqa: F401,E402
     _CTX_CACHE_MAX_MESSAGES, _CTX_CACHE_MAX_CHARS, _CTX_CACHE_MAX_CONVS, _CONV_LOCK_DIAG_MS, _GIT_RETENTION_DAYS, _GIT_RETENTION_COMMITS, _GIT_RETENTION_INTERVAL_SEC, _HOT_METADATA_FLUSH_INTERVAL_SEC, _HOT_METADATA_FLUSH_MSG_DELTA, _HOT_METADATA_KEYS, _HOT_METADATA_EXECUTOR, _GIT_RETENTION_EXECUTOR, _GIT_RETENTION_RUNNING, _GIT_RETENTION_RUNNING_LOCK, ConversationLockedError, _ConversationTimedRLock)
 
+# Row fields the full-text index (core/conversation_index.py) reads.
+_INDEXED_PATCH_FIELDS = frozenset({"content", "role", "ts", "msg_id"})
+
 
 class _CsTranscriptMixin:
     """transcript load/page + display traces + context-usage."""
@@ -645,6 +648,8 @@ class _CsTranscriptMixin:
         log = self._transcript_log(cid)
         if not log.exists():
             return -1
+        if msg_id:
+            return self._find_display_index_by_msg_id(log, cid, msg_id)
         idx = -1
         best = -1
         for row in log.iter_rows():
@@ -670,6 +675,29 @@ class _CsTranscriptMixin:
             if ts and float(row.get("ts") or row.get("timestamp") or 0.0) >= ts:
                 return idx
         return best
+
+    def _find_display_index_by_msg_id(self, log: SegmentedJsonl, cid: str,
+                                      msg_id: str) -> int:
+        """Display index of ``msg_id``: one segment parsed, not the prefix.
+
+        msg_id is stored in clear, so the segment holding it is found from
+        the bytes; the rows before it are counted from the segment index.
+        """
+        with self._get_conv_lock(cid):
+            paths = log.iter_paths()
+            role_rows = log.role_rows_by_path()
+        needles = log._msg_id_needles(msg_id)
+        for path_index, path in enumerate(paths):
+            if not log._segment_mentions(path, needles):
+                continue
+            idx = sum(int(role_rows.get(p, 0)) for p in paths[:path_index]) - 1
+            for row in log._iter_file(path):
+                if self._is_trace_update_row(row) or not row.get("role"):
+                    continue
+                idx += 1
+                if row.get("msg_id") == msg_id:
+                    return idx
+        return -1
 
     def load_page(self, cid: str, limit: int = 50, offset: int = 0,
                   user_id: str = "", before_msg_id: str = "") -> Optional[Dict]:
@@ -865,7 +893,12 @@ class _CsTranscriptMixin:
                 for entry in conv_dir.iterdir():
                     if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
                         patched_streams += _patch_stream(entry / "context.jsonl")
-            if transcript_patched:
+            # The generation tells the search index its rows are stale; it
+            # indexes content/role/ts/msg_id. A metadata patch (turn_final,
+            # is_error, attachments, source enrichment) leaves those rows
+            # valid: bumping for it made every search re-read and re-index
+            # the whole transcript (~60 s at 670k rows, 2026-09-29).
+            if transcript_patched and _INDEXED_PATCH_FIELDS.intersection(fields):
                 self.bump_transcript_generation(cid)
         if not patched_streams:
             # Callers patch durable markers (turn_final, gauges) that later
@@ -945,16 +978,56 @@ class _CsTranscriptMixin:
             return usage, 0.0
         if self._context_usage_repair_mtime.get(cid, 0) >= transcript_mtime:
             return usage, transcript_mtime
-        for line in log.iter_rows():
-            entry = self._context_usage_entry_from_source(
-                line.get("source"), line.get("ts"))
-            if not entry:
+        # Incremental: rows already read were merged into extras by an earlier
+        # repair, and the repair only ever keeps the newest value per agent.
+        # Re-reading the whole transcript here ran on every message_meta and
+        # cost 45 s at 670k rows (2026-09-29). Only rows appended since the
+        # last read are parsed, and in clear text only lines that carry a
+        # context gauge.
+        from core.secret_sanitization import strip_secret_runtime_values
+        paths = log.iter_paths()
+        start_index, start_offset = 0, 0
+        position = self._context_usage_repair_pos.get(cid)
+        names = [str(path) for path in paths]
+        if position and position[0] in names:
+            start_index, start_offset = names.index(position[0]), position[1]
+        codec = log.codec
+        needle = b'"context_used"'
+        last = position
+        for index in range(start_index, len(paths)):
+            path = paths[index]
+            offset = start_offset if index == start_index else 0
+            try:
+                data = path.read_bytes()
+            except FileNotFoundError:
                 continue
-            name, usage_entry = entry
-            prev = usage.get(name)
-            if (not isinstance(prev, dict)
-                    or float(prev.get("updated_at") or 0) <= float(usage_entry.get("updated_at") or 0)):
-                usage[name] = usage_entry
+            if len(data) < offset:
+                offset = 0  # rewritten shorter: read it again
+            end = data.rfind(b"\n") + 1
+            if end <= offset:
+                last = (str(path), offset)
+                continue
+            for raw in data[offset:end].split(b"\n"):
+                if not raw.strip() or (codec is None and needle not in raw):
+                    continue
+                try:
+                    row = json.loads(raw.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    continue
+                line = strip_secret_runtime_values(
+                    codec.decode(row) if codec is not None else row)
+                entry = self._context_usage_entry_from_source(
+                    line.get("source"), line.get("ts"))
+                if not entry:
+                    continue
+                name, usage_entry = entry
+                prev = usage.get(name)
+                if (not isinstance(prev, dict)
+                        or float(prev.get("updated_at") or 0) <= float(usage_entry.get("updated_at") or 0)):
+                    usage[name] = usage_entry
+            last = (str(path), end)
+        if last:
+            self._context_usage_repair_pos[cid] = last
         return usage, transcript_mtime
 
     def _repair_context_usage_from_transcript(self, cid: str,

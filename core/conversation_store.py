@@ -84,6 +84,8 @@ class ConversationStore(
         self._tool_parent_cache: Dict[str, Dict[str, str]] = {}
         self._hot_metadata_flush: Dict[str, Dict[str, Any]] = {}
         self._context_usage_repair_mtime: Dict[str, float] = {}
+        # cid -> (segment path, byte offset) the context-usage repair has read.
+        self._context_usage_repair_pos: Dict[str, tuple] = {}
         self._cid_user: Dict[str, str] = {}  # cid -> user_id (fast lookup, no scan)
         self._enc_enabled: Dict[str, bool] = {}  # cid -> encryption-enabled (cached)
         self._secret_runtime_scrubbed = set()

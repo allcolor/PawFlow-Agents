@@ -2,7 +2,6 @@
 import heapq
 import logging
 import re
-from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -482,23 +481,29 @@ class ReadHistoryHandler(ToolHandler):
         for start, msgs in store.iter_display_windows(self._conversation_id):
             yield start, msgs
 
-    def _collect(self, store, keep, budget: int):
+    def _collect(self, store, keep, budget: int, done=None):
         """Stream the transcript, keep what ``keep`` accepts, up to ``budget``.
 
         Returns ``(indexed_messages, total_matched)``: the page's worth of
         ``(absolute_index, message)`` pairs, and how many matched in total.
         The count keeps growing after the budget is spent -- a footer that
         says "of 4000" costs a counter, not 4000 retained messages.
+        ``done()`` returning True ends the pass: nothing after it can match
+        (a range past its closing id), so reading on is pure cost.
         """
         kept: List = []
         total = 0
         for start, msgs in self._windows(store):
             for i, msg in enumerate(msgs):
                 if not keep(start + i, msg):
+                    if done is not None and done():
+                        return kept, total
                     continue
                 total += 1
                 if len(kept) < budget:
                     kept.append((start + i, msg))
+                if done is not None and done():
+                    return kept, total
         return kept, total
 
     @staticmethod
@@ -729,7 +734,8 @@ class ReadHistoryHandler(ToolHandler):
                 state["closed"] = True
             return self._matches(msg, role_filter, agent_filter)
 
-        kept, total = self._collect(store, keep, budget)
+        kept, total = self._collect(
+            store, keep, budget, done=lambda: state["closed"])
         if not state["inside"]:
             return f"Error: from_msg_id {from_id} not found"
         if not state["closed"]:
@@ -865,32 +871,40 @@ class ReadHistoryHandler(ToolHandler):
         except (TypeError, ValueError):
             offset = 0
         if role_filter or agent_filter:
-            # recent is a tail: keep a sliding window of the last
-            # offset+limit matches and let everything older fall out of it,
-            # so the cost is the page, not the conversation.
-            tail = deque(maxlen=max(1, offset + limit))
-            total = 0
-            for start, msgs in self._windows(store):
-                for i, msg in enumerate(msgs):
-                    if not self._matches(msg, role_filter, agent_filter):
-                        continue
-                    total += 1
-                    tail.append((start + i, msg))
-            items = list(tail)
-            end = len(items) - offset
-            window = items[max(0, end - limit):end] if end > 0 else []
-            if not window:
-                scope = _scope_label(role_filter, agent_filter)
+            # recent is a tail: read backwards, a window at a time, and stop
+            # once the page (plus one match, to know whether older ones
+            # exist) is found. Reading forward over the whole transcript to
+            # keep its last matches cost 45 s at 670k rows (2026-09-29). The
+            # exact number of matches would need that full pass, so the
+            # header does not claim one.
+            if not self._owns_conversation(store):
+                return "No history found"
+            need = offset + limit
+            newest_first: List = []
+            hi = int(store.message_count(self._conversation_id) or 0)
+            chunk = store._WINDOW_CHUNK
+            while hi > 0 and len(newest_first) <= need:
+                lo = max(0, hi - chunk)
+                window = store.load_window_by_index(
+                    self._conversation_id, lo, hi - lo)
+                for i in range(len(window) - 1, -1, -1):
+                    if self._matches(window[i], role_filter, agent_filter):
+                        newest_first.append((lo + i, window[i]))
+                        if len(newest_first) > need:
+                            break
+                hi = lo
+            page = newest_first[offset:need]
+            scope = _scope_label(role_filter, agent_filter)
+            if not page:
                 return f"No messages found ({scope})"
-            start_idx = total - offset - len(window)
+            page.reverse()
             lines = [
                 self._format_message(m, idx, role_filter=role_filter)
-                for idx, m in window
+                for idx, m in page
             ]
-            scope = _scope_label(role_filter, agent_filter)
-            header = (f"Messages ({scope}) {start_idx}-"
-                      f"{start_idx + len(window) - 1} of {total}")
-            if start_idx > 0:
+            header = (f"Most recent messages ({scope}): {len(page)} shown, "
+                      f"newest last")
+            if len(newest_first) > need:
                 header += (f". More older — repeat with "
                            f"offset={offset + limit}.")
             return header + "\n\n" + "\n\n".join(lines)
@@ -915,10 +929,20 @@ class ReadHistoryHandler(ToolHandler):
                    role_filter: str, agent_filter: str) -> str:
         offset, limit, budget = self._budget(
             arguments.get("offset"), arguments.get("limit"))
-        kept, total = self._collect(
-            store,
-            lambda _i, m: self._matches(m, role_filter, agent_filter),
-            budget)
+        if not role_filter and not agent_filter:
+            # Unfiltered: the page is an index window and the total is the
+            # stored count -- no pass over the transcript.
+            if not self._owns_conversation(store):
+                return "No history found"
+            window = store.load_window_by_index(
+                self._conversation_id, 0, budget)
+            kept = list(enumerate(window))
+            total = int(store.message_count(self._conversation_id) or 0)
+        else:
+            kept, total = self._collect(
+                store,
+                lambda _i, m: self._matches(m, role_filter, agent_filter),
+                budget)
         return self._render_slice(
             kept, "Oldest messages",
             role_filter, agent_filter, action="oldest",

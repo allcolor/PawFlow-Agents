@@ -174,10 +174,10 @@ class _CsAppendMixin:
             raise ValueError("msg_id is required for idempotent append")
         lock = self._get_conv_lock(cid)
         with lock:
-            existing = self.load(cid, user_id=user_id) or []
-            for row in existing:
-                if str(row.get("msg_id") or "") != msg_id:
-                    continue
+            # A conversation not created yet holds no message at all.
+            row = (self._transcript_log(cid).find_by_msg_ids({msg_id}).get(msg_id)
+                   if self.exists(cid) else None)
+            if row is not None:
                 # Same id, same MEANING → duplicate; same id, different
                 # payload → explicit conflict, never a silent dedupe.
                 if _idempotency_fingerprint(row) \
@@ -213,12 +213,8 @@ class _CsAppendMixin:
 
         lock = self._get_conv_lock(cid)
         with lock:
-            user_id = str(items[0].get("user_id") or "")
-            existing = {
-                str(row.get("msg_id") or ""): row
-                for row in (self.load(cid, user_id=user_id) or [])
-                if str(row.get("msg_id") or "") in message_ids
-            }
+            existing = (self._transcript_log(cid).find_by_msg_ids(message_ids)
+                        if self.exists(cid) else {})
             for item, msg_id in zip(items, message_ids):
                 row = existing.get(msg_id)
                 if row is None:

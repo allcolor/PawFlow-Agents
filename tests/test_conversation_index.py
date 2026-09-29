@@ -641,7 +641,7 @@ class TestTheRightToBeForgotten:
         def rewrite(i):
             try:
                 start.wait(timeout=10)
-                store.patch_message(cid, "m1", **{f"marker_{i}": True})
+                store.patch_message(cid, "m1", content=f"one {i}")
             except Exception as exc:
                 errors.append(exc)
 

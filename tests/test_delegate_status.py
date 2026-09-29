@@ -13,6 +13,7 @@ Verifies that:
    _inject_bg_result, relay source-context injection covers both tools
 """
 import json
+import time
 
 from unittest.mock import MagicMock, patch
 
@@ -30,6 +31,9 @@ from core.handlers.resource_agent import (
     DelegateResultHandler,
     DelegateStatusHandler,
 )
+
+# Recent timestamps: a delegate unanswered for over a day is reported as stale.
+_NOW = time.time()
 
 
 def _make_handler(cls, conversation_id, source_agent="agentA"):
@@ -124,7 +128,7 @@ class TestDelegateStatusHandler:
         transcript = [{
             "role": "user",
             "content": "audit the implementation",
-            "timestamp": 100.0,
+            "timestamp": _NOW + 0,
             "source": {
                 "type": "agent_delegate",
                 "from": "agentA",
@@ -135,7 +139,7 @@ class TestDelegateStatusHandler:
         }, {
             "role": "user",
             "content": "private task from another caller",
-            "timestamp": 101.0,
+            "timestamp": _NOW + 1,
             "source": {
                 "type": "agent_delegate",
                 "from": "agentB",
@@ -157,7 +161,7 @@ class TestDelegateStatusHandler:
             out = json.loads(
                 _make_handler(DelegateStatusHandler, conv).execute({}))
 
-        assert out["counts"] == {"live": 1, "finished": 0}
+        assert out["counts"] == {"live": 1, "finished": 0, "stale": 0}
         assert out["live"][0]["task_id"] == "tid-shared-live"
         assert out["live"][0]["agent"] == "reviewer"
         assert out["live"][0]["mode"] == "shared"
@@ -170,7 +174,7 @@ class TestDelegateStatusHandler:
         store.save(conv, [{
             "role": "user",
             "content": "audit",
-            "timestamp": 100.0,
+            "timestamp": _NOW + 0,
             "source": {
                 "type": "agent_delegate",
                 "from": "agentA",
@@ -190,7 +194,7 @@ class TestDelegateStatusHandler:
         finally:
             unregister_live_delegate(conv, "agentA", "reviewer", task_id)
 
-        assert out["counts"] == {"live": 1, "finished": 0}
+        assert out["counts"] == {"live": 1, "finished": 0, "stale": 0}
         assert out["live"][0]["task_id"] == task_id
         assert out["live"][0]["status"] == "running"
         assert out["live"][0]["runtime_attached"] is True
@@ -237,7 +241,7 @@ class TestDelegateStatusHandler:
                     "task_id": "tid-shared-finished",
                 }))
 
-        assert status["counts"] == {"live": 0, "finished": 1}
+        assert status["counts"] == {"live": 0, "finished": 1, "stale": 0}
         assert status["finished"][0]["task_id"] == "tid-shared-finished"
         assert status["finished"][0]["mode"] == "shared"
         assert result["status"] == "completed"
@@ -301,7 +305,7 @@ class TestDelegateStatusHandler:
         try:
             h = _make_handler(DelegateStatusHandler, conv)
             out = json.loads(h.execute({}))
-            assert out["counts"] == {"live": 2, "finished": 2}
+            assert out["counts"] == {"live": 2, "finished": 2, "stale": 0}
             by_tid = {e["task_id"]: e for e in out["live"]}
             assert by_tid["tid1"]["name"] == "critic"
             assert by_tid["tid1"]["kind"] == "flash"
@@ -326,7 +330,7 @@ class TestDelegateStatusHandler:
         try:
             h = _make_handler(DelegateStatusHandler, conv)
             out = json.loads(h.execute({}))
-            assert out["counts"] == {"live": 0, "finished": 0}
+            assert out["counts"] == {"live": 0, "finished": 0, "stale": 0}
         finally:
             unregister_live_delegate(conv, "agentB",
                                      "agentB::flash::spy", "tid1")
@@ -346,7 +350,7 @@ class TestDelegateResultHandler:
         store.save(conv, [{
             "role": "user",
             "content": "audit",
-            "timestamp": 100.0,
+            "timestamp": _NOW + 0,
             "source": {
                 "type": "agent_delegate",
                 "from": "agentA",

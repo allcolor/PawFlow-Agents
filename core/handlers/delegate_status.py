@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 _FLASH_MARKER = "::flash::"
 
 
+# A delegate still unanswered after this long, with no runtime attached, is
+# reported as stale: counted, and only the most recent few listed.
+_STALE_AFTER_SECONDS = 24 * 3600
+_STALE_SHOWN = 10
+
+
 def _display_name(target: str) -> Dict[str, str]:
     """Split a runtime target into a display name and kind."""
     if _FLASH_MARKER in target:
@@ -111,7 +117,9 @@ class DelegateStatusHandler(SpawnAgentsHandler):
             "Check durable status for your shared, isolated, and flash "
             "delegates, including after context compaction. Returns pending/"
             "running work with task IDs and runtime details, plus the latest "
-            "100 finished results. Use delegate_result to fetch one output."
+            "100 finished results. Delegates unanswered for over a day with "
+            "nothing running for them are counted under 'stale' (the 10 most "
+            "recent listed). Use delegate_result to fetch one output."
         )
 
     @property
@@ -137,11 +145,19 @@ class DelegateStatusHandler(SpawnAgentsHandler):
         raw_live, raw_finished = _merged_state(
             parent_conv_id, src_agent, self._user_id)
         live = []
+        stale = []
         for entry in raw_live:
             item = _render_entry(entry, include_response=False)
             started = item.pop("started_at", 0.0)
             item["age_seconds"] = round(now - started, 1) if started else None
-            live.append(item)
+            # A transcript request with no reply and nothing running for it
+            # after a day will not answer any more. Listing every one buried
+            # the live delegates (2,265 for one agent, 2026-09-29).
+            if (not item.get("runtime_attached") and started
+                    and now - started > _STALE_AFTER_SECONDS):
+                stale.append(item)
+            else:
+                live.append(item)
 
         finished = [
             _render_entry(entry, include_response=False)
@@ -151,7 +167,9 @@ class DelegateStatusHandler(SpawnAgentsHandler):
         return json.dumps({
             "live": live,
             "finished": finished,
-            "counts": {"live": len(live), "finished": len(finished)},
+            "stale": stale[-_STALE_SHOWN:],
+            "counts": {"live": len(live), "finished": len(finished),
+                       "stale": len(stale)},
         }, ensure_ascii=False, indent=2)
 
 

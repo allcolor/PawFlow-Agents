@@ -335,8 +335,13 @@ Four properties worth knowing before relying on it:
 `read_history` reads the conversation it is called in, a bounded window at a
 time — it never loads a transcript whole, which is what a conversation of a
 few hundred thousand messages makes fatal. `recent` reads backward from the
-tail. `read(index)` and the index window used by `around` jump to the owning
-segment from its display-row count instead of decoding every earlier message.
+tail; with a role or agent filter it reads backward a window at a time and
+stops once the page is found, so its header says whether older matches exist
+but gives no exact count. `read(index)` and the index window used by `around`
+jump to the owning segment from its display-row count instead of decoding
+every earlier message; an `around` anchored on `from_msg_id` finds its segment
+from the stored bytes. `range` stops at `to_msg_id`, and an unfiltered
+`oldest` reads only the head of the transcript.
 
 For `search`, plaintext segmented logs use two file-level passes: exact phrase
 candidates first, then (only when there is no exact result) lexical candidates
@@ -374,7 +379,7 @@ someone else.
 |---|---|
 | `delegate` | Spawn/delegate work to another agent. |
 | `flash_delegate` | Create temporary task-specific agents for independent parallel work; they use the caller's LLM service and disappear after completion. Background results are delivered to the caller (preempt/wake) — and when the caller is on a live realtime voice session, the result is ALSO injected into the session and spoken (out-of-band `context` message). |
-| `delegate_status` | Report the caller's shared, flash, and isolated delegates. It streams the durable conversation transcript to rebuild shared request/reply pairs and isolated display traces, then merges process-local runtime details without duplicates. A context compaction or provider-session restart therefore cannot erase an acknowledged task from status. Finished results remain bounded to the latest 100. |
+| `delegate_status` | Report the caller's shared, flash, and isolated delegates. It streams the durable conversation transcript to rebuild shared request/reply pairs and isolated display traces, then merges process-local runtime details without duplicates. A context compaction or provider-session restart therefore cannot erase an acknowledged task from status. Finished results remain bounded to the latest 100. A delegate unanswered for more than a day with nothing running for it is reported under `stale` (counted; the 10 most recent listed) instead of `live`. |
 | `delegate_result` | Fetch a finished delegate by task_id from the process-local result cache or its durable shared reply/display trace (full response text, capped at 200k chars, latest 100 completions). The pull counterpart to asynchronous push delivery; pending/running delegates remain visible even when no result exists yet. |
 | `consult_agent` | One-shot delegation to the conversation agent's own model: resolves the agent's system prompt and `llm_service`, sends the task with bounded conversation context, returns the answer as the tool result. Approval-exempt (the delegate gets no tools). Built for realtime voice sessions (`tool_profile=consult_agent`) where the realtime model is only the spoken interface and routes substantial work to the agent's brain; works from text sessions too. |
 | `manage_resource` | Create/update/delete/list agents, skills, tools, services, resources; review/import marketplace skills; assign/unassign skills to agents with live context notifications. Creates resources in conversation scope when called from an active conversation. |

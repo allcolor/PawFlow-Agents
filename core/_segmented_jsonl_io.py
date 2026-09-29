@@ -354,3 +354,47 @@ class _SegmentedJsonlIOMixin:
                         return
         except FileNotFoundError:
             return
+
+    def find_by_msg_ids(self, msg_ids) -> Dict[str, Dict[str, Any]]:
+        """Return the decoded row of each msg_id present in this log.
+
+        Newest segment first, and only lines whose bytes contain an id are
+        parsed. The idempotent ingress used to load() the whole conversation
+        for this -- about 60 s and several GB at 670k rows (2026-09-29).
+        Trace-update rows are skipped: they refer to an anchor, they are not
+        the message itself.
+        """
+        from core.secret_sanitization import strip_secret_runtime_values
+
+        wanted = {str(mid) for mid in (msg_ids or ()) if str(mid)}
+        found: Dict[str, Dict[str, Any]] = {}
+        if not wanted or not self.exists():
+            return found
+        self._flush_own_append_handles()
+        codec = self.codec
+        for path in reversed(self._segment_paths()):
+            remaining = wanted - set(found)
+            if not remaining:
+                break
+            needles = [needle for mid in remaining
+                       for needle in self._msg_id_needles(mid)]
+            try:
+                data = path.read_bytes()
+            except FileNotFoundError:
+                continue
+            if not any(needle in data for needle in needles):
+                continue
+            for raw in data.split(b"\n"):
+                if not any(needle in raw for needle in needles):
+                    continue
+                try:
+                    row = json.loads(raw.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    continue
+                mid = str(row.get("msg_id") or "")
+                if (mid not in remaining or mid in found
+                        or row.get("t") == "trace_update"):
+                    continue
+                decoded = codec.decode(row) if codec is not None else row
+                found[mid] = strip_secret_runtime_values(decoded)
+        return found

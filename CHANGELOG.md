@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- In the web chat, a message sent with `/msg` or `/nimsg` appeared twice:
+  the local bubble and the saved message had different ids, so the saved
+  one was not recognized as the same message. Both now share one id.
+- `/msg @agent` did not reach a busy agent until its turn ended: the
+  message waited in the pending queue. It is now delivered at once, like a
+  composer message: the agent is interrupted and reads it immediately.
+- `/msg @all` never reached the live agents: it ran a throw-away copy of
+  every agent in a separate conversation and posted their answers only once
+  the slowest had finished. It now posts one message addressed to ALL and
+  delivers it at once to every live agent, interrupting the busy ones.
+  Messages to one agent are delivered in order, one at a time.
+
+### Performance
+
+On a conversation of 670,000 messages (1.9 GB), one pass over the whole
+transcript costs 45 to 60 seconds of CPU, and several paths made one on every
+call, slowing the whole server:
+
+- `conversation_search` re-read and re-indexed the whole conversation after
+  any change to a message's metadata (turn end, error flag). Only content
+  changes invalidate the index now, and the conversation excluded from the
+  search is no longer re-read.
+- The idempotent message ingress loaded the whole conversation to check one
+  message id. It now finds the id in the stored bytes and decodes one line.
+- The context-usage repair re-read the whole transcript on every gauge
+  update. It now reads only the rows added since its last pass.
+- `read_history`: a filtered `recent` reads backward and stops at the page,
+  `range` stops at its closing id, an unfiltered `oldest` reads only the
+  head, and `around` on a message id decodes only the segment holding it.
+- `delegate_status` no longer lists every unanswered delegate: those with
+  no answer and nothing running for over a day are counted under `stale`.
+
 ## [1.0.0-beta.298] — 2026-09-29
 
 ### Fixed

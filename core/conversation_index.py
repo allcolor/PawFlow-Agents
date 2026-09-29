@@ -178,7 +178,7 @@ class ConversationIndex:
 
     # -- Indexing ------------------------------------------------------
 
-    def refresh(self, store=None) -> Dict[str, int]:
+    def refresh(self, store=None, skip=()) -> Dict[str, int]:
         """Bring the index up to date with the user's conversations.
 
         Incremental twice over, because a search pays for this: a conversation
@@ -187,6 +187,9 @@ class ConversationIndex:
         Without the first check every search would read every transcript of
         every conversation from disk, which is not incremental in any sense
         that matters. Returns counts for logging and for the tool's footer.
+
+        ``skip`` names conversations the caller will not search (the one it
+        excludes): they are left as indexed, neither read nor purged.
         """
         if store is None:
             from core.conversation_store import ConversationStore
@@ -212,6 +215,8 @@ class ConversationIndex:
                 continue
             seen.add(cid)
             stats["conversations"] += 1
+            if cid in skip:
+                continue
             if self._is_encrypted(store, cid):
                 stats["skipped_encrypted"] += 1
                 if cid in known:

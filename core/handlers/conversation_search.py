@@ -116,13 +116,13 @@ class ConversationSearchHandler(ToolHandler):
             return (f"Error: conversation search needs SQLite FTS5, which this "
                     f"server's Python does not provide ({exc}).")
 
+        exclude = "" if arguments.get("include_current") else self._conversation_id
         try:
-            refresh = index.refresh()
+            # The excluded conversation is not searched: do not re-read it.
+            refresh = index.refresh(skip={exclude} if exclude else ())
         except Exception as exc:
             logger.warning("conversation index refresh failed", exc_info=True)
             return f"Error refreshing the conversation index: {exc}"
-
-        exclude = "" if arguments.get("include_current") else self._conversation_id
         try:
             hits = index.search(
                 query,

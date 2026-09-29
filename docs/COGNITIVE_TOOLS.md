@@ -621,7 +621,7 @@ All paths are relative to the PawFlow data directory:
 
 | System | Path | Format |
 |---|---|---|
-| Memory store | `data/memories/{user_id}.json` | JSON array of MemoryEntry objects |
+| Memory store | `data/memories/{user_id}.json` | JSON array of MemoryEntry objects; embeddings as base64 float32 (`embedding_f32`) |
 | Knowledge graph | `data/knowledge_graphs/{user_id}.json` | JSON with `entities` and `triples` |
 | Agent diary | `data/memories/{user_id}/diary_{agent_name}.jsonl` | JSONL, one record per line |
 | Project graph | `data/runtime/graphs/{safe_user}/{safe_relay}/graph.json` | JSON with `nodes`, `edges`, `metadata` |

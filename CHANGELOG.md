@@ -21,6 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   transcript to count the characters the bucket covered: 27 s on a 2 GB
   conversation, with the server stalled for 5 to 6 s. It now reads only the
   segments that hold the bucket's range: 0.56 s.
+- Storing a memory rewrote the user's whole memory file, where each
+  embedding was a list of floats: 223 MB for 23,700 memories, and 10 s with
+  the server stalled on each save. Embeddings are now stored packed
+  (float32, base64), converted on the first save, and duplicate checks no
+  longer re-normalize every stored text. The file shrank to 72 MB and a save
+  takes about 1 s.
 
 ## [1.0.0-beta.301] — 2026-09-29
 

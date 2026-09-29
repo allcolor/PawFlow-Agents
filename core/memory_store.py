@@ -7,6 +7,8 @@ Storage: JSON files per user in data/memories/
 Retrieval: tag-based filtering + text search (no vector DB needed).
 """
 
+import array
+import base64
 import json
 import logging
 import threading
@@ -47,6 +49,25 @@ def _memory_dedup_key(text: str) -> str:
     text = (text or "").lower().strip()
     text = _BM25_SPLIT.sub(" ", text)
     return " ".join(text.split())
+
+
+def _encode_embedding(vec: List[float]) -> str:
+    """Pack an embedding as base64 float32 for the JSON file.
+
+    As a JSON list of floats, embeddings were 90% of a user's memory file
+    and json.dumps spent ~10 s under the GIL re-encoding them on every
+    save (23k entries x 384 dims in production). A base64 string encodes
+    in C at memcpy speed; float32 keeps ample precision for cosine
+    similarity.
+    """
+    return base64.b64encode(array.array("f", vec).tobytes()).decode("ascii")
+
+
+def _decode_embedding(packed: str) -> List[float]:
+    """Inverse of _encode_embedding."""
+    values = array.array("f")
+    values.frombytes(base64.b64decode(packed))
+    return values.tolist()
 
 
 # ── Scope semantics (single source of truth) ───────────────────────
@@ -116,9 +137,10 @@ def _bm25_score(query_tokens: List[str], docs: List[List[str]]) -> List[float]:
 class MemoryEntry:
     """A single memory entry."""
 
-    __slots__ = ("id", "text", "tags", "created_at", "updated_at", "source",
-                 "embedding", "agent", "conversation_id",
-                 "category", "valid_from", "ended", "expires_at")
+    __slots__ = ("id", "_text", "_dedup_key", "tags", "created_at",
+                 "updated_at", "source", "_embedding", "_embedding_packed",
+                 "agent", "conversation_id", "category", "valid_from",
+                 "ended", "expires_at")
 
     def __init__(self, text: str, tags: List[str],
                  entry_id: str = "", source: str = "",
@@ -142,6 +164,40 @@ class MemoryEntry:
         self.ended = ended            # temporal-validity end (0 = still valid). Kept for as_of queries.
         self.expires_at = expires_at  # hard TTL for storage cleanup (0 = no TTL, keep forever)
 
+    @property
+    def text(self) -> str:
+        return self._text
+
+    @text.setter
+    def text(self, value: str) -> None:
+        self._text = value
+        self._dedup_key = None
+
+    def dedup_key(self) -> str:
+        # remember() compares the incoming text against every entry; with
+        # tens of thousands of entries the regex normalization alone took
+        # ~1.4 s per call, so it is computed once per text.
+        if self._dedup_key is None:
+            self._dedup_key = _memory_dedup_key(self._text)
+        return self._dedup_key
+
+    @property
+    def embedding(self) -> Optional[List[float]]:
+        return self._embedding
+
+    @embedding.setter
+    def embedding(self, vec: Optional[List[float]]) -> None:
+        self._embedding = vec
+        # Packed lazily by to_dict and reused by every later save.
+        self._embedding_packed = None
+
+    def _packed_embedding(self) -> str:
+        # Callers reassign .embedding instead of mutating the list in place,
+        # so the cached packing stays valid until the setter clears it.
+        if self._embedding_packed is None:
+            self._embedding_packed = _encode_embedding(self._embedding)
+        return self._embedding_packed
+
     def to_dict(self) -> Dict[str, Any]:
         d = {
             "id": self.id,
@@ -152,7 +208,7 @@ class MemoryEntry:
             "source": self.source,
         }
         if self.embedding is not None:
-            d["embedding"] = self.embedding
+            d["embedding_f32"] = self._packed_embedding()
         if self.agent:
             d["agent"] = self.agent
         if self.conversation_id:
@@ -169,14 +225,19 @@ class MemoryEntry:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MemoryEntry":
-        return cls(
+        packed = data.get("embedding_f32")
+        # One-shot migration: files written before the float32 packing hold
+        # a plain "embedding" list; the next save rewrites them packed.
+        embedding = (_decode_embedding(packed) if packed
+                     else data.get("embedding"))
+        entry = cls(
             text=data.get("text", ""),
             tags=data.get("tags", []),
             entry_id=data.get("id", ""),
             source=data.get("source", ""),
             created_at=data.get("created_at", 0),
             updated_at=data.get("updated_at", 0),
-            embedding=data.get("embedding"),
+            embedding=embedding,
             agent=data.get("agent", ""),
             conversation_id=data.get("conversation_id", ""),
             category=data.get("category", "") or data.get("hall", ""),
@@ -184,6 +245,9 @@ class MemoryEntry:
             ended=data.get("ended", 0),
             expires_at=data.get("expires_at", 0),
         )
+        if packed:
+            entry._embedding_packed = packed
+        return entry
 
     def matches(self, query: str) -> bool:
         """Check if this entry matches a text query (case-insensitive)."""
@@ -245,7 +309,7 @@ class MemoryStore:
             incoming_key = _memory_dedup_key(text)
             for e in entries:
                 same_text = e.text.strip().lower() == text.strip().lower()
-                same_key = incoming_key and _memory_dedup_key(e.text) == incoming_key
+                same_key = incoming_key and e.dedup_key() == incoming_key
                 same_scope = e.agent == agent and e.conversation_id == conversation_id
                 same_category = (e.category or "") == (category or "")
                 if same_text or (same_key and same_scope and same_category):

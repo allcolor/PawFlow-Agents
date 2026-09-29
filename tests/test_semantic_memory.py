@@ -85,20 +85,23 @@ class TestTopKSimilar:
 class TestMemoryEntryEmbedding:
     """Tests for MemoryEntry embedding serialization."""
 
-    def test_to_dict_includes_embedding(self):
+    def test_to_dict_packs_embedding_as_float32(self):
         from core.memory_store import MemoryEntry
         entry = MemoryEntry(text="hello", tags=["t"], embedding=[0.1, 0.2])
         d = entry.to_dict()
-        assert "embedding" in d
-        assert d["embedding"] == [0.1, 0.2]
+        assert "embedding" not in d
+        assert isinstance(d["embedding_f32"], str)
+        restored = MemoryEntry.from_dict(d)
+        assert restored.embedding == pytest.approx([0.1, 0.2], rel=1e-6)
 
     def test_to_dict_excludes_embedding_when_none(self):
         from core.memory_store import MemoryEntry
         entry = MemoryEntry(text="hello", tags=["t"], embedding=None)
         d = entry.to_dict()
-        assert d.get("embedding") is None
+        assert "embedding" not in d
+        assert "embedding_f32" not in d
 
-    def test_from_dict_reads_embedding(self):
+    def test_from_dict_migrates_legacy_float_list(self):
         from core.memory_store import MemoryEntry
         data = {
             "text": "hello",
@@ -111,6 +114,41 @@ class TestMemoryEntryEmbedding:
         }
         entry = MemoryEntry.from_dict(data)
         assert entry.embedding == [0.3, 0.4]
+        assert "embedding_f32" in entry.to_dict()
+
+    def test_packed_embedding_cached_until_reassigned(self):
+        from core.memory_store import MemoryEntry
+        entry = MemoryEntry(text="hello", tags=["t"], embedding=[0.5, 0.25])
+        first = entry.to_dict()["embedding_f32"]
+        with patch("core.memory_store._encode_embedding") as enc:
+            assert entry.to_dict()["embedding_f32"] == first
+            enc.assert_not_called()
+        entry.embedding = [1.0, 2.0]
+        restored = MemoryEntry.from_dict(entry.to_dict())
+        assert restored.embedding == [1.0, 2.0]
+
+    def test_loaded_packed_embedding_is_not_reencoded(self):
+        from core.memory_store import MemoryEntry
+        packed = MemoryEntry(text="x", tags=[], embedding=[0.5]).to_dict()
+        with patch("core.memory_store._encode_embedding") as enc:
+            entry = MemoryEntry.from_dict(packed)
+            assert entry.to_dict()["embedding_f32"] == packed["embedding_f32"]
+            enc.assert_not_called()
+
+    def test_store_file_round_trip_keeps_embeddings(self, tmp_path):
+        from core.memory_store import MemoryStore
+        store = MemoryStore(store_dir=str(tmp_path))
+        store.remember("u1", "a fact worth keeping", ["t"], embedding=[0.5, -1.0])
+        assert "embedding_f32" in (tmp_path / "u1.json").read_text()
+        reloaded = MemoryStore(store_dir=str(tmp_path))
+        assert reloaded.recall("u1")[0].embedding == [0.5, -1.0]
+
+    def test_dedup_key_follows_text_changes(self):
+        from core.memory_store import MemoryEntry
+        entry = MemoryEntry(text="Hello,  World", tags=[])
+        assert entry.dedup_key() == "hello world"
+        entry.text = "Other fact"
+        assert entry.dedup_key() == "other fact"
 
     def test_from_dict_backward_compat_no_embedding(self):
         from core.memory_store import MemoryEntry

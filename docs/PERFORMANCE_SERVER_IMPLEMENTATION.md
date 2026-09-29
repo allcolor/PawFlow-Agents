@@ -270,6 +270,30 @@ any segment without bounds. `_sum_chars_in_range` uses it for a positive
 `first_seq`. On the production transcript the same range fell from 27.3 s to
 0.56 s, with the same total.
 
+## 10. Memory store saves
+
+File: `core/memory_store.py`.
+
+`MemoryStore` rewrites a user's whole `data/memories/{user}.json` on every
+`remember()`. In production the file held 23,723 entries, each with a
+384-dimension embedding stored as a JSON list of floats: 223 MB, 90% of it
+embeddings. `json.dumps` took 10.3 s under the GIL on each save, and
+`remember()` also normalized every stored text with a regex to look for
+duplicates (1.4 s). A py-spy `--gil` profile taken after section 9 gave the
+save 69% of the samples; post-compaction memory extraction runs it after
+each bucket rollup, and the log stalled for 12 to 13 s (2026-09-29).
+
+Embeddings are now written as `embedding_f32`, a base64 string of float32
+values, packed once per entry and reused by every later save. An entry keeps
+its normalized duplicate key until its text changes. Files that still hold
+the former `embedding` list are read as is and rewritten packed on the next
+save. On a copy of the production file: 72 MB instead of 223 MB, loading
+2.1 s instead of 7.0 s, `remember()` 1.1 s instead of about 10.5 s (0.7 s of
+it `json.dumps`).
+
+The store still rewrites the whole file on each change, so a save stays
+proportional to the number of memories.
+
 ## Configuration
 
 | Variable | Default | Meaning |

@@ -19,6 +19,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   transcript: over two minutes on a conversation of 1.1 GB. They now read
   only the segments whose dates or sequence numbers meet the range. Each
   segment's bounds are computed once and cached next to it.
+- Marking the end of each agent turn patched a stored message by decoding and
+  re-encoding every row of its 8 MB segment, in the transcript and in every
+  agent's context, while holding the conversation lock. With seven agents
+  this blocked the conversation for 1 to 37 s per turn. The patch now
+  rewrites only the matching line: 196 ms fell to 22 ms per segment. A
+  patch slower than 500 ms logs the time of each step.
 
 ## [1.0.0-beta.300] — 2026-09-29
 

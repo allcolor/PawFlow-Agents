@@ -573,3 +573,70 @@ class _CsSessionsMixin:
     def list_bound(self, cid: str, rtype: str) -> List[Dict]:
         """List all bound items of a given type for a conversation."""
         return self.get_bindings(cid).get(rtype, [])
+
+    def _file_checkpoints_path(self, cid: str) -> Path:
+        return self._conv_dir(cid) / "checkpoints.json"
+
+    def _write_file_checkpoints(self, cid: str, entries: List[Dict]) -> None:
+        """Atomically replace checkpoints.json. Caller holds the extras lock."""
+        path = self._file_checkpoints_path(cid)
+        tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+        tmp.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+
+    def _migrate_extras_file_checkpoints(self, cid: str) -> None:
+        """Move the former ``checkpoints`` extra into checkpoints.json.
+
+        The list grows by one entry per user turn. Kept in extras.json, it
+        made every extras read and write decode and encode it. Caller holds
+        the extras lock.
+        """
+        if self._file_checkpoints_path(cid).exists():
+            return
+        data = self._read_extras(cid)
+        if "checkpoints" not in data:
+            return
+        legacy = data.pop("checkpoints")
+        self._write_file_checkpoints(
+            cid, legacy if isinstance(legacy, list) else [])
+        self._merge_hot_metadata_snapshot(cid, data)
+        self._write_extras(cid, data)
+        with self._cache_lock:
+            cached = self._cache.get(cid)
+            if cached is not None:
+                (cached.get("extras") or {}).pop("checkpoints", None)
+                cached.get("extra_keys", set()).discard("checkpoints")
+
+    def get_file_checkpoints(self, cid: str) -> List[Dict]:
+        """Return the /rewind file checkpoints of a conversation, oldest first."""
+        if not self.exists(cid):
+            return []
+        with self._get_extras_lock(cid):
+            self._migrate_extras_file_checkpoints(cid)
+            path = self._file_checkpoints_path(cid)
+            if not path.exists():
+                return []
+            try:
+                entries = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("[convstore:%s] unreadable checkpoints.json: %s",
+                               cid[:8], e)
+                return []
+        return entries if isinstance(entries, list) else []
+
+    def append_file_checkpoint(self, cid: str, entry: Dict) -> None:
+        """Append one /rewind file checkpoint."""
+        if not self.exists(cid):
+            return
+        with self._get_extras_lock(cid):
+            entries = self.get_file_checkpoints(cid)
+            entries.append(entry)
+            self._write_file_checkpoints(cid, entries)
+
+    def set_file_checkpoints(self, cid: str, entries: List[Dict]) -> None:
+        """Replace the /rewind file checkpoints (after a rewind)."""
+        if not self.exists(cid):
+            return
+        with self._get_extras_lock(cid):
+            self._migrate_extras_file_checkpoints(cid)
+            self._write_file_checkpoints(cid, list(entries))

@@ -218,6 +218,39 @@ transcript segment one patch fell from 196 ms to 22 ms.
 A patch slower than `PAWFLOW_JSONL_PATCH_DIAG_MS` logs
 `[segjsonl] patch slow` with its flush, scan, locate and write times.
 
+## 7. File checkpoints out of extras.json
+
+Files: `core/_conversation_store_sessions.py`, `core/checkpoint.py`,
+`core/_conversation_store_git.py`.
+
+`CheckpointManager.start_checkpoint` records one `/rewind` checkpoint per
+user turn. The list lived under the `checkpoints` key of `extras.json`, and
+nothing ever trims it. `_read_extras` decodes the whole file for every
+`get_extra`, and `set_extra` re-encodes it. Every relay tool request goes
+through `_active_tool_exposure` -> `get_agent_config`, which calls `get_extra`
+once for the roster and once per agent. On conversation 1719a9c3 (6,604
+checkpoints, 540 KB of a 550 KB extras file, rewritten 19 times in 30 s),
+a py-spy `--gil` profile of production gave `_read_extras` 33% of the GIL
+samples (2026-09-29).
+
+The list now lives in `checkpoints.json` next to `extras.json`, read and
+written through `get_file_checkpoints`, `append_file_checkpoint` and
+`set_file_checkpoints` under the extras lock. The first checkpoint operation
+on a conversation moves the former `checkpoints` extra into the file and drops
+it from `extras.json` and from the in-memory cache. `checkpoints.json` is part
+of the conversation's Git snapshot files. On the production extras, one read
+fell from 8.6 ms to 0.12 ms and one write from 12.7 ms to 0.14 ms.
+
+## 8. Relay WebSocket unmasking
+
+File: `services/_relay_ws.py`.
+
+`_ws_recv_frame` unmasked every relay frame with a per-byte generator, about
+13% of the GIL samples in the same profile. `_ws_unmask` XORs the payload and
+the repeated mask as two integers. The other copies of the per-byte loop
+(relay client, SDK, realtime, audio and code-server proxies) did not show in
+the profile and are unchanged.
+
 ## Configuration
 
 | Variable | Default | Meaning |

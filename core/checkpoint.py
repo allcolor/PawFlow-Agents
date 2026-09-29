@@ -196,13 +196,11 @@ class CheckpointManager:
         try:
             from core.conversation_store import ConversationStore
             store = ConversationStore.instance()
-            checkpoints = store.get_extra(conversation_id, "checkpoints") or []
-            checkpoints.append({
+            store.append_file_checkpoint(conversation_id, {
                 "id": cp_id,
                 "timestamp": time.time(),
                 "message_count": store.message_count(conversation_id),
             })
-            store.set_extra(conversation_id, "checkpoints", checkpoints)
         except Exception as e:
             logger.warning(f"[checkpoint] failed to register: {e}")
         return cp_id
@@ -212,8 +210,8 @@ class CheckpointManager:
         """List all checkpoints for a conversation."""
         try:
             from core.conversation_store import ConversationStore
-            return ConversationStore.instance().get_extra(
-                conversation_id, "checkpoints") or []
+            return ConversationStore.instance().get_file_checkpoints(
+                conversation_id)
         except Exception:
             return []
 
@@ -345,8 +343,8 @@ class CheckpointManager:
         checkpoints = checkpoints[:target_idx + 1]
         try:
             from core.conversation_store import ConversationStore
-            ConversationStore.instance().set_extra(
-                conversation_id, "checkpoints", checkpoints)
+            ConversationStore.instance().set_file_checkpoints(
+                conversation_id, checkpoints)
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 

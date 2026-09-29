@@ -245,7 +245,7 @@ class _CsGitMixin:
         files = [
             "transcript.jsonl", "transcript",
             "shared.jsonl", "shared",
-            "extras.json", "bindings.json",
+            "extras.json", "bindings.json", "checkpoints.json",
         ]
         existing = {f for f in files if (conv_dir / f).exists()}
         tracked: set[str] = set()

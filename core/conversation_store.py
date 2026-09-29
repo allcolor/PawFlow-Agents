@@ -6,6 +6,7 @@ Each conversation is a directory:
     shared.jsonl                  — shared context (public messages for all agents)
     {agent}/context.jsonl         — per-agent LLM context
     extras.json                   — atomic JSON metadata (no duplication)
+    checkpoints.json              — /rewind file checkpoints, one per user turn
 
 Stored message invariants (EVERY record in transcript/context streams):
   - msg_id  : own UUID, unique per line (not shared across records)

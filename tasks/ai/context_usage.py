@@ -517,9 +517,19 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
             real_window=real_window, provider=provider, source=source,
             cli_context_state="cold")
 
-    raw_messages, cache, _already_deserialized = _context_messages(
-        conversation_id, agent_name, user_id, store, active_ctx)
-    if cache is None and active_ctx is None:
+    # A CLI session the provider measured itself: the used value is that
+    # measurement (see below), whatever PawFlow's messages count to. Loading
+    # and re-counting the whole stored context only to discard the result ran
+    # on every append -- 0.1-0.7 s of CPU per call uncontended, 1-49 s per
+    # append with eight CLI agents writing at once (2026-09-29).
+    measured_session = (
+        is_cli and observed_tokens > 0 and observed_mode != "request")
+    if measured_session:
+        raw_messages, cache = [], None
+    else:
+        raw_messages, cache, _already_deserialized = _context_messages(
+            conversation_id, agent_name, user_id, store, active_ctx)
+    if cache is None and active_ctx is None and not measured_session:
         with _USAGE_CACHE_LOCK:
             cached_usage = _USAGE_CACHE.get((conversation_id, agent_name))
             if isinstance(cached_usage, dict):
@@ -585,6 +595,8 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
         usage["context_measurement_mode"] = observed_mode
         usage["context_measurement_revision"] = observed_revision
         usage["context_measurement_tokens"] = observed_tokens
+        if measured_session:
+            usage["cache_mode"] = "measured"
     if active_ctx is not None:
         try:
             from tasks.ai.agent_loop import AgentLoopTask

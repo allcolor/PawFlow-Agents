@@ -626,6 +626,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                     "%s; submitting best-effort%s",
                     state.name, self._pane_diagnostic(state.name))
         self._cancel_copy_mode(state)
+        self._clear_unconfirmed_paste(state)
         if not self._prepare_prompt_input(state):
             return False
         # Once, not once per attempt: the guard that keeps hooks from filing
@@ -1302,17 +1303,25 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             "exec", "-i", "--user", self._user_spec(), state.name,
             "tmux", "load-buffer", "-",
         ]
-        r = subprocess.run(cmd, input=text.encode("utf-8"), capture_output=True, timeout=15)  # nosec B603
+        try:
+            r = subprocess.run(cmd, input=text.encode("utf-8"), capture_output=True, timeout=15)  # nosec B603
+        except subprocess.TimeoutExpired:
+            state.last_error = "tmux load-buffer timed out after 15s"
+            return False
         if r.returncode != 0:
             state.last_error = self._command_error("tmux load-buffer", r)
             return False
         return True
 
     def _paste_buffer(self, state: InteractiveContainer) -> bool:
-        r = subprocess.run(  # nosec B603
-            docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
-                            "tmux", "paste-buffer", "-p", "-t", "pawflow"],
-            capture_output=True, timeout=10)
+        try:
+            r = subprocess.run(  # nosec B603
+                docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
+                                "tmux", "paste-buffer", "-p", "-t", "pawflow"],
+                capture_output=True, timeout=10)
+        except subprocess.TimeoutExpired:
+            state.last_error = "tmux paste-buffer timed out after 10s"
+            return False
         if r.returncode != 0:
             state.last_error = self._command_error("tmux paste-buffer", r)
             return False
@@ -1348,8 +1357,37 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 time.sleep(self._PASTE_CHUNK_GAP_SECONDS)
             if not (self._load_buffer(state, chunk)
                     and self._paste_buffer(state)):
+                state.unconfirmed_paste = text
                 return False
         return True
+
+    @staticmethod
+    def _paste_head_fragment(text: str) -> str:
+        """A distinctive head of the text: a failed paste lands from the start."""
+        for line in (text or "").strip().splitlines():
+            line = line.strip()
+            if len(line) >= 8:
+                return line[:24]
+        return ""
+
+    def _clear_unconfirmed_paste(self, state: InteractiveContainer) -> None:
+        """Empty the input box of a failed paste before pasting again.
+
+        Incident 2026-09-29: with the Docker daemon saturated, `tmux
+        paste-buffer` timed out. Killing the `docker exec` client does not
+        stop the exec in the container: the first piece landed once the
+        daemon recovered, and the next prompt was pasted under it and
+        submitted with it.
+        """
+        text = getattr(state, "unconfirmed_paste", "")
+        if not text:
+            return
+        state.unconfirmed_paste = ""
+        if (self._CLEAR_STRANDED_ON_FAILED_SEND
+                and self._pane_holds_stranded_prompt(
+                    self._pane_text(state.name),
+                    self._paste_head_fragment(text))):
+            self._clear_stranded_prompt(state)
 
     @staticmethod
     def _remember_injected_prompt(state: InteractiveContainer, text: str) -> None:
@@ -1525,6 +1563,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             return False
         self._sync_slot_credentials(state)
         self._cancel_copy_mode(state)
+        self._clear_unconfirmed_paste(state)
         canonical_input = self._PREPARE_INTERRUPT_BEFORE_PASTE
         if canonical_input and not self._prepare_prompt_input(state):
             return False
@@ -1635,6 +1674,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             return False
         self._sync_slot_credentials(state)
         self._cancel_copy_mode(state)
+        self._clear_unconfirmed_paste(state)
         self._remember_injected_prompt(state, text)
         event_service = self._remember_injected_prompt_for_event_service(
             state, text)
@@ -1673,10 +1713,14 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
             return False
-        r = subprocess.run(  # nosec B603
-            docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
-                            "tmux", "send-keys", "-t", "pawflow", *keys],
-            capture_output=True, timeout=10)
+        try:
+            r = subprocess.run(  # nosec B603
+                docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
+                                "tmux", "send-keys", "-t", "pawflow", *keys],
+                capture_output=True, timeout=10)
+        except subprocess.TimeoutExpired:
+            state.last_error = "tmux send-keys timed out after 10s"
+            return False
         if r.returncode != 0:
             state.last_error = self._command_error("tmux send-keys", r)
             return False

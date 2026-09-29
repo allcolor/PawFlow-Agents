@@ -95,8 +95,11 @@ def test_a_failed_piece_stops_the_paste(monkeypatch):
     monkeypatch.setattr(pool, "_paste_buffer", lambda state: False)
     monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
 
-    assert not pool._paste_text(object(), TURN_START)
+    state = types.SimpleNamespace(unconfirmed_paste="")
+    assert not pool._paste_text(state, TURN_START)
     assert len(loaded) == 1
+    # Remembered, so the next send clears it if it lands late.
+    assert state.unconfirmed_paste == TURN_START
 
 
 def test_cli_prompt_says_pasted_content_is_the_users_message():

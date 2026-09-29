@@ -817,8 +817,10 @@ broke the next turn (GameDev2, 2026-09-26 14:12Z).
   `submitted_msg_ids`, so the turn pastes it again instead of skipping it as
   already submitted and failing with "nothing to submit".
 - A turn refused with "nothing to submit" pasted nothing, so it keeps the
-  session marker (`claude_session:<agent>`) like a transport kill; only other
-  resume failures forget the session.
+  session marker (`claude_session:<agent>`) like a transport kill. So does a
+  failed paste ("Failed to paste prompt ...", reported as "Claude Code prompt
+  not delivered"): nothing was submitted. Only other resume failures forget
+  the session.
 
 ### A dead event stream replaces the session
 
@@ -939,6 +941,20 @@ prompt submitted first) moves the marker once and keeps waiting. The detached
 verifier of a Claude Code live interrupt never clears the input box. Codex
 keeps its own verifier and never uses the clearing sequence
 (`_CLEAR_STRANDED_ON_FAILED_SEND = False`).
+
+### A timed-out tmux command fails the send, and its late paste is cleared
+
+`tmux load-buffer`, `paste-buffer` and `send-keys` run through `docker exec`
+with a 15 s / 10 s / 10 s timeout. A timeout sets `last_error` and fails the
+send like any other tmux error; it no longer escapes as an exception that the
+turn filed as "session lost" (incident 2026-09-29: the daemon spent 12-17 s
+on two `docker rm -f`, and a wake-up's `paste-buffer` timed out). Killing
+the `docker exec` client does not stop the exec in the container, so the
+paste can still land once the daemon recovers. `_paste_text` records a failed
+paste in `state.unconfirmed_paste`, and the next `send_text`,
+`send_interrupt` or `send_queued` empties the input box with the clearing
+sequence when the head of that text sits unsent in an idle TUI, instead of
+pasting the next prompt under it.
 
 ### An empty composer is not proof of a submitted prompt
 

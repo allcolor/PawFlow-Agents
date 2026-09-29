@@ -90,6 +90,10 @@ class InteractiveContainer:
     # readiness, which gates the cold-start paste race (see send_text).
     prompt_ready: bool = False
     last_error: str = ""
+    # Text of the last paste that failed. A `docker exec` killed by its
+    # timeout still runs in the container, so that paste may land later;
+    # the next send empties the input box of it first.
+    unconfirmed_paste: str = ""
     # Session-scoped dedup of observed tool_use/tool_result ids. A live
     # Claude Code session replays its full context (every prior tool_use
     # and tool_result block) on each API request, so the proxy re-emits

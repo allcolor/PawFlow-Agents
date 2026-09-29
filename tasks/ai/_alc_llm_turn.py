@@ -532,9 +532,15 @@ class _ALCLlmTurnMixin:
                     or "stream interrupted" in st.err_str.lower()
                     or "broken pipe" in st.err_str.lower()
                 )
+                # A failed paste never reached the CLI either (incident
+                # 2026-09-29: `tmux paste-buffer` timed out while the Docker
+                # daemon was saturated). Nothing was submitted, so the live
+                # session is intact and the next turn resumes it.
+                st._is_delivery_failure = "Failed to paste prompt" in st.err_str
                 # An empty delta was refused before anything was pasted: the
                 # live session is untouched and must not be forgotten.
                 st._keep_session = (st._is_transport_kill
+                                    or st._is_delivery_failure
                                     or "nothing to submit" in st.err_str)
                 logger.error(
                     "[claude-code] resume failed (%s) — "
@@ -551,16 +557,15 @@ class _ALCLlmTurnMixin:
                     except Exception:
                         logger.debug("exception suppressed", exc_info=True)
                     st.ctx["_claude_has_session"] = False
-                st.emitter.on_fatal_error(
-                    f"Claude Code session lost: {st.err_str}"
-                    if not st._is_transport_kill else
-                    f"Claude Code stream interrupted: {st.err_str}")
+                if st._is_delivery_failure:
+                    st._cc_fatal = f"Claude Code prompt not delivered: {st.err_str}"
+                elif st._is_transport_kill:
+                    st._cc_fatal = f"Claude Code stream interrupted: {st.err_str}"
+                else:
+                    st._cc_fatal = f"Claude Code session lost: {st.err_str}"
+                st.emitter.on_fatal_error(st._cc_fatal)
                 st._fatal_error = True
-                st._fatal_error_msg = (
-                    st._fatal_error_msg
-                    or (f"Claude Code session lost: {st.err_str}"
-                        if not st._is_transport_kill else
-                        f"Claude Code stream interrupted: {st.err_str}"))
+                st._fatal_error_msg = st._fatal_error_msg or st._cc_fatal
                 return _ALC_BREAK
             if is_context_overflow_error(llm_err):
                 logger.warning(f"[agent:{st.conversation_id[:8]}] Context overflow, retrying...")

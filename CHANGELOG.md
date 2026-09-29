@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.302] — 2026-09-29
+
 ### Performance
 
 - While the server froze for about 12 s every 14 s, a third of its Python

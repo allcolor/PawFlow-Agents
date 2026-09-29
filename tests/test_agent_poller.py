@@ -576,6 +576,79 @@ def test_multiple_idle_targets_are_not_collapsed_into_one_wake(poller_env, activ
     assert _remaining(cid) == []
 
 
+@pytest.fixture
+def held_context_op():
+    held = []
+
+    def hold(task, cid, agent):
+        assert task._acquire_context_op(cid, agent, timeout=0.0)
+        held.append((task, cid, agent))
+
+    yield hold
+    for task, cid, agent in held:
+        task._release_context_op(cid, agent)
+
+
+def test_wake_for_agent_under_context_op_is_deferred(poller_env, held_context_op):
+    """A compact on the idle target must not race a turn it would break.
+
+    The compact deletes the agent's CLI session dir when it finishes; a turn
+    woken meanwhile spawned into that dir and failed on `cd` (2026-09-29).
+    """
+    cid = "compacting_target"
+    task = _active_task(cid, [])
+    held_context_op(task, cid, "claude")
+    reason = "[pending] 14 queued msg(s) after interrupted turn"
+    _schedule(cid, f"{cid}::pending::claude", reason)
+    _schedule(cid, f"{cid}::pending::gemini",
+              "[delegate_reply] queued result for gemini")
+
+    threads = _poll(task, cid)
+
+    assert [t.kwargs["args"][0]["_gen_key"] for t in threads] == [f"{cid}:gemini"]
+    remaining = _remaining(cid)
+    assert [e["key"] for e in remaining] == [f"{cid}::pending::claude"]
+    assert remaining[0]["reason"] == reason
+    assert 8 <= remaining[0]["recheck_at"] - time.time() <= 11
+
+    task._release_context_op(cid, "claude")
+    from core.poll_scheduler import PollScheduler
+    PollScheduler.instance().schedule(
+        cid, time.time() - 1, key=f"{cid}::pending::claude", reason=reason,
+        user_id="testuser")
+    threads = _poll(task, cid)
+    assert [t.kwargs["args"][0]["_gen_key"] for t in threads] == [f"{cid}:claude"]
+
+
+def test_whole_conversation_context_op_defers_every_wake(
+        poller_env, held_context_op):
+    cid = "compacting_all"
+    task = _active_task(cid, [])
+    held_context_op(task, cid, "")
+    _schedule(cid, f"{cid}::pending::claude", "[pending] wake claude")
+    _schedule(cid, f"{cid}::external-wakeup", "check an external job")
+
+    assert _poll(task, cid) == []
+    assert len(_remaining(cid)) == 2
+
+
+def test_continuation_for_agent_under_context_op_is_not_queued(
+        poller_env, held_context_op):
+    """Queued as an active wake, nothing would drain it if the agent was idle."""
+    from core.pending_queue import PendingQueue
+
+    cid = "compacting_continuation"
+    task = _active_task(cid, [])
+    held_context_op(task, cid, "assistant")
+    _schedule(cid, f"{cid}::continuation::deadbeef",
+              "[scheduled:assistant] [continuation] finish the fix")
+
+    assert _poll(task, cid) == []
+    assert PendingQueue.for_agent(cid, "assistant").peek_count() == 0
+    assert [e["key"] for e in _remaining(cid)] == [
+        f"{cid}::continuation::deadbeef"]
+
+
 def test_scheduled_entry_target_extraction(poller_env):
     poller = AgentPollerMixin()
     cid = "target_extraction"

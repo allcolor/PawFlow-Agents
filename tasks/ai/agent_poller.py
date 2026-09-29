@@ -374,6 +374,13 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                 for entry, target_agent in zip(entries, entry_targets):
                     entry_key = entry.get("key", "") or ""
                     reason = entry.get("reason", "") or ""
+                    if not self._is_context_op_free(conversation_id,
+                                                    target_agent):
+                        # A compact/rebuild owns this context. Its cleanup
+                        # deletes the CLI session dir a turn started now
+                        # would be spawning into. Retry once it is released.
+                        deferred_entries.append((target_agent, entry))
+                        continue
                     target_is_active = bool(target_agent) and (
                         self._agent_turn_active(conversation_id, target_agent))
                     if ((target_agent and not target_is_active)

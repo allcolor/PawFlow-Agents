@@ -1397,6 +1397,18 @@ the wake is preparing therefore sees the wake as the current owner and is
 preempted or queued normally; it cannot start a second CCI consumer on the same
 session.
 
+A context operation (`/compact`, rebuild, restart-from) holds its context-op
+lock for the agent, or for the whole conversation, for its full duration. It
+takes that lock *before* cancelling the agent's turn and releasing its live CLI
+session, and the poller defers every wake whose target is covered by a held
+lock, continuations included, with their key and reason, retrying ten seconds
+later. Cancelling a turn schedules a wake for its queued messages at once;
+without this fence that wake started a turn during the compaction, and the
+compaction's final cleanup deleted the CLI session directory the new turn was
+spawning into (`cd: /cc_sessions/<cid>/<agent>: No such file or directory`).
+A compaction that interrupted a running turn still resumes it itself through
+`[compact_resume:<agent>]` once the lock is released.
+
 ---
 
 ## 11. Auto-triggers

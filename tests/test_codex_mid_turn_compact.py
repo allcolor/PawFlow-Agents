@@ -197,12 +197,15 @@ def test_manual_compact_stops_active_loop_before_replacing_context():
     op_end = _AGENT_ACTIONS.index("# ═════════════════", op_start)
     block = _AGENT_ACTIONS[op_start:op_end]
     bg_start = block.index("def _bg():")
-    bg_block = block[bg_start:block.index("if not self._acquire_context_op", bg_start)]
+    bg_block = block[bg_start:block.index("result = fn()", bg_start)]
     assert 'if op_name != "compact":' not in bg_block
+    # The context is reserved first: the cancelled turn schedules a wake for
+    # its queued messages, which must not start a turn under the op.
+    lock_at = bg_block.index("if not self._acquire_context_op")
     cancel_at = bg_block.index(
         "self.cancel_agent(conv_id, agent_name=agent_name, silent=True)")
     evict_at = bg_block.index("release_cli_live_sessions_for_context(")
-    assert cancel_at < evict_at
+    assert lock_at < cancel_at < evict_at
     assert "def _refresh_active_context_from_store" in block
     assert "active_msgs[:] = refreshed" in block
     assert "_context_usage_cache" in block

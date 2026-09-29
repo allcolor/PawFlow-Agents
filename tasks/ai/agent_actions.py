@@ -615,8 +615,9 @@ class AgentActionsMixin(_AgentActionsConvMixin):
             respond freely.
 
         Returns immediately with an ack. The background thread:
-        1. Cancels the specific agent (or all agents if whole-conv)
-        2. Acquires the context op lock (scoped)
+        1. Acquires the context op lock (scoped), so no poller wake can
+           start a turn for the agent while the op runs
+        2. Cancels the specific agent (or all agents if whole-conv)
         3. Runs fn()
         4. Publishes SSE done/error
         5. Releases the lock
@@ -759,14 +760,10 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                             conv_id) or ""
                 except Exception:
                     logger.debug("compact resume detection failed", exc_info=True)
-            if capture_handoff is None:
-                self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
-                if op_name == "compact":
-                    from core.cli_live_sessions import (
-                        release_cli_live_sessions_for_context,
-                    )
-                    release_cli_live_sessions_for_context(
-                        conv_id, agent_name, reason="compact_started")
+            # Reserve the context before cancelling: the cancelled turn
+            # schedules a wake for its queued messages at once, and a turn
+            # started while the live session is released (docker rm can take
+            # 10 s) spawns into the session dir this op deletes at the end.
             if not self._acquire_context_op(conv_id, agent_name,
                                              timeout=60.0):
                 error = f"Timeout waiting for active agent ({op_name})"
@@ -776,6 +773,14 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                 })
                 return {"status": "error", "action": op_name, "error": error}
             try:
+                if capture_handoff is None:
+                    self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
+                    if op_name == "compact":
+                        from core.cli_live_sessions import (
+                            release_cli_live_sessions_for_context,
+                        )
+                        release_cli_live_sessions_for_context(
+                            conv_id, agent_name, reason="compact_started")
                 # A captured turn has no worker to cancel. Reserve the context
                 # first, then atomically retire only its still-owned session.
                 if capture_handoff is not None and not capture_handoff():

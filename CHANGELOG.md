@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Compacting an agent while it had queued messages could make its next turn
+  fail with "Failed to start Codex tmux: cd: /cc_sessions/<cid>/<agent>: No
+  such file or directory". Cancelling the running turn woke the agent for its
+  queued messages at once, before the compaction had reserved the context;
+  that turn started a CLI during the compaction, and the compaction's cleanup
+  deleted the session directory under it. The compaction now reserves the
+  context before cancelling, and scheduled wakes for an agent whose context is
+  being compacted wait until it is done.
+
 ## [1.0.0-beta.302] — 2026-09-29
 
 ### Performance

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The web chat often showed "Failed to execute 'json' on 'Response':
+  Unexpected end of JSON input". The server listened with a backlog of 5
+  connections: a burst of UI calls while it was busy overflowed it, the
+  reverse proxy's connect timed out, and it answered an empty 502. The
+  backlog is now 1024.
+- The half of a failed paste left in a Claude Code input box could still be
+  sent with the next prompt when the transcript quoted "esc to interrupt":
+  the idle CLI read as busy and the input box was not cleared. Only the input
+  box and the lines around it are checked now, and the decision is logged.
+
 ## [1.0.0-beta.299] — 2026-09-29
 
 ### Fixed

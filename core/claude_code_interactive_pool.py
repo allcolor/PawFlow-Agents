@@ -1156,10 +1156,29 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                          "BSpace", "BSpace"]
     _PANE_TAIL_DIAGNOSTIC_CHARS = 1200
     _CLEAR_STRANDED_ON_FAILED_SEND = True
+    # The running spinner sits just above the input box; the fallback covers
+    # a pane whose input line is not found.
+    _SPINNER_LINES_ABOVE_COMPOSER = 3
+    _PANE_BOTTOM_FALLBACK_LINES = 12
+
+    def _pane_bottom(self, pane: str) -> str:
+        """The input box and the TUI chrome around it, without the transcript.
+
+        Incident 2026-09-29 10:01Z: the transcript quoted "esc to interrupt"
+        (a test file the agent had printed), so an idle CLI read as running,
+        the stranded half of a timed-out paste was left in the input box, and
+        the next prompt was pasted under it.
+        """
+        lines = (pane or "").splitlines()
+        for idx in range(len(lines) - 1, -1, -1):
+            if lines[idx].lstrip().startswith("\u276f"):
+                start = max(0, idx - self._SPINNER_LINES_ABOVE_COMPOSER)
+                return "\n".join(lines[start:])
+        return "\n".join(lines[-self._PANE_BOTTOM_FALLBACK_LINES:])
 
     def _pane_holds_stranded_prompt(self, pane: str, fragment: str) -> bool:
         """Is our prompt visibly sitting unsent in an idle TUI?"""
-        if not pane or self._pane_shows_running(pane):
+        if not pane or self._pane_shows_running(self._pane_bottom(pane)):
             return False
         holds = self._pane_holds_unsent_paste(pane)
         if holds is not None:
@@ -1387,10 +1406,18 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         if not text:
             return
         state.unconfirmed_paste = ""
-        if (self._CLEAR_STRANDED_ON_FAILED_SEND
-                and self._pane_holds_stranded_prompt(
-                    self._pane_text(state.name),
-                    self._paste_head_fragment(text))):
+        if not self._CLEAR_STRANDED_ON_FAILED_SEND:
+            return
+        pane = self._pane_text(state.name)
+        stranded = self._pane_holds_stranded_prompt(
+            pane, self._paste_head_fragment(text))
+        # Logged either way: the 10:01Z miss left no trace of why.
+        logging.getLogger(__name__).info(
+            "[cci] failed paste for %s: %s%s", state.name,
+            "clearing it from the input box" if stranded
+            else "not in an idle input box, left alone",
+            self._pane_tail_diagnostic(pane))
+        if stranded:
             self._clear_stranded_prompt(state)
 
     @staticmethod

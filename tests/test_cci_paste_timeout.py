@@ -82,6 +82,22 @@ def test_the_next_send_empties_a_failed_paste_that_landed_late(monkeypatch):
     assert state.unconfirmed_paste == ""
 
 
+def test_a_transcript_quoting_the_running_marker_does_not_block_the_clear(
+        monkeypatch):
+    # 2026-09-29 10:01Z: the agent had printed this very test file, so its
+    # transcript held "esc to interrupt" and the idle CLI read as running.
+    transcript = "".join(
+        f"  transcript line {i}\n" for i in range(20))
+    pane = (transcript + '  RUNNING = ("... esc to interrupt\\n")\n'
+            + transcript + LATE_HEAD)
+    pool, keys = _pool(monkeypatch, pane)
+    state = _State()
+    state.unconfirmed_paste = PROMPT
+    pool._clear_unconfirmed_paste(state)
+    assert keys == [["Space", "Space", "Escape", "Escape",
+                     "BSpace", "BSpace"]]
+
+
 def test_an_unconfirmed_paste_is_remembered_for_the_next_send(monkeypatch):
     # 2026-09-29 09:19Z: GameDev1's pane did not move for 3 s, the send was
     # refused, and the paste sat in the composer a minute later.

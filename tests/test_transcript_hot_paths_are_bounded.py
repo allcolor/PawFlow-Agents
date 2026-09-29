@@ -215,6 +215,23 @@ class HotPaths(unittest.TestCase):
                                     "to_date": "1970-04-16T00:00:00+00:00"})
         self.assertIn("[#3]", out)
 
+    def test_bucket_char_sum_decodes_only_the_segments_it_covers(self):
+        from core._bg_bucket_build import _BgBucketBuildMixin
+        path = self.store._transcript_path(CONV)
+        expected = sum(len(r["content"])
+                       for r in SegmentedJsonl(path).iter_rows()
+                       if 2601 <= int(r.get("seq") or 0) <= 2645)
+        with _Decoded() as decoded:
+            total = _BgBucketBuildMixin._sum_chars_in_range(path, 2601, 2645)
+        self.assertGreater(total, 0)
+        self.assertEqual(total, expected)
+        self.assertBounded(decoded.count, "bucket char sum")
+
+    def test_rows_in_range_need_a_positive_low_bound(self):
+        log = self.store._transcript_log(CONV)
+        with self.assertRaises(ValueError):
+            next(log.iter_rows_in_range("seq", 0, 10))
+
     # -- search index generation ---------------------------------------------
 
     def _generation(self):

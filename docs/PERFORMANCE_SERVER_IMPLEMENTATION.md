@@ -251,6 +251,25 @@ the repeated mask as two integers. The other copies of the per-byte loop
 (relay client, SDK, realtime, audio and code-server proxies) did not show in
 the profile and are unchanged.
 
+## 9. Bucket character count reads the covered segments
+
+Files: `core/_bg_bucket_build.py`, `core/segmented_jsonl.py`.
+
+After each background bucket, `_build_one_bucket` subtracts the characters of
+the rows it covered from the transcript budget. `_sum_chars_in_range` decoded
+the whole transcript to add up a range at its tail. On conversation 1719a9c3
+(2 GB, 253 segments) that pass took 27 s and held most of the GIL: in the
+py-spy profile taken after the fix of section 7, it had 63% of the GIL
+samples, and the log stalled for 5 to 6 s while it ran, once every 5 to 10
+minutes (2026-09-29).
+
+`SegmentedJsonl.iter_rows_in_range(field, low, high)` skips the sealed
+segments whose cached `field_bounds.json` bounds (see `read_history`
+`range_by_seq`) lie outside the range, and always reads the tail segment and
+any segment without bounds. `_sum_chars_in_range` uses it for a positive
+`first_seq`. On the production transcript the same range fell from 27.3 s to
+0.56 s, with the same total.
+
 ## Configuration
 
 | Variable | Default | Meaning |

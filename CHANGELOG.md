@@ -17,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   metadata fell from 8.6 ms to 0.12 ms.
 - Relay WebSocket frames were unmasked one byte at a time in Python. They
   are now unmasked in one integer XOR.
+- After each background summary bucket, the server decoded the whole
+  transcript to count the characters the bucket covered: 27 s on a 2 GB
+  conversation, with the server stalled for 5 to 6 s. It now reads only the
+  segments that hold the bucket's range: 0.56 s.
 
 ## [1.0.0-beta.301] — 2026-09-29
 

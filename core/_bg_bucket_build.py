@@ -131,8 +131,12 @@ class _BgBucketBuildMixin:
         if not log.exists():
             return 0
         total = 0
+        # A bucket covers the tail of a transcript that can hold thousands
+        # of segments: read only the segments whose seq bounds meet it.
+        rows = (log.iter_rows_in_range("seq", first_seq, last_seq)
+                if first_seq > 0 else log.iter_rows())
         try:
-            for d in log.iter_rows():
+            for d in rows:
                 s = int(d.get("seq") or 0)
                 if s < first_seq or s > last_seq:
                     continue

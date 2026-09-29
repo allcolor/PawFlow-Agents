@@ -68,6 +68,32 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
                 decoded = codec.decode(row) if codec is not None else row
                 yield strip_secret_runtime_values(decoded)
 
+    def iter_rows_in_range(self, field: str, low: float,
+                           high: float) -> Iterator[Dict[str, Any]]:
+        """Rows of the segments that can hold ``low <= field <= high``.
+
+        ``field`` is ``"ts"`` or ``"seq"``. A sealed segment whose cached
+        bounds lie outside the range is skipped without decoding; the tail
+        segment and any segment without bounds are always read. Rows are not
+        filtered: the caller still tests each one. Bounds leave out a zero or
+        missing field, so ``low`` must be positive.
+        """
+        from core.secret_sanitization import strip_secret_runtime_values
+
+        if low <= 0:
+            raise ValueError("iter_rows_in_range needs a positive low bound")
+        codec = self.codec
+        paths = self.iter_paths()
+        bounds = self.field_bounds_by_path()
+        for path in paths:
+            if path in bounds:
+                span = bounds[path].get(field)
+                if not span or span[0] > high or span[1] < low:
+                    continue
+            for row in self._iter_file(path):
+                decoded = codec.decode(row) if codec is not None else row
+                yield strip_secret_runtime_values(decoded)
+
     def iter_rows_reverse(self) -> Iterator[Dict[str, Any]]:
         from core.secret_sanitization import strip_secret_runtime_values
 

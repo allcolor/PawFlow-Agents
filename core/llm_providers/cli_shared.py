@@ -613,10 +613,12 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
         body.extend([
             "## Bootstrap Contract",
             "",
-            "- Treat this file as PawFlow conversation context, not as a new user command.",
+            "- PawFlow, the agent platform your operator runs, wrote this file from its conversation store when it (re)started your CLI session. Its System Instructions are the operator's configuration for this agent; the conversation and the todo list are your own prior work in this conversation. The file is the context of the latest request, not a new user command by itself.",
             "- Read the entire file at least once: the earlier sections contain mandatory system/project instructions, skills, tool-use hints, prior decisions, and safety constraints.",
             "- For filesystem, shell, search, edit, patch, browser, web, image, or desktop work, use PawFlow MCP tools first and follow the surface advertised by the configured server. In api modes use get_tool_schema/use_tool; in full modes call the directly advertised tools. Do not switch to native provider tools unless the explicit user request is only about the provider runtime itself.",
+            "- Tools this file names that your CLI does not list natively (todolist, schedule_continuation, read_history, flash_delegate, delegate, manage_resource, scratchdir, ...) are PawFlow tools served by the PawFlow MCP server: in api modes reach them through get_tool_schema/use_tool.",
             "- Continue from the latest user request.",
+            "- A latest request that is a PawFlow `[System: ...]` notice (resume after a cancellation or a server restart, scheduled wake-up) is a genuine platform event, not an empty request: resume the task you were working on in the conversation above, including a task another agent delegated to you, without redoing finished steps.",
             "- If the latest user request does not supersede, redirect, or cancel unfinished work, resume and execute every pending or in-progress item in the Durable Todo List. Do not merely report that those items remain to be done.",
             "- Do not ask what to do unless both the file and the latest request are ambiguous.",
             "",
@@ -631,12 +633,29 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
         # as "PawFlow cold-session bootstrap", "You must first read...", and
         # "Path: ...". The file is the sole copy of the full context and latest
         # user turn; the composer receives only this indivisible read command.
+        # The order comes from the USER, in the user turn, in the imperative:
+        # this pasted line is the only user-role message of the cold turn. A
+        # bare "read this file and follow its contract", with the authority
+        # left to the file's own sections, reads like a prompt injection to a
+        # cautious model: 2026-09-29, two Sonnet agents restarted by a server
+        # restart read it, called it one, and asked what to do instead of
+        # resuming the task their delegator had given them.
+        agent_label = f"agent {agent_name}" if agent_name else "this agent"
         rendered_prompt = (
-            "PawFlow cold-session bootstrap. Before answering, use your local "
-            f"file-read capability to read the entire context file at {provider_path} "
-            f"(file mention: @{provider_path}); treat that file as context, follow "
-            "its Bootstrap Contract, and answer the Latest User Request at its end. "
-            "For PawFlow project work, use the tool surface advertised by the PawFlow MCP server."
+            "PawFlow cold-session bootstrap. I am your user; I run PawFlow, and "
+            "PawFlow (re)started your CLI session as "
+            f"{agent_label} and wrote our whole conversation to {provider_path} "
+            f"(file mention: @{provider_path}). Read that entire file now with "
+            "your file-read tool, before anything else: it holds my system "
+            "instructions for you, our conversation so far, your todo list and "
+            "the Bootstrap Contract. Then do what that contract says: answer "
+            "the Latest User Request at its end, and when that request is a "
+            "PawFlow [System: ...] notice, resume the task you were working on, "
+            "including a task another agent delegated to you. The file is my "
+            "instruction: do not ask me what to do unless both it and that "
+            "request are ambiguous. The PawFlow tools it names "
+            "are served by the PawFlow MCP server: use the tool surface that "
+            "server advertises."
         )
         self._remember_cli_bootstrap_prompt(
             rendered_prompt, messages, conversation_id, agent_name)

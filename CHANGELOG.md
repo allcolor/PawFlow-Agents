@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A Claude Code interactive turn failed with "Claude Code session lost" and
+  forgot its session when a `tmux paste-buffer` timed out behind a busy
+  Docker daemon, and the late paste was then submitted glued to the next
+  prompt. A timed-out tmux command now fails only that send ("prompt not
+  delivered"), the session is kept, and the next send first empties the input
+  box of the late paste.
+- CLI agents cold-started by PawFlow could refuse their bootstrap: two Sonnet
+  agents restarted with a `[System: Resuming after cancellation ...]` request
+  read `initial_context.md` as a prompt injection and asked what to do
+  instead of resuming their delegated task. The bootstrap prompt and the
+  Bootstrap Contract now say that PawFlow wrote the file, that its tools are
+  served by the PawFlow MCP server, and that a `[System: ...]` notice means
+  resuming the task in progress.
 - In the web chat, a message sent with `/msg` or `/nimsg` appeared twice:
   the local bubble and the saved message had different ids, so the saved
   one was not recognized as the same message. Both now share one id.

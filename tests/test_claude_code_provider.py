@@ -202,8 +202,19 @@ class TestSerializeMessages(unittest.TestCase):
         self.assertIn("@/cc_sessions/u/c/a/.pawflow_cli/initial_context.md", prompt)
         self.assertNotIn("latest request", prompt)
         self.assertNotIn("\n", prompt)
-        self.assertIn("read the entire context file", prompt)
+        self.assertIn("Read that entire file now", prompt)
         self.assertIn("Latest User Request", prompt)
+        # An imperative order in the USER's voice, so a cautious model does
+        # not file the file as an injection (2026-09-29: two Sonnet agents
+        # refused to resume).
+        self.assertIn("I am your user", prompt)
+        self.assertIn("CLI session as agent assistant", prompt)
+        self.assertIn("resume the task you were working on", prompt)
+        self.assertIn("The file is my instruction", prompt)
+        self.assertIn("wrote this file from its conversation store", body)
+        self.assertIn("are PawFlow tools served by the PawFlow MCP server", body)
+        self.assertIn("is a genuine platform event, not an empty request", body)
+        self.assertIn("a task another agent delegated to you", body)
         self.assertIn("## System Instructions", body)
         self.assertIn("system rules", body)
         self.assertIn("prior answer", body)

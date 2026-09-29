@@ -598,6 +598,16 @@ latest user request supersedes, redirects, or cancels it, the agent resumes and
 executes every pending or in-progress todo. Listing unfinished items without
 working on them does not satisfy the contract.
 
+The cold-start prompt and the contract state where the file comes from: PawFlow
+wrote it from its conversation store when it (re)started the CLI session, its
+System Instructions are the operator's configuration, and the PawFlow tools it
+names (todolist, schedule_continuation, read_history, ...) are served by the
+PawFlow MCP server. A latest request that is a PawFlow `[System: ...]` notice
+(resume after a cancellation or restart, scheduled wake-up) means: resume the
+task in progress, including one another agent delegated. Without that, two
+Sonnet agents cold-restarted on 2026-09-29 read the file as a prompt injection
+and asked what to do instead of resuming their delegated task.
+
 ### Scratchpad
 
 `scratchpad` is temporary working state, not a second memory or todo system.

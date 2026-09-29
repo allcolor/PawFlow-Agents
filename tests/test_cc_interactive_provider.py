@@ -1289,7 +1289,7 @@ def test_initial_interactive_prompt_writes_context_file(tmp_path):
     assert body.index("## Latest User Request") > body.index("## Bootstrap Contract")
     assert "latest request" not in prompt
     assert "\n" not in prompt
-    assert "read the entire context file" in prompt
+    assert "Read that entire file now" in prompt
     assert "Latest User Request" in prompt
     assert "Read the entire file at least once" in body
     assert "use PawFlow MCP tools first" in body

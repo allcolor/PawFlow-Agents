@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -116,6 +117,12 @@ _MCP_USE_TOOL_WRAPPERS = {
     "pawflow.use_tool", "pawflow/use_tool", "use_tool",
 }
 
+# Shape of a real tool identifier. A wrapper's inner tool_name that does not
+# match (e.g. a model that leaked its own tool-call markup into the value:
+# 'bash"> <|DSML|parameter name=...') is not a tool: the wrapper name is kept
+# so display surfaces (Active Agents status, history) never show the markup.
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
+
 _MCP_SCHEMA_WRAPPERS = {
     "mcp__pawflow__get_tool_schema", "mcp__pawflow__.get_tool_schema",
     "mcp_pawflow_get_tool_schema", "mcp_pawflow.get_tool_schema",
@@ -199,6 +206,8 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
             tool_name = str(
                 payload.get("ToolName") or payload.get("toolName")
                 or payload.get("tool_name") or name)
+            if not _TOOL_NAME_RE.match(tool_name):
+                return name, arguments
             tool_name = _TOOL_ALIASES.get(tool_name, tool_name)
             inner = (
                 payload.get("Arguments") if "Arguments" in payload
@@ -217,6 +226,8 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
             if ("tool_name" not in payload and isinstance(payload.get("parameters"), dict)):
                 payload = payload["parameters"]
             tool_name = payload.get("tool_name", name)
+            if not isinstance(tool_name, str) or not _TOOL_NAME_RE.match(tool_name):
+                return name, arguments
             tool_name = _TOOL_ALIASES.get(tool_name, tool_name)
             inner = payload.get(
                 "arguments_json",

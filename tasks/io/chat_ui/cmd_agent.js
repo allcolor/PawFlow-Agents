@@ -322,8 +322,16 @@ function cmdAgentMsg(agentName, text, options) {
   pendingFiles = [];
   renderAttachments();
 
+  // Client-side msg_id, as in the composer send path: the SSE echo of this
+  // message carries the same id, so it replaces this bubble instead of
+  // appearing a second time (/msg and /nimsg showed the message twice).
+  const userMsgId = Array.from(crypto.getRandomValues(new Uint8Array(6)),
+    b => b.toString(16).padStart(2, '0')).join('');
   const userSource = { type: 'user', name: '', target_agent: agentName };
-  const msgEl = addMsg('user', text, { source: userSource });
+  const msgEl = addMsg('user', text, { source: userSource, msg_id: userMsgId });
+  if (typeof turnViewRegisterUser === 'function') {
+    turnViewRegisterUser({ source: userSource, msg_id: userMsgId, turn_id: userMsgId }, msgEl);
+  }
   if (attachmentsForDisplay.length > 0) {
     msgEl.innerHTML = sourceBadge(userSource) + escapeHtml(text) + renderUserAttachments(attachmentsForDisplay);
   }
@@ -332,7 +340,7 @@ function cmdAgentMsg(agentName, text, options) {
   sending = true;
   document.getElementById('status').textContent = t('sending');
 
-  const body = { message: text, target_agent: agentName };
+  const body = { message: text, target_agent: agentName, msg_id: userMsgId };
   if (options && options.noInterrupt) body.no_interrupt = true;
   if (conversationId) body.conversation_id = conversationId;
   if (attachments.length > 0) body.attachments = attachments;
@@ -369,13 +377,12 @@ function cmdAgentMsgAll(text) {
     addMsg('system', t('broadcastFirst'));
     return;
   }
-  addMsg('user', text, { source: { type: 'user', name: '', target_agent: 'ALL' } });
+  // The server persists one ALL row and delivers it to every agent; the
+  // row reaches this chat through SSE, so no local bubble (it would show
+  // twice) and nothing to wait for.
   if (typeof _ensureSSEBeforeUserAction === 'function') _ensureSSEBeforeUserAction();
-  sending = true;
-  document.getElementById('status').textContent = t('broadcasting');
-
   action$('broadcast_agents', { message: text }).subscribe(data => {
-    if (data.error) { addMsg('error', data.error); sending = false; }
+    if (data.error) addMsg('error', data.error);
   });
 }
 

@@ -1,5 +1,6 @@
 """/nimsg sends a user message that does not interrupt the agent."""
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,13 +14,15 @@ const vm = require('vm');
 const fs = require('fs');
 const sent = [];
 const notes = [];
+const shown = [];
 const ctx = {
-  console, JSON,
+  console, JSON, crypto: require('crypto').webcrypto,
   parseQuotedArgs: (s) => s.trim().split(/\s+/),
   stripTarget: (s) => s.replace(/^@/, ''),
   resolveAgentName: (s) => s,
   selectedAgent: 'claude',
-  addMsg: (kind, text) => { notes.push([kind, text]); return {}; },
+  addMsg: (kind, text, extra) => { notes.push([kind, text]);
+    shown.push((extra && extra.msg_id) || ''); return {}; },
   t: (key) => key,
   pendingFiles: [], renderAttachments: () => {},
   sourceBadge: () => '', escapeHtml: (s) => s, renderUserAttachments: () => '',
@@ -37,7 +40,7 @@ for (const line of JSON.parse(process.argv[2])) {
     ? `cmdMsg(${JSON.stringify(text)}, { noInterrupt: true })`
     : `cmdMsg(${JSON.stringify(text)})`, ctx);
 }
-process.stdout.write(JSON.stringify({ sent, notes }));
+process.stdout.write(JSON.stringify({ sent, notes, shown }));
 """
 
 
@@ -53,12 +56,17 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None,
                                 reason="node is not available")
 
 
+def _without_msg_id(body):
+    assert re.fullmatch(r"[0-9a-f]{12}", body["msg_id"])
+    return {k: v for k, v in body.items() if k != "msg_id"}
+
+
 def test_nimsg_sends_the_message_without_interrupt():
     out = _run([["nimsg", "/nimsg @GameDev7 FYI build is green"]])
-    assert out["sent"] == [{"message": "FYI build is green",
-                            "target_agent": "GameDev7",
-                            "no_interrupt": True,
-                            "conversation_id": "conv"}]
+    assert len(out["sent"]) == 1
+    assert _without_msg_id(out["sent"][0]) == {
+        "message": "FYI build is green", "target_agent": "GameDev7",
+        "no_interrupt": True, "conversation_id": "conv"}
 
 
 def test_nimsg_without_target_uses_the_selected_agent():
@@ -70,6 +78,17 @@ def test_nimsg_without_target_uses_the_selected_agent():
 def test_msg_keeps_interrupting():
     out = _run([["msg", "/msg @GameDev7 stop"]])
     assert "no_interrupt" not in out["sent"][0]
+
+
+def test_local_bubble_and_post_share_the_msg_id():
+    """The SSE echo of a /msg or /nimsg must reconcile with the local bubble.
+    Without a shared msg_id the webchat showed the message twice
+    (2026-09-29)."""
+    out = _run([["nimsg", "/nimsg @claude one"], ["msg", "/msg @claude two"]])
+    ids = [body["msg_id"] for body in out["sent"]]
+    assert out["shown"] == ids
+    assert all(re.fullmatch(r"[0-9a-f]{12}", i) for i in ids)
+    assert ids[0] != ids[1]
 
 
 def test_nimsg_to_all_is_refused():
@@ -91,7 +110,7 @@ const fs = require('fs');
 const sent = [];
 const serverCommands = [];
 const ctx = {
-  console, JSON, window: {}, nicknameMap: {},
+  console, JSON, crypto: require('crypto').webcrypto, window: {}, nicknameMap: {},
   selectedAgent: 'claude', conversationId: 'conv',
   addMsg: () => ({}), t: (key) => key,
   pendingFiles: [], renderAttachments: () => {},
@@ -121,7 +140,7 @@ def test_typed_nimsg_reaches_the_streaming_post_not_the_server_parser():
         capture_output=True, text=True, timeout=30, check=True)
     out = json.loads(proc.stdout)
     assert out["serverCommands"] == []
-    assert out["sent"] == [{"message": "FYI build is green",
-                            "target_agent": "GameDev7",
-                            "no_interrupt": True,
-                            "conversation_id": "conv"}]
+    assert len(out["sent"]) == 1
+    assert _without_msg_id(out["sent"][0]) == {
+        "message": "FYI build is green", "target_agent": "GameDev7",
+        "no_interrupt": True, "conversation_id": "conv"}

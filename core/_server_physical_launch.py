@@ -77,7 +77,7 @@ def group_command(original: list[str], image: str, record: dict) -> list[str]:
         directory = Path(config["server_workspace_dir"])
         directory.mkdir(parents=True, exist_ok=True)
         from core._relay_naming import _chown_for_host_runner
-        _chown_for_host_runner(directory)
+        _chown_for_host_runner(directory, recursive=False)
         command.extend((
             "--volume", config["server_workspace_host_dir"] + ":" + root_mount + ":" + mode,
             "--volume", config["server_home_volume"] + ":" + home_mount,

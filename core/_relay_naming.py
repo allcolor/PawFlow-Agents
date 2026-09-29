@@ -83,8 +83,13 @@ def _host_run_uid_gid() -> tuple[int, int] | None:
     return uid, gid
 
 
-def _chown_for_host_runner(path: Path) -> None:
-    """Keep bind-mounted relay runtime paths owned by the PawFlow host user."""
+def _chown_for_host_runner(path: Path, *, recursive: bool = True) -> None:
+    """Keep bind-mounted relay runtime paths owned by the PawFlow host user.
+
+    A workspace root takes ``recursive=False``: its content is written by the
+    relay, which already runs as the host user. Walking it on every start
+    blocked MyWorkspace for 331 s on 958k files (2026-09-29).
+    """
     owner = _host_run_uid_gid()
     if owner is None:
         return
@@ -97,6 +102,9 @@ def _chown_for_host_runner(path: Path) -> None:
             logger.debug("Relay runtime path disappeared during chown: %s", entry)
 
     try:
+        if not recursive:
+            chown_entry(path)
+            return
         for root, dirs, files in os.walk(path):
             chown_entry(root)
             for name in dirs:

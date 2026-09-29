@@ -147,6 +147,39 @@ def test_server_relay_runtime_chown_uses_host_runner_uid_gid(monkeypatch, tmp_pa
     assert (str(root / "child" / "file.txt"), 1234, 5678) in calls
 
 
+def test_workspace_root_chown_does_not_walk_the_workspace(monkeypatch, tmp_path):
+    # 2026-09-29: walking MyWorkspace (958k files) held its start for 331 s.
+    calls = []
+    root = tmp_path / "runtime"
+    (root / "child").mkdir(parents=True)
+    (root / "child" / "file.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setenv("PAWFLOW_RUN_UID", "1234")
+    monkeypatch.setenv("PAWFLOW_RUN_GID", "5678")
+    monkeypatch.setattr(
+        srm.os,
+        "chown",
+        lambda path, uid, gid, *, follow_symlinks=True:
+            calls.append((str(path), uid, gid)),
+    )
+
+    srm._chown_for_host_runner(root, recursive=False)
+
+    assert calls == [(str(root), 1234, 5678)]
+
+
+def test_workspace_roots_are_chowned_without_a_walk():
+    import inspect
+
+    import core._server_physical_launch as launch
+
+    for module in (srm, launch):
+        source = inspect.getsource(module)
+        for line in source.splitlines():
+            if "_chown_for_host_runner(" in line and "def " not in line \
+                    and "import" not in line and "code_dir" not in line:
+                assert "recursive=False" in line, line
+
+
 def test_server_relay_runtime_chown_does_not_follow_dangling_symlinks(
         monkeypatch, tmp_path):
     calls = []

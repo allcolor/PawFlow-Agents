@@ -113,7 +113,7 @@ class ServerRelayManager:
         volume = _volume_name(conv_id, kind)
         runtime_dir = _relay_runtime_dir(user_id, conv_id, kind)
         runtime_dir.mkdir(parents=True, exist_ok=True)
-        _chown_for_host_runner(runtime_dir)
+        _chown_for_host_runner(runtime_dir, recursive=False)
         runtime_host_dir = _relay_runtime_host_dir(runtime_dir)
         host_ip = get_host_ip()
 
@@ -344,7 +344,7 @@ class ServerRelayManager:
             home_volume = physical_config["server_home_volume"]
             runtime_dir = Path(physical_config["server_workspace_dir"])
         runtime_dir.mkdir(parents=True, exist_ok=True)
-        _chown_for_host_runner(runtime_dir)
+        _chown_for_host_runner(runtime_dir, recursive=False)
         timings["chown"] = time.monotonic() - started
         runtime_host_dir = (physical_config.get("server_workspace_host_dir")
                             or _relay_runtime_host_dir(runtime_dir))

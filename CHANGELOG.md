@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- After a server restart, a managed server relay stayed "Starting" for
+  minutes and its Reconnect button failed with "A physical relay operation is
+  already running in this scope": before starting the container, the server
+  changed the owner of every file in the relay workspace, one by one (331 s
+  for MyWorkspace's 958k files). Only the workspace root is changed now; the
+  relay already writes its files as the host user.
 - A Claude Code interactive turn failed with "Claude Code session lost" and
   forgot its session when a `tmux paste-buffer` timed out behind a busy
   Docker daemon, and the late paste was then submitted glued to the next

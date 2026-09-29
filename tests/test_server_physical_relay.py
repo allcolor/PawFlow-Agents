@@ -319,7 +319,7 @@ def test_stop_removes_exact_container_and_routes_without_deleting_storage(manage
 def test_launch_plan_separates_mounts_and_private_credentials(manager, monkeypatch):
     from core import _server_physical_launch as launch
 
-    monkeypatch.setattr("core._relay_naming._chown_for_host_runner", lambda _p: None)
+    monkeypatch.setattr("core._relay_naming._chown_for_host_runner", lambda _p, **_kw: None)
     monkeypatch.setattr(launch, "_relay_runtime_host_dir", str)
     record = config.prepare_group(manager.registry, "user", "alice", "alice",
                                   body(manager), manager._get("user", "alice", "MyWorkspace"))

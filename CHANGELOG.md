@@ -13,6 +13,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   in the agent menu failed with "agent 'GameDev2' not found": they looked
   up the instance name as a definition. They now open the definition the
   instance runs.
+- In the web chat, a streamed reply from a delegate lost its
+  "Agent via service" header once the saved message replaced the live
+  bubble. A delegate reply now shows the agent that sent it and the agent
+  it answers.
+- The Active Agents panel could show a model's raw tool-call markup and
+  JSON payload as an agent's last tool: a DeepSeek agent leaked its DSML
+  markup into `use_tool`'s `tool_name`, and the wrapper passed it on as the
+  tool name. An inner tool name that is not shaped like a tool identifier
+  is no longer unwrapped; the call shows as `use_tool`.
 
 ## [1.0.0-beta.297] — 2026-09-28
 

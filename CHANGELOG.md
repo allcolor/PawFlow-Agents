@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Performance
+
+- While the server froze for about 12 s every 14 s, a third of its Python
+  time went to decoding conversation metadata. Each `/rewind` checkpoint
+  (one per user turn, never trimmed) was stored in the conversation's
+  `extras.json`: 540 KB of its 550 KB. Every metadata read decoded the whole
+  file, and every relay tool call read it once per agent. Checkpoints now
+  have their own `checkpoints.json`, moved there on first use. Reading the
+  metadata fell from 8.6 ms to 0.12 ms.
+- Relay WebSocket frames were unmasked one byte at a time in Python. They
+  are now unmasked in one integer XOR.
+
 ## [1.0.0-beta.301] — 2026-09-29
 
 ### Performance

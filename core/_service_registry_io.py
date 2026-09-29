@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import time
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -247,7 +248,10 @@ class _ServiceRegistryIOMixin:
                 d["config"] = self._encrypt_config(d.get("config", {}), sk)
             safe_name = sid.replace("/", "_").replace("\\", "_")
             filepath = svc_dir / f"{safe_name}.json"
-            tmp_path = filepath.with_suffix(".tmp")
+            # One temp file per write: concurrent saves of the same scope
+            # shared '<id>.tmp', and the first rename left the other writer
+            # renaming a file that no longer existed (ENOENT).
+            tmp_path = svc_dir / f".{safe_name}.{uuid.uuid4().hex}.tmp"
             try:
                 tmp_path.write_text(
                     json.dumps(d, ensure_ascii=False, indent=2),

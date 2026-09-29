@@ -28,6 +28,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   longer re-normalize every stored text. The file shrank to 72 MB and a save
   takes about 1 s.
 
+### Fixed
+
+- Two saves of the same service scope at once (common right after a
+  restart) could fail with "Failed to save service ... No such file or
+  directory: <id>.tmp": both wrote the same temporary file and the first
+  rename took it from the second. Each write now uses its own temporary
+  file.
+
 ## [1.0.0-beta.301] — 2026-09-29
 
 ### Performance

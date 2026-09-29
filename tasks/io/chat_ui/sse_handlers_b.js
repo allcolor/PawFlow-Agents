@@ -616,36 +616,6 @@ function _sseWireB() {
     document.getElementById('status').textContent = t('error');
   });
 
-  eventSource.addEventListener('agent_response', (e) => {
-    lastSSEActivity = Date.now();
-    const data = JSON.parse(e.data);
-    const extra = {};
-    if (data.source) extra.source = data.source;
-    if (data.model) extra.model = data.model;
-    if (data.provider) extra.provider = data.provider;
-    if (data.base_url) extra.base_url = data.base_url;
-    if (data.tokens_in || data.tokens_out) { extra.tokens_in = data.tokens_in || 0; extra.tokens_out = data.tokens_out || 0; }
-    if (data.duration_ms) extra.duration_ms = data.duration_ms;
-    extra.ts = data.ts;
-    const rEl = addMsg('assistant', data.response || '', extra);
-    if (typeof turnViewIngest === 'function') turnViewIngest('assistant', data, rEl);
-    scrollBottom();
-  });
-
-  eventSource.addEventListener('broadcast_done', (e) => {
-    lastSSEActivity = Date.now();
-    const data = JSON.parse(e.data);
-    if (typeof _noteLiveHistoryAppend === 'function') {
-      _noteLiveHistoryAppend(data.message_count, 0);
-    }
-    sending = false;
-    document.getElementById('sendBtn').disabled = false;
-    document.getElementById('status').textContent = t('ready');
-    addMsg('system', `Broadcast complete — ${data.agent_count} agent(s) responded.`);
-    scrollBottom();
-    loadConversations();
-  });
-
   eventSource.addEventListener('thought_scheduled', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);

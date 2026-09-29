@@ -79,34 +79,17 @@ def _handle_agentres_k2(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
 
-        from core.conversation_writer import ConversationWriter
-        from core.llm_client import stamp_message
-        from core.pending_queue import PendingQueue
-        msg = stamp_message({
-            "role": "user",
-            "content": message,
-            "source": {
-                "type": "user",
-                "name": user_id,
-                "target_agent": agent_name,
-            },
-            "channel": "web",
-        }, conv_id)
-        ConversationWriter.for_conversation(conv_id).enqueue_message(
-            dict(msg), agent_name=agent_name, user_id=user_id)
-        PendingQueue.for_agent(conv_id, agent_name).enqueue(
-            dict(msg), source=action)
-        try:
-            from tasks.ai.agent_loop import AgentLoopTask
-            AgentLoopTask.wake_agent(
-                conv_id, agent_name, reason=f"[{action}] {agent_name}",
-                user_id=user_id, delay=0.0)
-        except Exception:
-            logger.debug("agent message wake failed", exc_info=True)
+        # A user message is delivered now, like the composer's: it
+        # interrupts a running agent instead of waiting for its turn to end.
+        from tasks.ai.agent_loop import AgentLoopTask
+        from tasks.ai._user_message_delivery import deliver_user_message
+        msg_id = deliver_user_message(
+            AgentLoopTask._live_instance or self, conv_id, agent_name,
+            message, user_id)
         flowfile.set_content(json.dumps({
             "ok": True,
             "agent": agent_name,
-            "message": "Queued for agent",
+            "msg_id": msg_id,
         }, ensure_ascii=False).encode())
         return [flowfile]
 

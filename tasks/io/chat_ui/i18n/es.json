@@ -309,7 +309,6 @@
   "branchNamePrompt": "Nombre de la rama:",
   "branchTitle": "Rama: {branch}",
   "broadcastFirst": "Inicie una conversación antes de emitir a todos.",
-  "broadcasting": "Broadcast en curso...",
   "btwUsage": "Uso: /btw [@agent] <pregunta> (por defecto agente seleccionado)",
   "bugAgentRequired": "BUG: nombre de agente requerido para select",
   "bugNoAgentSelected": "BUG: ningún agente seleccionado (selectedAgent vacío)",

@@ -47,9 +47,11 @@ class _ApiClient:
 class _Queue:
     def __init__(self):
         self.items = []
+        self.messages = []
 
     def enqueue(self, message, source=""):
         self.items.append((message.get("msg_id"), source))
+        self.messages.append(dict(message))
         return True
 
 
@@ -61,7 +63,8 @@ class _HookRunner:
         return {"decision": "allow"}
 
 
-def _deliver(client, body_extra=None, running_mode=None, source=None):
+def _deliver(client, body_extra=None, running_mode=None, source=None,
+             attributes_extra=None, writer=None):
     from tasks.ai.agent_loop import AgentLoopTask
 
     task = AgentLoopTask({
@@ -80,6 +83,7 @@ def _deliver(client, body_extra=None, running_mode=None, source=None):
     if source:
         attributes["message_source"] = json.dumps(source)
         attributes["skip_pre_persist"] = "1"
+    attributes.update(attributes_extra or {})
     ff = FlowFile(content=json.dumps(body).encode("utf-8"),
                   attributes=attributes)
     store = MagicMock()
@@ -93,7 +97,7 @@ def _deliver(client, body_extra=None, running_mode=None, source=None):
                       return_value=store), \
                 patch("core.agent_hooks.AgentHookRunner", _HookRunner), \
                 patch("core.conversation_writer.ConversationWriter.for_conversation",
-                      return_value=MagicMock()), \
+                      return_value=writer or MagicMock()), \
                 patch("core.pending_queue.PendingQueue.for_agent",
                       return_value=queue), \
                 patch("services.tool_relay_service.ToolRelayService.cancel_agent",
@@ -170,3 +174,32 @@ def test_an_external_request_turn_is_never_entered(extra):
 
     assert client.interrupts == [] and client.queued == []
     assert ack["status"] == "queued"
+
+
+def test_a_broadcast_interrupts_each_agent_without_writing_the_row_again():
+    """/msg @all: the ALL row is persisted once by the broadcast; each
+    agent's ingress only delivers it, like a composer message."""
+    client = _CliClient()
+    writer = MagicMock()
+    ack, queue, cancelled = _deliver(
+        client, attributes_extra={"broadcast_pre_persisted": "1"},
+        writer=writer)
+
+    assert ack["status"] == "accepted"
+    assert cancelled == [AGENT]
+    assert client.interrupts == ["hello"]
+    writer.enqueue_message.assert_not_called()
+    assert queue.items == [("m-1", "preempt_rescue")]
+    rescued = queue.messages[0]
+    assert rescued["_already_persisted"] is True
+    assert rescued["source"]["target_agent"] == "ALL"
+
+
+def test_a_broadcast_refused_by_the_cli_is_queued_as_already_persisted():
+    client = _CliClient(accepts=False)
+    ack, queue, _ = _deliver(
+        client, attributes_extra={"broadcast_pre_persisted": "1"})
+
+    assert ack["status"] == "queued"
+    assert queue.items == [("m-1", "http")]
+    assert queue.messages[0]["_already_persisted"] is True

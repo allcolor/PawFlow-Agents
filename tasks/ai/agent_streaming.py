@@ -373,9 +373,16 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
         _uid = flowfile.get_attribute("http.auth.principal") or ""
         _stamped_user = None
         _runtime = None
-        _skip_pre_persist = bool(flowfile.get_attribute("skip_pre_persist"))
+        # /msg @all: the one ALL row is already persisted and fanned out to
+        # every agent context (_user_message_delivery); this ingress only
+        # delivers it to _target.
+        _broadcast_persisted = bool(
+            flowfile.get_attribute("broadcast_pre_persisted"))
+        _skip_pre_persist = (bool(flowfile.get_attribute("skip_pre_persist"))
+                             or _broadcast_persisted)
         _persisted_source = {"type": "user", "name": _uid,
-                             "target_agent": _target or None}
+                             "target_agent": ("ALL" if _broadcast_persisted
+                                              else _target or None)}
         try:
             _source_raw = flowfile.get_attribute("message_source") or ""
             _source_value = (json.loads(_source_raw)
@@ -818,7 +825,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             if not msg:
                 return False
             _enqueue_dict = dict(msg)
-            if not _skip_pre_persist:
+            if not _skip_pre_persist or _broadcast_persisted:
                 # The message was already persisted (and added to the agent
                 # context) by the pre-persist above. The next drain must NOT
                 # append it a second time or the transcript/context gets a

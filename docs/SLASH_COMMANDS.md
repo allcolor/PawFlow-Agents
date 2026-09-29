@@ -124,6 +124,17 @@ Runs the `debug` skill to diagnose session issues -- analyzes context state, rec
 
 Send a message to a specific agent or running task without changing the active agent. Agent targets accept either `reviewer` or `@reviewer`.
 
+The message is delivered at once, exactly like a message typed in the
+composer: a busy agent is interrupted (its running tool calls are cancelled)
+and reads it immediately; an idle agent starts a turn. It never waits for the
+end of the agent's current turn.
+
+`@ALL` sends ONE message addressed to every agent of the conversation. It
+appears once in the chat, reaches every agent's context, and is delivered to
+each live agent the same way (interrupting a busy one). Messages to one agent
+are delivered in order, one at a time; different agents are served in
+parallel.
+
 ```
 /msg @grok Explain this code
 /msg grok Explain this code

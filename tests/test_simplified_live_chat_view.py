@@ -490,7 +490,9 @@ def test_every_live_row_creator_hands_its_row_to_the_turn_view():
     assert "turnViewRegisterUser(data, el)" in handlers_a
     # Standalone assistant narration, with no delegate or task frame to hold it.
     assert "turnViewIngest('assistant', data, dEl)" in handlers_a
-    assert "turnViewIngest('assistant', data, rEl)" in handlers_b
+    # /msg @all no longer renders clone answers (agent_response): the live
+    # agents answer through the ordinary new_message path above.
+    assert "addEventListener('agent_response'" not in handlers_b
 
 
 def test_turn_block_cannot_be_squeezed_by_the_message_column():

@@ -11,7 +11,9 @@ const HELP_DATA = {
   '/msg': {
     usage: '/msg [@agent|@t_taskid] <message>',
     short: t('commandShort.2'),
-    detail: 'Send a message to a specific agent or task without changing the active agent.\n\nExamples:\n  /msg @grok Explain this code\n  /msg @ALL What do you think?\n  /msg @t_8953b308 Check the latest post\n  /msg @"Agent With Spaces" Hello',
+    detail: 'Send a message to a specific agent or task without changing the active agent.\n\n'
+      + 'The message is delivered at once, like a composer message: a busy agent is interrupted and reads it immediately. '
+      + '@ALL sends one message to every agent of the conversation, delivered to each the same way.\n\nExamples:\n  /msg @grok Explain this code\n  /msg @ALL What do you think?\n  /msg @t_8953b308 Check the latest post\n  /msg @"Agent With Spaces" Hello',
   },
   '/nimsg': {
     usage: '/nimsg [@agent] <message>',
@@ -107,7 +109,7 @@ const HELP_DATA = {
       + '  /agent select assistant             — Switch back to the default assistant\n'
       + '  /agent delete @<name>              — Delete an agent by name\n'
       + '  /agent msg @<name> <text>          — Send a message to a specific agent\n'
-      + '  /agent msg @ALL <text>             — Broadcast to all agents in parallel\n'
+      + '  /agent msg @ALL <text>             — One message to every agent, delivered to each now\n'
       + '  /agent btw @<name|ALL> <text>      — Side-channel question (no interruption)\n'
       + '  /agent resume @<name>              — Tell agent to continue from where it stopped\n'
       + '  /agent setname @<real> [nickname]  — Set or reset display name (omit to reset)\n\n'

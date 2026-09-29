@@ -326,17 +326,6 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
     elif ev_type == "discard":
         pass  # silently discard
 
-    elif ev_type == "agent_response":
-        agent = data.get("agent_name", data.get("source", {}).get("name", "") if isinstance(data.get("source"), dict) else "")
-        response = data.get("response", "")
-        if response:
-            app.renderer.print_system("")  # spacing
-            app.renderer.end_stream(agent, response)
-
-    elif ev_type == "broadcast_done":
-        count = data.get("agent_count", 0)
-        app.renderer.print_system(f"Broadcast complete — {count} agent(s) responded")
-
     elif ev_type == "plan_created":
         plan = data.get("plan", data)
         title = plan.get("title", data.get("title", ""))

@@ -309,7 +309,6 @@
   "branchNamePrompt": "Branch name:",
   "branchTitle": "Branch: {branch}",
   "broadcastFirst": "Start a conversation first before broadcasting.",
-  "broadcasting": "Broadcasting...",
   "btwUsage": "Usage: /btw [@agent] <question> (defaults to selected agent)",
   "bugAgentRequired": "BUG: agent name required for select",
   "bugNoAgentSelected": "BUG: no agent selected (selectedAgent is empty)",

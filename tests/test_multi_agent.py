@@ -672,18 +672,6 @@ class TestResolveAgentTask:
                                    conversation_id="conv1")
 
 
-class TestBroadcastAgents:
-    def test_broadcast_all_uses_conversation_agents(self):
-        from tasks.ai.agent_side_channels import AgentSideChannelsMixin
-
-        src = inspect.getsource(AgentSideChannelsMixin._broadcast_agents)
-        assert "get_all_agent_configs(conversation_id)" in src
-        assert "rs.list_all(\"agent\", user_id)" not in src
-        assert "_resolve_agent_client(\"\", user_id, conversation_id)" not in src
-        assert "conversation_id=conversation_id" in src
-        assert "_resolve_llm_service(\n                    svc_id, uid, conversation_id)" in src
-
-
 class TestDelegateExcluded:
     def test_delegate_excluded_by_default(self):
         """delegate tool is excluded from sub-agent tools by default."""

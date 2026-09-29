@@ -534,17 +534,31 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        # Launch broadcast in background thread
-        thread = threading.Thread(
-            target=self._broadcast_agents,
-            args=(conv_id, message, user_id),
-            daemon=True,
-            name=f"broadcast-{conv_id[:8]}",
-        )
-        thread.start()
+        # One user message addressed to ALL, delivered to every live agent
+        # now (interrupting a busy one), like a composer message to each.
+        from core.conv_agent_config import get_all_agent_configs
+        from tasks.ai._user_message_delivery import broadcast_user_message
+        agents = [name for name in (get_all_agent_configs(conv_id) or {})
+                  if isinstance(name, str) and name.strip()]
+        if not agents:
+            flowfile.set_content(json.dumps({
+                "error": "No agents are attached to this conversation.",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.conversation_access import ConversationAccessError
+        try:
+            msg_id = broadcast_user_message(
+                _exec, conv_id, agents, message, user_id)
+        except ConversationAccessError:
+            flowfile.set_content(json.dumps({
+                "error": "Conversation not found",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
         flowfile.set_content(json.dumps({
-            "status": "broadcasting",
-            "conversation_id": conv_id,
+            "ok": True, "conversation_id": conv_id,
+            "agents": agents, "msg_id": msg_id,
         }).encode())
         return [flowfile]
 

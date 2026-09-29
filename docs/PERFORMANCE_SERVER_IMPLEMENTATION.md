@@ -195,6 +195,29 @@ the audit found no measurement showing retry storms in live load. Errors that
 set `retryable = False` already stop immediately. This is left for a change
 with its own flow-level tests.
 
+## 6. Message patch rewrites one line
+
+Files: `core/segmented_jsonl.py`, `core/_segmented_jsonl_io.py`.
+
+`ConversationStore.patch_message()` patches the row in the transcript, the
+shared context and every agent context, under the conversation lock. Each
+`turn_final` marker (one per agent turn) went through it.
+`patch_first_by_msg_id` used to decode every row of the segment that holds
+the message, merge the fields, and re-encode every row. On a conversation with
+seven agents, a 2 GB transcript and 8 MB segments, this held the conversation
+lock for 1 to 37 s per turn. Every other writer and UI action of the
+conversation waited behind it (2026-09-29).
+
+The segment bytes read for the msg-id pre-check are now reused. The first line
+whose row carries the msg-id is located from the needle hits and decoded
+alone. The patched row replaces exactly that byte range, so every other line
+stays byte-for-byte identical. The index keeps its row count; its byte size,
+and its role-row count when `role` changes, are updated. On a real 8 MB
+transcript segment one patch fell from 196 ms to 22 ms.
+
+A patch slower than `PAWFLOW_JSONL_PATCH_DIAG_MS` logs
+`[segjsonl] patch slow` with its flush, scan, locate and write times.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -202,6 +225,7 @@ with its own flow-level tests.
 | `PAWFLOW_TOOL_BATCH_MAX_WORKERS` | 8 | Worker threads per tool-call batch; invalid values raise at dispatch |
 | `PAWFLOW_WRITER_BACKLOG_WARN_ITEMS` | 256 | Queue depth that triggers a writer backlog warning |
 | `PAWFLOW_WRITER_BACKLOG_WARN_SECONDS` | 5 | Enqueue-to-persist latency that triggers a writer backlog warning |
+| `PAWFLOW_JSONL_PATCH_DIAG_MS` | 500 | Duration above which a message patch logs its stage timings |
 
 Module constants without an environment override: `_BUFFER_SWEEP_INTERVAL`
 (1 s, event bus), `_BACKLOG_PROCESS_SECONDS` (10 s, maintenance).

@@ -446,7 +446,51 @@ def test_patch_never_decodes_a_segment_that_does_not_hold_the_row(
     assert log.patch_first_by_msg_id("absent", {"content": "x"}) is None
     assert decoded == []
     assert log.patch_first_by_msg_id("m1", {"content": "x"})["content"] == "x"
-    assert decoded == ["000000.jsonl"]
+    # 2026-09-29: even the segment that holds the row is not decoded whole;
+    # only the matching line is.
+    assert decoded == []
+
+
+def test_patch_rewrites_only_the_matching_line_bytes(tmp_path):
+    # 2026-09-29: round-tripping every row of the segment in each stream
+    # held the conversation lock up to 37 s per turn_final patch.
+    log = SegmentedJsonl(tmp_path / "context.jsonl", max_rows=10)
+    seg = tmp_path / "context" / "000000.jsonl"
+    log.append_dicts([{"msg_id": "m1", "content": "one"}])
+    SegmentedJsonl.flush_append_handles(tmp_path / "context")
+    with open(seg, "a", encoding="utf-8") as fh:
+        # Non-canonical spacing: a decode/re-encode would normalise it.
+        fh.write('{"msg_id":  "m2",   "content": "two"}\n')
+    log.append_dicts([{"msg_id": "m3", "content": "three"}])
+    SegmentedJsonl.flush_append_handles(tmp_path / "context")
+    before = seg.read_bytes().split(b"\n")
+    index_path = tmp_path / "context" / "index.json"
+
+    patched = log.patch_first_by_msg_id("m3", {"turn_final": True})
+
+    after = seg.read_bytes().split(b"\n")
+    assert patched == {"msg_id": "m3", "content": "three", "turn_final": True}
+    assert after[:2] == before[:2]
+    assert json.loads(after[2])["turn_final"] is True
+    assert [row.get("turn_final") for row in log.iter_rows()] == [None, None, True]
+    index = json.loads(index_path.read_text())
+    assert index["segments"][0]["bytes"] == seg.stat().st_size
+
+
+def test_patch_skips_a_row_that_only_mentions_the_msg_id(tmp_path):
+    log = SegmentedJsonl(tmp_path / "context.jsonl", max_rows=10)
+    log.append_dicts([
+        {"msg_id": "a1", "role": "assistant", "turn_id": "u1"},
+        {"msg_id": "u1", "role": "user", "content": "hi"},
+    ])
+    SegmentedJsonl.flush_append_handles(tmp_path / "context")
+
+    patched = log.patch_first_by_msg_id("u1", {"turn_final": True})
+
+    assert patched["msg_id"] == "u1"
+    rows = list(log.iter_rows())
+    assert "turn_final" not in rows[0]
+    assert rows[1]["turn_final"] is True
 
 
 def test_patch_finds_a_msg_id_json_escapes(tmp_path):

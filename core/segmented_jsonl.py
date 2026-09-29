@@ -20,6 +20,7 @@ _APPEND_HANDLE_MAX = int(os.getenv("PAWFLOW_JSONL_APPEND_HANDLE_MAX", "128") or 
 _APPEND_BUFFER_BYTES = int(os.getenv("PAWFLOW_JSONL_APPEND_BUFFER_BYTES", str(1024 * 1024)) or str(1024 * 1024))
 _INDEX_FLUSH_ROWS = int(os.getenv("PAWFLOW_JSONL_INDEX_FLUSH_ROWS", "64") or "64")
 _INDEX_FLUSH_SECONDS = float(os.getenv("PAWFLOW_JSONL_INDEX_FLUSH_SECONDS", "60.0") or "60.0")
+_PATCH_DIAG_MS = float(os.getenv("PAWFLOW_JSONL_PATCH_DIAG_MS", "500") or "500")
 _INDEX_CACHE: Dict[str, Dict[str, Any]] = {}
 _INDEX_CACHE_LOCK = threading.RLock()
 _APPEND_HANDLES: Dict[str, Dict[str, Any]] = {}
@@ -428,44 +429,70 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
             return None
         from core.secret_sanitization import strip_secret_runtime_values
 
+        started = time.monotonic()
+        stages = {"flush": 0.0, "scan": 0.0, "locate": 0.0, "write": 0.0}
+        scanned = 0
+        patched: Optional[Dict[str, Any]] = None
         fields = strip_secret_runtime_values(fields)
         paths = self._segment_paths()
         needles = self._msg_id_needles(msg_id)
-        for path in reversed(paths):
-            self.flush_append_handles(path)
-            # Most patches look for a row that is not in this log at all (a
-            # conversation patches the transcript and EVERY agent's context).
-            # Decoding each segment's JSON only to learn that held the
-            # conversation lock for 25 s on a large conversation
-            # (2026-09-26). msg_id is stored in clear: skip segments whose
-            # bytes do not contain it.
-            if not self._segment_mentions(path, needles):
-                continue
-            rows = list(self._iter_file(path))
-            patched: Optional[Dict[str, Any]] = None
-            changed = False
-            codec = self.codec
-            for idx, row in enumerate(rows):
-                if row.get("msg_id") != msg_id:
+        try:
+            for path in reversed(paths):
+                t0 = time.monotonic()
+                self.flush_append_handles(path)
+                t1 = time.monotonic()
+                # Most patches look for a row that is not in this log at all
+                # (a conversation patches the transcript and EVERY agent's
+                # context). Decoding each segment's JSON only to learn that
+                # held the conversation lock for 25 s on a large conversation
+                # (2026-09-26). msg_id is stored in clear: skip segments whose
+                # bytes do not contain it.
+                data = self._segment_bytes_mentioning(path, needles)
+                t2 = time.monotonic()
+                stages["flush"] += t1 - t0
+                stages["scan"] += t2 - t1
+                scanned += 1
+                if data is None:
                     continue
+                # Only the matching line is decoded and re-encoded. Round-
+                # tripping every row of the segment, in each stream of the
+                # conversation, kept the conversation lock for up to 37 s on
+                # every turn_final patch (2026-09-29).
+                located = self._locate_msg_id_line(data, msg_id, needles)
+                stages["locate"] += time.monotonic() - t2
+                if located is None:
+                    continue
+                start, end, row = located
                 # Work in decoded (plaintext) space so caller-supplied fields
                 # merge correctly and change-detection is logical, then
                 # re-encode for storage. msg_id is clear, so the match above
                 # needs no key.
+                codec = self.codec
                 decoded = codec.decode(row) if codec is not None else row
                 decoded = strip_secret_runtime_values(decoded)
                 updated = dict(decoded)
                 updated.update(fields)
-                changed = updated != decoded
-                rows[idx] = codec.encode(updated) if codec is not None else updated
+                if updated != decoded:
+                    t3 = time.monotonic()
+                    stored = codec.encode(updated) if codec is not None else updated
+                    line = (json.dumps(stored, ensure_ascii=False) + "\n").encode("utf-8")
+                    role_delta = int(bool(stored.get("role"))) - int(bool(row.get("role")))
+                    self._splice_line_in_path(path, data, start, end, line,
+                                              role_delta=role_delta)
+                    stages["write"] += time.monotonic() - t3
                 patched = updated
-                break
-            if patched is None:
-                continue
-            if changed:
-                self._replace_rows_in_path(path, rows)
-            return patched
-        return None
+                return patched
+            return None
+        finally:
+            total_ms = (time.monotonic() - started) * 1000.0
+            if total_ms >= _PATCH_DIAG_MS:
+                logging.getLogger(__name__).warning(
+                    "[segjsonl] patch slow path=%s msg_id=%s found=%s "
+                    "segments=%d scanned=%d total_ms=%.1f %s",
+                    self.flat_path, msg_id, patched is not None, len(paths),
+                    scanned, total_ms,
+                    " ".join(f"{name}_ms={secs * 1000.0:.1f}"
+                             for name, secs in stages.items()))
 
     @staticmethod
     def _msg_id_needles(msg_id: str) -> tuple:
@@ -483,6 +510,40 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         except FileNotFoundError:
             return False
         return any(needle in data for needle in needles)
+
+    @staticmethod
+    def _segment_bytes_mentioning(path: Path, needles: tuple) -> Optional[bytes]:
+        """The segment's bytes when they contain a needle, else None."""
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except FileNotFoundError:
+            return None
+        return data if any(needle in data for needle in needles) else None
+
+    @staticmethod
+    def _locate_msg_id_line(data: bytes, msg_id: str, needles: tuple):
+        """``(start, end, row)`` of the first line whose row has ``msg_id``.
+
+        A needle can also occur in another row (a turn_id, a quoted id in
+        content), so each hit's line is decoded and its msg_id checked.
+        """
+        pos = 0
+        while True:
+            hits = [i for i in (data.find(n, pos) for n in needles) if i >= 0]
+            if not hits:
+                return None
+            hit = min(hits)
+            start = data.rfind(b"\n", 0, hit) + 1
+            end = data.find(b"\n", hit)
+            end = len(data) if end < 0 else end + 1
+            try:
+                row = json.loads(data[start:end])
+            except ValueError:
+                row = None
+            if isinstance(row, dict) and row.get("msg_id") == msg_id:
+                return start, end, row
+            pos = end
 
     def delete_by_msg_ids(self, msg_ids: set) -> int:
         """Delete rows matching msg_id/trace_id, rewriting touched segments only."""

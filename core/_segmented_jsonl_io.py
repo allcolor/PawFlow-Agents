@@ -195,6 +195,37 @@ class _SegmentedJsonlIOMixin:
             self._remember_index(index, flushed=True)
             self._write_index(index)
 
+    def _splice_line_in_path(self, path: Path, data: bytes, start: int,
+                             end: int, line: bytes, role_delta: int = 0) -> None:
+        """Replace bytes ``[start, end)`` of ``path``, read as ``data``, by
+        ``line`` without decoding the segment's other rows."""
+        self._close_append_handles(path)
+        tmp = path.with_name(
+            f"{path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp")
+        try:
+            with open(tmp, "wb") as fh:
+                fh.write(data[:start])
+                fh.write(line)
+                fh.write(data[end:])
+            self._replace_path(tmp, path)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+        if self.is_segmented():
+            index = self._load_index()
+            for item in index.get("segments") or []:
+                if str(item.get("file") or "") == path.name:
+                    item["bytes"] = path.stat().st_size
+                    if role_delta:
+                        item["role_rows"] = int(
+                            item.get("role_rows") or 0) + role_delta
+                    break
+            self._remember_index(index, flushed=True)
+            self._write_index(index)
+
     @staticmethod
     def _replace_path(src: Path, dst: Path) -> None:
         last_err = None

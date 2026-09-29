@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Performance
+
+- Every message appended by a CLI agent (Claude Code, Codex, Gemini...)
+  reloaded and re-counted that agent's whole context to refresh the context
+  gauge, then threw the count away: once the provider has measured its own
+  prompt, that measurement is the gauge. On beta.300 this took 1 s per
+  message at the median and up to 49 s with eight agents writing at once,
+  enough to overflow a Claude Code session's event queue. A measured session
+  now skips the recount.
+- `read_history` `range_by_date` and `range_by_seq` read the whole
+  transcript: over two minutes on a conversation of 1.1 GB. They now read
+  only the segments whose dates or sequence numbers meet the range. Each
+  segment's bounds are computed once and cached next to it.
+
 ## [1.0.0-beta.300] — 2026-09-29
 
 ### Fixed

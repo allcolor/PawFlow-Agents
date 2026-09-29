@@ -38,6 +38,12 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
     allow_reuse_port = True
+    # socketserver listens with a backlog of 5. The webchat fires bursts of
+    # /api/ui calls, and while a busy server is slow to accept, the sixth
+    # connection's SYN is dropped: Caddy's 3 s dial timed out and the browser
+    # got an empty 502, "Unexpected end of JSON input" (2026-09-29, host
+    # ListenOverflows 176k). The kernel still caps this at somaxconn.
+    request_queue_size = 1024
 
     def __init__(self, server_address, handler_class, route_registry,
                  max_dispatch_threads=None, header_read_timeout=None,

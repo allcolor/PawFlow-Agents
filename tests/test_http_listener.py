@@ -1873,3 +1873,20 @@ class TestFilestoreRequestIsPublic:
 
     def test_unknown_file_is_not_public(self, _store):
         assert self._probe("nope") is False
+
+
+def test_listen_backlog_absorbs_a_burst_of_ui_calls():
+    # 2026-09-29: the default backlog of 5 dropped the SYNs of a webchat
+    # burst; Caddy's dial timed out and answered an empty 502.
+    from services._http_server import _HTTPServerWithRegistry
+
+    backlogs = []
+
+    class _Sock:
+        def listen(self, backlog):
+            backlogs.append(backlog)
+
+    server = object.__new__(_HTTPServerWithRegistry)
+    server.socket = _Sock()
+    server.server_activate()
+    assert backlogs and backlogs[0] >= 128

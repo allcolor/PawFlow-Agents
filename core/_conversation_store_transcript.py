@@ -536,6 +536,48 @@ class _CsTranscriptMixin:
             return iter(())
         selected = {i for i, path in enumerate(paths) if str(path) in matched}
         selected |= {i - 1 for i in selected if i}
+        return self._iter_selected_display_windows(cid, log, paths, selected)
+
+    def iter_display_range_windows(self, cid: str, field: str,
+                                   low: float, high: float):
+        """Windows of the segments that can hold ``low <= field <= high``.
+
+        ``field`` is ``"ts"`` or ``"seq"``. Sealed segments whose bounds lie
+        outside the range are skipped without decoding; neighbours of a kept
+        segment are kept too, so a trace composed across a boundary stays
+        whole. ``None`` requests the full pass (encrypted rows hide their
+        bounds).
+        """
+        if not self.exists(cid):
+            return iter(())
+        log = self._transcript_log(cid)
+        if log.codec is not None:
+            return None
+        paths = log.iter_paths()
+        if not paths:
+            return iter(())
+        bounds = log.field_bounds_by_path()
+        selected = set()
+        for i, path in enumerate(paths):
+            if path not in bounds:
+                selected.add(i)
+                continue
+            span = bounds[path].get(field)
+            if span and span[0] <= high and span[1] >= low:
+                selected.add(i)
+        if not selected:
+            return iter(())
+        selected |= {i - 1 for i in selected if i}
+        selected |= {i + 1 for i in selected if i + 1 < len(paths)}
+        return self._iter_selected_display_windows(cid, log, paths, selected)
+
+    def _iter_selected_display_windows(self, cid: str, log, paths,
+                                       selected) -> Any:
+        """Display windows of the ``selected`` segment indexes.
+
+        A skipped segment advances the absolute index by its display-row
+        count, so ``[#n]`` matches what the full pass would render.
+        """
         # A version-1 index is upgraded here. Share the append lock while its
         # active-segment count is measured and persisted so no row can land
         # between those operations.

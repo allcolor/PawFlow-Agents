@@ -342,6 +342,11 @@ jump to the owning segment from its display-row count instead of decoding
 every earlier message; an `around` anchored on `from_msg_id` finds its segment
 from the stored bytes. `range` stops at `to_msg_id`, and an unfiltered
 `oldest` reads only the head of the transcript.
+`range_by_date` and `range_by_seq` decode only the segments whose `ts`/`seq`
+bounds meet the range, plus their neighbours and the open tail segment. The
+bounds of each sealed segment are read once from its raw bytes and cached in
+`field_bounds.json` beside the segment index, keyed by file identity, so a
+rewritten segment is scanned again. Encrypted transcripts keep the full pass.
 
 For `search`, plaintext segmented logs use two file-level passes: exact phrase
 candidates first, then (only when there is no exact result) lexical candidates

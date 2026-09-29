@@ -159,6 +159,62 @@ class HotPaths(unittest.TestCase):
         self.assertIn(f"of {CONV_SIZE}", out)
         self.assertBounded(decoded.count, "oldest", cap=SEGMENT_ROWS + 50)
 
+    # The covering segment, its two neighbours and the open tail segment.
+    RANGE_CAP = 4 * SEGMENT_ROWS + 1
+
+    def _full_pass(self, arguments):
+        with patch.object(ConversationStore, "iter_display_range_windows",
+                          return_value=None):
+            return self.handler.execute(arguments)
+
+    def test_range_by_date_decodes_only_the_segments_it_covers(self):
+        arguments = {"action": "range_by_date",
+                     "from_date": "1970-01-01T00:43:30+00:00",
+                     "to_date": "1970-01-01T00:43:40+00:00",
+                     "role_filter": "user"}
+        with _Decoded() as decoded:
+            out = self.handler.execute(arguments)
+        self.assertIn("[#1610]", out)
+        self.assertIn("[#1620]", out)
+        self.assertNotIn("[#1622]", out)
+        self.assertEqual(out, self._full_pass(arguments))
+        self.assertBounded(decoded.count, "range_by_date",
+                           cap=self.RANGE_CAP)
+
+    def test_range_by_seq_decodes_only_the_segments_it_covers(self):
+        arguments = {"action": "range_by_seq", "from_seq": 2601,
+                     "to_seq": 2605, "agent_filter": "A"}
+        with _Decoded() as decoded:
+            out = self.handler.execute(arguments)
+        self.assertIn("[#2600]", out)
+        self.assertIn("[#2604]", out)
+        self.assertEqual(out, self._full_pass(arguments))
+        self.assertBounded(decoded.count, "range_by_seq",
+                           cap=self.RANGE_CAP)
+
+    def test_range_in_the_open_tail_segment(self):
+        arguments = {"action": "range_by_seq", "from_seq": 4998,
+                     "to_seq": 5000}
+        out = self.handler.execute(arguments)
+        self.assertIn("[#4999]", out)
+        self.assertEqual(out, self._full_pass(arguments))
+
+    def test_segment_bounds_are_cached_and_a_rewrite_rescans(self):
+        from core._segmented_jsonl_io import _SegmentedJsonlIOMixin
+        log = self.store._transcript_log(CONV)
+        first = log.field_bounds_by_path()
+        self.assertEqual(len(first), len(log.iter_paths()) - 1)
+        with patch.object(_SegmentedJsonlIOMixin, "_scan_field_bounds",
+                          side_effect=AssertionError("rescanned")):
+            self.assertEqual(log.field_bounds_by_path(), first)
+        # Rewriting a sealed segment changes its identity: its bounds are
+        # read again, and a row moved out of the old range is still found.
+        self.store.patch_message(CONV, "m00003", ts=9_000_000.0)
+        out = self.handler.execute({"action": "range_by_date",
+                                    "from_date": "1970-04-15T00:00:00+00:00",
+                                    "to_date": "1970-04-16T00:00:00+00:00"})
+        self.assertIn("[#3]", out)
+
     # -- search index generation ---------------------------------------------
 
     def _generation(self):

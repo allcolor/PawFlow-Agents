@@ -481,7 +481,24 @@ class ReadHistoryHandler(ToolHandler):
         for start, msgs in store.iter_display_windows(self._conversation_id):
             yield start, msgs
 
-    def _collect(self, store, keep, budget: int, done=None):
+    def _range_windows(self, store, field: str, low: float, high: float):
+        """Windows of the segments whose ts/seq bounds meet [low, high]."""
+        if not self._owns_conversation(store):
+            return
+        range_reader = getattr(store, "iter_display_range_windows", None)
+        if range_reader is not None:
+            try:
+                windows = range_reader(self._conversation_id, field, low, high)
+            except Exception:
+                logger.debug("history range prefilter failed", exc_info=True)
+                windows = None
+            if windows is not None:
+                yield from windows
+                return
+        for start, msgs in store.iter_display_windows(self._conversation_id):
+            yield start, msgs
+
+    def _collect(self, store, keep, budget: int, done=None, windows=None):
         """Stream the transcript, keep what ``keep`` accepts, up to ``budget``.
 
         Returns ``(indexed_messages, total_matched)``: the page's worth of
@@ -490,10 +507,11 @@ class ReadHistoryHandler(ToolHandler):
         says "of 4000" costs a counter, not 4000 retained messages.
         ``done()`` returning True ends the pass: nothing after it can match
         (a range past its closing id), so reading on is pure cost.
+        ``windows`` replaces the full pass with a narrower reader.
         """
         kept: List = []
         total = 0
-        for start, msgs in self._windows(store):
+        for start, msgs in (self._windows(store) if windows is None else windows):
             for i, msg in enumerate(msgs):
                 if not keep(start + i, msg):
                     if done is not None and done():
@@ -761,7 +779,8 @@ class ReadHistoryHandler(ToolHandler):
             store,
             lambda _i, m: (from_seq <= _msg_seq(m) <= to_seq
                            and self._matches(m, role_filter, agent_filter)),
-            budget)
+            budget,
+            windows=self._range_windows(store, "seq", from_seq, to_seq))
         return self._render_slice(
             kept, f"Seq range {from_seq}..{to_seq}",
             role_filter, agent_filter, action="range_by_seq",
@@ -780,7 +799,8 @@ class ReadHistoryHandler(ToolHandler):
             store,
             lambda _i, m: (from_ts <= _msg_ts(m) <= to_ts
                            and self._matches(m, role_filter, agent_filter)),
-            budget)
+            budget,
+            windows=self._range_windows(store, "ts", from_ts, to_ts))
         label = (f"Date range {arguments.get('from_date', '')}.."
                  f"{arguments.get('to_date', '')}")
         return self._render_slice(

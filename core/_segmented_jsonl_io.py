@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -20,8 +21,13 @@ from typing import Any, Dict, Iterator, List, Optional
 
 _SEGMENT_INDEX_VERSION = 2
 _SECRET_SCRUB_VERSION = 2
+_FIELD_BOUNDS_VERSION = 1
 _ROLE_KEY_BYTES = b'"role":'
 _ROLE_STRING_PREFIX = b'{"role": "'
+# A row's numeric ts/timestamp/seq as json.dumps writes it. Nested or escaped
+# occurrences only widen a segment's bounds, which costs a read, never a row.
+_FIELD_NUMBER_RE = re.compile(
+    rb'(?<!\\)"(ts|timestamp|seq)":\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)')
 
 
 def _is_windows_wsl_unc_path(path: Path) -> bool:
@@ -308,6 +314,95 @@ class _SegmentedJsonlIOMixin:
             self._remember_index(index, flushed=True)
             self._write_index(index)
         return counts
+
+    @staticmethod
+    def _scan_field_bounds(path: Path) -> Dict[str, List[float]]:
+        """``{"ts": [min, max], "seq": [min, max]}`` from raw segment bytes.
+
+        Zero is left out: a row without ts/seq reads as 0, and a range whose
+        both ends are positive never selects it. ``timestamp`` (the fallback
+        of a row with no ``ts``) is folded into ``ts``.
+        """
+        bounds: Dict[str, List[float]] = {}
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            return bounds
+        for key, value in _FIELD_NUMBER_RE.findall(data):
+            number = float(value)
+            if not number:
+                continue
+            name = "seq" if key == b"seq" else "ts"
+            current = bounds.get(name)
+            if current is None:
+                bounds[name] = [number, number]
+            elif number < current[0]:
+                current[0] = number
+            elif number > current[1]:
+                current[1] = number
+        return bounds
+
+    def field_bounds_by_path(self) -> Dict[Path, Dict[str, List[float]]]:
+        """ts/seq bounds of every sealed segment, cached beside the index.
+
+        A range read uses them to skip segments that cannot hold a match
+        instead of decoding the whole transcript. The tail segment is left
+        out, as is any segment that changed while it was scanned: a segment
+        without bounds is always read. The cache lives in its own file,
+        keyed by segment identity like ``secret_scrub.json``, so appends
+        never race with it and a rewritten segment is scanned again.
+        """
+        paths = self._segment_paths()[:-1] if self.is_segmented() else []
+        if not paths:
+            return {}
+        marker_path = self.segment_dir / "field_bounds.json"
+        try:
+            previous = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = {}
+        cached = {}
+        if (isinstance(previous, dict)
+                and previous.get("version") == _FIELD_BOUNDS_VERSION
+                and isinstance(previous.get("segments"), dict)):
+            cached = previous["segments"]
+        marker = {"version": _FIELD_BOUNDS_VERSION, "segments": {}}
+        result: Dict[Path, Dict[str, List[float]]] = {}
+        for path in paths:
+            try:
+                signature = self._scrub_segment_signature(path)
+            except OSError:
+                continue
+            entry = cached.get(path.name)
+            if isinstance(entry, dict) and entry.get("signature") == signature:
+                bounds = entry.get("bounds") or {}
+            else:
+                bounds = self._scan_field_bounds(path)
+                try:
+                    if self._scrub_segment_signature(path) != signature:
+                        continue
+                except OSError:
+                    continue
+            marker["segments"][path.name] = {
+                "signature": signature, "bounds": bounds}
+            result[path] = bounds
+        if marker != previous:
+            tmp = marker_path.with_name(
+                f"{marker_path.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                tmp.write_text(json.dumps(marker, separators=(",", ":")),
+                               encoding="utf-8")
+                self._replace_path(tmp, marker_path)
+            except OSError:
+                logging.getLogger(__name__).warning(
+                    "Could not persist segment field bounds", exc_info=True)
+            finally:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    logging.getLogger(__name__).debug(
+                        "Could not remove field bounds temporary file",
+                        exc_info=True)
+        return result
 
     @staticmethod
     def _iter_file(path: Path) -> Iterator[Dict[str, Any]]:

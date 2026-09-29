@@ -48,9 +48,6 @@ _INDEXED_ROLES = ("user", "assistant")
 
 _MAX_LIMIT = 50
 _DEFAULT_LIMIT = 10
-# One message is one row; a row far past this is a paste, not a discussion.
-# Truncated for the index only — the transcript keeps the whole thing.
-_MAX_ROW_CHARS = 20000
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS indexed_conversations (
@@ -59,10 +56,7 @@ CREATE TABLE IF NOT EXISTS indexed_conversations (
     rows_indexed INTEGER NOT NULL DEFAULT 0,
     source_updated_at REAL NOT NULL DEFAULT 0,
     updated_at REAL NOT NULL DEFAULT 0,
-    -- The store's transcript rewrite counter as of the last index. -1 on a
-    -- database written before this column existed, which differs from every
-    -- real generation and so forces one full reindex -- exactly what an index
-    -- that may hold deleted text needs.
+    -- The store's transcript rewrite counter as of the last index.
     source_generation INTEGER NOT NULL DEFAULT -1
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
@@ -73,9 +67,25 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
     role UNINDEXED,
     msg_id UNINDEXED,
     ts UNINDEXED,
+    -- Display index of the row, numbered like read_history's [#n]: file
+    -- order, one per role row. Lets read_history answer a search from here.
+    pos UNINDEXED,
+    -- source.name, for rendering a hit without reading the transcript.
+    speaker UNINDEXED,
+    -- Every agent the row involves (read_history's agent_filter), each
+    -- wrapped in _AGENT_SEP so instr() matches whole names only.
+    agents UNINDEXED,
     tokenize = 'unicode61'
 );
 """
+
+# An index missing any of these predates positions; it is dropped and rebuilt.
+_REQUIRED_MESSAGE_COLUMNS = frozenset({"pos", "speaker", "agents"})
+_AGENT_SEP = "\x1f"
+_INSERT_SQL = (
+    "INSERT INTO messages (content, conversation_id, title, agent, role, "
+    "msg_id, ts, pos, speaker, agents) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 
 _TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
@@ -115,6 +125,12 @@ class ConversationIndex:
             Path(str(_paths.CONVERSATION_INDEX_DIR)) / f"{_safe_name(user_id)}.db")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._db_lock = threading.Lock()
+        # One writer per conversation: a background rebuild and a search-time
+        # refresh of the same conversation would otherwise insert its rows
+        # twice.
+        self._conv_locks: Dict[str, threading.Lock] = {}
+        self._conv_locks_guard = threading.Lock()
+        self._rebuilding: set = set()
         self._guard = SqliteStoreGuard("Conversation index")
         self._guard.preflight(self._path)
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
@@ -128,18 +144,16 @@ class ConversationIndex:
                 self._conn.close()
                 raise FTSUnavailable(
                     f"SQLite FTS5 is not available: {exc}") from exc
-            # CREATE TABLE IF NOT EXISTS leaves an older database's columns
-            # alone, so the column is added here. Existing rows take the -1
-            # default and are reindexed once, which is the point: such a
-            # database may hold text that has since been edited or deleted.
-            try:
-                self._conn.execute(
-                    "ALTER TABLE indexed_conversations "
-                    "ADD COLUMN source_generation INTEGER NOT NULL DEFAULT -1")
-            except sqlite3.OperationalError as exc:
-                if is_corruption_error(exc):
-                    raise
-                pass  # already there
+            # CREATE TABLE IF NOT EXISTS leaves an older database alone. One
+            # without row positions cannot serve read_history, and one without
+            # generations may hold text since edited or deleted: the index is
+            # derived data, so it is dropped and rebuilt rather than migrated.
+            columns = {row[1] for row in self._conn.execute(
+                "PRAGMA table_info(messages)")}
+            if not _REQUIRED_MESSAGE_COLUMNS <= columns:
+                self._conn.execute("DROP TABLE IF EXISTS messages")
+                self._conn.execute("DROP TABLE IF EXISTS indexed_conversations")
+                self._conn.executescript(_SCHEMA)
             try:
                 self._conn.execute("PRAGMA journal_mode=WAL")
             except sqlite3.DatabaseError as exc:
@@ -238,12 +252,8 @@ class ConversationIndex:
                     and generation == row["source_generation"]):
                 stats["unchanged"] += 1
                 continue
-            added = self._index_conversation(
-                store, cid, title, row["rows_indexed"] if row else 0,
-                updated_at, generation,
-                stale=row is not None and generation != row["source_generation"],
-                incremental=row is not None,
-                stored_title=row["title"] if row is not None else None)
+            with self._conversation_lock(cid):
+                added = self._sync_conversation(store, cid, title, updated_at)
             if added:
                 stats["indexed"] += 1
                 stats["messages"] += added
@@ -254,12 +264,15 @@ class ConversationIndex:
                 stats["purged"] += 1
         return stats
 
-    def _known(self) -> Dict[str, Dict[str, Any]]:
+    def _known(self, cid: str = "") -> Dict[str, Dict[str, Any]]:
+        sql = ("SELECT conversation_id, title, rows_indexed, source_updated_at, "
+               "source_generation FROM indexed_conversations")
+        params: tuple = ()
+        if cid:
+            sql += " WHERE conversation_id = ?"
+            params = (cid,)
         with self._guard.runtime(self._path), self._db_lock:
-            rows = self._conn.execute(
-                "SELECT conversation_id, title, rows_indexed, source_updated_at, "
-                "source_generation FROM indexed_conversations"
-            ).fetchall()
+            rows = self._conn.execute(sql, params).fetchall()
         return {r["conversation_id"]: {
             "title": str(r["title"] or ""),
             "rows_indexed": int(r["rows_indexed"] or 0),
@@ -299,88 +312,141 @@ class ConversationIndex:
                 return str(name)
         return str(msg.get("agent") or msg.get("agent_name") or "")
 
-    def _index_conversation(self, store, cid: str, title: str,
-                            watermark: int, source_updated_at: float = 0.0,
-                            source_generation: int = 0,
-                            stale: bool = False,
-                            incremental: bool = False,
-                            stored_title: Optional[str] = None) -> int:
-        incremental = incremental and not stale
-        purged = False
+    def _conversation_lock(self, cid: str) -> threading.Lock:
+        with self._conv_locks_guard:
+            lock = self._conv_locks.get(cid)
+            if lock is None:
+                lock = self._conv_locks[cid] = threading.Lock()
+            return lock
+
+    def _sync_conversation(self, store, cid: str, title: str,
+                           source_updated_at: float,
+                           allow_full: bool = True) -> Optional[int]:
+        """Index what ``cid`` gained since its watermark. Caller holds its lock.
+
+        Positions, the watermark and the shrink check all count display rows
+        the way read_history numbers them: ``display_row_count`` and the
+        display windows, in file order. The metadata ``message_count`` and the
+        timestamp-sorted ``load()`` count differently; mixing them left
+        watermarks above the count, which read as a shrunken transcript and
+        purged and re-read the whole conversation (~80 s at 700k rows on the
+        first search after a restart, 2026-09-29).
+
+        Returns the rows indexed, or None when the index cannot answer for
+        the conversation: its transcript was unreadable (and it was purged),
+        or it needs a full reindex and ``allow_full`` is False.
+        """
+        row = self._known(cid).get(cid)
+        watermark = row["rows_indexed"] if row else 0
         try:
-            if incremental:
-                with store._get_conv_lock(cid):
-                    current_generation = int(store.get_extra(
-                        cid, TRANSCRIPT_GENERATION, 0) or 0)
-                    if current_generation != source_generation:
-                        source_generation = current_generation
-                        stale = True
-                        incremental = False
-                    else:
-                        total = int(store.message_count(cid) or 0)
-                        if total < watermark:
-                            incremental = False
-                        else:
-                            appended = total - watermark
-                            if appended:
-                                page = store.load_page(
-                                    cid, limit=appended, offset=0,
-                                    user_id=self._user_id)
-                                messages = list(
-                                    (page or {}).get("messages") or [])
-                                if len(messages) < appended:
-                                    raise OSError(
-                                        "incremental transcript tail was incomplete")
-                                fresh = messages[-appended:]
-                            else:
-                                fresh = []
-            if not incremental:
-                messages = store.load(cid, user_id=self._user_id) or []
-                total = len(messages)
+            with store._get_conv_lock(cid):
+                generation = int(store.get_extra(
+                    cid, TRANSCRIPT_GENERATION, 0) or 0)
+                total = int(store.display_row_count(cid))
+                # A moved generation: indexed rows may hold text since edited
+                # or deleted, and an edit at constant row count leaves nothing
+                # else to notice. Fewer rows than the watermark: it no longer
+                # addresses the same rows.
+                full = (row is None
+                        or generation != row["source_generation"]
+                        or total < watermark)
+                if not full:
+                    appended = total - watermark
+                    fresh = (store.load_window_by_index(cid, watermark, appended)
+                             if appended else [])
+                    if len(fresh) < appended:
+                        raise OSError(
+                            "incremental transcript tail was incomplete")
+            if full:
+                if not allow_full:
+                    return None
+                return self._reindex_whole(store, cid, title,
+                                           source_updated_at, generation)
         except Exception:
             logger.debug("transcript unreadable for %s", cid[:8], exc_info=True)
             # Do this even on an incremental refresh: the existing rows may be
             # exactly the text that was deleted or redacted before the read
             # failed. Keeping them would turn an I/O failure into disclosure.
             self.purge(cid)
-            return 0
-        if not incremental and (stale or total < watermark):
-            # `stale`: the store's rewrite counter moved, so rows already
-            # indexed may hold text that has since been edited or deleted.
-            # Appending onto them would keep serving it -- and an edit that
-            # keeps the row count identical leaves nothing else to notice.
-            # `total < watermark`: the transcript shrank, so the watermark no
-            # longer addresses the same rows.
-            self.purge(cid)
-            watermark = 0
-            purged = True
-        if not incremental:
-            fresh = messages[watermark:]
+            return None
+        rows = self._rows(cid, title, fresh, watermark)
+        self._record(cid, title, row["title"], rows, watermark + len(fresh),
+                     source_updated_at, generation)
+        return len(rows)
+
+    def _reindex_whole(self, store, cid: str, title: str,
+                       source_updated_at: float, generation: int) -> int:
+        """Purge ``cid`` and re-read it one display window at a time.
+
+        ``store.load()`` held the whole transcript in memory (2 GB at 700k
+        rows). Windows are committed as they come; until the final record
+        lands the conversation has no ``indexed_conversations`` row, so
+        read_history keeps using its scan meanwhile.
+        """
+        self.purge(cid)
+        added = 0
+        total = 0
+        for start, msgs in store.iter_display_windows(cid):
+            rows = self._rows(cid, title, msgs, start)
+            if rows:
+                with self._guard.runtime(self._path), self._db_lock:
+                    self._conn.executemany(_INSERT_SQL, rows)
+                    self._conn.commit()
+            added += len(rows)
+            total = start + len(msgs)
+        self._record(cid, title, None, [], total, source_updated_at,
+                     generation)
+        return added
+
+    def _rows(self, cid: str, title: str, msgs: List[Dict[str, Any]],
+              first_pos: int) -> List[tuple]:
+        """Index rows for ``msgs``, whose first display index is first_pos."""
+        from core.handlers.history import _msg_agents_involved
+        from core.secret_sanitization import strip_secret_runtime_values
+
         rows = []
-        for msg in fresh:
+        for offset, msg in enumerate(msgs):
             if not isinstance(msg, dict):
                 continue
-            if str(msg.get("role") or "") not in _INDEXED_ROLES:
+            role = str(msg.get("role") or "")
+            if role not in _INDEXED_ROLES:
                 continue
             content = msg.get("content")
+            if content is None:
+                continue
+            # read_history searches str(content), so the index holds the same.
             if not isinstance(content, str):
+                content = str(strip_secret_runtime_values(content))
+            if not content.strip():
                 continue
-            content = content.strip()
-            if not content:
-                continue
+            source = msg.get("source")
+            speaker = (str(source.get("name") or "")
+                       if isinstance(source, dict) else "")
+            agents = sorted(_msg_agents_involved(msg))
+            # Whole, not capped: read_history matches anywhere in a message.
+            # Messages over 20k chars are ~145 of 214k in production, ~15 MB.
             rows.append((
-                content[:_MAX_ROW_CHARS],
+                content,
                 cid,
                 title,
                 self._agent_of(msg),
-                str(msg.get("role") or ""),
+                role,
                 str(msg.get("msg_id") or ""),
                 float(msg.get("ts") or 0.0),
+                first_pos + offset,
+                speaker,
+                "".join(_AGENT_SEP + a for a in agents) + _AGENT_SEP
+                if agents else "",
             ))
+        return rows
 
+    def _record(self, cid: str, title: str, stored_title: Optional[str],
+                rows: List[tuple], total: int, source_updated_at: float,
+                generation: int) -> None:
+        """Insert ``rows`` and move the watermark to ``total``, atomically."""
         with self._guard.runtime(self._path), self._db_lock:
             if (title and stored_title is not None
-                    and title != stored_title and not purged):
+                    and title != stored_title):
                 # A renamed conversation must stop reporting its old title,
                 # on the rows already indexed as much as on the new ones.
                 # `messages` is an FTS5 table whose conversation_id column is
@@ -392,10 +458,7 @@ class ConversationIndex:
                     "UPDATE messages SET title = ? WHERE conversation_id = ? "
                     "AND title != ?", (title, cid, title))
             if rows:
-                self._conn.executemany(
-                    "INSERT INTO messages (content, conversation_id, title, "
-                    "agent, role, msg_id, ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    rows)
+                self._conn.executemany(_INSERT_SQL, rows)
             # The watermark advances over every row read, indexed or not --
             # it addresses transcript positions, not stored rows. Advancing it
             # only by len(rows) would re-read every tool row on each refresh.
@@ -410,9 +473,8 @@ class ConversationIndex:
                 "updated_at=excluded.updated_at, "
                 "source_generation=excluded.source_generation",
                 (cid, title, total, source_updated_at, time.time(),
-                 source_generation))
+                 generation))
             self._conn.commit()
-        return len(rows)
 
     def purge(self, cid: str) -> None:
         """Forget a conversation entirely (deleted, or newly encrypted)."""
@@ -430,6 +492,88 @@ class ConversationIndex:
             self._conn.execute("DELETE FROM messages")
             self._conn.execute("DELETE FROM indexed_conversations")
             self._conn.commit()
+
+    # -- One conversation, for read_history -----------------------------
+
+    def ensure_current(self, store, cid: str) -> bool:
+        """Bring ``cid`` up to date; True when the index may answer for it.
+
+        Appended rows are indexed inline -- cheap, they are the tail. A
+        conversation that needs a full reindex (never indexed, rewritten,
+        shrunk) is rebuilt in the background and this returns False, so an
+        interactive caller falls back to its scan instead of waiting a minute
+        on the largest transcripts. So does a conversation whose rebuild is
+        already running.
+        """
+        if self._is_encrypted(store, cid):
+            return False
+        lock = self._conversation_lock(cid)
+        if not lock.acquire(blocking=False):
+            return False
+        try:
+            row = self._known(cid).get(cid)
+            if row is not None:
+                meta = store.get_metadata(cid) or {}
+                if self._sync_conversation(
+                        store, cid, row["title"],
+                        float(meta.get("updated_at") or 0.0),
+                        allow_full=False) is not None:
+                    return True
+        finally:
+            lock.release()
+        self._rebuild_in_background(store, cid)
+        return False
+
+    def _rebuild_in_background(self, store, cid: str) -> None:
+        with self._conv_locks_guard:
+            if cid in self._rebuilding:
+                return
+            self._rebuilding.add(cid)
+
+        def _run():
+            try:
+                with self._conversation_lock(cid):
+                    meta = store.get_metadata(cid) or {}
+                    title = str(store.get_extra(cid, "title", "") or "")
+                    self._sync_conversation(
+                        store, cid, title,
+                        float(meta.get("updated_at") or 0.0))
+            except Exception:
+                logger.warning("conversation index rebuild failed for %s",
+                               cid[:8], exc_info=True)
+            finally:
+                with self._conv_locks_guard:
+                    self._rebuilding.discard(cid)
+
+        threading.Thread(target=_run, daemon=True,
+                         name=f"conv-index-rebuild-{cid[:8]}").start()
+
+    def search_conversation(self, cid: str, role: str, agent: str = "",
+                            needles: Optional[List[str]] = None
+                            ) -> List[Dict[str, Any]]:
+        """Rows of ``cid`` with ``role``, in display order, prefiltered.
+
+        ``agent`` keeps rows involving that agent (read_history's
+        agent_filter). ``needles`` keeps rows whose lowercased content holds
+        any of them. SQLite's lower() folds ASCII only, so pass ASCII needles,
+        and re-check each returned row: this narrows the candidates, it does
+        not decide.
+        """
+        sql = ("SELECT pos, content, role, speaker FROM messages "
+               "WHERE conversation_id = ? AND role = ?")
+        params: List[Any] = [cid, role]
+        if agent:
+            sql += " AND instr(agents, ?) > 0"
+            params.append(_AGENT_SEP + agent + _AGENT_SEP)
+        if needles:
+            sql += (" AND ("
+                    + " OR ".join("instr(lower(content), ?) > 0"
+                                  for _ in needles) + ")")
+            params.extend(needles)
+        sql += " ORDER BY pos"
+        with self._guard.runtime(self._path), self._db_lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
 
     # -- Searching -----------------------------------------------------
 

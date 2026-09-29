@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from core.handlers._history_indexed_search import indexed_search_hits
 from core.tool_registry import ToolHandler
 
 logger = logging.getLogger(__name__)
@@ -655,10 +656,20 @@ class ReadHistoryHandler(ToolHandler):
         # handles natural multi-term queries.
         offset, limit, budget = self._budget(
             arguments.get("offset"), arguments.get("limit"))
+        tokens = _search_tokens(query)
+        # A user/assistant search is answered from the full-text index when
+        # it is current for this conversation: no transcript decoding.
+        indexed = (indexed_search_hits(
+            store, self._conversation_id, self._user_id, query, tokens,
+            role_filter, agent_filter, budget)
+            if self._owns_conversation(store) else None)
+        if indexed is not None:
+            hits, total = indexed
+            return self._render_search_hits(query, hits, total, offset, limit,
+                                            role_filter, agent_filter)
         exact_hits = []      # (index, msg), first `budget` of them
         exact_total = 0
         query_lower = query.lower()
-        tokens = _search_tokens(query)
         excluded_tools = [] if role_filter == "tool" else ["read_history"]
         exact_windows = self._search_windows(
             store, [query], excluded_tool_names=excluded_tools)
@@ -711,6 +722,12 @@ class ReadHistoryHandler(ToolHandler):
             token_hits.sort(key=lambda h: (-h[0], h[2]))
             hits = [(i, msg) for _score, _neg_i, i, msg in token_hits]
             total = token_total
+        return self._render_search_hits(query, hits, total, offset, limit,
+                                        role_filter, agent_filter)
+
+    def _render_search_hits(self, query: str, hits, total: int, offset: int,
+                            limit: int, role_filter: str,
+                            agent_filter: str) -> str:
         if not hits:
             scope = _scope_label(role_filter, agent_filter)
             tag = f" ({scope})" if scope else ""

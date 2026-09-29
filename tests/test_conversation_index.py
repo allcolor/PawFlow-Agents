@@ -129,32 +129,34 @@ class TestIndexing:
             "role": "assistant", "content": "second",
         }, user_id=USER)
         real_lock = store._get_conv_lock(cid)
-        real_count = store.message_count
-        real_page = store.load_page
-        state = {"locked": False, "counted": False, "paged": False}
+        real_count = store.display_row_count
+        real_page = store.load_window_by_index
+        # A depth, not a flag: the store re-enters its (reentrant) lock
+        # inside these calls, and an inner exit must not read as released.
+        state = {"depth": 0, "counted": False, "paged": False}
 
         class CheckedLock:
             def __enter__(self):
                 real_lock.acquire()
-                state["locked"] = True
+                state["depth"] += 1
 
             def __exit__(self, exc_type, exc, tb):
-                state["locked"] = False
+                state["depth"] -= 1
                 real_lock.release()
 
         def checked_count(*args, **kwargs):
-            assert state["locked"]
+            assert state["depth"]
             state["counted"] = True
             return real_count(*args, **kwargs)
 
         def checked_page(*args, **kwargs):
-            assert state["locked"]
+            assert state["depth"]
             state["paged"] = True
             return real_page(*args, **kwargs)
 
         monkeypatch.setattr(store, "_get_conv_lock", lambda _cid: CheckedLock())
-        monkeypatch.setattr(store, "message_count", checked_count)
-        monkeypatch.setattr(store, "load_page", checked_page)
+        monkeypatch.setattr(store, "display_row_count", checked_count)
+        monkeypatch.setattr(store, "load_window_by_index", checked_page)
 
         index.refresh(store)
 
@@ -582,14 +584,14 @@ class TestTheRightToBeForgotten:
         index.refresh(store)
         assert index.search("secret")
         store.patch_message(cid, "m1", content="REDACTED")
-        real_load = store.load
+        real_windows = store.iter_display_windows
 
-        def fail_target(target, **kwargs):
+        def fail_target(target, *args, **kwargs):
             if target == cid:
                 raise OSError("transcript unreadable")
-            return real_load(target, **kwargs)
+            return real_windows(target, *args, **kwargs)
 
-        monkeypatch.setattr(store, "load", fail_target)
+        monkeypatch.setattr(store, "iter_display_windows", fail_target)
         index.refresh(store)
 
         assert index.search("secret") == []

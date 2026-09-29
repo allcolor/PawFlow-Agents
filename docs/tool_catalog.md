@@ -320,11 +320,16 @@ Four properties worth knowing before relying on it:
 - **The index refreshes when you search, not when a message is appended.** The
   refresh is incremental twice over — a conversation whose `updated_at` has not
   moved since it was indexed is never opened, and an ordinary append reads only
-  the reverse-tail rows past its watermark. The watermark count and tail read
-  share the conversation lock so a concurrent append cannot shift the selected
-  rows. A changed `transcript_generation` still purges and rebuilds the whole
-  conversation. The difference is only *when* the cost lands; putting it on
-  append would make the chat UI wait for a feature that turn may never use.
+  the display rows past its watermark (`load_window_by_index`). The watermark
+  and every row position count display rows exactly as `read_history` numbers
+  them (`display_row_count`, from the segment index), never the cached
+  `message_count`: a count that lagged the watermark used to read as a shrunken
+  transcript and re-read the whole conversation on the first search after a
+  restart. The count and tail read share the conversation lock so a concurrent
+  append cannot shift the selected rows. A changed `transcript_generation`
+  still purges and rebuilds the whole conversation, streamed one display
+  window at a time. The difference is only *when* the cost lands; putting it
+  on append would make the chat UI wait for a feature that turn may never use.
 - **Only `user` and `assistant` rows are indexed**, and only conversations the
   searching user owns. Tool output is machine text that would dominate every
   ranking, and a shared conversation is searchable by its owner, not yet by
@@ -347,6 +352,19 @@ bounds meet the range, plus their neighbours and the open tail segment. The
 bounds of each sealed segment are read once from its raw bytes and cached in
 `field_bounds.json` beside the segment index, keyed by file identity, so a
 rewritten segment is scanned again. Encrypted transcripts keep the full pass.
+
+A `search` with `role_filter` `user` or `assistant` is answered from the
+conversation index (`core/handlers/_history_indexed_search.py`) when the
+searching user owns the conversation and its index is current. Each indexed
+row holds its whole text, its `[#index]`, its speaker and every agent it
+involves, so the exact-then-keyword matching runs on SQLite rows and no
+transcript segment is decoded (a common word on a 700k-row conversation took
+~10 s through the scan). SQL only prefilters (`instr(lower(content), …)`,
+ASCII needles); Python applies the scan's own rules, so answers match the scan
+character for character. Appended rows are indexed inline; a conversation that
+needs a full reindex (never indexed, rewritten, shrunk) is rebuilt on a
+background thread while that call and the next ones use the scan below. Other
+roles, unfiltered searches and encrypted conversations always scan.
 
 For `search`, plaintext segmented logs use two file-level passes: exact phrase
 candidates first, then (only when there is no exact result) lexical candidates

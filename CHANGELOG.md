@@ -27,6 +27,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (float32, base64), converted on the first save, and duplicate checks no
   longer re-normalize every stored text. The file shrank to 72 MB and a save
   takes about 1 s.
+- `read_history` searches filtered on `user` or `assistant` are answered from
+  the conversation search index instead of decoding the transcript: about
+  10 s on the largest conversation before, a fraction of a second now, with
+  identical results. The index now counts messages the way `read_history`
+  numbers them; mixing two counts made the first `conversation_search` after
+  a restart re-read whole conversations (80 s). A full reindex streams the
+  transcript instead of loading it, and runs in the background when
+  `read_history` needs one. The existing index is rebuilt once on first use,
+  and long messages are now indexed whole.
 
 ### Fixed
 

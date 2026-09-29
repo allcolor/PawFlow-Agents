@@ -622,6 +622,21 @@ class _CsTranscriptMixin:
 
         return _windows()
 
+    def display_row_count(self, cid: str) -> int:
+        """Display rows in the transcript, numbered as read_history numbers.
+
+        ``message_count`` is cached metadata and may count differently; the
+        search index needs the count that matches the display windows and
+        ``load_window_by_index``. Read from the segment index, no decoding.
+        """
+        if not self.exists(cid):
+            return 0
+        log = self._transcript_log(cid)
+        if not log.exists():
+            return 0
+        with self._get_conv_lock(cid):
+            return sum(int(n) for n in log.role_rows_by_path().values())
+
     def load_window_by_index(self, cid: str, start: int, count: int) -> List[Dict]:
         """``count`` display messages from absolute display index ``start``.
 

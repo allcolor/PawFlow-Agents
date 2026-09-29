@@ -294,6 +294,33 @@ it `json.dumps`).
 The store still rewrites the whole file on each change, so a save stays
 proportional to the number of memories.
 
+## 11. History search from the conversation index
+
+Files: `core/conversation_index.py`, `core/handlers/_history_indexed_search.py`,
+`core/handlers/history.py`, `core/_conversation_store_transcript.py`.
+
+`read_history search` decoded every segment holding a search term: 10.5 s
+(py-spy, server side) for a common word on the 700k-row conversation. The
+first `conversation_search` after a restart took 80 s: the index watermark was
+set from `len(load())` on a full pass and compared with the cached
+`message_count` on an incremental one. The two count differently, so a
+watermark above the count read as a shrunken transcript and the whole
+conversation was loaded again (2 GB in memory via `store.load()`).
+
+Every index count and position is now a display row as `read_history`
+numbers it: `display_row_count` sums the segment index's role rows, appends
+are read with `load_window_by_index`, and a full reindex streams
+`iter_display_windows`. Each row stores its `[#index]`, speaker, involved
+agents and whole text (the 20k-char cap is gone: ~145 of 214k rows, ~15 MB).
+A `user`/`assistant` search then runs on SQLite rows with the scan's matching
+rules; a conversation that needs a full reindex is rebuilt on a background
+thread while searches keep scanning. An index without these columns is
+dropped and rebuilt once.
+
+Synthetic 60k-message conversation, same query and identical output: 0.066 s
+indexed against 1.08 s scanned; the full reindex took 1.6 s. The incremental
+refresh measured on production was 0.1 s.
+
 ## Configuration
 
 | Variable | Default | Meaning |

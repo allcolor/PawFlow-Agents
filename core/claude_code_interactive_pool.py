@@ -660,6 +660,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         if settle > 0:
             time.sleep(settle)
         if not self._paste_landed(state, text, before):
+            # A slow TUI can still ingest it after the window (2026-09-29:
+            # GameDev1's composer held it a minute later), so the next send
+            # must clear it like a timed-out paste.
+            state.unconfirmed_paste = text
             state.last_error = "prompt was not confirmed after the single paste"
             logging.getLogger(__name__).error(
                 "[cci] paste was not confirmed for %s; refusing to replay it%s",

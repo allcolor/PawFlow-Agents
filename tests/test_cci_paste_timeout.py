@@ -82,6 +82,33 @@ def test_the_next_send_empties_a_failed_paste_that_landed_late(monkeypatch):
     assert state.unconfirmed_paste == ""
 
 
+def test_an_unconfirmed_paste_is_remembered_for_the_next_send(monkeypatch):
+    # 2026-09-29 09:19Z: GameDev1's pane did not move for 3 s, the send was
+    # refused, and the paste sat in the composer a minute later.
+    pool = InteractiveClaudeCodePool()
+    for name, value in {
+        "_is_alive": lambda _n: True,
+        "_sync_slot_credentials": lambda _s: None,
+        "_cancel_copy_mode": lambda _s: None,
+        "_prepare_prompt_input": lambda _s: True,
+        "_remember_injected_prompt": lambda _s, _t: None,
+        "_remember_injected_prompt_for_event_service": lambda _s, _t: None,
+        "_paste_settle_seconds": lambda: 0,
+        "_pane_text": lambda _n: EMPTY,
+        "_journal_mark": lambda _s: None,
+        "_paste_text": lambda _s, _t: True,
+        "_paste_landed": lambda _s, _t, _b: False,
+        "_pane_diagnostic": lambda _n: "",
+    }.items():
+        monkeypatch.setattr(pool, name, value)
+    state = _State()
+    state.prompt_ready = True
+
+    assert pool.send_text(state, PROMPT) is False
+    assert state.last_error == "prompt was not confirmed after the single paste"
+    assert state.unconfirmed_paste == pool._composer_safe_text(PROMPT)
+
+
 def test_an_empty_input_box_is_left_alone(monkeypatch):
     pool, keys = _pool(monkeypatch, EMPTY)
     state = _State()

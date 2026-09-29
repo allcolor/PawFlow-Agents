@@ -22,7 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Docker daemon, and the late paste was then submitted glued to the next
   prompt. A timed-out tmux command now fails only that send ("prompt not
   delivered"), the session is kept, and the next send first empties the input
-  box of the late paste.
+  box of the late paste. The same applies when the screen does not show the
+  paste within 3 s ("prompt was not confirmed after the single paste"): a
+  slow CLI can still take it afterwards.
 - CLI agents cold-started by PawFlow could refuse their bootstrap: two Sonnet
   agents restarted with a `[System: Resuming after cancellation ...]` request
   read `initial_context.md` as a prompt injection and asked what to do

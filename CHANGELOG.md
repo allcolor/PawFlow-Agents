@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A compacted summary could keep nested context: a previous summary inside
+  a later one, or a delegate result quoting its context. The summarizer is
+  now told to keep each fact once and fold nested summaries into its own.
 - After a server restart, a managed server relay stayed "Starting" for
   minutes and its Reconnect button failed with "A physical relay operation is
   already running in this scope": before starting the container, the server

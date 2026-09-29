@@ -348,6 +348,18 @@ class AgentSummarizeMixin(_AgentSummarizeBackendMixin):
             return
 
         _focus = f"\n- FOCUS: {compact_instructions}" if compact_instructions else ""
+        # The code drops the duplicates it can recognize (a cold start's
+        # initial_context.md read back); the rest -- a summary nested in a
+        # summary, a delegate result quoting its context -- only the reader
+        # sees. 2026-09-29: an agent found nested context left in its summary.
+        _dedup_rule = (
+            "- DEDUPLICATE: the input can hold the same content several\n"
+            "  times -- a previous summary nested inside a later one, a\n"
+            "  serialized context read back, a delegate result quoting its\n"
+            "  context, repeated tool output. Keep each fact once, in its\n"
+            "  most recent form. Never copy a nested summary or context\n"
+            "  block as such: fold its facts into your own output.\n"
+        )
         if final:
             # Final pass: 9-section structured summary, analysis-first.
             # Inspired by Claude Code's compact prompt: the <analysis>
@@ -406,6 +418,7 @@ class AgentSummarizeMixin(_AgentSummarizeBackendMixin):
                 f"     what was in flight.\n"
                 f"\n"
                 f"- Skip raw tool output, JSON blobs, and technical plumbing.\n"
+                f"{_dedup_rule}"
                 f"- RECENCY WEIGHTING: emphasize the LATEST work. Older\n"
                 f"  threads (especially content carried over from a prior\n"
                 f"  compacted summary or tagged as 'earlier planning') are\n"
@@ -426,7 +439,8 @@ class AgentSummarizeMixin(_AgentSummarizeBackendMixin):
                 f"- Preserve concrete facts ONLY: file paths, decisions "
                 f"made, errors hit, commands run, file contents discussed. "
                 f"No fluff, no narration, no meta-commentary.\n"
-                f"- Skip raw tool output and JSON plumbing."
+                f"- Skip raw tool output and JSON plumbing.\n"
+                f"{_dedup_rule.rstrip()}"
             )
         _analysis_note = (
             "\n- When calling compact_result(summary=...), pass ONLY the\n"

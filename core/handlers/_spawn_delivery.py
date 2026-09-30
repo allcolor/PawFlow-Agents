@@ -43,6 +43,48 @@ def _delegate_result_preview(response: str):
     return tail.strip(), True
 
 
+_FLASH_MARKER = "::flash::"
+
+
+def route_flash_caller(conv_id: str, caller_agent: str, text: str):
+    """Where a result addressed to ``caller_agent`` must go.
+
+    A flash agent is a sub-agent run, not a conversation agent. Waking it by
+    its runtime name started a conversation turn with no agent config ("No
+    LLM service resolved for agent '<parent>::flash::<name>'"). While the
+    flash agent runs, the result joins its live-delegate queue, which its
+    loop drains before the next provider call. Once it has finished, the
+    result goes to the conversation agent that created it.
+
+    Returns ``(agent, text)`` to deliver through the normal preempt/wake
+    path, or None when the result was queued to a running flash agent. A
+    caller that is not a flash agent is returned unchanged.
+    """
+    if _FLASH_MARKER not in (caller_agent or ""):
+        return caller_agent, text
+    from core.agent_executor import (
+        list_live_delegates, queue_live_delegate_message)
+    from core.service_registry import _parent_conversation_id
+    parent_conv = _parent_conversation_id(conv_id) or conv_id
+    # The live slot is keyed by the creator's exact name; the runtime name
+    # only carries a sanitized copy of it.
+    creator = caller_agent.split(_FLASH_MARKER, 1)[0]
+    for entry in list_live_delegates(parent_conv):
+        if entry.get("target") == caller_agent:
+            creator = entry.get("caller") or creator
+            if queue_live_delegate_message(
+                    parent_conv, creator, caller_agent, text):
+                logger.info("[delegate] result queued to running flash "
+                            "agent '%s'", caller_agent)
+                return None
+    flash_name = caller_agent.split(_FLASH_MARKER, 1)[1]
+    logger.info("[delegate] flash agent '%s' has finished — result goes to "
+                "its creator '%s'", caller_agent, creator)
+    return creator, (
+        f"[Result addressed to your flash agent '{flash_name}', which has "
+        f"already finished]\n\n{text}")
+
+
 class _SpawnDeliveryMixin:
     """Delivery/dedup methods composed onto SpawnAgentsHandler via MRO."""
 
@@ -394,6 +436,10 @@ class _SpawnDeliveryMixin:
         caller_agent's context (not shared, not other agents). The user
         sees it via the transcript (display_only publish).
         """
+        routed = route_flash_caller(conv_id, caller_agent, text)
+        if routed is None:
+            return
+        caller_agent, text = routed
         _source = {
             "type": "user",
             "name": "system",

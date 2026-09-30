@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   deleted the session directory under it. The compaction now reserves the
   context before cancelling, and scheduled wakes for an agent whose context is
   being compacted wait until it is done.
+- A reply to a delegate sent by a flash agent that had already finished
+  started a conversation turn under the flash agent's name, which failed with
+  "No LLM service resolved for agent '<agent>::flash::<name>'" and lost the
+  reply. Results addressed to a flash agent now join its queue while it runs,
+  and go to the agent that created it once it has finished.
 
 ## [1.0.0-beta.302] — 2026-09-29
 

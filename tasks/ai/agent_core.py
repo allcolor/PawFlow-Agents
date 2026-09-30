@@ -587,12 +587,19 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                         "response": st._reply_text,
                                         "error": "",
                                     })
+                            st._routed = None
+                            if not st._external_delivered:
+                                from core.handlers._spawn_delivery import route_flash_caller
+                                st._routed = route_flash_caller(
+                                    st.conversation_id, st._src_agent,
+                                    st._reply_text)
                             if st._external_delivered:
                                 logger.info(
                                     "[delegate-reply] task %s returned to "
                                     "external caller",
                                     st._delegate_task_id)
-                            else:
+                            elif st._routed is not None:
+                                st._src_agent, st._reply_text = st._routed
                                 from core.handlers.resource_agent import SpawnAgentsHandler
                                 from tasks.ai.agent_loop import AgentLoopTask
                                 import uuid as _uuid_dr

@@ -357,6 +357,16 @@ the existing inheritance behavior is preserved. This is required for published
 MCP agents whose own runtime service is a non-LLM MCP transport. The external
 MCP source identity is retained for routing and attribution.
 
+A flash agent (`<creator>::flash::<name>`) is a sub-agent run, not a
+conversation agent, so a result addressed to it is never delivered by starting
+a conversation turn under its runtime name: that turn has no agent config and
+fails with "No LLM service resolved". `route_flash_caller`
+(`core/handlers/_spawn_delivery.py`) routes both a delegate reply and a
+background delegate result addressed to a flash agent. While the flash agent
+runs, the result joins its live-delegate queue, drained before its next
+provider call. Once it has finished, the result goes to its creator, prefixed
+`[Result addressed to your flash agent '<name>', which has already finished]`.
+
 A conversation agent published as an inbound MCP client has
 `runtime_kind: "external_mcp"`. PawFlow does not start its own LLM loop for
 that agent. Webchat turns are accepted only while its remotely controllable MCP

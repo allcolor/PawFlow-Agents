@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.303] — 2026-10-02
+
 ### Fixed
 
 - Compacting an agent while it had queued messages could make its next turn

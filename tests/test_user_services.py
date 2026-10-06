@@ -1617,7 +1617,7 @@ class TestResourceConflict:
         async def run_session():
             done = asyncio.Event()
 
-            async def fake_recv(reader):
+            async def fake_recv(reader, **_kwargs):
                 if frames:
                     return frames.pop(0)
                 await done.wait()

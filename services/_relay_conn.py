@@ -590,8 +590,8 @@ class _RelayConnMixin:
         KEEPALIVE = 120
         while True:
             try:
-                opcode, payload = await asyncio.wait_for(
-                    _ws_recv_frame(reader), timeout=KEEPALIVE)
+                opcode, payload = await _ws_recv_frame(
+                    reader, idle_timeout=KEEPALIVE)
             except asyncio.TimeoutError:
                 reader_exception = None
                 exception_getter = getattr(reader, "exception", None)

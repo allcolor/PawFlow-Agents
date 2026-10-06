@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A relay on a slow uplink dropped its connection in the middle of large
+  results, several times a day (`Relay disconnected ... IncompleteReadError:
+  N bytes read on a total of M expected`). The relay watchdog counted only
+  received frames and keepalive pings as activity, and the ping waits for the
+  send lock that a long upload holds: after 90 s of back-to-back result
+  uploads it took the busy link for a dead one and shut the socket mid-frame.
+  The 30 s socket timeout also bounded a whole frame send, so a multi-megabyte
+  frame raised after part of it was sent. The relay now writes frames in
+  64 KiB pieces, each counting as activity, and fails only when the link makes
+  no progress for 30 s. The server's 120 s keepalive bounded the whole frame
+  read too: a body still arriving was cancelled after its header was
+  consumed, and the next read resumed mid-frame. It now bounds only the wait
+  for a frame to start, and a stall inside a frame closes the link.
+
 ## [1.0.0-beta.305] — 2026-10-06
 
 ### Fixed

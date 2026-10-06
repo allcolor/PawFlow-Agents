@@ -262,25 +262,62 @@ def _ws_unmask(data: bytes, mask: bytes) -> bytes:
     return (int.from_bytes(data, "big") ^ int.from_bytes(key, "big")).to_bytes(n, "big")
 
 
-async def _ws_recv_frame(reader):
-    hdr = await reader.readexactly(2)
+async def _read_without_stall(reader, length, stall_timeout):
+    """Read ``length`` bytes, failing only when no byte arrives in time."""
+    if stall_timeout is None:
+        return await reader.readexactly(length)
+    parts = []
+    remaining = length
+    while remaining:
+        try:
+            part = await asyncio.wait_for(
+                reader.read(min(remaining, 1024 * 1024)), stall_timeout)
+        except asyncio.TimeoutError:
+            # Not a TimeoutError: callers treat that as "no frame yet" and
+            # read again, which would resume in the middle of this frame.
+            raise ConnectionError(
+                f'relay frame stalled for {stall_timeout:g}s with '
+                f'{length - remaining} of {length} bytes read') from None
+        if not part:
+            raise asyncio.IncompleteReadError(b''.join(parts), length)
+        parts.append(part)
+        remaining -= len(part)
+    return b''.join(parts)
+
+
+async def _ws_recv_frame(reader, idle_timeout=None):
+    """Receive one frame.
+
+    ``idle_timeout`` bounds only the wait for a frame to START and raises
+    ``asyncio.TimeoutError`` with nothing consumed. Once the header has
+    begun, a stall of that long closes the link with ``ConnectionError``. A
+    caller that wrapped the whole call in ``wait_for`` cancelled a large frame
+    still uploading on a slow link after its header was consumed, and its
+    next read started in the middle of that frame.
+    """
+    if idle_timeout is None:
+        hdr = await reader.readexactly(2)
+    else:
+        hdr = await asyncio.wait_for(reader.readexactly(2), idle_timeout)
     opcode = hdr[0] & 0x0F
     masked = bool(hdr[1] & 0x80)
     length = hdr[1] & 0x7F
     if length == 126:
-        length = struct.unpack('!H', await reader.readexactly(2))[0]
+        length = struct.unpack(
+            '!H', await _read_without_stall(reader, 2, idle_timeout))[0]
     elif length == 127:
-        length = struct.unpack('!Q', await reader.readexactly(8))[0]
+        length = struct.unpack(
+            '!Q', await _read_without_stall(reader, 8, idle_timeout))[0]
     # Cap relay-declared frame sizes: a connected relay (user-run, token
     # holder) can otherwise stream bytes into unbounded memory.
     if length > _WS_MAX_FRAME_BYTES:
         raise ConnectionError(f"WS frame too large: {length} bytes")
     if masked:
-        mask = await reader.readexactly(4)
-        data = await reader.readexactly(length)
+        mask = await _read_without_stall(reader, 4, idle_timeout)
+        data = await _read_without_stall(reader, length, idle_timeout)
         payload = _ws_unmask(data, mask)
     else:
-        payload = await reader.readexactly(length)
+        payload = await _read_without_stall(reader, length, idle_timeout)
     return opcode, payload
 
 

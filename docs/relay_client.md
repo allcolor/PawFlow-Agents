@@ -392,6 +392,25 @@ The relay loop's last hard-coded deadline was `_DEAD_TIMEOUT = 90`, the silent
 socket after which it forces a reconnect. `PAWFLOW_RELAY_DEAD_TIMEOUT` sets it,
 and the value in force is printed when the worker connects.
 
+An upload in progress counts as activity: `ws_send` (`pawflow_relay/ws_frame.py`)
+writes a frame in 64 KiB pieces and reports each one, and the worker's send
+function refreshes the watchdog's clock on every piece. The watchdog used to see
+only received frames and keepalive pings, and the ping waits for the send lock.
+On a slow uplink, results uploaded back to back held that lock for more than 90
+s, so the watchdog took the busy link for a dead one and shut the socket in the
+middle of a frame. The socket's 30 s timeout now bounds each piece, not the
+whole frame: `sendall` had to finish a multi-megabyte frame within 30 s and
+raised after part of it was already sent. A frame fails only when the link makes
+no progress for 30 s.
+
+The server applies its 120 s keepalive the same way
+(`_ws_recv_frame(reader, idle_timeout=...)` in `services/_relay_ws.py`). The
+timeout bounds only the wait for a frame to start, and nothing is consumed when
+it expires. Once a frame has begun, a stall of that length closes the link with
+`ConnectionError`. Wrapping the whole read in `wait_for` cancelled a body still
+uploading after its header had been consumed, and the next read resumed in the
+middle of that frame.
+
 The worker also honours an operator kill request: Relay Desktop's **Kill
 in-flight calls** button writes `kill_inflight` into the runtime root
 (`PAWFLOW_RELAY_RUNTIME_ROOT`), the worker polls it once a second -- a file, not

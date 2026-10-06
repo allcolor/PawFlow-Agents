@@ -7,9 +7,24 @@ Used by pawflow_relay/worker.py + tools/pawflow_relay.py launcher + mcp_bridge.p
 import os
 import struct
 
+#: Bytes handed to one ``sock.send`` call. The socket timeout bounds each
+#: call, so a frame fails only when the link makes no progress for that long,
+#: never because a large frame takes longer than the timeout to upload.
+_SEND_PIECE_BYTES = 64 * 1024
 
-def ws_send(sock, data, opcode=0x01):
-    """Send a single masked WS frame. `data` must be bytes."""
+
+def ws_send(sock, data, opcode=0x01, on_progress=None):
+    """Send a single masked WS frame. `data` must be bytes.
+
+    ``on_progress`` is called after every piece the socket accepts, so a
+    caller can count an upload in progress as link activity.
+
+    ``sock.sendall`` was not usable here: the socket timeout bounded the
+    WHOLE frame (the total ``sendall`` duration on a plain socket, one
+    ``SSL_write`` of the whole buffer on TLS), so on a slow uplink a
+    multi-megabyte result frame raised ``socket.timeout`` after a part of it
+    was already on the wire, and the server then read a truncated frame.
+    """
     if isinstance(data, str):
         data = data.encode("utf-8")
     mask = os.urandom(4)
@@ -23,7 +38,12 @@ def ws_send(sock, data, opcode=0x01):
     else:
         frame += bytes([0x80 | 127]) + struct.pack("!Q", length)
     frame += mask + masked
-    sock.sendall(frame)
+    view = memoryview(frame)
+    while view:
+        sent = sock.send(view[:_SEND_PIECE_BYTES])
+        view = view[sent:]
+        if on_progress is not None:
+            on_progress()
 
 
 def ws_recv(sock):

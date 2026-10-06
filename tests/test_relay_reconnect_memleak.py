@@ -289,7 +289,7 @@ async def test_relay_main_loop_ignores_bad_json_frame(monkeypatch):
     svc = RelayService({"_service_id": "fs1", "token": "tok"})
     frames = iter([(0x01, b"{bad-json"), (0x08, b"")])
 
-    async def _fake_recv(_reader):
+    async def _fake_recv(_reader, **_kwargs):
         return next(frames)
 
     monkeypatch.setattr(fs_mod, "_ws_recv_frame", _fake_recv)
@@ -307,7 +307,7 @@ async def test_relay_main_loop_keeps_session_after_dispatch_error(monkeypatch):
         (0x08, b""),
     ])
 
-    async def _fake_recv(_reader):
+    async def _fake_recv(_reader, **_kwargs):
         return next(frames)
 
     async def _boom(*_args, **_kwargs):
@@ -338,7 +338,7 @@ async def test_relay_main_loop_labels_result_with_pending_action(monkeypatch):
         "close_info": "",
     }
 
-    async def _fake_recv(_reader):
+    async def _fake_recv(_reader, **_kwargs):
         return next(frames)
 
     monkeypatch.setattr(fs_mod, "_ws_recv_frame", _fake_recv)

@@ -262,7 +262,17 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     # function-attribute stash.
     _state = RelayWorkerState()
 
-    from pawflow_relay.ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
+    from pawflow_relay.ws_frame import ws_send as _ws_send_raw, ws_recv as _ws_frame_recv
+
+    def _mark_send_progress():
+        _last_activity[0] = time.time()
+
+    def _ws_frame_send(sock_, data, opcode=0x01):
+        # An upload in progress is link activity. The watchdog only saw
+        # received frames and keepalive pings, and the ping waits for the
+        # send lock: while results uploaded back to back on a slow link, the
+        # watchdog took the busy link for a dead one and cut it mid-frame.
+        _ws_send_raw(sock_, data, opcode, on_progress=_mark_send_progress)
 
     def _execute_command(msg, on_output=None):
         # Connection-scoped deps are bundled into _dispatch_ctx (built per

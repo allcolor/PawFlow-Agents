@@ -832,6 +832,21 @@ like a dead tmux and recreates the container; `send_queued` and
 `send_interrupt` refuse to paste into it, so the message stays queued for the
 turn that runs on the new session.
 
+### Event queue between turns, and overflow recovery
+
+Nothing reads a session's queue between two turns: the next turn's
+`drain_session` discards whatever is waiting. The CLI keeps producing events
+meanwhile. An idle Codex TUI polls `GET /backend-api/wham/usage` every few
+seconds, which is four events per poll, and on 2026-10-06 (GameDev6) that
+filled the 4096 slots in 91 minutes after the last Stop. Each later message
+was pasted and worked on by the CLI, but its turn failed at once with "CC
+interactive event queue overflow". So while a session is between turns
+(`turn_over`) and no request lease is held, a full queue drops its oldest
+event instead of overflowing. An overflow during a claimed turn still fails
+that turn. `drain_session` then clears `unreliable`, since it discards every
+event the overflow could have cost, so the next turn pastes and observes its
+message on the same session.
+
 ### Multi-message drain and msg_id dedup
 
 The live-session delta is NOT just the newest user message. A retrigger turn

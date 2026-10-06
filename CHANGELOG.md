@@ -14,6 +14,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `GET /api/fs/download` route that streams the relay's bounded chunks
   straight to the browser's download manager, with `Content-Length` and an
   attachment file name, like FileStore downloads.
+- An idle Codex session could fail every later message with "LLM call
+  failed: CC interactive event queue overflow". Between two turns nobody
+  reads a session's event queue, and the idle Codex TUI polls
+  `/backend-api/wham/usage` every few seconds, four events per poll: 4096
+  slots filled in 91 minutes, and the session was marked dead for good. The
+  messages were still pasted and the CLI worked on them, but each turn failed
+  at once and nobody saw the answers. Between turns a full queue now drops its
+  oldest event, which the next turn would have discarded anyway. An overflow
+  during a turn still fails that turn, and the next turn recovers the session
+  when it empties the queue, instead of failing until the container is
+  replaced.
 
 ## [1.0.0-beta.303] — 2026-10-02
 

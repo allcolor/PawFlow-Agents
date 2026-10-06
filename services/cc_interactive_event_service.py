@@ -680,6 +680,13 @@ class CCInteractiveEventService(BaseService):
             drained += len(state.pushback)
             state.pushback.clear()
             state.pending_compact_events.clear()
+            # An overflow only ever cost events, and every event still queued
+            # is discarded right here. The stream is whole again for the turn
+            # that drains it: keeping the session dead failed every later
+            # message with "queue overflow" while the CLI, which had received
+            # the paste, went on working on it unobserved.
+            state.unreliable = False
+            state.error = ""
             while True:
                 try:
                     state.events.get_nowait()
@@ -706,16 +713,36 @@ class CCInteractiveEventService(BaseService):
         self._track_turn_boundary(state, event)
         self._maybe_ingest_manual_prompt(state, event)
         self._maybe_adopt_orphan_turn(state, event)
-        try:
-            # Do not hold stream_condition while a bounded queue put blocks:
-            # the consumer needs that condition to drain the queue.
-            state.events.put(event, block=block, timeout=5 if block else 0)
-        except queue.Full as exc:
-            with state.stream_condition:
-                state.unreliable = True
-                state.error = "CC interactive event queue overflow"
-                state.stream_condition.notify_all()
-            raise RuntimeError(state.error) from exc
+        queued = False
+        with state.stream_condition:
+            if state.turn_over and not state.active_request_consumer_epoch:
+                # Between turns nobody reads the queue, and the next claim
+                # drains whatever is in it. The CLI keeps talking meanwhile:
+                # an idle Codex TUI polls /backend-api/wham/usage every few
+                # seconds, four events a poll, and filled 4096 slots in 91
+                # minutes. Keep the newest events instead of declaring the
+                # stream dead.
+                while True:
+                    try:
+                        state.events.put_nowait(event)
+                        break
+                    except queue.Full:
+                        try:
+                            state.events.get_nowait()
+                        except queue.Empty:
+                            pass
+                queued = True
+        if not queued:
+            try:
+                # Do not hold stream_condition while a bounded queue put
+                # blocks: the consumer needs that condition to drain the queue.
+                state.events.put(event, block=block, timeout=5 if block else 0)
+            except queue.Full as exc:
+                with state.stream_condition:
+                    state.unreliable = True
+                    state.error = "CC interactive event queue overflow"
+                    state.stream_condition.notify_all()
+                raise RuntimeError(state.error) from exc
         with state.stream_condition:
             if not state.oldest_pending_at:
                 state.oldest_pending_at = time.time()

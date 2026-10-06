@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.305] — 2026-10-06
+
 ### Fixed
 
 - The project wiki of a large relay project never refreshed: every

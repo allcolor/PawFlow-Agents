@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The project wiki of a large relay project never refreshed: every
+  maintenance cycle failed with "project wiki scan returned invalid JSON".
+  The source scan sent its result, one entry per source file, through the
+  relay's exec stdout, which is capped at 10 MiB; a project with tens of
+  thousands of source files exceeds it and the JSON arrived cut. The scan now
+  writes its result to a file under the relay's `.pawflow-runtime/`, which the
+  server reads in chunks and deletes, so the result size has no limit.
+
 ## [1.0.0-beta.304] — 2026-10-06
 
 ### Fixed

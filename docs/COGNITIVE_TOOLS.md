@@ -405,6 +405,10 @@ only the first body is sent; later copies cite the canonical path. Ordinary larg
 text keeps bounded head/tail context and carries explicit truncation metadata.
 The source scanner is encoded into the relay command and executed in memory; it
 does not create a helper file in the project or on the server-local root.
+It writes its result to `.pawflow-runtime/wiki-scan-<id>.json` under the relay
+root, which the server reads back in chunks and then deletes, also after a
+failed scan. The result does not travel through exec stdout, which the relay
+caps at 10 MiB: a project with tens of thousands of source files exceeds it.
 Wiki scans and updates run **only** on the relay container surface:
 `local=true` is rejected with a `ValueError`, because the server/host working
 tree is the deployed runtime (`app/data/runtime/...`), not the project — one

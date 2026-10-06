@@ -74,6 +74,7 @@ from pathlib import Path
 
 ROOT = Path(os.environ.get("PAWFLOW_WIKI_ROOT", ".")).resolve()
 MAX_FILES = int(os.environ.get("PAWFLOW_WIKI_MAX_FILES", "0"))
+OUTPUT = Path(os.environ["PAWFLOW_WIKI_OUTPUT"]).resolve()
 SKIP_DIRS = {
     ".git", ".hg", ".svn", ".idea", ".vscode", ".pawflow-runtime",
     "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache",
@@ -128,13 +129,14 @@ for dirpath, dirnames, filenames in os.walk(ROOT):
     if truncated:
         break
 
-print(json.dumps({
+OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+OUTPUT.write_text(json.dumps({
     "status": "scanned",
     "files": files,
     "skipped_large": skipped_large,
     "skipped_unreadable": skipped_unreadable,
     "truncated": truncated,
-}, separators=(",", ":")))
+}, separators=(",", ":")), encoding="utf-8")
 '''
 
 _SCHEMA_TEXT = """# Project Wiki Schema
@@ -433,19 +435,34 @@ class ProjectWiki:
         command = (
             "python3 -c \"import base64;"
             f"exec(base64.b64decode('{encoded_script}'))\"")
-        result = service.exec(
-            ".", command,
-            env={"PAWFLOW_WIKI_ROOT": root,
-                 "PAWFLOW_WIKI_MAX_FILES": str(max_files)},
-            local=local,
-        )
-        if not isinstance(result, dict) or int(result.get("returncode", 0) or 0) != 0:
-            detail = str((result or {}).get("stderr", ""))[:300]
-            raise RuntimeError(f"project wiki scan failed: {detail or 'relay error'}")
+        # The scan result comes back as a relay file read in chunks, not as
+        # stdout: the relay caps exec output at 10 MiB, and a large project's
+        # manifest exceeds it (cut mid-JSON, every scan of it failed).
+        output = f".pawflow-runtime/wiki-scan-{uuid.uuid4().hex}.json"
         try:
-            payload = json.loads(str(result.get("stdout") or ""))
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"project wiki scan returned invalid JSON: {exc}") from exc
+            result = service.exec(
+                ".", command,
+                env={"PAWFLOW_WIKI_ROOT": root,
+                     "PAWFLOW_WIKI_MAX_FILES": str(max_files),
+                     "PAWFLOW_WIKI_OUTPUT": output},
+                local=local,
+            )
+            if not isinstance(result, dict) or int(result.get("returncode", 0) or 0) != 0:
+                detail = str((result or {}).get("stderr", ""))[:300]
+                raise RuntimeError(f"project wiki scan failed: {detail or 'relay error'}")
+            try:
+                raw = b"".join(service.iter_file_chunks(output, local=local))
+            except Exception as exc:
+                raise RuntimeError(f"project wiki scan result unreadable: {exc}") from exc
+            try:
+                payload = json.loads(raw)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise RuntimeError(f"project wiki scan returned invalid JSON: {exc}") from exc
+        finally:
+            try:
+                service.delete_file(output, local=local)
+            except Exception as exc:
+                logger.debug("Project wiki scan output %s not removed: %s", output, exc)
         current = payload.get("files") or {}
         if not isinstance(current, dict):
             raise RuntimeError("project wiki scan returned invalid files")

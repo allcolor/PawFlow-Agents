@@ -36,16 +36,25 @@ class _Relay:
 
     def delete_file(self, path, local=False):
         self.deletes.append((path, local))
+        self.files.pop(path, None)
         return None
 
     def exec(self, path, command, env=None, local=False):
         self.exec_calls.append((path, command, env, local))
         payload = self.scans.pop(0)
-        return {"stdout": json.dumps({"status": "scanned", "files": payload}),
-                "stderr": "", "returncode": 0}
+        self.files[env["PAWFLOW_WIKI_OUTPUT"]] = json.dumps(
+            {"status": "scanned", "files": payload})
+        return {"stdout": "", "stderr": "", "returncode": 0}
 
     def read_file(self, path, local=False):
         return self.files[path].encode()
+
+    def iter_file_chunks(self, path, local=False):
+        raw = self.files[path].encode()
+        # Several chunks, so the scan must join them rather than parse one.
+        step = max(1, len(raw) // 3)
+        for start in range(0, len(raw), step):
+            yield raw[start:start + step]
 
 
 class _Client:
@@ -93,7 +102,6 @@ def test_scan_executes_in_memory_without_relay_helper_file(wiki):
     wiki.scan_from_relay(relay)
 
     assert relay.writes == []
-    assert relay.deletes == []
     path, command, env, local = relay.exec_calls[0]
     assert path == "."
     assert command.startswith("python3 -c ")
@@ -101,6 +109,53 @@ def test_scan_executes_in_memory_without_relay_helper_file(wiki):
     assert env["PAWFLOW_WIKI_ROOT"] == "."
     assert env["PAWFLOW_WIKI_MAX_FILES"] == "0"
     assert local is False
+    # The result file is the only relay file, and it is removed once read.
+    assert env["PAWFLOW_WIKI_OUTPUT"].startswith(".pawflow-runtime/wiki-scan-")
+    assert relay.deletes == [(env["PAWFLOW_WIKI_OUTPUT"], False)]
+    assert env["PAWFLOW_WIKI_OUTPUT"] not in relay.files
+
+
+def test_scan_script_writes_its_result_to_the_output_file(tmp_path, monkeypatch):
+    # Exec stdout is capped at 10 MiB by the relay: the result must not
+    # travel through it, or a large project's manifest arrives cut mid-JSON.
+    import contextlib
+    import io
+    from core.project_wiki import _SCAN_SCRIPT
+    project = tmp_path / "project"
+    (project / "pkg").mkdir(parents=True)
+    (project / "pkg" / "mod.py").write_text("x = 1\n")
+    (project / "image.png").write_bytes(b"png")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PAWFLOW_WIKI_ROOT", "project")
+    monkeypatch.setenv("PAWFLOW_WIKI_MAX_FILES", "0")
+    monkeypatch.setenv("PAWFLOW_WIKI_OUTPUT", ".pawflow-runtime/wiki-scan-t.json")
+    stdout = io.StringIO()
+
+    with contextlib.redirect_stdout(stdout):
+        exec(_SCAN_SCRIPT, {})
+
+    assert stdout.getvalue() == ""
+    payload = json.loads(
+        (tmp_path / ".pawflow-runtime" / "wiki-scan-t.json").read_text())
+    assert payload["status"] == "scanned"
+    assert set(payload["files"]) == {"pkg/mod.py"}
+    assert payload["files"]["pkg/mod.py"]["sha256"] == hashlib.sha256(
+        b"x = 1\n").hexdigest()
+
+
+def test_failed_scan_still_removes_the_output_file(wiki):
+    relay = _Relay([])
+
+    def failing_exec(path, command, env=None, local=False):
+        relay.exec_calls.append((path, command, env, local))
+        relay.files[env["PAWFLOW_WIKI_OUTPUT"]] = '{"status": "scan'
+        return {"stdout": "", "stderr": "boom", "returncode": 1}
+
+    relay.exec = failing_exec
+    with pytest.raises(RuntimeError, match="boom"):
+        wiki.scan_from_relay(relay)
+    output = relay.exec_calls[0][2]["PAWFLOW_WIKI_OUTPUT"]
+    assert relay.deletes == [(output, False)]
 
 
 def test_zero_batch_uses_safe_default_and_enforces_source_budgets(wiki):

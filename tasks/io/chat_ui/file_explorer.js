@@ -329,15 +329,15 @@ function _feNewDir(){
 }
 
 function _feDl(name){
-  action$('fs_read_file',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:_fePath(name)}).subscribe(d => {
-    if(d.error){alert(t('errorMessage', { error: d.error }));return;}
-    let blob;
-    if(d.encoding==='base64'){
-      const bin=atob(d.content);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-      blob=new Blob([arr]);
-    } else {blob=new Blob([d.content],{type:'text/plain;charset=utf-8'});}
-    const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);
-  });
+  // Native navigation to the streaming route: the browser's download manager
+  // writes the bytes to disk, nothing is buffered in page memory.
+  const q=new URLSearchParams({conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:_fePath(name)});
+  const a=document.createElement('a');
+  a.href='/api/fs/download?'+q.toString();
+  a.download=name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 function _feUpload(){

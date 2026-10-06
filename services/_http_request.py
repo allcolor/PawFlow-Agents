@@ -428,6 +428,10 @@ class _RequestHandler(BaseHTTPRequestHandler):
             from services._http_upload_stream import handle_upload_stream
             handle_upload_stream(self, content_length, session, query)
             return
+        if method == "GET" and path == "/api/fs/download":
+            from services._http_download_stream import handle_relay_download
+            handle_relay_download(self, session, query)
+            return
 
         # Read ordinary request bodies after all streaming fast-paths.
         body = self.rfile.read(content_length) if content_length > 0 else b""

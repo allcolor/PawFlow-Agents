@@ -79,6 +79,16 @@ Both the attachment preview and relay File Manager show native upload progress.
 Closing only the File Manager does not cancel an active request; closing or
 reloading the webchat tab does.
 
+File Manager downloads are streamed the same way in reverse. The download
+action navigates to `GET /api/fs/download?conversation_id=…&service=…&path=…`,
+a listener fast path that requires the same conversation write access as the
+`fs_read_file` action, sends `Content-Length` from the relay `stat`, and
+forwards the relay's bounded `read_file_chunked` chunks straight to the
+response with an `attachment` disposition. The browser's download manager
+writes the file to disk; the page never holds it as a `Blob`. A relay failure
+mid-transfer closes the connection short of `Content-Length`, so the browser
+reports a failed download instead of saving a truncated file.
+
 ## Image Tools
 
 | Tool | Purpose |

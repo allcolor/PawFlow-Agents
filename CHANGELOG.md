@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The File Manager could not download large relay files. A download read the
+  whole file through the `fs_read_file` action (capped at 4 MiB) as JSON and
+  base64, then rebuilt it as a `Blob` in the page. Downloads now go to a new
+  `GET /api/fs/download` route that streams the relay's bounded chunks
+  straight to the browser's download manager, with `Content-Length` and an
+  attachment file name, like FileStore downloads.
+
 ## [1.0.0-beta.303] — 2026-10-02
 
 ### Fixed

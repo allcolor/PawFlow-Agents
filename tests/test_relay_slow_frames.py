@@ -1,9 +1,11 @@
 """Large relay frames on a slow link are neither cut nor desynchronised.
 
-The Ultima7D relay dropped its connection mid-frame many times a day: its
-watchdog ignored uploads in progress, its socket timeout bounded a whole
-frame send, and the server cancelled a frame body that took longer than its
-keepalive to arrive.
+The Ultima7D relay dropped its connection mid-frame many times a day. Its
+log showed the cause: its 30 s socket timeout bounded a whole TLS frame write
+("The write operation timed out"), and every later write on the broken TLS
+link failed with SSL BAD_LENGTH until the server closed it. Two related
+defects are covered too: the watchdog ignored uploads in progress, and the
+server cancelled a frame body that took longer than its keepalive to arrive.
 """
 
 import asyncio
@@ -160,6 +162,35 @@ def test_ws_send_longer_than_the_socket_timeout_succeeds_while_it_progresses():
     # 0.3 s socket timeout although the reader never stopped draining it.
     assert elapsed > 0.3
     assert ws_recv(_BufferSocket(received)) == (0x01, payload)
+
+
+class _TimeoutAfterSocket(_TrickleSocket):
+    """Times out on the second piece, like the Ultima7D TLS uplink."""
+
+    def __init__(self):
+        super().__init__(limit=64 * 1024)
+        self.sends = 0
+        self.shutdowns = []
+
+    def send(self, view):
+        self.sends += 1
+        if self.sends == 2:
+            raise socket.timeout("The write operation timed out")
+        return super().send(view)
+
+    def shutdown(self, how):
+        self.shutdowns.append(how)
+
+
+def test_failed_send_shuts_the_socket_down_for_an_immediate_reconnect():
+    sock = _TimeoutAfterSocket()
+
+    with pytest.raises(socket.timeout):
+        ws_send(sock, os.urandom(200_000))
+
+    # Half a frame is on the wire and TLS would refuse every later write
+    # with SSL BAD_LENGTH: the link is shut, not reused.
+    assert sock.shutdowns == [socket.SHUT_RDWR]
 
 
 def test_relay_worker_counts_send_progress_as_watchdog_activity():

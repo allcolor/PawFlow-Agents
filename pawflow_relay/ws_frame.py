@@ -5,6 +5,7 @@ Used by pawflow_relay/worker.py + tools/pawflow_relay.py launcher + mcp_bridge.p
 """
 
 import os
+import socket
 import struct
 
 #: Bytes handed to one ``sock.send`` call. The socket timeout bounds each
@@ -23,7 +24,13 @@ def ws_send(sock, data, opcode=0x01, on_progress=None):
     WHOLE frame (the total ``sendall`` duration on a plain socket, one
     ``SSL_write`` of the whole buffer on TLS), so on a slow uplink a
     multi-megabyte result frame raised ``socket.timeout`` after a part of it
-    was already on the wire, and the server then read a truncated frame.
+    was already on the wire ("The write operation timed out").
+
+    A failed send shuts the socket down: the server is left waiting for the
+    rest of a frame, and TLS refuses every later write that is not a retry of
+    the failed one (``[SSL: BAD_LENGTH] bad length``). Each later result
+    failed that way until the server closed the link; now the relay
+    reconnects at once and its ledger serves the retried requests.
     """
     if isinstance(data, str):
         data = data.encode("utf-8")
@@ -39,11 +46,18 @@ def ws_send(sock, data, opcode=0x01, on_progress=None):
         frame += bytes([0x80 | 127]) + struct.pack("!Q", length)
     frame += mask + masked
     view = memoryview(frame)
-    while view:
-        sent = sock.send(view[:_SEND_PIECE_BYTES])
-        view = view[sent:]
-        if on_progress is not None:
-            on_progress()
+    try:
+        while view:
+            sent = sock.send(view[:_SEND_PIECE_BYTES])
+            view = view[sent:]
+            if on_progress is not None:
+                on_progress()
+    except OSError:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        raise
 
 
 def ws_recv(sock):

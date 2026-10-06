@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.305] — 2026-10-06
+
 ### Fixed
 
 - A relay on a slow uplink dropped its connection in the middle of large
@@ -23,10 +25,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cancelled after its header was consumed, and the next read resumed
   mid-frame. It now bounds only the wait for a frame to start, and a stall
   inside a frame closes the link.
-
-## [1.0.0-beta.305] — 2026-10-06
-
-### Fixed
 
 - The project wiki of a large relay project never refreshed: every
   maintenance cycle failed with "project wiki scan returned invalid JSON".

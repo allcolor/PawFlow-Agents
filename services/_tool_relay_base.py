@@ -58,6 +58,33 @@ def _is_relay_transport_error(exc: Exception) -> bool:
     return False
 
 
+# Tools whose arguments become conversation content: a message to another
+# agent or to the user, a task prompt, or a persisted note or plan. A value
+# substituted there is stored and shown in clear, so their arguments keep the
+# $NAME reference instead.
+_NO_VAR_SUBSTITUTION_TOOLS = frozenset({
+    "delegate", "flash_delegate", "consult_agent", "a2a", "A2A",
+    "assign_task", "complete_task", "verify_task",
+    "notify_user", "ask_user",
+    "propose_workflow", "review_workflow_proposal",
+    "todolist", "remember", "diary_write", "scratchpad", "kg_add", "learn",
+    "schedule_continuation", "ScheduleWakeup",
+})
+
+
+def allows_var_substitution(tool_name: str, arguments) -> bool:
+    """True when $VAR / ${VAR} may be replaced in this call's arguments.
+
+    A wrapped call (use_tool and its MCP spellings) is judged by its inner
+    tool, whose arguments the wrapper carries.
+    """
+    if tool_name in _NO_VAR_SUBSTITUTION_TOOLS:
+        return False
+    from core.llm_client import unwrap_mcp_tool
+    inner_name, _inner_args = unwrap_mcp_tool(tool_name, arguments)
+    return inner_name not in _NO_VAR_SUBSTITUTION_TOOLS
+
+
 def _resolve_vars_in_args(arguments: dict, env: dict, skip_keys: set = None):
     """Resolve $VAR and ${VAR} patterns in all string values of arguments.
 

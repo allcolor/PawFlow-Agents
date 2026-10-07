@@ -738,8 +738,9 @@ class _ToolRelayExecuteMixin:
                         _skip = {"command"}
                     elif tool_name == "execute_script":
                         _skip = {"code"}
-                    _resolve_vars_in_args(
-                        execution_arguments, _all_env, skip_keys=_skip)
+                    if _trb.allows_var_substitution(tool_name, execution_arguments):
+                        _resolve_vars_in_args(
+                            execution_arguments, _all_env, skip_keys=_skip)
                 # Only secrets → redaction
                 _secret_values, _secret_names = self._cached_secret_values(
                     user_id, _secret_cid, fingerprint=_fp,

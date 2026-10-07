@@ -318,6 +318,58 @@ def test_bash_still_receives_secret_environment(monkeypatch):
     assert len(fingerprint_calls) == 2
 
 
+def _relay_with_secret_env(monkeypatch):
+    from core.tool_approval import ToolApprovalGate
+
+    ToolRelayService.clear_runtime_caches()
+    registry = _Registry("ok")
+    svc = ToolRelayService({})
+    monkeypatch.setattr(svc, "_get_registry", lambda *args: registry)
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_has_hooks", classmethod(lambda *args: False))
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_extra_fast",
+        staticmethod(lambda _cid, key, default=None: _fast_auto_permissions(key, default)))
+    monkeypatch.setattr(ToolApprovalGate, "_is_catastrophic_command", lambda _cmd: False)
+    monkeypatch.setattr(
+        ToolRelayService, "_secret_config_fingerprint",
+        classmethod(lambda cls, uid, conv, agent_name="": ("fp",)))
+    monkeypatch.setattr(_trb_mod, "resolve_secrets_env",
+                        lambda *_args: {"TOKEN": "TOPSECRET"})
+    monkeypatch.setattr(_trb_mod, "resolve_secret_values", lambda *_args: (set(), {}))
+    return svc, registry
+
+
+@pytest.mark.parametrize("tool_name, arguments", [
+    ("delegate", {"agent": "reviewer", "message": "use ${TOKEN} and $TOKEN"}),
+    ("notify_user", {"content": "token is $TOKEN"}),
+    ("assign_task", {"agent": "reviewer", "task_def_name": "t",
+                     "variables": {"key": "${TOKEN}"}}),
+    ("use_tool", {"tool_name": "delegate",
+                  "arguments_json": '{"agent": "reviewer", "message": "$TOKEN"}'}),
+])
+def test_message_tools_keep_secret_references(monkeypatch, tool_name, arguments):
+    import copy
+
+    svc, registry = _relay_with_secret_env(monkeypatch)
+    sent = copy.deepcopy(arguments)
+
+    svc._do_execute("r1", tool_name, sent, "alice", "conv1", "assistant")
+
+    assert registry.executed_args == [arguments]
+    assert "TOPSECRET" not in repr(registry.executed_args)
+
+
+def test_execution_tools_still_resolve_secret_references(monkeypatch):
+    svc, registry = _relay_with_secret_env(monkeypatch)
+
+    svc._do_execute("r1", "web_fetch",
+                    {"url": "https://example.test", "headers": {"X-Key": "$TOKEN"}},
+                    "alice", "conv1", "assistant")
+
+    assert registry.executed_args[0]["headers"] == {"X-Key": "TOPSECRET"}
+
+
 def test_post_tool_hook_never_receives_private_secret_environment(monkeypatch):
     import core.agent_hooks as hooks_mod
     from core.tool_approval import ToolApprovalGate

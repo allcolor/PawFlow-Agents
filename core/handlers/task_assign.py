@@ -200,7 +200,9 @@ class AssignTaskHandler(ToolHandler):
         Resolution order:
         1. Escaped \\${...} → preserved as literal ${...}
         2. Custom variables from 'variables' dict: ${key} → value
-        3. Unified cascade: secrets → params → env
+        3. Parameter cascade (conv → user → global → env). Secrets are
+           never resolved: the task prompt is shown to agents and stored,
+           so a secret stays a ${NAME} reference.
         """
         # Step 1: protect escaped \${...} with placeholder
         _esc = "\x00ESC\x00"
@@ -213,7 +215,8 @@ class AssignTaskHandler(ToolHandler):
         if "${" in text:
             from core.expression import resolve_expression
             text = resolve_expression(text, owner=user_id,
-                                      conversation_id=conversation_id)
+                                      conversation_id=conversation_id,
+                                      include_secrets=False)
         # Step 4: restore escaped expressions
         text = text.replace(_esc, "${")
         return text

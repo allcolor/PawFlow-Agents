@@ -370,8 +370,10 @@ class AgentToolExecMixin:
                     logger.error("pre_tool_call hook failed; denying tool: %s", _he,
                                  exc_info=True)
                     return tc, f"Error: pre_tool_call hook failed: {_he}"
-                # Resolve $VAR / ${VAR} in arguments before execution.
-                if _all_env:
+                # Resolve $VAR / ${VAR} in arguments before execution, except
+                # in tools whose arguments become conversation content.
+                from services._tool_relay_base import allows_var_substitution
+                if _all_env and allows_var_substitution(tc.name, tc.arguments):
                     _skip = set()
                     if tc.name == "bash":
                         _skip = {"command"}

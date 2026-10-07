@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- Messages between agents carried secrets in clear. Before running a tool,
+  PawFlow replaced every `$NAME` / `${NAME}` in its arguments with the
+  matching secret, so a `delegate` (or `flash_delegate`, `consult_agent`,
+  `a2a`, `assign_task`, `notify_user`, `ask_user`, ...) whose text named a
+  secret delivered, stored and displayed its value. Tools whose arguments
+  become conversation content (messages to agents or to the user, task and
+  workflow traffic, todo/memory/diary/scratchpad/knowledge-graph notes,
+  scheduled plans) now keep the reference, also when called through
+  `use_tool`. `assign_task` no longer resolves secrets in a task
+  definition's prompt and criteria; parameters still resolve. Execution tools
+  (`bash` environment, `web_fetch`, ...) still receive the secret value.
+
 ## [1.0.0-beta.306] — 2026-10-07
 
 ### Fixed

@@ -174,10 +174,13 @@ class LazyResolveDict(dict):
 def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = None,
                        owner: Optional[str] = None,
                        conversation_id: Optional[str] = None,
-                       _depth: int = 0) -> str:
+                       _depth: int = 0,
+                       include_secrets: bool = True) -> str:
     """Resolve all ${...} expressions in a template string.
 
     Cascade: secrets (conv→user→global) → params (flow attrs→flow params→conv→user→global→env).
+    With ``include_secrets=False`` secrets are skipped: use it for text that
+    an agent or a user will read, where a secret must stay a reference.
 
     FlowFile attributes are merged into parameters by callers
     ({**flow_params, **flowfile_attrs} — attrs win over flow params).
@@ -421,9 +424,10 @@ def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = Non
 
         # ── Unified resolution: secrets cascade → params cascade ──
         # 1. Secrets: flow(n/a) → conv → user → global
-        val, found = _cascade_secret(key, exact_scope=exact_scope)
-        if found:
-            return _return_val(val)
+        if include_secrets:
+            val, found = _cascade_secret(key, exact_scope=exact_scope)
+            if found:
+                return _return_val(val)
 
         # 2. Parameters: flow → conv → user → global
         val, found = _cascade_param(key, exact_scope=exact_scope)
@@ -454,7 +458,8 @@ def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = Non
     if '${' in result and result != template:
         result = resolve_expression(result, parameters, owner,
                                     conversation_id=conversation_id,
-                                    _depth=_depth + 1)
+                                    _depth=_depth + 1,
+                                    include_secrets=include_secrets)
 
     # The outermost call turns protected \${...} escapes back into literal
     # ${...}. Done only at depth 0 so the tokens survive every recursive pass.

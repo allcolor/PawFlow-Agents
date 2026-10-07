@@ -73,6 +73,18 @@ approved. Five properties enforce that, each covered by regression tests in
   OpenAI or unified-diff `apply_patch` headers. A session or allow-all grant for
   the outer tool never covers a protected path hidden inside its payload.
 
+`$VAR` / `${VAR}` resolution never applies to tools whose arguments become
+conversation content: messages to other agents (`delegate`, `flash_delegate`,
+`consult_agent`, `a2a`), task and workflow traffic (`assign_task`,
+`complete_task`, `verify_task`, `propose_workflow`,
+`review_workflow_proposal`), messages to the user (`notify_user`,
+`ask_user`), and persisted notes and plans (`todolist`, `remember`,
+`diary_write`, `scratchpad`, `kg_add`, `learn`, `schedule_continuation`,
+`ScheduleWakeup`). A wrapped call (`use_tool`) is judged by its inner tool.
+Their text keeps the `$NAME` reference, so a secret is never stored or shown
+in clear. `assign_task` likewise resolves only parameters, never secrets, in a
+task definition's prompt and criteria.
+
 One gap remains: filesystem handlers resolve the expression language
 (`${scope.key}`) on their own arguments at handler entry, after the gate. A
 path approved as literal text can therefore still resolve to a different

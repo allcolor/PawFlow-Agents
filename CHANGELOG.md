@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A recurring loop addressed to one agent (`[scheduled:<agent>]` prompt)
+  lost its target: its stored reason starts with `[loop] `, and the poller
+  only recognized the agent tag at the very start. The loop then waited for
+  the whole conversation to go idle, was retried as "due" on every poll
+  pass while other agents worked, and, once it ran, woke the conversation's
+  selected agent with only the first 60 characters of the prompt. The
+  poller now reads the tag after `[loop] `, wakes the addressed agent as
+  soon as it is idle (or queues the reminder into its active turn once),
+  and delivers the full loop prompt, also after a deferral.
+
+- `/schedules add <datetime> <reason> @agent` tagged its reason
+  `[@agent]`, a form the poller never parsed, so the schedule woke the
+  conversation's selected agent instead. It now uses the
+  `[scheduled:<agent>]` tag like `schedule_recheck`.
+
 ## [1.0.0-beta.305] — 2026-10-06
 
 ### Fixed

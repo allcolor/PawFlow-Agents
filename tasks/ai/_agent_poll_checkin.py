@@ -87,7 +87,7 @@ class _AgentPollCheckinMixin:
         if not scheduler.claim_due([entry]):
             return
         reason = self._tag_reason_for_agent(
-            agent_name, entry.get("reason") or "scheduled recheck")
+            agent_name, self._scheduled_entry_reason(entry))
         if self._redirect_external_mcp_wake(conversation_id, [reason]):
             return
         user_id = entry.get("user_id") or ""
@@ -229,10 +229,22 @@ class _AgentPollCheckinMixin:
             pv_match = re.search(r'\[plan_verify:\w+:\d+:[\w.-]+\]\s*\(([\w.-]+)\)', sr)
             if pv_match:
                 return pv_match.group(1)
-            sched_match = re.match(r'\[scheduled:([\w.-]+)\]', sr)
+            # Recurring loops prefix their prompt with "[loop] ".
+            sched_match = re.match(r'(?:\[loop\]\s*)?\[scheduled:([\w.-]+)\]', sr)
             if sched_match:
                 return sched_match.group(1)
         return None
+
+    @staticmethod
+    def _scheduled_entry_reason(entry: dict) -> str:
+        """Return the wake text of a due entry.
+
+        A loop's reason only keeps the first 60 characters of its prompt for
+        logs; the woken agent must receive the full prompt.
+        """
+        if entry.get("prompt"):
+            return f"[loop] {entry['prompt']}"
+        return entry.get("reason") or "scheduled recheck"
 
 
     def _build_poll_checkin(self, conversation_id: str,

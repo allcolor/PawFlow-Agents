@@ -233,7 +233,8 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         scheduler = PollScheduler.instance()
         sched_reason = reason
         if agent:
-            sched_reason = f"[@{agent}] {reason}"
+            # The poller routes wakes by this tag (same as schedule_recheck).
+            sched_reason = f"[scheduled:{agent}] {reason}"
         if loop_seconds and int(loop_seconds) > 0:
             loop_key = scheduler.schedule_loop(
                 conversation_id=conv_id,

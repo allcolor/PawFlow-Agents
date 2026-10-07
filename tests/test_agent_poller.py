@@ -831,3 +831,108 @@ def test_due_wake_never_loads_the_full_transcript(
     assert len(workers) == 1
     args = task._build_poll_context.call_args.args
     assert args == (cid, [])
+
+
+# ── Recurring loops addressed to one agent ──
+
+_LOOP_PROMPT = ("[scheduled:GameDev2] STATUT HORAIRE : envoyer via notify_user un "
+                "statut court en francais, sans lui demander de decision")
+
+
+def _schedule_due_loop(cid, prompt=_LOOP_PROMPT):
+    from core.poll_scheduler import PollScheduler
+    scheduler = PollScheduler.instance()
+    key = scheduler.schedule_loop(cid, 3600, prompt=prompt, user_id="testuser")
+    scheduler._schedules[key]["recheck_at"] = time.time() - 1
+    return key
+
+
+def test_loop_reason_names_its_target_agent(poller_env):
+    poller = AgentPollerMixin()
+    cid = "loop_target"
+    reason = f"[loop] {_LOOP_PROMPT[:60]}"
+    assert poller._extract_agent_from_reasons([reason]) == "GameDev2"
+    assert poller._scheduled_entry_target(
+        cid, {"key": f"loop::{cid}::abc123", "reason": reason}) == "GameDev2"
+
+
+def test_loop_for_idle_agent_starts_with_full_prompt_while_others_work(poller_env):
+    """Other busy agents must not hold a loop addressed to an idle agent."""
+    cid = "loop_idle_target"
+    task = _active_task(cid, ["GameDev4", "GameDev6"])
+    key = _schedule_due_loop(cid)
+
+    threads = _poll(task, cid)
+
+    assert len(threads) == 1
+    assert threads[0].kwargs["args"][0]["_gen_key"] == f"{cid}:GameDev2"
+    reasons = task._build_poll_context.call_args.kwargs["scheduled_reasons"]
+    assert reasons == [f"[loop] {_LOOP_PROMPT}"]
+    remaining = _remaining(cid)
+    assert [e["key"] for e in remaining] == [key]
+    assert remaining[0]["recheck_at"] - time.time() > 3500
+
+
+def test_loop_for_busy_agent_is_queued_once_with_full_prompt(poller_env, monkeypatch):
+    from core.pending_queue import PendingQueue
+
+    cid = "loop_busy_target"
+    task = _active_task(cid, ["GameDev2"])
+    key = _schedule_due_loop(cid)
+    persist = task._persist_scheduled_wakeup
+    contents = []
+
+    def capture(conversation_id, agent_name, content, *args, **kwargs):
+        contents.append(content)
+        return persist(conversation_id, agent_name, content, *args, **kwargs)
+
+    monkeypatch.setattr(task, "_persist_scheduled_wakeup", capture)
+    monkeypatch.setattr("tasks.ai.agent_loop.AgentLoopTask.wake_agent", MagicMock())
+
+    assert _poll(task, cid) == []
+
+    assert PendingQueue.for_agent(cid, "GameDev2").peek_count() == 1
+    assert len(contents) == 1 and _LOOP_PROMPT in contents[0]
+    remaining = _remaining(cid)
+    assert [e["key"] for e in remaining] == [key]
+    assert remaining[0]["recheck_at"] - time.time() > 3500
+
+
+def test_untargeted_loop_deferred_copy_keeps_full_prompt(poller_env):
+    from core.poll_scheduler import PollScheduler
+
+    cid = "loop_untargeted"
+    prompt = "check the nightly build and report every failing job with its log"
+    task = _active_task(cid, ["assistant"])
+    _schedule_due_loop(cid, prompt=prompt)
+
+    assert _poll(task, cid) == []
+    pending = [e for e in _remaining(cid) if "::pending::" in e["key"]]
+    assert len(pending) == 1 and pending[0]["prompt"] == prompt
+
+    task._active_conversations.clear()
+    task._active_turns.clear()
+    PollScheduler.instance()._schedules[pending[0]["key"]]["recheck_at"] = time.time() - 1
+    assert len(_poll(task, cid)) == 1
+    reasons = task._build_poll_context.call_args.kwargs["scheduled_reasons"]
+    assert reasons == [f"[loop] {prompt}"]
+
+
+@pytest.mark.parametrize("loop_seconds", [0, 3600])
+def test_add_schedule_with_agent_targets_that_agent(poller_env, loop_seconds):
+    import json
+    from core import FlowFile
+    from core.conversation_store import ConversationStore
+    from tasks.ai.actions.scheduling import _handle_scheduling
+
+    cid = "ui_schedule_target"
+    body = {"action": "add_schedule", "conversation_id": cid,
+            "at": "20260101000000", "reason": "status", "agent": "GameDev2"}
+    if loop_seconds:
+        body["loop_seconds"] = loop_seconds
+    task = AgentLoopTask({"conversation_store": True, "api_key": "test-key"})
+    _handle_scheduling(task, "add_schedule", body, ConversationStore.instance(),
+                       "testuser", FlowFile(content=json.dumps(body).encode()))
+
+    [entry] = _remaining(cid)
+    assert AgentPollerMixin()._scheduled_entry_target(cid, entry) == "GameDev2"

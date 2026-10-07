@@ -392,7 +392,7 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                         continue
                     if target_agent and ("::continuation::" in entry_key
                                          or "[continuation]" in reason
-                                         or reason.startswith("[scheduled:")):
+                                         or reason.startswith(("[scheduled:", "[loop] "))):
                         # Explicit reminders carry work, unlike pending-queue
                         # nudges. Deliver their plan to the active agent once.
                         active_wakes.append((target_agent, entry))
@@ -431,7 +431,7 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                     scheduled_entries[conversation_id] = run_entries
                     scheduled_reasons[conversation_id] = [
                         self._tag_reason_for_agent(
-                            wake_agent, entry.get("reason", "scheduled recheck"))
+                            wake_agent, self._scheduled_entry_reason(entry))
                         for entry in run_entries
                     ]
 
@@ -466,7 +466,7 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                 continue
             scheduled_reasons[conversation_id] = [
                 self._tag_reason_for_agent(
-                    wake_agent, entry.get("reason", "scheduled recheck"))
+                    wake_agent, self._scheduled_entry_reason(entry))
                 for entry in run_entries
             ]
 

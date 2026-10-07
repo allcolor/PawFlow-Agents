@@ -1028,6 +1028,12 @@ Run a prompt or command on a recurring interval.
 
 Minimum interval: 5 seconds.
 
+A loop whose prompt starts with `[scheduled:<agent>]` (as written by
+`schedule_recheck(agent=..., recurring=true)`) is addressed to that agent: it
+runs as soon as that agent is idle, even while other agents keep the
+conversation busy. If the agent is mid-turn, the reminder is queued into that
+turn once. The agent always receives the full prompt.
+
 ---
 
 ## Plans

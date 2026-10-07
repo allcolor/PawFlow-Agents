@@ -291,6 +291,9 @@ class PollScheduler:
                     "reason": entry.get("reason", ""),
                     "created_at": now,
                 }
+                if entry.get("prompt"):
+                    # A deferred loop copy must still deliver the full prompt.
+                    self._schedules[key]["prompt"] = entry["prompt"]
                 updated += 1
             if updated:
                 self._save()

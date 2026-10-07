@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.306] — 2026-10-07
+
 ### Fixed
 
 - A recurring loop addressed to one agent (`[scheduled:<agent>]` prompt)

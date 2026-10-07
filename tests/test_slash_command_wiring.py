@@ -51,6 +51,9 @@ from tasks.io._telegram_client_helpers import _format_telegram_command_result
         ("/flow start flow-1 key=value", "start_flow", {"parameters": {"key": "value"}}),
         ("/autoconv on @reviewer 6/1m", "random_thought", {"sub": "on", "agent": "reviewer"}),
         ("/loop 5m check deploy", "loop_start", {"interval_seconds": 300}),
+        ("/loop 2-3/h check deploy", "loop_start",
+         {"interval_seconds": 1200, "interval_max_seconds": 1800}),
+        ("/loop 30s /compact", "loop_start", {"prompt": "/compact"}),
         ("/encrypt status", "conv_encrypt_status", {}),
         ("/clear-store ALL", "clear_store", {"scope": "all_agents"}),
     ],
@@ -62,6 +65,11 @@ def test_repaired_slash_command_routes_match_handler_contract(text, action, expe
     assert parsed["conversation_id"] == "conv1"
     for key, value in expected.items():
         assert parsed[key] == value
+
+
+@pytest.mark.parametrize("text", ["/loop 2/h check deploy", "/loop 5m check deploy"])
+def test_fixed_loop_interval_has_no_range(text):
+    assert "interval_max_seconds" not in _parse_command(text, "conv1", "alice", "assistant")
 
 
 def test_every_help_registry_command_has_a_parse_route():

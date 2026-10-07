@@ -56,16 +56,19 @@ def _parse_loop_command(arg: str, base: dict) -> dict:
             return {"display": "Usage: /loop stop <key>", **base}
         return {"action": "loop_stop", "key": tokens[1], **base}
 
-    interval = _interval_seconds(tokens[0])
+    interval, interval_max = _interval_range(tokens[0])
     if interval < 5:
         return {"display": "Usage: /loop <interval: 5s|10m|2h> <prompt or /command>", **base}
     prompt = " ".join(tokens[1:]).strip()
     if not prompt:
         return {"display": "Usage: /loop <interval> <prompt or /command>", **base}
-    return {
+    result = {
         "action": "loop_start", "interval_seconds": interval,
         "prompt": prompt, **base,
     }
+    if interval_max > interval:
+        result["interval_max_seconds"] = interval_max
+    return result
 
 
 def _parse_encrypt_command(arg: str, base: dict) -> dict:
@@ -190,14 +193,23 @@ def _parse_goal_command(arg: str, base: dict, agent_name: str) -> dict:
     return result
 
 
-def _interval_seconds(spec: str) -> int:
+def _interval_range(spec: str) -> tuple:
+    """Return the (shortest, longest) interval in seconds of a loop spec.
+
+    ``2-3/h`` runs 2 to 3 times per hour: each tick draws its interval
+    between 20 and 30 minutes. A fixed spec returns the same value twice.
+    """
     units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
     simple = re.fullmatch(r"(\d+)([smhd])", spec.lower())
     if simple:
-        return int(simple.group(1)) * units[simple.group(2)]
+        seconds = int(simple.group(1)) * units[simple.group(2)]
+        return seconds, seconds
     frequency = re.fullmatch(r"(\d+)(?:-(\d+))?/(\d*)([smhd])", spec.lower())
     if frequency:
-        count = int(frequency.group(1))
+        count_min = int(frequency.group(1))
+        count_max = int(frequency.group(2) or count_min)
         duration = int(frequency.group(3) or "1") * units[frequency.group(4)]
-        return duration // count if count else 0
-    return 0
+        if not count_min or count_max < count_min:
+            return 0, 0
+        return duration // count_max, duration // count_min
+    return 0, 0

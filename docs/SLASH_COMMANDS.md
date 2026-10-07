@@ -1028,6 +1028,17 @@ Run a prompt or command on a recurring interval.
 
 Minimum interval: 5 seconds.
 
+Frequency format: `<min>[-<max>]/<duration>`, as in `/autoconv`. A ranged
+frequency draws each tick's delay at random between `duration/max` and
+`duration/min`: `2-3/h` waits 20 to 30 minutes between runs.
+
+A loop whose prompt starts with `/` runs that slash command on every tick
+instead of waking an agent. It goes through the same command dispatcher as
+the chat input, as the loop owner and for the conversation's selected agent,
+whether or not agents are busy. The command's result appears as a
+notification. If the previous run of the same loop is still busy, the tick is
+skipped.
+
 A loop whose prompt starts with `[scheduled:<agent>]` (as written by
 `schedule_recheck(agent=..., recurring=true)`) is addressed to that agent: it
 runs as soon as that agent is idle, even while other agents keep the

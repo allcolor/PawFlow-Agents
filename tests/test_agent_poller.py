@@ -918,6 +918,100 @@ def test_untargeted_loop_deferred_copy_keeps_full_prompt(poller_env):
     assert reasons == [f"[loop] {prompt}"]
 
 
+# ── Loops whose prompt is a /command ──
+
+
+def _poll_running_loop_commands(task):
+    """Run one poll pass; loop commands run inline, agent wakes are captured."""
+    def thread(*args, **kwargs):
+        worker = MagicMock()
+        if kwargs.get("name", "").startswith("loop-cmd-"):
+            worker.start.side_effect = lambda: kwargs["target"](*kwargs["args"])
+        return worker
+
+    with patch("tasks.ai.agent_poller.threading.Thread", side_effect=thread) as thread_cls:
+        task._poll_once()
+    return [name for name in (call.kwargs.get("name", "")
+                              for call in thread_cls.call_args_list)
+            if name.startswith(("loop-cmd-", "agent-poll-"))]
+
+
+def _capture_notifications(monkeypatch):
+    events = []
+    bus = MagicMock()
+    bus.publish_event.side_effect = lambda cid, event, data: events.append((cid, event, data))
+    monkeypatch.setattr(
+        "core.conversation_event_bus.ConversationEventBus.instance", lambda: bus)
+    return events
+
+
+def test_command_loop_runs_its_command_instead_of_waking_an_agent(
+        poller_env, monkeypatch):
+    import json
+    from core import FlowFile
+    from core.conversation_store import ConversationStore
+
+    cid = "loop_command"
+    task = _active_task(cid, [])
+    ConversationStore.instance().set_extra(
+        cid, "active_resources", {"agent": "GameDev2"})
+    key = _schedule_due_loop(cid, prompt="/cost")
+    calls = []
+
+    def execute(ff):
+        calls.append((json.loads(ff.get_content()),
+                      ff.get_attribute("http.auth.principal")))
+        return [FlowFile(content=json.dumps({"display": "Cost: $1.00"}).encode())]
+
+    monkeypatch.setattr(task, "execute", execute)
+    events = _capture_notifications(monkeypatch)
+
+    names = _poll_running_loop_commands(task)
+
+    assert names == [f"loop-cmd-{cid[:8]}"]
+    assert calls == [({
+        "action": "command", "text": "/cost", "conversation_id": cid,
+        "agent_name": "GameDev2", "_inline_response": True,
+    }, "testuser")]
+    notes = [data for c, event, data in events if event == "notification"]
+    assert len(notes) == 1 and notes[0]["content"] == "[loop] /cost\nCost: $1.00"
+    task._build_poll_context.assert_not_called()
+    remaining = _remaining(cid)
+    assert [e["key"] for e in remaining] == [key]
+    assert remaining[0]["recheck_at"] - time.time() > 3500
+
+
+def test_command_loop_failure_is_reported_and_releases_the_loop(
+        poller_env, monkeypatch):
+    from tasks.ai import agent_poller
+
+    cid = "loop_command_fail"
+    task = _active_task(cid, [])
+    _schedule_due_loop(cid, prompt="/compact")
+    monkeypatch.setattr(task, "execute", MagicMock(side_effect=RuntimeError("boom")))
+    events = _capture_notifications(monkeypatch)
+
+    _poll_running_loop_commands(task)
+
+    notes = [data for c, event, data in events if event == "notification"]
+    assert notes[0]["content"] == "[loop] /compact\nError: boom"
+    assert agent_poller._RUNNING_LOOP_COMMANDS == set()
+
+
+def test_command_loop_tick_is_skipped_while_its_previous_run_is_busy(
+        poller_env, monkeypatch):
+    from tasks.ai import agent_poller
+
+    cid = "loop_command_busy"
+    task = _active_task(cid, [])
+    key = _schedule_due_loop(cid, prompt="/cost")
+    monkeypatch.setattr(task, "execute", MagicMock())
+    monkeypatch.setattr(agent_poller, "_RUNNING_LOOP_COMMANDS", {key})
+
+    assert _poll_running_loop_commands(task) == []
+    task.execute.assert_not_called()
+
+
 @pytest.mark.parametrize("loop_seconds", [0, 3600])
 def test_add_schedule_with_agent_targets_that_agent(poller_env, loop_seconds):
     import json

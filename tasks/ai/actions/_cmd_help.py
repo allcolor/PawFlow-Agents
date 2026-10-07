@@ -548,8 +548,8 @@ HELP: Dict[str, Dict[str, str]] = {
         "short": "Run a prompt on a recurring interval",
         "detail": (
             "  /loop 5m check if deploy finished\n"
-            "  /loop 10m /cost\n\n"
-            "Default interval: 10 minutes."
+            "  /loop 10m /cost         — runs /cost, result shown as a notification\n"
+            "  /loop 2-3/h check deploy — random 20-30 min delay between runs"
         ),
     },
 

@@ -325,7 +325,8 @@ function cmdLoop(text, parts) {
       const loops = data.loops || [];
       if (loops.length === 0) addMsg('system', t('noActiveLoops'));
       else {
-        const lines = loops.map(l => l.key + ' — every ' + l.interval_seconds + 's: ' + (l.prompt || '?'));
+        const lines = loops.map(l => l.key + ' — every ' + l.interval_seconds
+          + (l.interval_max_seconds ? '-' + l.interval_max_seconds : '') + 's: ' + (l.prompt || '?'));
         addMsg('system', t('activeLoopsHeader') + '\n' + lines.join('\n'));
       }
     });
@@ -341,12 +342,19 @@ function cmdLoop(text, parts) {
   }
   const _units = {s:1, m:60, h:3600, d:86400};
   let intervalSec = 0;
+  let intervalMaxSec = 0;
   const acMatch = loopArg.match(/^(\d+)(?:-(\d+))?\/(\d*)([smhd])$/);
   if (acMatch) {
+    // 2-3/h runs 2 to 3 times per hour: the server draws each tick's
+    // interval between period/3 and period/2.
     const countMin = parseInt(acMatch[1]);
+    const countMax = acMatch[2] ? parseInt(acMatch[2]) : countMin;
     const durationNum = parseInt(acMatch[3] || '1');
     const period = durationNum * _units[acMatch[4]];
-    intervalSec = Math.floor(period / countMin);
+    if (countMin && countMax >= countMin) {
+      intervalSec = Math.floor(period / countMax);
+      intervalMaxSec = Math.floor(period / countMin);
+    }
   } else {
     const simpleMatch = loopArg.match(/^(\d+)([smhd])$/);
     if (simpleMatch) intervalSec = parseInt(simpleMatch[1]) * _units[simpleMatch[2]];
@@ -357,9 +365,12 @@ function cmdLoop(text, parts) {
   }
   const loopPrompt = parts.slice(2).join(' ').trim();
   if (!loopPrompt) { addMsg('system', t('usageLoop')); return true; }
-  action$('loop_start', { conversation_id: conversationId, interval_seconds: intervalSec, prompt: loopPrompt })
+  const loopBody = { conversation_id: conversationId, interval_seconds: intervalSec, prompt: loopPrompt };
+  if (intervalMaxSec > intervalSec) loopBody.interval_max_seconds = intervalMaxSec;
+  const intervalLabel = intervalMaxSec > intervalSec ? intervalSec + '-' + intervalMaxSec : intervalSec;
+  action$('loop_start', loopBody)
     .subscribe(data => {
-      if (data.started) addMsg('system', t('loopStarted', { interval: intervalSec, prompt: loopPrompt, key: data.key }));
+      if (data.started) addMsg('system', t('loopStarted', { interval: intervalLabel, prompt: loopPrompt, key: data.key }));
       else addMsg('error', data.error || t('loopStartFailed'));
     });
   return true;

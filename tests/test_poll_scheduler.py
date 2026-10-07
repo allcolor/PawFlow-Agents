@@ -129,3 +129,36 @@ def test_deferring_recurring_entry_keeps_its_recurrence(scheduler):
     assert scheduler.reschedule_due([(entry, key, 10)]) == 1
     assert scheduler.get(key)["recurring"] is True
     assert scheduler.get(key)["prompt"] == "check"
+
+
+def test_ranged_loop_draws_each_tick_delay_within_its_range(scheduler, monkeypatch):
+    draws = []
+
+    def fake_uniform(low, high):
+        draws.append((low, high))
+        return low + 7
+
+    monkeypatch.setattr("core.poll_scheduler.random.uniform", fake_uniform)
+    before = time.time()
+    key = scheduler.schedule_loop(
+        "c", 1200, prompt="check", user_id="u", interval_max_seconds=1800)
+    first = scheduler.get(key)
+    assert first["interval_max_seconds"] == 1800
+    assert before + 1207 <= first["recheck_at"] <= time.time() + 1207
+    first["recheck_at"] = time.time() - 1
+    scheduler.get_due()
+    assert draws == [(1200, 1800), (1200, 1800)]
+    assert scheduler.get(key)["recheck_at"] >= time.time() + 1206
+
+
+def test_fixed_loop_keeps_its_exact_interval(scheduler, monkeypatch):
+    monkeypatch.setattr(
+        "core.poll_scheduler.random.uniform",
+        lambda *_: pytest.fail("fixed loops must not draw"))
+    key = scheduler.schedule_loop("c", 60, prompt="check", user_id="u",
+                                  interval_max_seconds=60)
+    assert "interval_max_seconds" not in scheduler.get(key)
+    scheduler.get(key)["recheck_at"] = time.time() - 1
+    now = time.time()
+    scheduler.get_due()
+    assert now + 59 <= scheduler.get(key)["recheck_at"] <= time.time() + 60

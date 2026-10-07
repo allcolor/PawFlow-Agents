@@ -141,11 +141,14 @@ def _handle_conv_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         from core.poll_scheduler import PollScheduler
+        interval_max = int(body.get("interval_max_seconds") or 0)
         key = PollScheduler.instance().schedule_loop(
-            conv_id, interval, prompt=prompt, user_id=user_id)
-        flowfile.set_content(json.dumps({
-            "started": True, "key": key, "interval": interval, "prompt": prompt,
-        }).encode())
+            conv_id, interval, prompt=prompt, user_id=user_id,
+            interval_max_seconds=interval_max)
+        result = {"started": True, "key": key, "interval": interval, "prompt": prompt}
+        if interval_max > interval:
+            result["interval_max"] = interval_max
+        flowfile.set_content(json.dumps(result).encode())
         return [flowfile]
 
     if action == "loop_stop":

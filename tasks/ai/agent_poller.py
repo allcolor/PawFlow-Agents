@@ -3,6 +3,7 @@
 Auto-extracted from tasks/ai/agent_loop.py.
 All methods access self (AgentLoopTask instance).
 """
+import json
 import logging
 import os
 import re
@@ -26,6 +27,10 @@ _TARGETED_WAKE_REASON_RES = (
     re.compile(r"^\[pending\] wake ([\w.-]+)$"),
     re.compile(r"^\[delegate_reply\] queued result for ([\w.-]+)$"),
 )
+# Loop keys whose slash command is still running: a slow command skips the
+# ticks that come due meanwhile instead of piling up.
+_RUNNING_LOOP_COMMANDS: set = set()
+_RUNNING_LOOP_COMMANDS_LOCK = threading.Lock()
 
 
 def _poll_generation_key(conversation_id: str, agent_name: str) -> str:
@@ -184,6 +189,86 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             return reason
         return f"[scheduled:{agent}] {reason}"
 
+    @staticmethod
+    def _loop_command_text(entry: dict) -> str:
+        """Return the slash command a recurring loop runs ("" for a prompt)."""
+        if not entry.get("recurring"):
+            return ""
+        prompt = (entry.get("prompt") or "").strip()
+        return prompt if prompt.startswith("/") else ""
+
+    def _start_loop_commands(self, entries: List[dict]) -> None:
+        """Run each claimed command-loop tick off the poll thread."""
+        for entry in entries:
+            key = entry.get("key") or entry["conversation_id"]
+            with _RUNNING_LOOP_COMMANDS_LOCK:
+                if key in _RUNNING_LOOP_COMMANDS:
+                    logger.info("[poller] Loop %s skipped: previous command "
+                                "still running", key)
+                    continue
+                _RUNNING_LOOP_COMMANDS.add(key)
+            threading.Thread(
+                target=self._run_loop_command, args=(entry,), daemon=True,
+                name=f"loop-cmd-{entry['conversation_id'][:8]}",
+            ).start()
+
+    def _run_loop_command(self, entry: dict) -> None:
+        """Run one loop tick's slash command through the unified dispatcher.
+
+        The command runs as the loop owner, exactly as if typed in the chat,
+        and its rendered result is shown to the conversation as a notification.
+        """
+        cid = entry["conversation_id"]
+        key = entry.get("key") or cid
+        command = self._loop_command_text(entry)
+        try:
+            user_id = entry.get("user_id") or ""
+            if not user_id:
+                raise ValueError(f"loop {key} has no owner")
+            from core import FlowFile
+            from core.conversation_store import ConversationStore
+            from tasks.ai.actions._command_result import format_command_payload
+            extra = ConversationStore.instance().get_extra(
+                cid, "active_resources") or {}
+            body = {
+                "action": "command",
+                "text": command,
+                "conversation_id": cid,
+                "agent_name": str(extra.get("agent", "") or ""),
+                "_inline_response": True,
+            }
+            ff = FlowFile(content=json.dumps(body, ensure_ascii=False).encode("utf-8"))
+            ff.set_attribute("http.auth.principal", user_id)
+            ff.set_attribute("conversation_id", cid)
+            logger.info("[poller] Loop %s running %s", key, command)
+            outputs = self.execute(ff)
+            out = outputs[0] if outputs else ff
+            raw = out.get_content().decode("utf-8", errors="replace")
+            try:
+                payload = json.loads(raw)
+            except ValueError:
+                payload = raw
+            display = payload.get("display") if isinstance(payload, dict) else ""
+            text = display or format_command_payload(payload)
+        except Exception as exc:
+            logger.exception("[poller] Loop %s command %s failed", key, command)
+            text = f"Error: {exc}"
+        finally:
+            with _RUNNING_LOOP_COMMANDS_LOCK:
+                _RUNNING_LOOP_COMMANDS.discard(key)
+        try:
+            import uuid
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(cid, "notification", {
+                "msg_id": uuid.uuid4().hex[:12],
+                "content": f"[loop] {command}\n{text}",
+                "agent": "",
+                "status": "proactive",
+                "ts": time.time(),
+            })
+        except Exception:
+            logger.debug("loop command notification failed", exc_info=True)
+
 
     def _poll_conversations(self, interval: int) -> None:
         """Background poller: periodically check active conversations for pending work.
@@ -316,11 +401,17 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         scheduled_entries: Dict[str, List[Dict]] = {}
         # Thought entries are processed individually (each agent gets its own loop)
         thought_entries: List[Dict] = []
+        # Loops whose prompt is a /command run that command, not an agent turn.
+        command_entries: List[Dict] = []
         due_entries = scheduler.get_due()
         for entry in due_entries:
             cid = entry["conversation_id"]
             entry_key = entry.get("key", cid)
             reason = entry.get("reason", "scheduled recheck")
+
+            if self._loop_command_text(entry):
+                command_entries.append(entry)
+                continue
 
             if "::thought::" in entry_key:
                 # Thoughts are never blocked — they can arrive anytime
@@ -348,6 +439,10 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         # Source 2 removed: all autonomous wake-ups go through PollScheduler
         # with agent-qualified keys (::thought::, ::task::, ::recheck::).
         # No more SSE cooldown guessing.
+
+        if command_entries:
+            # Claiming honours a cancel (/loop stop) that raced this poll.
+            self._start_loop_commands(scheduler.claim_due(command_entries))
 
         if not to_poll and not thought_entries:
             return

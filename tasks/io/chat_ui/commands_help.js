@@ -623,7 +623,7 @@ const HELP_DATA = {
   '/loop': {
     usage: '/loop <interval> <prompt> | list | stop <key>',
     short: t('commandShort.77'),
-    detail: '/loop 5m "check build status" — runs every 5 minutes\n/loop 30s /compact — runs /compact every 30s\n/loop 2-3/h "check deploy" — 2-3 times per hour (autoconv syntax)\n/loop 1/30s "ping" — once per 30 seconds\n/loop list — show active loops\n/loop stop <key> — stop a loop',
+    detail: '/loop 5m "check build status" — runs every 5 minutes\n/loop 30s /compact — runs /compact every 30s\n/loop 2-3/h "check deploy" — 2-3 times per hour, random 20-30 min delay (autoconv syntax)\n/loop 1/30s "ping" — once per 30 seconds\n/loop list — show active loops\n/loop stop <key> — stop a loop',
   },
   '/login': {
     usage: '/login',

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import threading
 import time
 from datetime import datetime, timezone
@@ -109,26 +110,34 @@ class PollScheduler:
     def schedule_loop(
         self, conversation_id: str, interval_seconds: int,
         prompt: str = "", user_id: str = "", key: str = "",
+        interval_max_seconds: int = 0,
     ) -> str:
-        """Schedule a recurring prompt loop. Returns the loop key."""
+        """Schedule a recurring prompt loop. Returns the loop key.
+
+        With ``interval_max_seconds`` above ``interval_seconds``, every tick
+        draws its delay uniformly between the two (``/loop 2-3/h``).
+        """
         import hashlib
         prompt_hash = hashlib.md5(prompt.encode(), usedforsecurity=False).hexdigest()[:6]
         loop_key = key or f"loop::{conversation_id}::{prompt_hash}"
-        recheck_at = time.time() + interval_seconds
+        entry = {
+            "conversation_id": conversation_id,
+            "key": loop_key,
+            "user_id": user_id,
+            "reason": f"[loop] {prompt[:60]}",
+            "recurring": True,
+            "interval_seconds": interval_seconds,
+            "prompt": prompt,
+        }
+        if interval_max_seconds and interval_max_seconds > interval_seconds:
+            entry["interval_max_seconds"] = interval_max_seconds
+        now = time.time()
+        entry["created_at"] = now
+        entry["recheck_at"] = now + _loop_delay(entry)
         with self._lock:
             self._due_entries.pop(loop_key, None)
             self._delivering_entries.pop(loop_key, None)
-            self._schedules[loop_key] = {
-                "conversation_id": conversation_id,
-                "key": loop_key,
-                "recheck_at": recheck_at,
-                "user_id": user_id,
-                "reason": f"[loop] {prompt[:60]}",
-                "created_at": time.time(),
-                "recurring": True,
-                "interval_seconds": interval_seconds,
-                "prompt": prompt,
-            }
+            self._schedules[loop_key] = entry
             self._save()
         logger.info(f"[poll_scheduler] Loop started: {loop_key} every {interval_seconds}s")
         return loop_key
@@ -224,14 +233,14 @@ class PollScheduler:
                 due.append(entry)
                 # Re-schedule recurring entries
                 if entry.get("recurring") and entry.get("interval_seconds"):
-                    next_at = now + entry["interval_seconds"]
+                    delay = _loop_delay(entry)
                     self._schedules[k] = {
                         **entry,
-                        "recheck_at": next_at,
+                        "recheck_at": now + delay,
                         "created_at": now,
                     }
                     logger.info(f"[poll_scheduler] Re-scheduled recurring {k} "
-                                f"in {entry['interval_seconds']}s")
+                                f"in {int(delay)}s")
             if expired_keys:
                 self._save()
         return due
@@ -350,3 +359,12 @@ class PollScheduler:
                 json.dump(list(self._schedules.values()), f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[poll_scheduler] Failed to save schedule: {e}")
+
+
+def _loop_delay(entry: Dict[str, Any]) -> float:
+    """Delay before a loop's next tick: fixed, or drawn from its range."""
+    low = entry.get("interval_seconds") or 0
+    high = entry.get("interval_max_seconds") or 0
+    if high > low:
+        return random.uniform(low, high)  # nosec B311 - scheduling jitter, not security
+    return low

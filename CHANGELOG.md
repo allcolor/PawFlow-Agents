@@ -23,6 +23,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   conversation's selected agent instead. It now uses the
   `[scheduled:<agent>]` tag like `schedule_recheck`.
 
+- `/loop <interval> /command` never ran the command: each tick woke an
+  agent with the text `[loop] /compact` as a reminder. A loop whose prompt
+  is a slash command now runs that command on every tick through the
+  unified command dispatcher, as the loop owner and for the conversation's
+  selected agent, exactly as if it were typed in the chat. Its result is
+  shown as a notification; a tick that comes due while the previous run of
+  the same loop is still busy is skipped.
+
+- `/loop 2-3/h` used a fixed interval (the period divided by the minimum
+  count, 30 min) although the help documents 2 to 3 runs per hour. A
+  ranged frequency now draws each tick's delay at random between
+  period/max and period/min (20 to 30 min for `2-3/h`).
+
 ## [1.0.0-beta.305] — 2026-10-06
 
 ### Fixed

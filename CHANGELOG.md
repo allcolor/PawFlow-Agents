@@ -20,6 +20,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   definition's prompt and criteria; parameters still resolve. Execution tools
   (`bash` environment, `web_fetch`, ...) still receive the secret value.
 
+### Added
+
+- Agents can now remove a stale reminder. `ScheduleWakeup` could only
+  create wake-ups and loops, so a recurring loop that outlived its task
+  kept waking its agent every interval and only the user could stop it
+  with `/loop stop <full key>`. `ScheduleWakeup(action='list')` now shows
+  the conversation's wake-ups and loops with their keys and next run, and
+  `ScheduleWakeup(action='cancel', key=...)` removes one. Both are limited
+  to the caller's own conversation. One-shot wake-ups report their key, and
+  scheduling without a `reason` is now an error instead of a generic
+  default.
+
 ## [1.0.0-beta.306] — 2026-10-07
 
 ### Fixed

@@ -425,7 +425,7 @@ someone else.
 | `notify_user` | Notify the user. |
 | `manage_variable` | Get, list, set, or delete plaintext user/conversation variables; sensitive values belong in `store_secret`. |
 | `PushNotification` | Send a runtime-only notification event. Web clients accumulate it in their tab-local notification center; it is not persisted in the transcript or agent context. |
-| `ScheduleWakeup` | Schedule an agent wakeup. |
+| `ScheduleWakeup` | Schedule an agent wakeup. `action='list'` shows this conversation's wake-ups and loops with their keys; `action='cancel'` + `key` removes a stale one (own conversation only). |
 | `schedule_continuation` | Persist a delayed continuation wake-up for the current conversation. |
 | `read_parent_context` | Read parent task/agent context. |
 | `read_history` | Read conversation history. |

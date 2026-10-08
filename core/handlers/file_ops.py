@@ -225,7 +225,10 @@ class ScheduleWakeupHandler(ToolHandler):
             "Use this when the user asks you to do something at a specific time or date, "
             "or when you need to periodically monitor something. "
             "The recheck survives server restarts. "
-            "You can specify either a delay in seconds or an exact ISO datetime."
+            "You can specify either a delay in seconds or an exact ISO datetime. "
+            "action='list' shows this conversation's pending wake-ups and loops with "
+            "their keys; action='cancel' with key removes one that is stale or no "
+            "longer wanted."
         )
 
     @property
@@ -233,6 +236,16 @@ class ScheduleWakeupHandler(ToolHandler):
         return {
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["schedule", "list", "cancel"],
+                    "description": "schedule (default) creates a wake-up; list shows this "
+                                   "conversation's wake-ups and loops; cancel removes one by key.",
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Wake-up or loop key to cancel (from action='list'). Required for cancel.",
+                },
                 "delay_seconds": {
                     "type": "integer",
                     "description": "Seconds from now to schedule the recheck (e.g. 3600 for 1 hour)",
@@ -244,7 +257,7 @@ class ScheduleWakeupHandler(ToolHandler):
                 },
                 "reason": {
                     "type": "string",
-                    "description": "What to do when the recheck fires (e.g. 'check stock price of AAPL')",
+                    "description": "What to do when the recheck fires (e.g. 'check stock price of AAPL'). Required for schedule.",
                 },
                 "agent": {
                     "type": "string",
@@ -255,7 +268,7 @@ class ScheduleWakeupHandler(ToolHandler):
                     "description": "If true, the recheck repeats at the same interval automatically (requires delay_seconds). Default: false.",
                 },
             },
-            "required": ["reason"],
+            "required": [],
         }
 
     def set_conversation_id(self, conversation_id: str) -> None:
@@ -267,7 +280,8 @@ class ScheduleWakeupHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         from core.poll_scheduler import PollScheduler
 
-        reason = arguments.get("reason", "scheduled recheck")
+        action = arguments.get("action") or "schedule"
+        reason = arguments.get("reason", "")
         at_str = arguments.get("at", "")
         delay = arguments.get("delay_seconds", 0)
         agent = arguments.get("agent", "")
@@ -276,6 +290,15 @@ class ScheduleWakeupHandler(ToolHandler):
             return "Error: no conversation context — cannot schedule recheck"
 
         scheduler = PollScheduler.instance()
+
+        if action == "list":
+            return self._list(scheduler)
+        if action == "cancel":
+            return self._cancel(scheduler, arguments.get("key", ""))
+        if action != "schedule":
+            return f"Error: unknown action '{action}'. Use schedule, list or cancel"
+        if not reason:
+            return "Error: 'reason' is required to schedule a wake-up"
 
         if at_str:
             from datetime import datetime, timezone as tz
@@ -322,7 +345,45 @@ class ScheduleWakeupHandler(ToolHandler):
             from datetime import datetime, timezone as tz
             dt_str = datetime.fromtimestamp(recheck_at, tz=tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
             agent_info = f" Agent: {agent}" if agent else ""
-            return f"Recheck scheduled for {dt_str}.{agent_info} Reason: {reason}"
+            return (f"Recheck scheduled for {dt_str}.{agent_info} "
+                    f"Key: {self._conversation_id}. Reason: {reason}")
+
+    def _own_entries(self, scheduler) -> list:
+        return [e for e in scheduler.list_all()
+                if e.get("conversation_id") == self._conversation_id]
+
+    @staticmethod
+    def _entry_key(entry) -> str:
+        return entry.get("key") or entry.get("conversation_id", "")
+
+    def _list(self, scheduler) -> str:
+        from datetime import datetime, timezone as tz
+        entries = sorted(self._own_entries(scheduler),
+                         key=lambda e: e.get("recheck_at", 0))
+        if not entries:
+            return "No scheduled wake-ups or loops in this conversation."
+        lines = []
+        for e in entries:
+            due = datetime.fromtimestamp(
+                e.get("recheck_at", 0), tz=tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            every = (f" every {e['interval_seconds']}s"
+                     if e.get("recurring") and e.get("interval_seconds") else "")
+            text = (e.get("prompt") or e.get("reason") or "").replace("\n", " ")
+            if len(text) > 160:
+                text = text[:160] + "..."
+            lines.append(f"- {self._entry_key(e)} next {due}{every}: {text}")
+        return "\n".join(lines)
+
+    def _cancel(self, scheduler, key: str) -> str:
+        if not key:
+            return "Error: 'key' is required to cancel (see action='list')"
+        if not any(self._entry_key(e) == key
+                   for e in self._own_entries(scheduler)):
+            return (f"Error: no wake-up or loop with key '{key}' in this "
+                    "conversation (see action='list')")
+        if scheduler.cancel(key):
+            return f"Cancelled {key}."
+        return f"Error: {key} is being delivered right now and cannot be cancelled"
 
 
 class LocalFilesHandler(ToolHandler):

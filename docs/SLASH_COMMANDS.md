@@ -1028,6 +1028,11 @@ Run a prompt or command on a recurring interval.
 
 Minimum interval: 5 seconds.
 
+`/loop stop` takes the full key shown by `/loop list` (for example
+`loop::<conversation_id>::0792ca`). Agents can do the same with
+`ScheduleWakeup(action='list')` and `ScheduleWakeup(action='cancel', key=...)`,
+limited to their own conversation.
+
 Frequency format: `<min>[-<max>]/<duration>`, as in `/autoconv`. A ranged
 frequency draws each tick's delay at random between `duration/max` and
 `duration/min`: `2-3/h` waits 20 to 30 minutes between runs.

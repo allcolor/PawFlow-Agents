@@ -1,7 +1,7 @@
 # PawFlow Project Summary — Current State
 
-**Last updated**: 2026-10-07
-**Package version**: `1.0.0b306` (beta.306)
+**Last updated**: 2026-10-08
+**Package version**: `1.0.0b307` (beta.307)
 
 **Status**: functional beta, remaining API changes before 1.0.0 expected to be minor
 

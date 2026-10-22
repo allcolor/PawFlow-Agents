@@ -57,16 +57,25 @@ Providers that read FileStore locally (`ACCEPTS_FILESTORE_URLS`) keep the
 
 The webchat resolves Markdown links using the canonical
 `fs://filestore/<id>/<name>` form to the authenticated, same-origin
-`/files/<id>/<name>` route. The relay file explorer reads preview content
-through the authenticated `fs_read_file` action, decodes base64 binary results,
-and creates a browser-local `blob:` URL. Both paths are passed to the shared
-file viewer, which selects the image, video, audio, PDF, HTML, text, or
-unknown-binary view from the display filename and response `Content-Type`.
-HTTP file routes retain the bearer token and same-origin credentials. Relay
-previews pass their already-read `Blob` directly to the viewer, avoiding a
-second `fetch(blob:)` that would be rejected by the Webchat `connect-src`
-policy. The relay file explorer itself is a closable `files` surface in the
-tiled workspace; opening it again focuses the mounted tile instead of creating
+`/files/<id>/<name>` route. The relay file explorer previews a file through
+the streaming route described below, `GET /api/fs/download?...&inline=1`.
+Both URLs are passed to the shared file viewer, which selects the image,
+video, audio, PDF, HTML, text, or unknown-binary view from the display
+filename and, when the name does not tell, the response `Content-Type`.
+Images, video, audio, PDF and HTML render from their same-origin URL: the
+browser streams the response itself, so a video starts playing while it
+arrives and the page never holds the file as a `Blob`. Text is fetched with
+the bearer token and same-origin credentials and shows at most its first
+4 MiB (`VIEWER_TEXT_PREVIEW_BYTES` in `file_viewer.js`), with a notice when
+it is cut; the Download button still streams the whole file. An unknown
+binary type stops its transfer as soon as the headers arrive. Opening another
+file or closing the viewer aborts the current transfer and removes a playing
+video or audio element. A URL from another origin keeps the fetch path, which
+the Webchat `connect-src` policy refuses, so the viewer never frames a foreign
+page. A caller that already holds the bytes (`fetchFsFile`) passes them as a
+`Blob`, avoiding a second `fetch(blob:)` that `connect-src` would reject. The
+relay file explorer itself is a closable `files` surface in the tiled
+workspace; opening it again focuses the mounted tile instead of creating
 another surface or a blocking dialog.
 
 Webchat uploads use a raw single-file HTTP body. The HTTP listener consumes it
@@ -88,6 +97,16 @@ response with an `attachment` disposition. The browser's download manager
 writes the file to disk; the page never holds it as a `Blob`. A relay failure
 mid-transfer closes the connection short of `Content-Length`, so the browser
 reports a failed download instead of saving a truncated file.
+
+With `inline=1` the same route serves the file for display (`inline`
+disposition), which is how File Manager previews reach the file viewer.
+Opened directly in a tab, such a response renders in the webchat origin,
+whose policy allows inline script, so every inline type except PDF carries
+the Webchat `Content-Security-Policy` plus `sandbox`: relay HTML or SVG cannot
+run script there. PDF stays unsandboxed because Chrome does not start its PDF
+viewer in a sandboxed document. Like the FileStore route, the relay route
+ignores `Range` requests: the browser plays a video progressively from the
+start of the transfer.
 
 ## Image Tools
 

@@ -399,15 +399,10 @@ function _feZipDir(name){
 }
 
 function _fePreview(name){
-  action$('fs_read_file',{conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:_fePath(name)}).subscribe(d => {
-    if(d.error){alert(t('errorMessage', { error: d.error }));return;}
-    let blob;
-    if(d.encoding==='base64'){
-      const bin=atob(d.content);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-      blob=new Blob([arr]);
-    } else {blob=new Blob([d.content],{type:'text/plain;charset=utf-8'});}
-    openFileViewer(URL.createObjectURL(blob),name,blob);
-  });
+  // The viewer points its media element at the streaming route: the browser
+  // plays the relay file while it arrives, nothing is buffered in page memory.
+  const q=new URLSearchParams({conversation_id:_fe.surface.dataset.conversationId,service:_fe.svc,path:_fePath(name),inline:'1'});
+  openFileViewer(location.origin+'/api/fs/download?'+q.toString(),name);
 }
 
 function _feSearch(q){

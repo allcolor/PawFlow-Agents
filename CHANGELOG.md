@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- File Manager previews still loaded relay files into a `Blob`. A preview
+  read the whole file through the `fs_read_file` action (capped at 4 MiB) as
+  JSON and base64 before showing it, so large files failed and a video could
+  not start before its last byte arrived. Previews now open the streaming
+  `GET /api/fs/download` route with `inline=1`, and the shared file viewer
+  renders images, video, audio, PDF and HTML straight from their URL, so the
+  browser streams them; FileStore previews no longer download the whole file
+  first either. Text previews show the first 4 MiB, an unknown binary is no
+  longer downloaded only to say it cannot be shown, and opening another file
+  or closing the viewer stops the transfer. Inline responses other than PDF
+  are sandboxed, so relay HTML opened in a tab cannot run script in the
+  webchat origin.
+
 ## [1.0.0-beta.307] — 2026-10-08
 
 ### Security

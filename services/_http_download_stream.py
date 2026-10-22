@@ -1,9 +1,10 @@
-"""Bounded-memory HTTP downloads from relay filesystems.
+"""Bounded-memory HTTP downloads and previews from relay filesystems.
 
-The file explorer used to download through the ``fs_read_file`` UI action:
-the whole file travelled as one JSON/base64 response and was rebuilt as a
-Blob in the browser, so large files failed. This route streams the relay's
-bounded chunks straight to the HTTP response instead.
+The file explorer used to download and preview through the ``fs_read_file``
+UI action: the whole file travelled as one JSON/base64 response and was
+rebuilt as a Blob in the browser, so large files failed. This route streams
+the relay's bounded chunks straight to the HTTP response instead, as an
+attachment for downloads or inline (``inline=1``) for the file viewer.
 """
 
 import json
@@ -12,9 +13,16 @@ import mimetypes
 from urllib.parse import parse_qs, quote
 
 from core.handlers._fs_helpers import find_fs_service
+from services._http_base import _SECURITY_HEADERS
 
 
 logger = logging.getLogger("services.http_listener_service")
+
+# A preview opened directly in a tab renders in the webchat origin, whose
+# policy allows inline script: sandbox it so relay HTML or SVG cannot run
+# script there. PDF stays unsandboxed because Chrome refuses to start its PDF
+# viewer in a sandboxed document, and PDF script never runs in the page.
+_INLINE_PREVIEW_CSP = _SECURITY_HEADERS["Content-Security-Policy"] + "; sandbox"
 
 
 def _send_json(handler, status, payload):
@@ -33,17 +41,22 @@ def _one(params, name):
     return values[0].strip() if values else ""
 
 
-def _content_disposition(filename):
-    """Attachment header safe for any file name (RFC 6266 / RFC 5987)."""
+def _content_disposition(filename, inline=False):
+    """Disposition header safe for any file name (RFC 6266 / RFC 5987)."""
     fallback = "".join(
         ch if 32 <= ord(ch) < 127 and ch not in '"\\' else "_"
         for ch in filename) or "download"
-    return (f'attachment; filename="{fallback}"; '
+    kind = "inline" if inline else "attachment"
+    return (f'{kind}; filename="{fallback}"; '
             f"filename*=UTF-8''{quote(filename, safe='')}")
 
 
 def handle_relay_download(handler, session, query):
-    """Stream one relay file to the client without holding it in memory."""
+    """Stream one relay file to the client without holding it in memory.
+
+    ``inline=1`` serves it for display (the file viewer points its media
+    element at this URL) instead of as an attachment.
+    """
     user_id = ""
     if session and session is not True:
         user_id = getattr(session, "username", "") or ""
@@ -55,6 +68,7 @@ def handle_relay_download(handler, session, query):
     conversation_id = _one(params, "conversation_id")
     service_name = _one(params, "service")
     relay_path = _one(params, "path")
+    inline = _one(params, "inline") == "1"
     if not conversation_id or not service_name or not relay_path:
         _send_json(handler, 400, {
             "error": "conversation_id, service and path are required"})
@@ -91,11 +105,13 @@ def handle_relay_download(handler, session, query):
         return
 
     filename = relay_path.replace("\\", "/").rsplit("/", 1)[-1]
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     handler.send_response(200)
-    handler.send_header(
-        "Content-Type",
-        mimetypes.guess_type(filename)[0] or "application/octet-stream")
-    handler.send_header("Content-Disposition", _content_disposition(filename))
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Content-Disposition",
+                        _content_disposition(filename, inline=inline))
+    if inline and content_type != "application/pdf":
+        handler.send_header("Content-Security-Policy", _INLINE_PREVIEW_CSP)
     handler.send_header("Content-Length", str(int(entry.size)))
     handler.send_header("Cache-Control", "no-store")
     if getattr(handler, "_renew_cookie", ""):

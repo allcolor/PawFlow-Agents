@@ -110,6 +110,32 @@ function fetchFsFile(service, fpath) {
     });
 }
 
+// Text previews render at most this many bytes; the Download button still
+// streams the whole file.
+const VIEWER_TEXT_PREVIEW_BYTES = 4 * 1024 * 1024;
+
+// Read the start of a text response, then abort the transfer: previewing a
+// multi-gigabyte log must not pull it into the page.
+function _viewerReadTextPreview(response, length, abort) {
+  if (!response.body || !response.body.getReader) {
+    return response.text().then(text => ({ text, truncated: false }));
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let bytes = 0;
+  const pump = () => reader.read().then(({ done, value }) => {
+    if (done) return { text: text + decoder.decode(), truncated: false };
+    const part = value.subarray(0, VIEWER_TEXT_PREVIEW_BYTES - bytes);
+    bytes += part.length;
+    text += decoder.decode(part, { stream: true });
+    if (bytes < VIEWER_TEXT_PREVIEW_BYTES) return pump();
+    abort.abort();
+    return { text: text + decoder.decode(), truncated: length !== bytes };
+  });
+  return pump();
+}
+
 function openFileViewer(filenameOrUrl, displayName, sourceBlob) {
   let viewer = document.getElementById('fileViewer');
   if (!viewer) {
@@ -145,70 +171,120 @@ function openFileViewer(filenameOrUrl, displayName, sourceBlob) {
   const fname = displayName || filenameOrUrl.split('/').pop();
   const ext = fname.split('.').pop().toLowerCase();
   nameEl.textContent = fname;
+  sizeEl.textContent = '';
   dlEl.download = fname;
   contentEl.innerHTML = '<p style="color:#888;">Loading...</p>';
+  // Opening another file, or closing the viewer, stops this file's transfer.
+  if (viewer._abort) viewer._abort.abort();
+  const abort = new AbortController();
+  viewer._abort = abort;
+  const current = () => viewer._abort === abort;
 
-  const renderBlob = (blob, ct) => {
-    if (!sizeEl.textContent && typeof blob.size === 'number') {
-      sizeEl.textContent = (blob.size / 1024).toFixed(1) + ' KB';
-    }
-    const blobUrl = url.startsWith('blob:') ? url : URL.createObjectURL(blob);
-    dlEl.href = blobUrl;
-    const IMG = ['png','jpg','jpeg','gif','svg','webp','bmp','ico','avif'];
-    const VID = ['mp4','webm','mov','mkv','avi','m4v','ogv'];
-    const AUD = ['mp3','wav','ogg','oga','m4a','flac','opus','aac','weba'];
-    const TEXTY = ['txt','log','md','markdown','json','jsonl','ndjson','xml','yaml','yml','toml','ini','cfg','conf','csv','tsv','py','js','ts','tsx','jsx','css','scss','less','sh','bash','zsh','ps1','go','rs','java','c','cc','cpp','h','hpp','cs','rb','php','lua','sql','dockerfile','env','gitignore'];
-    if (IMG.includes(ext) || ct.startsWith('image/')) {
-      contentEl.innerHTML = '<img src="' + blobUrl + '" style="max-width:100%;max-height:40vh;object-fit:contain;">';
-    } else if (VID.includes(ext) || ct.startsWith('video/')) {
-      contentEl.innerHTML = '<video controls src="' + blobUrl + '" style="max-width:100%;max-height:40vh;background:#000;"></video>';
-    } else if (AUD.includes(ext) || ct.startsWith('audio/')) {
-      contentEl.innerHTML = '<audio controls src="' + blobUrl + '" style="width:100%;"></audio>';
-    } else if (ext === 'pdf' || ct === 'application/pdf') {
-      contentEl.innerHTML = '<iframe src="' + blobUrl + '" style="width:100%;height:40vh;border:none;"></iframe>';
-    } else if (ext === 'html' || ct === 'text/html') {
-      contentEl.innerHTML = '<iframe src="' + blobUrl + '" sandbox="allow-same-origin" style="width:100%;height:40vh;border:none;background:#fff;"></iframe>';
-    } else if (TEXTY.includes(ext) || ct.startsWith('text/') || ct.includes('json') || ct.includes('xml') || ct.includes('yaml')) {
-      return blob.text().then(text => {
-        sizeEl.textContent = (text.length / 1024).toFixed(1) + ' KB';
-        contentEl.innerHTML = '<pre style="margin:0;white-space:pre-wrap;word-break:break-all;color:#ddd;font-size:13px;font-family:monospace;">' + text.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
-      });
-    } else {
-      // Unknown binary — don't try to render, offer download only
-      contentEl.innerHTML = '<div style="color:#aaa;padding:20px;text-align:center;">' +
-        '<p style="font-size:14px;margin:0 0 8px 0;">Binary file — preview not available.</p>' +
-        '<p style="font-size:12px;margin:0;color:#888;">Type: ' + escapeHtml(ct || 'unknown') + ' \u00B7 ' + escapeHtml(ext || 'no ext') + '</p>' +
-        '<p style="font-size:12px;margin:8px 0 0 0;">Use the Download button above.</p></div>';
-    }
-    return null;
+  const IMG = ['png','jpg','jpeg','gif','svg','webp','bmp','ico','avif'];
+  const VID = ['mp4','webm','mov','mkv','avi','m4v','ogv'];
+  const AUD = ['mp3','wav','ogg','oga','m4a','flac','opus','aac','weba'];
+  const TEXTY = ['txt','log','md','markdown','json','jsonl','ndjson','xml','yaml','yml','toml','ini','cfg','conf','csv','tsv','py','js','ts','tsx','jsx','css','scss','less','sh','bash','zsh','ps1','go','rs','java','c','cc','cpp','h','hpp','cs','rb','php','lua','sql','dockerfile','env','gitignore'];
+  const kindOf = ct => {
+    if (IMG.includes(ext) || ct.startsWith('image/')) return 'image';
+    if (VID.includes(ext) || ct.startsWith('video/')) return 'video';
+    if (AUD.includes(ext) || ct.startsWith('audio/')) return 'audio';
+    if (ext === 'pdf' || ct === 'application/pdf') return 'pdf';
+    if (ext === 'html' || ct === 'text/html') return 'html';
+    if (TEXTY.includes(ext) || ct.startsWith('text/') || ct.includes('json') || ct.includes('xml') || ct.includes('yaml')) return 'text';
+    return 'binary';
   };
+  // These kinds render from their URL: the browser streams the response
+  // itself (video and audio play while it arrives) and the page holds nothing.
+  const FROM_URL = ['image', 'video', 'audio', 'pdf', 'html'];
+  const showSize = bytes => { sizeEl.textContent = (bytes / 1024).toFixed(1) + ' KB'; };
   const showError = (err) => {
     contentEl.innerHTML = '<p style="color:#ff6b6b;">Could not load file: ' + escapeHtml(err.message) + '</p>';
     dlEl.href = '#';
   };
+  const renderFromUrl = (src, kind) => {
+    const s = escapeHtml(src);
+    dlEl.href = src;
+    if (kind === 'image') {
+      contentEl.innerHTML = '<img src="' + s + '" style="max-width:100%;max-height:40vh;object-fit:contain;">';
+    } else if (kind === 'video') {
+      contentEl.innerHTML = '<video controls src="' + s + '" style="max-width:100%;max-height:40vh;background:#000;"></video>';
+    } else if (kind === 'audio') {
+      contentEl.innerHTML = '<audio controls src="' + s + '" style="width:100%;"></audio>';
+    } else if (kind === 'pdf') {
+      contentEl.innerHTML = '<iframe src="' + s + '" style="width:100%;height:40vh;border:none;"></iframe>';
+    } else {
+      contentEl.innerHTML = '<iframe src="' + s + '" sandbox="allow-same-origin" style="width:100%;height:40vh;border:none;background:#fff;"></iframe>';
+    }
+    const media = contentEl.querySelector && contentEl.querySelector('img,video,audio');
+    if (media) media.onerror = () => { if (current()) showError(new Error('the browser could not load it')); };
+  };
+  const renderText = (text, truncated) => {
+    contentEl.innerHTML = '<pre style="margin:0;white-space:pre-wrap;word-break:break-all;color:#ddd;font-size:13px;font-family:monospace;">' + text.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>'
+      + (truncated ? '<p style="color:#888;font-size:12px;margin:8px 0 0 0;">Preview shows the first ' + (VIEWER_TEXT_PREVIEW_BYTES / 1048576) + ' MB. Use the Download button above for the whole file.</p>' : '');
+  };
+  const renderBinary = ct => {
+    // Unknown binary — don't try to render, offer download only
+    contentEl.innerHTML = '<div style="color:#aaa;padding:20px;text-align:center;">' +
+      '<p style="font-size:14px;margin:0 0 8px 0;">Binary file — preview not available.</p>' +
+      '<p style="font-size:12px;margin:0;color:#888;">Type: ' + escapeHtml(ct || 'unknown') + ' \u00B7 ' + escapeHtml(ext || 'no ext') + '</p>' +
+      '<p style="font-size:12px;margin:8px 0 0 0;">Use the Download button above.</p></div>';
+  };
 
-  // Relay previews already hold the bytes. Rendering that Blob directly avoids
-  // a second fetch(blob:), which the Webchat CSP correctly blocks via connect-src.
+  // A caller that already holds the bytes (fetchFsFile) passes them as a Blob.
+  // Rendering it directly avoids a second fetch(blob:), which the Webchat CSP
+  // correctly blocks via connect-src.
   if (sourceBlob) {
-    Promise.resolve(renderBlob(sourceBlob, sourceBlob.type || '')).catch(showError);
+    const ct = sourceBlob.type || '';
+    const kind = kindOf(ct);
+    const blobUrl = url.startsWith('blob:') ? url : URL.createObjectURL(sourceBlob);
+    if (typeof sourceBlob.size === 'number') showSize(sourceBlob.size);
+    if (FROM_URL.includes(kind)) { renderFromUrl(blobUrl, kind); return; }
+    dlEl.href = blobUrl;
+    if (kind === 'binary') { renderBinary(ct); return; }
+    sourceBlob.text().then(text => { if (current()) renderText(text, false); }).catch(showError);
     return;
   }
 
+  // A same-origin file (FileStore, relay streaming route) whose name gives its
+  // kind needs no fetch. Other origins keep the fetch path, which the Webchat
+  // connect-src policy refuses, so the viewer never frames a foreign page.
+  let sameOrigin = false;
+  try { sameOrigin = new URL(url, location.origin).origin === location.origin; } catch (e) { /* not a URL */ }
+  if (sameOrigin && FROM_URL.includes(kindOf(''))) {
+    renderFromUrl(url, kindOf(''));
+    return;
+  }
+
+  dlEl.href = url;
   const authHeaders = {};
   const token = getToken();
   if (token) authHeaders['Authorization'] = 'Bearer ' + token;
-  fetch(url, { headers: authHeaders, credentials: 'same-origin' }).then(r => {
+  fetch(url, { headers: authHeaders, credentials: 'same-origin', signal: abort.signal }).then(r => {
     if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!current()) return null;
     const ct = r.headers.get('content-type') || '';
-    sizeEl.textContent = r.headers.get('content-length')
-      ? (parseInt(r.headers.get('content-length')) / 1024).toFixed(1) + ' KB' : '';
-    return r.blob().then(blob => renderBlob(blob, ct));
-  }).catch(showError);
+    const length = parseInt(r.headers.get('content-length') || '', 10);
+    if (length >= 0) showSize(length);
+    const kind = kindOf(ct);
+    if (kind !== 'text') {
+      // Rendered from its URL or not at all: stop downloading this body.
+      abort.abort();
+      if (FROM_URL.includes(kind)) renderFromUrl(url, kind); else renderBinary(ct);
+      return null;
+    }
+    return _viewerReadTextPreview(r, length, abort).then(({ text, truncated }) => {
+      if (current()) renderText(text, truncated);
+    });
+  }).catch(err => { if (current() && err.name !== 'AbortError') showError(err); });
 }
 
 function closeFileViewer() {
   const v = document.getElementById('fileViewer');
-  if (v) v.style.display = 'none';
+  if (!v) return;
+  v.style.display = 'none';
+  // Stop the transfer, and a streamed video or audio that is still playing.
+  if (v._abort) v._abort.abort();
+  document.getElementById('viewerContent').innerHTML = '';
 }
 
 // Intercept file links in messages to open viewer

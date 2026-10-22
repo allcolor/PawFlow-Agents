@@ -20,16 +20,24 @@ const VIEWER_SOURCE = path.join(
   __dirname, '..', '..', 'tasks', 'io', 'chat_ui', 'file_viewer.js');
 const viewerFileSource = fs.readFileSync(VIEWER_SOURCE, 'utf8');
 const viewerSource = viewerFileSource.slice(
-  viewerFileSource.indexOf('function openFileViewer(filenameOrUrl, displayName, sourceBlob)'),
-  viewerFileSource.indexOf('\nfunction closeFileViewer'));
+  viewerFileSource.indexOf('const VIEWER_TEXT_PREVIEW_BYTES'),
+  viewerFileSource.indexOf('\n// Intercept file links'));
 
 let passed = 0;
 const failures = [];
+const pending = [];
 
 function test(name, fn) {
-  try { fn(); passed++; }
-  catch (err) { failures.push(name + ': ' + (err && err.message ? err.message : err)); }
+  const fail = err => failures.push(name + ': ' + (err && err.message ? err.message : err));
+  try {
+    const result = fn();
+    if (result && typeof result.then === 'function') pending.push(result.then(() => { passed++; }, fail));
+    else passed++;
+  } catch (err) { fail(err); }
 }
+
+// Let every queued promise callback of the code under test run.
+const settle = () => new Promise(resolve => setImmediate(resolve));
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg || 'assertion failed');
@@ -38,32 +46,15 @@ function assert(cond, msg) {
 function env() {
   const opened = [];
   const calls = [];
-  const pane = {
-    className: '',
-    innerHTML: '',
-    remove() {},
-    querySelector() { return { textContent: '' }; },
-  };
   const ctx = {
-    _fe: { preview: null, svc: 'relay one', path: 'media folder', surface: { dataset: { conversationId: 'law' } } },
+    _fe: { svc: 'relay one', path: 'media folder', surface: { dataset: { conversationId: 'law' } } },
     conversationId: 'other',
     _fePath: name => 'media folder/' + name,
-    _feEsc: value => String(value),
-    _feFmtSz: value => String(value),
-    t: key => key,
-    atob: value => value,
-    Blob,
-    Uint8Array,
-    URL: { createObjectURL() { return 'blob:relay-preview'; } },
-    document: {
-      createElement() { return pane; },
-      body: { appendChild() {} },
-    },
+    URLSearchParams,
+    location: { origin: 'https://webchat.example.org' },
     action$(action, payload) {
       calls.push({ action, payload });
-      return { subscribe(callback) {
-        callback({ content: 'file body', encoding: 'utf-8' });
-      } };
+      return { subscribe() {} };
     },
     openFileViewer(url, name, blob) { opened.push({ url, name, blob }); },
   };
@@ -145,22 +136,32 @@ function workspaceEnv() {
   };
 }
 
-function viewerEnv() {
+// `responses` are served to fetch() in order; a missing one never settles.
+function viewerEnv(responses = []) {
   const fetches = [];
+  const media = { onerror: null };
   const elements = {
     fileViewer: { style: {} },
-    viewerContent: { innerHTML: '' },
+    viewerContent: {
+      innerHTML: '',
+      querySelector() { return /<(img|video|audio)\b/.test(this.innerHTML) ? media : null; },
+    },
     viewerFileName: { textContent: '' },
     viewerFileSize: { textContent: '' },
     viewerDownload: { download: '', href: '' },
   };
   const ctx = {
     API: 'https://webchat.example.org/api/chat',
+    AbortController,
+    TextDecoder,
+    URL,
     document: { getElementById(id) { return elements[id] || null; } },
-    escapeHtml: value => String(value),
+    escapeHtml: value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
     fetch(url, options) {
       fetches.push({ url, options });
-      return { then() { return { catch() {} }; } };
+      const response = responses.shift();
+      return response ? Promise.resolve(response) : new Promise(() => {});
     },
     getToken: () => 'secret-token',
     location: { origin: 'https://webchat.example.org' },
@@ -168,22 +169,40 @@ function viewerEnv() {
   };
   vm.createContext(ctx);
   vm.runInContext(viewerSource, ctx, { filename: 'file_viewer_preview.js' });
-  return { ctx, elements, fetches };
+  const limit = vm.runInContext('VIEWER_TEXT_PREVIEW_BYTES', ctx);
+  return { ctx, elements, fetches, media, limit };
+}
+
+// A fetch() Response whose body is read chunk by chunk.
+function streamResponse(chunks, headers) {
+  const body = { reads: 0 };
+  body.getReader = () => ({
+    read() {
+      if (body.reads >= chunks.length) return Promise.resolve({ done: true, value: undefined });
+      return Promise.resolve({ done: false, value: chunks[body.reads++] });
+    },
+  });
+  return {
+    ok: true, status: 200, body,
+    headers: { get(name) { return headers[name.toLowerCase()] || null; } },
+  };
 }
 
 for (const filename of ['clip.mp4', 'document.pdf', 'notes.txt', 'archive.bin']) {
-  test(filename + ' preview reads through the relay and delegates to the shared viewer', () => {
+  test(filename + ' preview opens the relay streaming route in the shared viewer', () => {
     const e = env();
     e.ctx._fePreview(filename);
-    assert(e.calls.length === 1, 'filesystem was not read exactly once');
-    assert(e.calls[0].action === 'fs_read_file', 'wrong action: ' + e.calls[0].action);
-    assert(e.calls[0].payload.service === 'relay one', 'wrong relay service');
-    assert(e.calls[0].payload.conversation_id === 'law', 'preview lost its tile conversation');
-    assert(e.calls[0].payload.path === 'media folder/' + filename, 'wrong file path');
+    assert(e.calls.length === 0, 'preview still read the file through a UI action');
     assert(e.opened.length === 1, 'viewer was not opened');
-    assert(e.opened[0].url === 'blob:relay-preview', 'wrong viewer URL');
+    const url = new URL(e.opened[0].url);
+    assert(url.origin + url.pathname === 'https://webchat.example.org/api/fs/download',
+      'preview did not use the streaming route: ' + e.opened[0].url);
+    assert(url.searchParams.get('conversation_id') === 'law', 'preview lost its tile conversation');
+    assert(url.searchParams.get('service') === 'relay one', 'wrong relay service');
+    assert(url.searchParams.get('path') === 'media folder/' + filename, 'wrong file path');
+    assert(url.searchParams.get('inline') === '1', 'preview asked for an attachment');
     assert(e.opened[0].name === filename, 'viewer lost the file name');
-    assert(e.opened[0].blob instanceof Blob, 'viewer did not receive the relay Blob');
+    assert(e.opened[0].blob === undefined, 'preview handed the viewer a page Blob');
   });
 }
 
@@ -292,32 +311,169 @@ test('explorer service selection and navigation send the same conversation scope
     'directory result did not populate the explorer');
 });
 
-test('relay blob preview bypasses the CSP-blocked fetch path', () => {
+test('blob preview bypasses the CSP-blocked fetch path', () => {
   const e = viewerEnv();
   const blob = { size: 7, type: 'image/png' };
   e.ctx.openFileViewer('blob:relay-preview', 'pawflow_art.png', blob);
   assert(e.fetches.length === 0, 'viewer fetched a local blob through connect-src');
   assert(e.elements.viewerDownload.href === 'blob:relay-preview',
-    'viewer download did not reuse the relay blob URL');
+    'viewer download did not reuse the blob URL');
   assert(e.elements.viewerContent.innerHTML.includes('<img src="blob:relay-preview"'),
-    'viewer did not render the relay image Blob');
+    'viewer did not render the image Blob');
 });
 
-test('same-origin FileStore preview keeps authenticated fetch options', () => {
+const STREAM_URL = 'https://webchat.example.org/api/fs/download?conversation_id=law'
+  + '&service=relay+one&path=media+folder%2Fclip.mp4&inline=1';
+
+test('relay video preview plays from the streaming URL without fetching it', () => {
+  const e = viewerEnv();
+  e.ctx.openFileViewer(STREAM_URL, 'clip.mp4');
+  const html = e.elements.viewerContent.innerHTML;
+  assert(e.fetches.length === 0, 'viewer downloaded the video before playing it');
+  assert(html.includes('<video controls src="' + STREAM_URL.replace(/&/g, '&amp;') + '"'),
+    'video element does not stream the relay URL: ' + html);
+  assert(!html.includes('blob:'), 'viewer rebuilt the video as a Blob');
+  assert(e.elements.viewerDownload.href === STREAM_URL, 'viewer download does not stream the file');
+});
+
+test('same-origin images, PDFs and HTML render from their URL', () => {
   const e = viewerEnv();
   e.ctx.openFileViewer('/files/fid/pawflow_art.png');
-  assert(e.fetches.length === 1, 'viewer did not fetch the FileStore file');
-  assert(e.fetches[0].url === 'https://webchat.example.org/files/fid/pawflow_art.png',
+  assert(e.elements.viewerContent.innerHTML.includes(
+    '<img src="https://webchat.example.org/files/fid/pawflow_art.png"'), 'image not rendered from its URL');
+  e.ctx.openFileViewer('/files/fid/report.pdf');
+  const pdf = e.elements.viewerContent.innerHTML;
+  assert(pdf.includes('<iframe src="https://webchat.example.org/files/fid/report.pdf"'),
+    'PDF not framed from its URL');
+  assert(!pdf.includes('sandbox'), 'PDF frame is sandboxed');
+  e.ctx.openFileViewer('/files/fid/page.html');
+  assert(e.elements.viewerContent.innerHTML.includes('sandbox="allow-same-origin"'),
+    'HTML preview lost its script sandbox');
+  assert(e.fetches.length === 0, 'viewer fetched a file it renders from its URL');
+});
+
+test('a streamed preview that fails to load reports the error', () => {
+  const e = viewerEnv();
+  e.ctx.openFileViewer(STREAM_URL, 'clip.mp4');
+  e.media.onerror();
+  assert(e.elements.viewerContent.innerHTML.includes('Could not load file'),
+    'media load failure left an empty player');
+});
+
+test('a quote in the file URL cannot break out of the src attribute', () => {
+  const e = viewerEnv();
+  e.ctx.openFileViewer('/files/fid/x" onerror="alert(1).png');
+  const html = e.elements.viewerContent.innerHTML;
+  assert(html.includes('<img src='), 'image preview not rendered');
+  assert(!html.includes('" onerror="'), 'file URL injected an attribute: ' + html);
+});
+
+test('a foreign origin is never framed', () => {
+  const e = viewerEnv();
+  e.ctx.openFileViewer('https://evil.example/files/fid/report.pdf');
+  assert(e.fetches.length === 1, 'foreign file skipped the connect-src guarded fetch');
+  assert(!e.elements.viewerContent.innerHTML.includes('<iframe'), 'viewer framed a foreign page');
+});
+
+test('same-origin text preview keeps authenticated fetch options', async () => {
+  const text = new TextEncoder().encode('hello <b>world</b>');
+  const e = viewerEnv([streamResponse([text],
+    { 'content-type': 'text/plain', 'content-length': String(text.length) })]);
+  e.ctx.openFileViewer('/files/fid/notes.txt');
+  assert(e.fetches.length === 1, 'viewer did not fetch the text file');
+  assert(e.fetches[0].url === 'https://webchat.example.org/files/fid/notes.txt',
     'viewer did not resolve the same-origin file URL');
   assert(e.fetches[0].options.credentials === 'same-origin',
     'same-origin file fetch lost its credentials mode');
   assert(e.fetches[0].options.headers.Authorization === 'Bearer secret-token',
     'same-origin file fetch lost its bearer token');
+  await settle();
+  const html = e.elements.viewerContent.innerHTML;
+  assert(html.includes('hello &lt;b&gt;world&lt;/b&gt;'), 'text preview not rendered: ' + html);
+  assert(!html.includes('Preview shows the first'), 'a complete file was reported as truncated');
+  assert(!e.fetches[0].options.signal.aborted, 'complete text preview aborted its transfer');
+  assert(e.elements.viewerDownload.href === 'https://webchat.example.org/files/fid/notes.txt',
+    'text preview download does not stream the file');
 });
 
-if (failures.length) {
-  console.error('\n' + failures.length + ' failing, ' + passed + ' passing');
-  for (const failure of failures) console.error('  - ' + failure);
-  process.exit(1);
-}
-console.log(passed + ' passing');
+test('large text preview stops reading at the preview limit', async () => {
+  const half = new Uint8Array(viewerEnv().limit / 2).fill(97);
+  const response = streamResponse([half, half, half],
+    { 'content-type': 'text/plain', 'content-length': String(half.length * 3) });
+  const e = viewerEnv([response]);
+  e.ctx.openFileViewer('/files/fid/huge.log');
+  await settle();
+  assert(response.body.reads === 2, 'viewer kept reading past the preview limit: ' + response.body.reads);
+  assert(e.fetches[0].options.signal.aborted, 'viewer did not stop the text transfer');
+  assert(e.elements.viewerContent.innerHTML.includes('Preview shows the first 4 MB'),
+    'truncated text preview did not say so');
+  assert(e.elements.viewerFileSize.textContent === (half.length * 3 / 1024).toFixed(1) + ' KB',
+    'size label lost the file size');
+});
+
+test('binary preview does not download the body', async () => {
+  const response = streamResponse([new Uint8Array(8)],
+    { 'content-type': 'application/octet-stream', 'content-length': '5368709120' });
+  const e = viewerEnv([response]);
+  e.ctx.openFileViewer('/files/fid/archive.bin');
+  await settle();
+  assert(response.body.reads === 0, 'viewer downloaded a binary it cannot show');
+  assert(e.fetches[0].options.signal.aborted, 'viewer did not stop the binary transfer');
+  assert(e.elements.viewerContent.innerHTML.includes('Binary file'), 'binary notice missing');
+  assert(e.elements.viewerFileSize.textContent === '5242880.0 KB', 'size label lost the file size');
+  assert(e.elements.viewerDownload.href === 'https://webchat.example.org/files/fid/archive.bin',
+    'binary preview download does not stream the file');
+});
+
+test('media found by its content type streams from its URL', async () => {
+  const response = streamResponse([new Uint8Array(8)],
+    { 'content-type': 'video/mp4', 'content-length': '8' });
+  const e = viewerEnv([response]);
+  e.ctx.openFileViewer('/files/fid/recording');
+  await settle();
+  assert(response.body.reads === 0, 'viewer downloaded the video body');
+  assert(e.fetches[0].options.signal.aborted, 'viewer kept the probe transfer open');
+  assert(e.elements.viewerContent.innerHTML.includes(
+    '<video controls src="https://webchat.example.org/files/fid/recording"'), 'video not streamed from its URL');
+});
+
+test('opening another file stops the previous transfer', () => {
+  const e = viewerEnv();
+  e.ctx.openFileViewer('/files/fid/first.log');
+  e.ctx.openFileViewer('/files/fid/second.log');
+  assert(e.fetches[0].options.signal.aborted, 'previous preview kept streaming');
+  assert(!e.fetches[1].options.signal.aborted, 'new preview was aborted');
+});
+
+test('closing the viewer stops the transfer and the player', () => {
+  const e = viewerEnv();
+  e.ctx.openFileViewer('/files/fid/first.log');
+  e.ctx.closeFileViewer();
+  assert(e.fetches[0].options.signal.aborted, 'closed preview kept streaming');
+  e.ctx.openFileViewer(STREAM_URL, 'clip.mp4');
+  e.ctx.closeFileViewer();
+  assert(e.elements.fileViewer.style.display === 'none', 'viewer stayed open');
+  assert(e.elements.viewerContent.innerHTML === '', 'closed viewer kept its video element');
+});
+
+test('a late response does not overwrite a newer preview', async () => {
+  let resolveLate;
+  const late = new Promise(resolve => { resolveLate = resolve; });
+  const e = viewerEnv([late]);
+  e.ctx.openFileViewer('/files/fid/slow.log');
+  e.ctx.openFileViewer('/files/fid/pawflow_art.png');
+  resolveLate(streamResponse([new TextEncoder().encode('stale')],
+    { 'content-type': 'text/plain', 'content-length': '5' }));
+  await settle();
+  assert(e.elements.viewerContent.innerHTML.includes('<img src='),
+    'stale text replaced the newer image preview');
+});
+
+Promise.all(pending).then(() => {
+  if (failures.length) {
+    console.error('\n' + failures.length + ' failing, ' + passed + ' passing');
+    for (const failure of failures) console.error('  - ' + failure);
+    process.exit(1);
+  }
+  console.log(passed + ' passing');
+});

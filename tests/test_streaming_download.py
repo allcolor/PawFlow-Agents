@@ -7,6 +7,7 @@ import pytest
 
 import core.conversation_access as conversation_access
 from services import _http_download_stream as download_stream
+from services._http_base import _SECURITY_HEADERS
 
 
 class _Server:
@@ -91,8 +92,41 @@ def test_relay_download_streams_chunks_with_length_and_attachment(relay):
     assert disposition.startswith('attachment; filename="vid_o _x_.mp4"')
     assert "filename*=UTF-8''vid%C3%A9o%20%22x%22.mp4" in disposition
     assert "\n" not in disposition and "\r" not in disposition
+    assert "Content-Security-Policy" not in headers
     assert handler.server.transfers == ["relay download"]
     assert handler.close_connection is True
+
+
+def test_relay_preview_streams_inline_in_a_script_sandbox(relay):
+    handler = _Handler()
+
+    download_stream.handle_relay_download(handler, _Session(), QUERY + "&inline=1")
+
+    assert handler.status == 200
+    assert handler.wfile.getvalue() == b"abcdefgh"
+    headers = handler.response_headers
+    assert headers["Content-Length"] == "8"
+    assert headers["Content-Type"] == "video/mp4"
+    assert headers["Content-Disposition"].startswith('inline; filename="vid_o _x_.mp4"')
+    # Opened directly in a tab, relay HTML must not run script in the webchat origin.
+    assert headers["Content-Security-Policy"] == (
+        _SECURITY_HEADERS["Content-Security-Policy"] + "; sandbox")
+    assert handler.server.transfers == ["relay download"]
+    assert handler.close_connection is True
+
+
+def test_relay_pdf_preview_is_not_sandboxed(relay):
+    handler = _Handler()
+
+    download_stream.handle_relay_download(
+        handler, _Session(),
+        "conversation_id=conv&service=relay&path=docs%2Freport.pdf&inline=1")
+
+    headers = handler.response_headers
+    assert headers["Content-Type"] == "application/pdf"
+    assert headers["Content-Disposition"].startswith('inline; filename="report.pdf"')
+    assert "Content-Security-Policy" not in headers
+    assert handler.wfile.getvalue() == b"abcdefgh"
 
 
 def test_relay_download_requires_user_and_conversation_access(relay):

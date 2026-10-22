@@ -49,15 +49,18 @@ def test_file_explorer_streams_uploads_and_keeps_mobile_toolbar_visible():
     assert ".fe-overlay" not in template
 
 
-def test_file_explorer_preview_uses_relay_read_and_blob_viewer():
+def test_file_explorer_preview_streams_from_the_relay_download_route():
     explorer = Path("tasks/io/chat_ui/file_explorer.js").read_text(encoding="utf-8")
     viewer = Path("tasks/io/chat_ui/file_viewer.js").read_text(encoding="utf-8")
     preview = explorer[
         explorer.index("function _fePreview(name)") : explorer.index("\nfunction _feSearch")
     ]
 
-    assert "action$('fs_read_file'" in preview
-    assert "openFileViewer(URL.createObjectURL(blob),name,blob)" in preview
+    assert "'/api/fs/download?'" in preview
+    assert "inline:'1'" in preview
+    assert "fs_read_file" not in preview
+    assert "Blob" not in preview
+    assert "createObjectURL" not in preview
     assert "'/fs/'" not in preview
     assert "function openFileViewer(filenameOrUrl, displayName, sourceBlob)" in viewer
     assert "!filenameOrUrl.startsWith('blob:')" in viewer

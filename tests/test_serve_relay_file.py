@@ -159,6 +159,28 @@ def test_video_served_with_video_mime():
     assert out.get_attribute("http.response.header.Content-Type") == "video/mp4"
 
 
+def test_html_cannot_run_script_but_pdf_is_not_sandboxed():
+    from services._http_base import _INLINE_FILE_CSP
+
+    class _Svc:
+        def stat(self, path):
+            return SimpleNamespace(size=4)
+
+        def iter_file_chunks(self, path):
+            yield b"<p/>"
+
+    def policy(rest):
+        with patch("tasks.io.serve_relay_file.find_fs_service", return_value=_Svc()):
+            out = _new_task().execute(_make_ff("relay1", rest))[0]
+        assert out.get_attribute("http.response.status") == "200"
+        return out.get_attribute("http.response.header.Content-Security-Policy")
+
+    # Opened in a tab, relay HTML must not run script in the webchat origin.
+    assert policy("site/page.html") == _INLINE_FILE_CSP
+    # Chrome does not start its PDF viewer in a sandboxed document.
+    assert policy("docs/report.pdf") is None
+
+
 def test_large_payload_is_spilled_without_read_file(monkeypatch):
     task = _new_task()
     ff = _make_ff("relay1", "large.bin")

@@ -29,6 +29,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Content-Security-Policy` plus `sandbox allow-same-origin` (listener fast path
   and `serveFile` task), so an uploaded or agent-written HTML or SVG opened in a
   tab renders without script while its same-origin images still load.
+- Relay files opened from `/fs/<service>/<path>` get the same policy from the
+  `serveRelayFile` task: a relay HTML or SVG opened in a tab no longer runs
+  script in the webchat origin, and its relative images and styles still load.
 
 ## [1.0.0-beta.308] — 2026-10-23
 

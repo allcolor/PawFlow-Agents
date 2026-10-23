@@ -100,6 +100,11 @@ class ServeRelayFileTask(BaseTask):
         flowfile.set_attribute(
             "http.response.header.Content-Disposition",
             f'inline; filename="{fname}"')
+        if content_type != "application/pdf":
+            from services._http_base import _INLINE_FILE_CSP
+            flowfile.set_attribute(
+                "http.response.header.Content-Security-Policy",
+                _INLINE_FILE_CSP)
         flowfile.set_attribute("http.response.header.Content-Length",
                                str(size))
         return [flowfile]

@@ -95,10 +95,10 @@ class ServeFileTask(BaseTask):
             "http.response.header.Content-Disposition",
             f'inline; filename="{filename}"')
         if content_type != "application/pdf":
-            from services._http_base import _FILESTORE_INLINE_CSP
+            from services._http_base import _INLINE_FILE_CSP
             flowfile.set_attribute(
                 "http.response.header.Content-Security-Policy",
-                _FILESTORE_INLINE_CSP)
+                _INLINE_FILE_CSP)
         flowfile.set_attribute("http.response.header.Content-Length",
                                str(size))
         flowfile.set_attribute("http.response.file_path", str(path))

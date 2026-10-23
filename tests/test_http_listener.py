@@ -911,7 +911,7 @@ class TestHTTPListenerService:
 
     def test_filestore_html_opened_in_a_tab_cannot_run_script(self, tmp_path, monkeypatch):
         from core.file_store import FileStore
-        from services._http_base import _FILESTORE_INLINE_CSP, _SECURITY_HEADERS
+        from services._http_base import _INLINE_FILE_CSP, _SECURITY_HEADERS
 
         store = FileStore(base_dir=str(tmp_path / "files"))
         monkeypatch.setattr(FileStore, "_instance", store)
@@ -936,10 +936,10 @@ class TestHTTPListenerService:
                 return resp.headers.get_all("Content-Security-Policy")
 
             # Script stays off; the document keeps its origin for its images.
-            assert _FILESTORE_INLINE_CSP == (
+            assert _INLINE_FILE_CSP == (
                 _SECURITY_HEADERS["Content-Security-Policy"]
                 + "; sandbox allow-same-origin")
-            assert policies(page, "page.html") == [_FILESTORE_INLINE_CSP]
+            assert policies(page, "page.html") == [_INLINE_FILE_CSP]
             # Chrome does not start its PDF viewer in a sandboxed document.
             assert policies(report, "report.pdf") == [
                 _SECURITY_HEADERS["Content-Security-Policy"]]

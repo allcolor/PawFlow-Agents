@@ -55,12 +55,13 @@ _SECURITY_HEADERS = {
     "Permissions-Policy": "camera=(), microphone=(self), geolocation=()",
 }
 
-# FileStore files are served inline in the webchat origin, whose policy allows
-# inline script. sandbox without allow-scripts keeps an uploaded HTML or SVG
-# opened in a tab from running script there; allow-same-origin keeps its
-# same-origin images and styles loading with the session. PDF is exempt:
-# Chrome refuses to start its PDF viewer in a sandboxed document.
-_FILESTORE_INLINE_CSP = (
+# FileStore (/files/<id>) and relay media (/fs/<service>/<path>) files are
+# served inline in the webchat origin, whose policy allows inline script.
+# sandbox without allow-scripts keeps an HTML or SVG opened in a tab from
+# running script there; allow-same-origin keeps its same-origin images and
+# styles loading with the session. PDF is exempt: Chrome refuses to start its
+# PDF viewer in a sandboxed document.
+_INLINE_FILE_CSP = (
     _SECURITY_HEADERS["Content-Security-Policy"] + "; sandbox allow-same-origin")
 
 

@@ -946,6 +946,34 @@ class TestHTTPListenerService:
         finally:
             svc.disconnect()
 
+    def test_filestore_download_survives_a_non_latin1_file_name(self, tmp_path, monkeypatch):
+        from core.file_store import FileStore
+
+        store = FileStore(base_dir=str(tmp_path / "files"))
+        monkeypatch.setattr(FileStore, "_instance", store)
+        file_id = store.store("报告 \"x\".pdf", b"%PDF-1.4", "application/pdf",
+                              user_id="test_user", conversation_id="conv-1")
+
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19942})
+        svc.connect()
+        try:
+            svc.register_route(
+                "GET", "/files/{file_id}/{filename+}", "test", lambda req: None)
+            req = urllib.request.Request(
+                f"http://127.0.0.1:19942/files/{file_id}/report.pdf",
+                headers={"Cookie": f"pawflow_token={_create_test_session()}"},
+            )
+            resp = urllib.request.urlopen(req, timeout=5)
+
+            # A raw name outside Latin-1 used to abort the response unsent.
+            assert resp.status == 200
+            assert resp.read() == b"%PDF-1.4"
+            assert resp.headers.get("Content-Disposition") == (
+                'inline; filename="__ _x_.pdf"; '
+                "filename*=UTF-8''%E6%8A%A5%E5%91%8A%20%22x%22.pdf")
+        finally:
+            svc.disconnect()
+
     def test_serve_file_flow_streams_without_large_flowfile_body(self, tmp_path, monkeypatch):
         from core.file_store import FileStore
 

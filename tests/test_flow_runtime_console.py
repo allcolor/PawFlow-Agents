@@ -620,6 +620,36 @@ def test_content_download_route_streams(runtime):
     assert req2.result[1] == 404
 
 
+def test_content_download_keeps_a_non_latin1_file_name(runtime):
+    from tasks.ai.actions.flow_runtime import handle_content_download
+    _, conn = runtime
+    ff = FlowFile(content=b"x")
+    ff.set_attribute("filename", "报告.txt")
+    conn.enqueue(ff)
+
+    class _Req:
+        auth_user_id = "u1"
+        auth_role = ""
+        headers = None
+        def __init__(self):
+            self.path_params = {"instance_id": "inst1",
+                                "connection_id": conn.connection_id,
+                                "process_id": ff.process_id}
+        def complete(self, status, headers, body):
+            raise AssertionError(body)
+        def complete_stream(self, status, headers, stream):
+            self.headers = headers
+            b"".join(stream)
+    req = _Req()
+    handle_content_download(req)
+
+    disposition = req.headers["Content-Disposition"]
+    assert disposition == (
+        "attachment; filename=\"__.txt\"; filename*=UTF-8''%E6%8A%A5%E5%91%8A.txt")
+    # http.server writes header values as strict Latin-1.
+    disposition.encode("latin-1")
+
+
 def test_route_registration_is_idempotent():
     from tasks.ai.actions.flow_runtime import register_flow_runtime_routes
 

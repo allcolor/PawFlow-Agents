@@ -16,6 +16,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 
 logger = logging.getLogger("services.http_listener_service")  # canonical name preserved across the module split
@@ -63,6 +64,20 @@ _SECURITY_HEADERS = {
 # PDF viewer in a sandboxed document.
 _INLINE_FILE_CSP = (
     _SECURITY_HEADERS["Content-Security-Policy"] + "; sandbox allow-same-origin")
+
+
+def _content_disposition(filename, inline=False):
+    """Disposition header safe for any file name (RFC 6266 / RFC 5987).
+
+    http.server encodes header values as strict Latin-1, so a raw name
+    outside it aborts the response; quotes and controls break the header.
+    """
+    fallback = "".join(
+        ch if 32 <= ord(ch) < 127 and ch not in '"\\' else "_"
+        for ch in filename) or "download"
+    kind = "inline" if inline else "attachment"
+    return (f'{kind}; filename="{fallback}"; '
+            f"filename*=UTF-8''{quote(filename, safe='')}")
 
 
 class _GlobalRateLimiter:

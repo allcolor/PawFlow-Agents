@@ -181,6 +181,28 @@ def test_html_cannot_run_script_but_pdf_is_not_sandboxed():
     assert policy("docs/report.pdf") is None
 
 
+def test_encoded_path_is_decoded_and_name_kept_in_disposition():
+    seen = []
+
+    class _Svc:
+        def stat(self, path):
+            seen.append(path)
+            return SimpleNamespace(size=4)
+
+        def iter_file_chunks(self, path):
+            yield b"%PDF"
+
+    # The webchat encodes each /fs/ path segment with encodeURIComponent.
+    ff = _make_ff("relay1", "docs/%E6%8A%A5%E5%91%8A%20x.pdf")
+    with patch("tasks.io.serve_relay_file.find_fs_service", return_value=_Svc()):
+        out = _new_task().execute(ff)[0]
+
+    assert out.get_attribute("http.response.status") == "200"
+    assert seen == ["docs/报告 x.pdf"]
+    assert out.get_attribute("http.response.header.Content-Disposition") == (
+        "inline; filename=\"__ x.pdf\"; filename*=UTF-8''%E6%8A%A5%E5%91%8A%20x.pdf")
+
+
 def test_large_payload_is_spilled_without_read_file(monkeypatch):
     task = _new_task()
     ff = _make_ff("relay1", "large.bin")

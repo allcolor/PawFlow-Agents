@@ -87,15 +87,15 @@ class ServeFileTask(BaseTask):
         content_type = metadata.get("content_type", "application/octet-stream")
         size = path.stat().st_size
 
+        from services._http_base import _INLINE_FILE_CSP, _content_disposition
         flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "200")
         flowfile.set_attribute("http.response.header.Content-Type",
                                content_type)
         flowfile.set_attribute(
             "http.response.header.Content-Disposition",
-            f'inline; filename="{filename}"')
+            _content_disposition(filename, inline=True))
         if content_type != "application/pdf":
-            from services._http_base import _INLINE_FILE_CSP
             flowfile.set_attribute(
                 "http.response.header.Content-Security-Policy",
                 _INLINE_FILE_CSP)

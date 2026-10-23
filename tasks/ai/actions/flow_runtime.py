@@ -541,11 +541,11 @@ def handle_content_download(req) -> None:
                 logger.debug("Could not close FlowFile content stream",
                              exc_info=True)
 
+    from services._http_base import _content_disposition
     req.complete_stream(200, {
         "Content-Type": mime,
         "Content-Length": str(flowfile.size()),
-        "Content-Disposition":
-            f'attachment; filename="{filename.replace(chr(34), "")}"',
+        "Content-Disposition": _content_disposition(filename),
     }, _chunks())
 
 

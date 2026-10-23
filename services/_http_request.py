@@ -22,6 +22,7 @@ from services._http_base import (
     _HTTP_TIMING_DIAG_MS,
     _INLINE_FILE_CSP,
     _SECURITY_HEADERS,
+    _content_disposition,
     _emit_timing_summary,
     _is_long_lived_stream_path,
     _rate_limit_policy,
@@ -275,7 +276,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Disposition",
-                         f'inline; filename="{Path(filename).name}"')
+                         _content_disposition(Path(filename).name, inline=True))
         if content_type != "application/pdf":
             self.send_header("Content-Security-Policy", _INLINE_FILE_CSP)
         self.send_header("Content-Length", str(size))

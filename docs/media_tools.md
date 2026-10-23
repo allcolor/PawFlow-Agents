@@ -130,6 +130,14 @@ document keeps its origin, so the images and styles it loads from other
 `/files/` URLs, or from relative `/fs/` paths next to it, still receive the
 session cookie; without `allow-scripts`, no script runs either way.
 
+These routes, the File Manager route and FlowFile content downloads send the
+file name as an ASCII `filename` fallback plus a UTF-8 `filename*`
+(RFC 6266 / RFC 5987). `http.server` writes header values as strict Latin-1,
+so a raw name such as `报告.pdf` used to abort the response before anything was
+sent. `/fs/` also decodes the percent-encoded service and path that the webchat
+builds with `encodeURIComponent`; a relay file whose name has a space or a
+non-ASCII character no longer answers `404`.
+
 ## Image Tools
 
 | Tool | Purpose |

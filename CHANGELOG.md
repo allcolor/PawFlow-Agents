@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A file whose name falls outside Latin-1 (for example `报告.pdf`) no longer
+  fails to open: `/files/<id>`, the `serveFile` and `serveRelayFile` tasks and
+  FlowFile content downloads wrote the raw name into `Content-Disposition`,
+  which `http.server` cannot encode, so the response was aborted unsent. They
+  now send an ASCII `filename` plus a UTF-8 `filename*` (RFC 6266 / 5987).
+  `/fs/<service>/<path>` also decodes the percent-encoded path the webchat
+  sends, so relay files with a space or non-ASCII character in their name no
+  longer return `404`.
+
 ## [1.0.0-beta.309] — 2026-10-23
 
 ### Added

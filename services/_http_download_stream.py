@@ -13,10 +13,10 @@ import json
 import logging
 import mimetypes
 import re
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs
 
 from core.handlers._fs_helpers import find_fs_service
-from services._http_base import _SECURITY_HEADERS
+from services._http_base import _SECURITY_HEADERS, _content_disposition
 
 
 logger = logging.getLogger("services.http_listener_service")
@@ -53,16 +53,6 @@ def _send_json(handler, status, payload, headers=None):
 def _one(params, name):
     values = params.get(name) or []
     return values[0].strip() if values else ""
-
-
-def _content_disposition(filename, inline=False):
-    """Disposition header safe for any file name (RFC 6266 / RFC 5987)."""
-    fallback = "".join(
-        ch if 32 <= ord(ch) < 127 and ch not in '"\\' else "_"
-        for ch in filename) or "download"
-    kind = "inline" if inline else "attachment"
-    return (f'{kind}; filename="{fallback}"; '
-            f"filename*=UTF-8''{quote(filename, safe='')}")
 
 
 def _byte_range(header, size):

@@ -379,6 +379,21 @@ class TestServeFileTask(unittest.TestCase):
         assert policy(page) == _INLINE_FILE_CSP
         assert policy(report) is None
 
+    def test_serve_non_latin1_name_as_rfc5987_disposition(self):
+        from tasks.io.serve_file import ServeFileTask
+        fid = FileStore.instance().store("报告.pdf", b"%PDF-1.4", "application/pdf")
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.path.file_id", fid)
+        ff.set_attribute("http.auth.principal", "test_user")
+
+        disposition = ServeFileTask({}).execute(ff)[0].get_attribute(
+            "http.response.header.Content-Disposition")
+
+        assert disposition == (
+            "inline; filename=\"__.pdf\"; filename*=UTF-8''%E6%8A%A5%E5%91%8A.pdf")
+        # http.server writes header values as strict Latin-1.
+        disposition.encode("latin-1")
+
     def test_serve_missing_file(self):
         from tasks.io.serve_file import ServeFileTask
         task = ServeFileTask({})

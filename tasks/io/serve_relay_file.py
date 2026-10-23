@@ -19,6 +19,7 @@ Flow:
 import logging
 import mimetypes
 from typing import Dict, Any, List
+from urllib.parse import unquote
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
@@ -55,8 +56,10 @@ class ServeRelayFileTask(BaseTask):
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         svc_attr = self.config.get("service_attribute", "http.path.service_name")
         path_attr = self.config.get("path_attribute", "http.path.rest")
-        service_name = flowfile.get_attribute(svc_attr) or ""
-        rel_path = flowfile.get_attribute(path_attr) or ""
+        # Route parameters arrive percent-encoded: the webchat builds /fs/
+        # URLs with encodeURIComponent, so "my photo.png" is "my%20photo.png".
+        service_name = unquote(flowfile.get_attribute(svc_attr) or "")
+        rel_path = unquote(flowfile.get_attribute(path_attr) or "")
         user_id = flowfile.get_attribute("http.auth.principal") or ""
 
         if not service_name or not rel_path:
@@ -95,13 +98,13 @@ class ServeRelayFileTask(BaseTask):
         fname = rel_path.rsplit("/", 1)[-1] if "/" in rel_path else rel_path
         content_type = mimetypes.guess_type(fname)[0] or "application/octet-stream"
 
+        from services._http_base import _INLINE_FILE_CSP, _content_disposition
         flowfile.set_attribute("http.response.status", "200")
         flowfile.set_attribute("http.response.header.Content-Type", content_type)
         flowfile.set_attribute(
             "http.response.header.Content-Disposition",
-            f'inline; filename="{fname}"')
+            _content_disposition(fname, inline=True))
         if content_type != "application/pdf":
-            from services._http_base import _INLINE_FILE_CSP
             flowfile.set_attribute(
                 "http.response.header.Content-Security-Policy",
                 _INLINE_FILE_CSP)

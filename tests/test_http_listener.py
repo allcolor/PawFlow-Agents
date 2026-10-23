@@ -974,6 +974,58 @@ class TestHTTPListenerService:
         finally:
             svc.disconnect()
 
+    def test_filestore_download_serves_byte_ranges(self, tmp_path, monkeypatch):
+        from core.file_store import FileStore
+
+        store = FileStore(base_dir=str(tmp_path / "files"))
+        monkeypatch.setattr(FileStore, "_instance", store)
+        payload = bytes(range(256)) * 8
+        file_id = store.store("clip.mp4", payload, "video/mp4",
+                              user_id="test_user", conversation_id="conv-1")
+
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19943})
+        svc.connect()
+        try:
+            svc.register_route(
+                "GET", "/files/{file_id}/{filename+}", "test", lambda req: None)
+
+            def get(range_header=None):
+                headers = {"Cookie": f"pawflow_token={_create_test_session()}"}
+                if range_header:
+                    headers["Range"] = range_header
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:19943/files/{file_id}/clip.mp4",
+                    headers=headers)
+                try:
+                    resp = urllib.request.urlopen(req, timeout=5)
+                    return resp.status, resp.headers, resp.read()
+                except urllib.error.HTTPError as exc:
+                    return exc.code, exc.headers, exc.read()
+
+            status, headers, body = get()
+            assert (status, body) == (200, payload)
+            assert headers["Accept-Ranges"] == "bytes"
+
+            status, headers, body = get("bytes=1000-1099")
+            assert (status, body) == (206, payload[1000:1100])
+            assert headers["Content-Range"] == "bytes 1000-1099/2048"
+            assert headers["Content-Length"] == "100"
+
+            status, headers, body = get("bytes=-48")
+            assert (status, body) == (206, payload[-48:])
+            assert headers["Content-Range"] == "bytes 2000-2047/2048"
+
+            status, headers, _ = get("bytes=2048-")
+            assert status == 416
+            assert headers["Content-Range"] == "bytes */2048"
+
+            # Several ranges are ignored: the whole file is sent.
+            status, headers, body = get("bytes=0-1,4-5")
+            assert (status, body) == (200, payload)
+            assert "Content-Range" not in headers
+        finally:
+            svc.disconnect()
+
     def test_serve_file_flow_streams_without_large_flowfile_body(self, tmp_path, monkeypatch):
         from core.file_store import FileStore
 

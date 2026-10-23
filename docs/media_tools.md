@@ -118,7 +118,8 @@ data shows its metadata once the browser has fetched that index instead of
 after the whole file. A range that starts past the end of the file gets `416`
 with `Content-Range: bytes */<size>`; several ranges, another unit or a
 malformed header are ignored and the whole file is sent, as RFC 9110 allows.
-The FileStore route `/files/<id>` still ignores `Range`.
+The FileStore route `/files/<id>` answers the same single ranges, with a seek
+on the stored file, so FileStore videos seek and start the same way.
 
 The FileStore route and the relay media route `/fs/<service>/<path>` always
 serve inline, so every type except PDF carries the Webchat

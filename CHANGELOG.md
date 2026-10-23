@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The FileStore route `/files/<id>` answers a single HTTP byte range with
+  `206 Partial Content` (`416` past the end of the file) and advertises
+  `Accept-Ranges: bytes`, like the File Manager route: a FileStore video can
+  seek, and an MP4 whose index sits at the end starts without the whole file.
+
 ### Fixed
 
 - A file whose name falls outside Latin-1 (for example `报告.pdf`) no longer

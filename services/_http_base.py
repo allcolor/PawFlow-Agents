@@ -80,6 +80,41 @@ def _content_disposition(filename, inline=False):
             f"filename*=UTF-8''{quote(filename, safe='')}")
 
 
+# One byte range, as media players send it: ``first-last``, ``first-`` or a
+# ``-suffix``. Several ranges or another unit are ignored: RFC 9110 lets a
+# server send the whole file instead.
+_BYTE_RANGE = re.compile(r"bytes=([0-9]*)-([0-9]*)")
+
+
+class _RangeNotSatisfiable(Exception):
+    """A valid byte range that starts past the end of the file (416)."""
+
+
+def _byte_range(header, size):
+    """Inclusive ``(start, end)`` asked by a ``Range`` header, or ``None``.
+
+    ``None`` sends the whole file: no header, an empty file, or a range the
+    file routes ignore (several ranges, another unit, malformed, last < first).
+    """
+    match = _BYTE_RANGE.fullmatch((header or "").strip().lower())
+    if not match or size <= 0:
+        return None
+    first, last = match.groups()
+    if not first:
+        if not last:
+            return None
+        if int(last) == 0:
+            raise _RangeNotSatisfiable()
+        return max(0, size - int(last)), size - 1
+    start = int(first)
+    if last and int(last) < start:
+        return None
+    if start >= size:
+        raise _RangeNotSatisfiable()
+    end = min(int(last), size - 1) if last else size - 1
+    return start, end
+
+
 class _GlobalRateLimiter:
     """Small in-memory sliding-window limiter for login and API routes."""
 

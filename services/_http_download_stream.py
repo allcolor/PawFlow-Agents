@@ -12,11 +12,15 @@ chunks covering it, so a video player can seek or read a trailing index.
 import json
 import logging
 import mimetypes
-import re
 from urllib.parse import parse_qs
 
 from core.handlers._fs_helpers import find_fs_service
-from services._http_base import _SECURITY_HEADERS, _content_disposition
+from services._http_base import (
+    _SECURITY_HEADERS,
+    _RangeNotSatisfiable,
+    _byte_range,
+    _content_disposition,
+)
 
 
 logger = logging.getLogger("services.http_listener_service")
@@ -26,15 +30,6 @@ logger = logging.getLogger("services.http_listener_service")
 # script there. PDF stays unsandboxed because Chrome refuses to start its PDF
 # viewer in a sandboxed document, and PDF script never runs in the page.
 _INLINE_PREVIEW_CSP = _SECURITY_HEADERS["Content-Security-Policy"] + "; sandbox"
-
-# One byte range, as media players send it: ``first-last``, ``first-`` or a
-# ``-suffix``. Several ranges or another unit are ignored: RFC 9110 lets a
-# server send the whole file instead.
-_BYTE_RANGE = re.compile(r"bytes=([0-9]*)-([0-9]*)")
-
-
-class _RangeNotSatisfiable(Exception):
-    """A valid byte range that starts past the end of the file (416)."""
 
 
 def _send_json(handler, status, payload, headers=None):
@@ -53,31 +48,6 @@ def _send_json(handler, status, payload, headers=None):
 def _one(params, name):
     values = params.get(name) or []
     return values[0].strip() if values else ""
-
-
-def _byte_range(header, size):
-    """Inclusive ``(start, end)`` asked by a ``Range`` header, or ``None``.
-
-    ``None`` sends the whole file: no header, an empty file, or a range this
-    route ignores (several ranges, another unit, malformed, last < first).
-    """
-    match = _BYTE_RANGE.fullmatch((header or "").strip().lower())
-    if not match or size <= 0:
-        return None
-    first, last = match.groups()
-    if not first:
-        if not last:
-            return None
-        if int(last) == 0:
-            raise _RangeNotSatisfiable()
-        return max(0, size - int(last)), size - 1
-    start = int(first)
-    if last and int(last) < start:
-        return None
-    if start >= size:
-        raise _RangeNotSatisfiable()
-    end = min(int(last), size - 1) if last else size - 1
-    return start, end
 
 
 def handle_relay_download(handler, session, query):

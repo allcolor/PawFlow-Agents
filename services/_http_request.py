@@ -21,7 +21,9 @@ from services._http_base import (
     _GLOBAL_RATE_LIMITER,
     _HTTP_TIMING_DIAG_MS,
     _INLINE_FILE_CSP,
+    _RangeNotSatisfiable,
     _SECURITY_HEADERS,
+    _byte_range,
     _content_disposition,
     _emit_timing_summary,
     _is_long_lived_stream_path,
@@ -192,10 +194,13 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         return True
 
-    def _send_json_error(self, status: int, message: bytes) -> None:
+    def _send_json_error(self, status: int, message: bytes,
+                         headers: dict[str, str] | None = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(message)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         if hasattr(self, '_renew_cookie') and self._renew_cookie:
             self.send_header("Set-Cookie", self._renew_cookie)
         self.end_headers()
@@ -236,6 +241,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
         Large exports must not travel through FlowFile content queues: the
         default queue byte threshold is 100 MB, so a 180 MB archive can be
         produced successfully and then stall forever before send_response.
+        A single ``Range`` is served as ``206 Partial Content`` (see
+        ``_byte_range``), so a video can seek or read a trailing index.
         """
         file_id = path_params.get("file_id", "")
         if not file_id:
@@ -272,14 +279,25 @@ class _RequestHandler(BaseHTTPRequestHandler):
                         or mimetypes.guess_type(filename)[0]
                         or "application/octet-stream")
         size = path.stat().st_size
+        try:
+            byte_range = _byte_range(self.headers.get("Range"), size)
+        except _RangeNotSatisfiable:
+            self._send_json_error(
+                416, b'{"error": "Requested range not satisfiable"}',
+                {"Content-Range": f"bytes */{size}"})
+            return True
+        start, end = byte_range or (0, size - 1)
 
-        self.send_response(200)
+        self.send_response(206 if byte_range else 200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Disposition",
                          _content_disposition(Path(filename).name, inline=True))
         if content_type != "application/pdf":
             self.send_header("Content-Security-Policy", _INLINE_FILE_CSP)
-        self.send_header("Content-Length", str(size))
+        if byte_range:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
         if hasattr(self, '_renew_cookie') and self._renew_cookie:
             self.send_header("Set-Cookie", self._renew_cookie)
         self.end_headers()
@@ -288,11 +306,14 @@ class _RequestHandler(BaseHTTPRequestHandler):
 
         try:
             with path.open("rb") as f:
-                while True:
-                    chunk = f.read(1024 * 1024)
+                f.seek(start)
+                remaining = end - start + 1
+                while remaining > 0:
+                    chunk = f.read(min(1024 * 1024, remaining))
                     if not chunk:
                         break
                     self.wfile.write(chunk)
+                    remaining -= len(chunk)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             logger.debug("Client disconnected during FileStore download %s",
                          file_id)

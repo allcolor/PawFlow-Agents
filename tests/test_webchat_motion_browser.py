@@ -706,7 +706,11 @@ def test_desktop_tab_rail_keeps_content_present_while_sliding(chromium_browser):
         )
         page.wait_for_timeout(300)
         opening = snapshot()
-        page.wait_for_timeout(650)
+        # Close only after the opening slide has ended: reversing a running
+        # CSS transition shortens the new one, so under load a fixed delay
+        # could start closing at 99.99% and report a 899.99 ms duration.
+        page.wait_for_function(
+            "document.getElementById('tabBar').getAnimations().length === 0")
         opened = snapshot()
         page.mouse.move(640, 400)
         page.wait_for_timeout(300)

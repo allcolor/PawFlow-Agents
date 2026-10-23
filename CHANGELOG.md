@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The real-Chromium tab-rail motion test no longer fails under load. It now
+  waits for the opening slide to end before closing the rail; the fixed delay
+  it used could reverse a still-running CSS transition, which Chromium then
+  shortened (899.9999995780847 ms instead of 900 ms).
+
 ## [1.0.0-beta.308] — 2026-10-23
 
 ### Fixed

@@ -120,6 +120,14 @@ with `Content-Range: bytes */<size>`; several ranges, another unit or a
 malformed header are ignored and the whole file is sent, as RFC 9110 allows.
 The FileStore route `/files/<id>` still ignores `Range`.
 
+The FileStore route always serves inline, so every type except PDF carries the
+Webchat `Content-Security-Policy` plus `sandbox allow-same-origin`, on the
+listener fast path and in the `serveFile` task alike: an HTML or SVG uploaded
+to the FileStore, or written there by an agent, cannot run script in the
+webchat origin when opened in a tab. Unlike relay previews, the document keeps
+its origin, so the images and styles it loads from other `/files/` URLs still
+receive the session cookie; without `allow-scripts`, no script runs either way.
+
 ## Image Tools
 
 | Tool | Purpose |

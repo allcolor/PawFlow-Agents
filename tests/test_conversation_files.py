@@ -362,6 +362,23 @@ class TestServeFileTask(unittest.TestCase):
         assert results[0].get_attribute("http.response.file_path")
         assert "test.csv" in results[0].get_attribute("http.response.header.Content-Disposition")
 
+    def test_serve_html_without_script_but_pdf_unsandboxed(self):
+        from services._http_base import _FILESTORE_INLINE_CSP
+        from tasks.io.serve_file import ServeFileTask
+        store = FileStore.instance()
+        page = store.store("page.html", b"<script>alert(1)</script>", "text/html")
+        report = store.store("report.pdf", b"%PDF-1.4", "application/pdf")
+
+        def policy(fid):
+            ff = FlowFile(content=b"")
+            ff.set_attribute("http.path.file_id", fid)
+            ff.set_attribute("http.auth.principal", "test_user")
+            return ServeFileTask({}).execute(ff)[0].get_attribute(
+                "http.response.header.Content-Security-Policy")
+
+        assert policy(page) == _FILESTORE_INLINE_CSP
+        assert policy(report) is None
+
     def test_serve_missing_file(self):
         from tasks.io.serve_file import ServeFileTask
         task = ServeFileTask({})

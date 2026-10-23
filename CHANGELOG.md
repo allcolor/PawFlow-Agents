@@ -22,6 +22,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it used could reverse a still-running CSS transition, which Chromium then
   shortened (899.9999995780847 ms instead of 900 ms).
 
+### Security
+
+- FileStore files opened from `/files/<id>` can no longer run script in the
+  webchat origin. Every response except PDF carries the Webchat
+  `Content-Security-Policy` plus `sandbox allow-same-origin` (listener fast path
+  and `serveFile` task), so an uploaded or agent-written HTML or SVG opened in a
+  tab renders without script while its same-origin images still load.
+
 ## [1.0.0-beta.308] — 2026-10-23
 
 ### Fixed

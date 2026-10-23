@@ -909,6 +909,43 @@ class TestHTTPListenerService:
         finally:
             svc.disconnect()
 
+    def test_filestore_html_opened_in_a_tab_cannot_run_script(self, tmp_path, monkeypatch):
+        from core.file_store import FileStore
+        from services._http_base import _FILESTORE_INLINE_CSP, _SECURITY_HEADERS
+
+        store = FileStore(base_dir=str(tmp_path / "files"))
+        monkeypatch.setattr(FileStore, "_instance", store)
+        page = store.store("page.html", b"<script>alert(1)</script>", "text/html",
+                           user_id="test_user", conversation_id="conv-1")
+        report = store.store("report.pdf", b"%PDF-1.4", "application/pdf",
+                             user_id="test_user", conversation_id="conv-1")
+
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19941})
+        svc.connect()
+        try:
+            svc.register_route(
+                "GET", "/files/{file_id}/{filename+}", "test", lambda req: None)
+
+            def policies(file_id, name):
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:19941/files/{file_id}/{name}",
+                    headers={"Cookie": f"pawflow_token={_create_test_session()}"},
+                )
+                resp = urllib.request.urlopen(req, timeout=5)
+                assert resp.status == 200
+                return resp.headers.get_all("Content-Security-Policy")
+
+            # Script stays off; the document keeps its origin for its images.
+            assert _FILESTORE_INLINE_CSP == (
+                _SECURITY_HEADERS["Content-Security-Policy"]
+                + "; sandbox allow-same-origin")
+            assert policies(page, "page.html") == [_FILESTORE_INLINE_CSP]
+            # Chrome does not start its PDF viewer in a sandboxed document.
+            assert policies(report, "report.pdf") == [
+                _SECURITY_HEADERS["Content-Security-Policy"]]
+        finally:
+            svc.disconnect()
+
     def test_serve_file_flow_streams_without_large_flowfile_body(self, tmp_path, monkeypatch):
         from core.file_store import FileStore
 

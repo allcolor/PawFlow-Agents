@@ -18,6 +18,7 @@ from urllib.parse import parse_qs
 from services._http_base import (
     PendingRequest,
     RouteRegistry,
+    _FILESTORE_INLINE_CSP,
     _GLOBAL_RATE_LIMITER,
     _HTTP_TIMING_DIAG_MS,
     _SECURITY_HEADERS,
@@ -275,6 +276,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Disposition",
                          f'inline; filename="{Path(filename).name}"')
+        if content_type != "application/pdf":
+            self.send_header("Content-Security-Policy", _FILESTORE_INLINE_CSP)
         self.send_header("Content-Length", str(size))
         if hasattr(self, '_renew_cookie') and self._renew_cookie:
             self.send_header("Set-Cookie", self._renew_cookie)

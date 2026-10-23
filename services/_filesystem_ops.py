@@ -459,6 +459,35 @@ class _RelayFsOpsMixin:
             if chunk.get("done"):
                 break
 
+    def iter_file_range(self, path: str, start: int, end: int,
+                        local: bool = False,
+                        chunk_size: int = 4 * 1024 * 1024):
+        """Yield bytes ``start`` to ``end`` (inclusive) of one relay file.
+
+        ``read_chunk`` is stateless (it seeks to ``index * chunk_size``), so
+        only the chunks covering the range travel: a player that needs the
+        index at the end of a large video does not wait for the rest.
+        """
+        # A short range (a PDF viewer fetches 64 KiB pieces) reads chunks of
+        # about its own length, not a whole 4 MiB chunk for each piece.
+        chunk_size = min(chunk_size, max(64 * 1024, end - start + 1))
+        index, skip = divmod(start, chunk_size)
+        remaining = end - start + 1
+        while remaining > 0:
+            chunk = self._request(
+                "read_chunk", path, index=index,
+                chunk_size=chunk_size, local=local)
+            data = base64.b64decode(chunk.get("data") or "")
+            data = data[skip:skip + remaining]
+            if not data:
+                return
+            yield data
+            remaining -= len(data)
+            if chunk.get("done"):
+                return
+            index += 1
+            skip = 0
+
     def copy_file_to_local(self, path: str, local_path: str,
                            local: bool = False) -> dict:
         """Copy a relay file to a server-local path without holding it in RAM."""

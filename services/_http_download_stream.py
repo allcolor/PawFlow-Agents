@@ -5,11 +5,14 @@ UI action: the whole file travelled as one JSON/base64 response and was
 rebuilt as a Blob in the browser, so large files failed. This route streams
 the relay's bounded chunks straight to the HTTP response instead, as an
 attachment for downloads or inline (``inline=1``) for the file viewer.
+A single ``Range`` is answered with ``206 Partial Content`` from the relay
+chunks covering it, so a video player can seek or read a trailing index.
 """
 
 import json
 import logging
 import mimetypes
+import re
 from urllib.parse import parse_qs, quote
 
 from core.handlers._fs_helpers import find_fs_service
@@ -24,12 +27,23 @@ logger = logging.getLogger("services.http_listener_service")
 # viewer in a sandboxed document, and PDF script never runs in the page.
 _INLINE_PREVIEW_CSP = _SECURITY_HEADERS["Content-Security-Policy"] + "; sandbox"
 
+# One byte range, as media players send it: ``first-last``, ``first-`` or a
+# ``-suffix``. Several ranges or another unit are ignored: RFC 9110 lets a
+# server send the whole file instead.
+_BYTE_RANGE = re.compile(r"bytes=([0-9]*)-([0-9]*)")
 
-def _send_json(handler, status, payload):
+
+class _RangeNotSatisfiable(Exception):
+    """A valid byte range that starts past the end of the file (416)."""
+
+
+def _send_json(handler, status, payload, headers=None):
     body = json.dumps(payload).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json")
     handler.send_header("Content-Length", str(len(body)))
+    for name, value in (headers or {}).items():
+        handler.send_header(name, value)
     if getattr(handler, "_renew_cookie", ""):
         handler.send_header("Set-Cookie", handler._renew_cookie)
     handler.end_headers()
@@ -51,11 +65,37 @@ def _content_disposition(filename, inline=False):
             f"filename*=UTF-8''{quote(filename, safe='')}")
 
 
+def _byte_range(header, size):
+    """Inclusive ``(start, end)`` asked by a ``Range`` header, or ``None``.
+
+    ``None`` sends the whole file: no header, an empty file, or a range this
+    route ignores (several ranges, another unit, malformed, last < first).
+    """
+    match = _BYTE_RANGE.fullmatch((header or "").strip().lower())
+    if not match or size <= 0:
+        return None
+    first, last = match.groups()
+    if not first:
+        if not last:
+            return None
+        if int(last) == 0:
+            raise _RangeNotSatisfiable()
+        return max(0, size - int(last)), size - 1
+    start = int(first)
+    if last and int(last) < start:
+        return None
+    if start >= size:
+        raise _RangeNotSatisfiable()
+    end = min(int(last), size - 1) if last else size - 1
+    return start, end
+
+
 def handle_relay_download(handler, session, query):
     """Stream one relay file to the client without holding it in memory.
 
     ``inline=1`` serves it for display (the file viewer points its media
-    element at this URL) instead of as an attachment.
+    element at this URL) instead of as an attachment. A single ``Range`` is
+    served as ``206 Partial Content`` (see ``_byte_range``).
     """
     user_id = ""
     if session and session is not True:
@@ -99,6 +139,13 @@ def handle_relay_download(handler, session, query):
     if entry.kind == "directory":
         _send_json(handler, 400, {"error": "Cannot download a directory"})
         return
+    size = int(entry.size)
+    try:
+        byte_range = _byte_range(handler.headers.get("Range"), size)
+    except _RangeNotSatisfiable:
+        _send_json(handler, 416, {"error": "Requested range not satisfiable"},
+                   {"Content-Range": f"bytes */{size}"})
+        return
 
     if not handler.server.transfer_current_dispatch_to_long_lived(
             "relay download", handler.connection):
@@ -106,13 +153,23 @@ def handle_relay_download(handler, session, query):
 
     filename = relay_path.replace("\\", "/").rsplit("/", 1)[-1]
     content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    handler.send_response(200)
+    if byte_range is None:
+        handler.send_response(200)
+        length = size
+        chunks = reader(relay_path)
+    else:
+        start, end = byte_range
+        handler.send_response(206)
+        handler.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        length = end - start + 1
+        chunks = service.iter_file_range(relay_path, start, end)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Content-Disposition",
                         _content_disposition(filename, inline=inline))
     if inline and content_type != "application/pdf":
         handler.send_header("Content-Security-Policy", _INLINE_PREVIEW_CSP)
-    handler.send_header("Content-Length", str(int(entry.size)))
+    handler.send_header("Accept-Ranges", "bytes")
+    handler.send_header("Content-Length", str(length))
     handler.send_header("Cache-Control", "no-store")
     if getattr(handler, "_renew_cookie", ""):
         handler.send_header("Set-Cookie", handler._renew_cookie)
@@ -124,7 +181,7 @@ def handle_relay_download(handler, session, query):
     handler.close_connection = True
     sent = 0
     try:
-        for chunk in reader(relay_path):
+        for chunk in chunks:
             if chunk:
                 handler.wfile.write(chunk)
                 sent += len(chunk)

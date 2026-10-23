@@ -104,9 +104,21 @@ Opened directly in a tab, such a response renders in the webchat origin,
 whose policy allows inline script, so every inline type except PDF carries
 the Webchat `Content-Security-Policy` plus `sandbox`: relay HTML or SVG cannot
 run script there. PDF stays unsandboxed because Chrome does not start its PDF
-viewer in a sandboxed document. Like the FileStore route, the relay route
-ignores `Range` requests: the browser plays a video progressively from the
-start of the transfer.
+viewer in a sandboxed document.
+
+The route also answers a single byte range (`Range: bytes=first-last`,
+`first-` or `-suffix`) with `206 Partial Content`, `Content-Range` and only
+those bytes, and every response advertises `Accept-Ranges: bytes`. The relay
+`read_chunk` action is stateless (it seeks to `index * chunk_size`), so only
+the chunks covering the range travel: 4 MiB chunks for an open-ended range, as
+a video player sends, and chunks of about the range's own length (at least
+64 KiB) for a short one, such as the 64 KiB pieces a PDF viewer asks for. A
+video can therefore seek, and an MP4 whose index (`moov`) follows its media
+data shows its metadata once the browser has fetched that index instead of
+after the whole file. A range that starts past the end of the file gets `416`
+with `Content-Range: bytes */<size>`; several ranges, another unit or a
+malformed header are ignored and the whole file is sent, as RFC 9110 allows.
+The FileStore route `/files/<id>` still ignores `Range`.
 
 ## Image Tools
 

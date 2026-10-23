@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- File Manager previews and downloads (`GET /api/fs/download`) answer a single
+  HTTP byte range with `206 Partial Content` and advertise
+  `Accept-Ranges: bytes`. Only the relay chunks covering the range are read, so
+  a previewed video can seek, and an MP4 whose index sits at the end of the
+  file shows its metadata without first transferring the whole file. A range
+  past the end of the file gets `416`.
+
 ### Fixed
 
 - The real-Chromium tab-rail motion test no longer fails under load. It now

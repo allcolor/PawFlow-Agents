@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.310] — 2026-10-23
+
 ### Added
 
 - The FileStore route `/files/<id>` answers a single HTTP byte range with

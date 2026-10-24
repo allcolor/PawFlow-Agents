@@ -550,9 +550,14 @@ class _InteractiveContainerSpawnMixin:
 
         root_settings_path = Path(workdir) / "settings.json"
         root_settings = self._read_json(root_settings_path)
+        # PawFlow owns compaction of interactive sessions. Claude Code
+        # 2.1.299+ also compacts on its own a 200K+ token conversation left
+        # idle for about 54 minutes (an agent waiting on a scheduled
+        # continuation); turn that off.
         root_settings.update({
             "theme": root_settings.get("theme") or "dark",
             "skipDangerousModePermissionPrompt": True,
+            "idleCompaction": False,
         })
         root_settings_path.write_text(json.dumps(root_settings, indent=2) + "\n", encoding="utf-8")
 

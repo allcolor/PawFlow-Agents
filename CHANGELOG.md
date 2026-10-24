@@ -26,6 +26,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   safely replayed". These two handlers and the image model info handler now
   take the relay and its local flag like the image and video handlers, and
   pass both to the media service.
+- A Claude Code interactive session could compact itself while idle: Claude
+  Code 2.1.299+ compacts a 200K+ token conversation left idle for about 54
+  minutes, for example an agent waiting on a scheduled continuation, although
+  PawFlow owns compaction of these sessions. PawFlow now writes
+  `"idleCompaction": false` into each session's Claude Code user settings.
+  The native auto-compact window keeps no PawFlow default: set
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000` in the service's
+  `cli_environment` to keep it beyond PawFlow's threshold; the variable takes
+  precedence over the window Claude Code saves when its auto-compact offer is
+  accepted.
 
 ## [1.0.0-beta.311] — 2026-10-24
 

@@ -1604,6 +1604,23 @@ def test_interactive_pool_preaccepts_claude_interactive_prompts(tmp_path, monkey
     assert claude_json["projects"]["/cc_sessions/conv/agent"]["hasTrustDialogAccepted"] is True
 
 
+def test_interactive_pool_turns_off_native_idle_compaction(tmp_path):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    root_settings_path = tmp_path / "settings.json"
+    root_settings_path.write_text(json.dumps({
+        "idleCompaction": True,
+        "modelSettings": {"claude-opus-5-5": {"autoCompactWindow": 400000}},
+    }), encoding="utf-8")
+
+    InteractiveClaudeCodePool()._write_hook_settings(str(tmp_path))
+
+    root_settings = json.loads(root_settings_path.read_text())
+    assert root_settings["idleCompaction"] is False
+    assert root_settings["modelSettings"] == {
+        "claude-opus-5-5": {"autoCompactWindow": 400000}}
+
+
 def test_interactive_pool_send_text_pastes_then_sends_enter(monkeypatch):
     from core.claude_code_interactive_pool import InteractiveClaudeCodePool, InteractiveContainer
 

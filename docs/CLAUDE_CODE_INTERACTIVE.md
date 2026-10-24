@@ -682,6 +682,19 @@ The provider assembles responses from those events:
   same WebSocket. `PreCompact` and the defensive `PostCompact` fallback are
   terminal signals: PawFlow removes the native session and runs its own forced
   compact before cold-starting the provider from the canonical context.
+- PawFlow owns compaction, so the CLI must not start one on its own. The user
+  settings PawFlow writes for each session (`settings.json` in
+  `CLAUDE_CONFIG_DIR`) set `"idleCompaction": false`: Claude Code 2.1.299+
+  otherwise compacts a 200K+ token conversation left idle for about 54
+  minutes, for example an agent waiting on a scheduled continuation. The
+  native auto-compact window is separate: set
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000` in the service's
+  `cli_environment` to keep Claude Code's own auto-compact beyond PawFlow's
+  threshold. The variable takes precedence over a window saved from Claude
+  Code's auto-compact offer (`modelSettings.<model>.autoCompactWindow`),
+  suppresses that offer, and is capped at the model's context window. Like
+  every `cli_environment` entry, it is read when PawFlow starts the Claude
+  Code process.
 - Only the Claude Code `Stop` hook closes a PawFlow turn. Anthropic
   `message_stop` events are observed for diagnostics but do not terminate the
   interactive turn, because Claude Code can issue intermediate model requests

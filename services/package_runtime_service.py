@@ -131,7 +131,11 @@ class PackageRuntimeService(Service):
         return _operation
 
     def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
-                            scope: str = "", agent_name: str = "") -> None:
+                            scope: str = "", agent_name: str = "",
+                            **_: object) -> None:
+        # Media tools also pass every media service their relay context
+        # (relay_id, relay_local). It does not apply here: a service provider
+        # runs on the agent's or the conversation's default relay.
         self._runtime_context = {
             "user_id": user_id,
             "conversation_id": conversation_id,

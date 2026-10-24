@@ -1374,6 +1374,63 @@ def test_pfp_media_resolver_discovers_named_package_provider(tmp_path, monkeypat
     assert svc.config["package_runtime"]["object_id"] == "service_provider:image"
 
 
+def test_pfp_image_provider_serves_the_image_tools(tmp_path, monkeypatch):
+    # The image tools hand every media service the relay context (relay_id,
+    # relay_local). The PFP proxy rejected those keywords: get_image_model_info
+    # raised TypeError and generate_image returned it (2026-10-24). A service
+    # provider runs on the default relay, so the context never reaches it.
+    _reset_repo(tmp_path, monkeypatch)
+    from core import pfp_runtime
+    from core.handlers.media import ImageGenerationHandler, ImageModelInfoHandler
+    from core.service_registry import ServiceRegistry, SCOPE_CONV
+    from tasks.ai.agent_utils import AgentUtilsMixin
+
+    _register_test_package_service_type(
+        "testImageProvider", "service_provider:image",
+        provides=["media.image_generation"])
+    ServiceRegistry.get_instance().install(
+        SCOPE_CONV, "conv1", "pfp-image", "testImageProvider")
+
+    class _Agent(AgentUtilsMixin):
+        pass
+
+    class _Storage:
+        def write(self, destination, filename, data, content_type):
+            return {"file_id": "image-file"}
+
+    monkeypatch.setattr(
+        "core.storage_resolver.StorageResolver",
+        lambda user_id="", conversation_id="": _Storage(),
+    )
+    contexts = []
+
+    def _invoke_service(runtime, installed_from, operation, arguments, context):
+        contexts.append(context)
+        return {"image_bytes": b"png", "content_type": "image/png"}
+
+    monkeypatch.setattr(pfp_runtime, "invoke_service", _invoke_service)
+
+    info = ImageModelInfoHandler()
+    info.set_service_resolver(_Agent()._make_image_resolver(
+        "alice", "conv1", "agentA", ("get_model_info",)))
+    generate = ImageGenerationHandler()
+    generate.set_service_resolver(_Agent()._make_image_resolver(
+        "alice", "conv1", "agentA"))
+    generate.set_relay_id("relay-b", True)
+    for handler in (info, generate):
+        handler.set_user_id("alice")
+        handler.set_conversation_id("conv1")
+        handler.set_agent_name("agentA")
+
+    model_info = json.loads(info.execute({}))
+    assert model_info["provider"] == "pfp"
+    assert model_info["object_id"] == "service_provider:image"
+    assert generate.execute({"prompt": "cat"}).startswith(
+        "Image generated: fs://filestore/image-file/")
+    assert contexts[0]["agent_name"] == "agentA"
+    assert not {"relay_id", "relay_local"} & set(contexts[0])
+
+
 def test_tool_relay_media_resolver_discovers_pfp_capability_provider(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     from core.service_registry import ServiceRegistry, SCOPE_USER

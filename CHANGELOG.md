@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Media tools failed on every media service provided by a PFP package. Since
+  beta.246 the image, video, audio, and capability tools pass each media
+  service the relay context (`relay_id`, `relay_local`) that ComfyUI and
+  FFmpeg use, and the package service proxy rejected those keywords:
+  `get_image_model_info` failed with `PackageRuntimeService.set_runtime_context()
+  got an unexpected keyword argument 'relay_id'`, and `generate_image` returned
+  the same error. The proxy now accepts that context; a package service
+  provider still runs on the agent's or the conversation's default relay.
+
 ## [1.0.0-beta.311] — 2026-10-24
 
 ### Fixed

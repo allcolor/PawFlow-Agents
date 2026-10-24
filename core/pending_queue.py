@@ -247,19 +247,8 @@ class PendingQueue:
         if self._path is None or not self._path.exists():
             return []
         with self._lock:
-            entries: List[Dict] = []
-            try:
-                with open(self._path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            entries.append(json.loads(line))
-                        except Exception as e:
-                            logger.warning("[pending-queue] skipping corrupt line "
-                                            "in %s: %s", self._path, e)
-            except FileNotFoundError:
+            entries = self._read_entries()
+            if entries is None:
                 return []
             # Truncate — atomic via empty file replace. Keep the file so
             # next enqueue doesn't race with mkdir / parent detection.
@@ -267,6 +256,24 @@ class PendingQueue:
             with open(tmp, "w", encoding="utf-8") as _fh:
                 pass
             tmp.replace(self._path)
+        return entries
+
+    def _read_entries(self) -> Optional[List[Dict]]:
+        """Parse the queue file, None when it is missing. Caller holds the lock."""
+        entries: List[Dict] = []
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entries.append(json.loads(line))
+                    except Exception as e:
+                        logger.warning("[pending-queue] skipping corrupt line "
+                                        "in %s: %s", self._path, e)
+        except FileNotFoundError:
+            return None
         return entries
 
     def discard_msg_ids(self, msg_ids, sources=None) -> int:
@@ -334,6 +341,18 @@ class PendingQueue:
                     return sum(1 for line in f if line.strip())
             except FileNotFoundError:
                 return 0
+
+    def peek(self) -> List[Dict]:
+        """The waiting messages, oldest first, without consuming them."""
+        inbox = self._inbox_backend()
+        if inbox is not None:
+            return [dict(item.payload) for item in inbox.list_items(
+                self.conv_id, self.agent_name, states=("pending",),
+                limit=100000)]
+        if self._path is None or not self._path.exists():
+            return []
+        with self._lock:
+            return self._read_entries() or []
 
     # ── Boot recovery ───────────────────────────────────────────────
 

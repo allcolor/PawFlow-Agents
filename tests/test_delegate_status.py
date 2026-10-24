@@ -9,13 +9,19 @@ Verifies that:
    for the calling agent only
 4. DelegateResultHandler returns the retained output by task_id, reports
    still-running delegates, and hides other callers' results
-5. Wiring: handlers registered in the default registry, results recorded in
+5. A shared request is pending while it waits in the target's queue, read
+   once taken, running through the target's turn, completed by its
+   turn_final row, and consumed when the target answered elsewhere
+6. The status is compact and bounded
+7. Wiring: handlers registered in the default registry, results recorded in
    _inject_bg_result, relay source-context injection covers both tools
 """
 import json
 import time
 
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from core.conversation_store import ConversationStore
 from core.agent_executor import (
@@ -42,6 +48,55 @@ def _make_handler(cls, conversation_id, source_agent="agentA"):
     h.set_user_id("user1")
     h.set_source_agent(source_agent, "svc_a")
     return h
+
+
+@pytest.fixture
+def fresh_queues():
+    from core.pending_queue import PendingQueue
+    PendingQueue.drop_cache()
+    yield PendingQueue
+    PendingQueue.drop_cache()
+
+
+def _shared_request(task_id, ts, target="reviewer"):
+    return {
+        "role": "user",
+        "content": f"request {task_id}",
+        "timestamp": ts,
+        "source": {
+            "type": "agent_delegate",
+            "from": "agentA",
+            "to": target,
+            "target_agent": target,
+            "task_id": task_id,
+        },
+    }
+
+
+def _shared_reply(task_id, ts, *, turn_final, role="assistant", content="",
+                  **extra):
+    """A row of the reviewer's turn answering ``task_id``.
+
+    ``turn_final=None`` leaves the marker out, like the caller's user row for
+    a reply delivered while it was busy and like rows that predate it.
+    """
+    row = {
+        "role": role,
+        "content": content or f"row of {task_id}",
+        "timestamp": ts,
+        "source": {
+            "type": "agent_delegate",
+            "from": "reviewer",
+            "to": "agentA",
+            "kind": "reply",
+            "task_id": task_id,
+        },
+        **extra,
+    }
+    if turn_final is not None:
+        row["turn_id"] = f"turn-{task_id}"
+        row["turn_final"] = turn_final
+    return row
 
 
 class TestLiveDelegateSnapshot:
@@ -161,10 +216,13 @@ class TestDelegateStatusHandler:
             out = json.loads(
                 _make_handler(DelegateStatusHandler, conv).execute({}))
 
-        assert out["counts"] == {"live": 1, "finished": 0, "stale": 0}
+        assert out["counts"] == {
+            "live": 1, "finished": 0, "stale": 0, "consumed": 0}
         assert out["live"][0]["task_id"] == "tid-shared-live"
         assert out["live"][0]["agent"] == "reviewer"
         assert out["live"][0]["mode"] == "shared"
+        # Not in the reviewer's queue, and nothing from it since.
+        assert out["live"][0]["status"] == "read"
 
     def test_durable_and_runtime_live_delegate_are_merged_once(self, tmp_path):
         conv = "conv_dsh_shared_runtime"
@@ -194,7 +252,8 @@ class TestDelegateStatusHandler:
         finally:
             unregister_live_delegate(conv, "agentA", "reviewer", task_id)
 
-        assert out["counts"] == {"live": 1, "finished": 0, "stale": 0}
+        assert out["counts"] == {
+            "live": 1, "finished": 0, "stale": 0, "consumed": 0}
         assert out["live"][0]["task_id"] == task_id
         assert out["live"][0]["status"] == "running"
         assert out["live"][0]["runtime_attached"] is True
@@ -241,7 +300,8 @@ class TestDelegateStatusHandler:
                     "task_id": "tid-shared-finished",
                 }))
 
-        assert status["counts"] == {"live": 0, "finished": 1, "stale": 0}
+        assert status["counts"] == {
+            "live": 0, "finished": 1, "stale": 0, "consumed": 0}
         assert status["finished"][0]["task_id"] == "tid-shared-finished"
         assert status["finished"][0]["mode"] == "shared"
         assert result["status"] == "completed"
@@ -305,17 +365,21 @@ class TestDelegateStatusHandler:
         try:
             h = _make_handler(DelegateStatusHandler, conv)
             out = json.loads(h.execute({}))
-            assert out["counts"] == {"live": 2, "finished": 2, "stale": 0}
+            assert out["counts"] == {
+                "live": 2, "finished": 2, "stale": 0, "consumed": 0}
             by_tid = {e["task_id"]: e for e in out["live"]}
             assert by_tid["tid1"]["name"] == "critic"
-            assert by_tid["tid1"]["kind"] == "flash"
+            assert by_tid["tid1"]["mode"] == "flash"
             assert by_tid["tid1"]["age_seconds"] >= 0
-            assert by_tid["tid2"]["name"] == "reviewer"
-            assert by_tid["tid2"]["kind"] == "agent"
+            # A plain agent's name is its agent; mode already says flash.
+            assert by_tid["tid2"]["agent"] == "reviewer"
+            assert "name" not in by_tid["tid2"]
+            assert "kind" not in by_tid["tid1"]
             fin = {e["task_id"]: e for e in out["finished"]}
-            assert fin["tid3"]["kind"] == "flash"
+            assert fin["tid3"]["mode"] == "flash"
             assert fin["tid3"]["response_chars"] == 2
-            assert fin["tid4"]["kind"] == "agent"
+            assert fin["tid4"]["agent"] == "reviewer"
+            assert "response_chars" not in fin["tid4"]
         finally:
             unregister_live_delegate(conv, "agentA",
                                      "agentA::flash::critic", "tid1")
@@ -330,7 +394,8 @@ class TestDelegateStatusHandler:
         try:
             h = _make_handler(DelegateStatusHandler, conv)
             out = json.loads(h.execute({}))
-            assert out["counts"] == {"live": 0, "finished": 0, "stale": 0}
+            assert out["counts"] == {
+                "live": 0, "finished": 0, "stale": 0, "consumed": 0}
         finally:
             unregister_live_delegate(conv, "agentB",
                                      "agentB::flash::spy", "tid1")
@@ -340,6 +405,188 @@ class TestDelegateStatusHandler:
         h.set_conversation_id("conv_dsh3")
         out = h.execute({})
         assert out.startswith("Error: delegate_status")
+
+
+class TestSharedDelegateLifecycle:
+    def test_queued_request_is_pending_and_taken_one_is_read(
+            self, tmp_path, fresh_queues):
+        conv = "conv_dsl_queue"
+        queued = _shared_request("tid-queued", _NOW - 30)
+        store = ConversationStore(
+            store_dir=str(tmp_path / "queue-conversations"))
+        store.save(conv, [_shared_request("tid-taken", _NOW - 60), queued],
+                   user_id="user1")
+
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store):
+            fresh_queues.for_agent(conv, "reviewer").enqueue(
+                dict(queued, msg_id="m-queued", ts=_NOW - 30),
+                source="delegate_reply")
+            out = json.loads(
+                _make_handler(DelegateStatusHandler, conv).execute({}))
+
+        assert {e["task_id"]: e["status"] for e in out["live"]} == {
+            "tid-taken": "read", "tid-queued": "pending"}
+        assert out["counts"]["consumed"] == 0
+
+    def test_request_answered_under_another_task_is_consumed(
+            self, tmp_path, fresh_queues):
+        conv = "conv_dsl_consumed"
+        store = ConversationStore(
+            store_dir=str(tmp_path / "consumed-conversations"))
+        store.save(conv, [
+            # The reviewer answers both in one turn, under the newest...
+            _shared_request("tid-batched", _NOW - 100),
+            _shared_request("tid-newest", _NOW - 90),
+            _shared_reply("tid-newest", _NOW - 80, turn_final=True,
+                          content="Both are done."),
+            # ...and this one with a new delegate to the caller.
+            _shared_request("tid-asked-back", _NOW - 70),
+            {
+                "role": "user",
+                "content": "Which branch?",
+                "timestamp": _NOW - 60,
+                "source": {
+                    "type": "agent_delegate",
+                    "from": "reviewer",
+                    "to": "agentA",
+                    "target_agent": "agentA",
+                    "task_id": "tid-question",
+                },
+            },
+        ], user_id="user1")
+
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store):
+            out = json.loads(
+                _make_handler(DelegateStatusHandler, conv).execute({}))
+            result = json.loads(_make_handler(
+                DelegateResultHandler, conv).execute({
+                    "task_id": "tid-batched"}))
+
+        assert out["live"] == []
+        assert out["counts"] == {
+            "live": 0, "finished": 1, "stale": 0, "consumed": 2}
+        assert [e["task_id"] for e in out["finished"]] == ["tid-newest"]
+        assert out["finished"][0]["duration_ms"] == 10000
+        assert result["status"] == "consumed"
+        assert "another task_id" in result["message"]
+
+    def test_target_turn_keeps_request_running_until_turn_final(
+            self, tmp_path, fresh_queues):
+        conv = "conv_dsl_running"
+        base = _NOW - 600
+        request = _shared_request("tid-work", base)
+        turn = [
+            _shared_reply("tid-work", base + 1, turn_final=False,
+                          tool_calls=[{"id": "tc1", "name": "bash",
+                                       "arguments": {"command": "make test"}}]),
+            _shared_reply("tid-work", base + 2, turn_final=False, role="tool",
+                          content="12 passed", tool_call_id="tc1"),
+            _shared_reply("tid-work", base + 3, turn_final=False,
+                          content="Tests pass, writing the summary."),
+        ]
+        store = ConversationStore(
+            store_dir=str(tmp_path / "running-conversations"))
+        store.save(conv, [request] + turn, user_id="user1")
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store):
+            running = json.loads(
+                _make_handler(DelegateStatusHandler, conv).execute({}))
+
+        # The turn's last row completes it; the copy delivered to the busy
+        # caller half a minute later changes neither duration nor text.
+        final = _shared_reply("tid-work", base + 10, turn_final=True,
+                              content="All 12 tests pass.")
+        delivered = _shared_reply("tid-work", base + 40, turn_final=None,
+                                  role="user", content="Delivered copy.")
+        store.save(conv, [request] + turn + [final, delivered],
+                   user_id="user1")
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store):
+            done = json.loads(
+                _make_handler(DelegateStatusHandler, conv).execute({}))
+            result = json.loads(_make_handler(
+                DelegateResultHandler, conv).execute({"task_id": "tid-work"}))
+
+        assert [(e["task_id"], e["status"]) for e in running["live"]] == [
+            ("tid-work", "running")]
+        assert running["counts"]["finished"] == 0
+        assert done["counts"] == {
+            "live": 0, "finished": 1, "stale": 0, "consumed": 0}
+        assert result["status"] == "completed"
+        assert result["response"] == "All 12 tests pass."
+        assert result["duration_ms"] == pytest.approx(10000.0)
+
+    def test_turn_left_without_marker_completes_on_next_task(
+            self, tmp_path, fresh_queues):
+        conv = "conv_dsl_unmarked"
+        base = _NOW - 600
+        store = ConversationStore(
+            store_dir=str(tmp_path / "unmarked-conversations"))
+        store.save(conv, [
+            _shared_request("tid-first", base),
+            _shared_reply("tid-first", base + 5, turn_final=False,
+                          content="First answer."),
+            _shared_request("tid-second", base + 20),
+            _shared_reply("tid-second", base + 30, turn_final=False,
+                          content="Working on it."),
+        ], user_id="user1")
+
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store):
+            out = json.loads(
+                _make_handler(DelegateStatusHandler, conv).execute({}))
+
+        assert [e["task_id"] for e in out["finished"]] == ["tid-first"]
+        assert out["finished"][0]["duration_ms"] == 5000
+        assert [(e["task_id"], e["status"]) for e in out["live"]] == [
+            ("tid-second", "running")]
+
+    def test_status_is_compact_and_bounded(self):
+        from core.handlers import delegate_status as module
+        now = time.time()
+        live = [{"task_id": f"live{i}", "target": "GameDev3",
+                 "mode": "shared", "status": "pending",
+                 "pending_messages": 0, "started_at": now - 600 + i}
+                for i in range(120)]
+        live.append({"task_id": "flash1", "target": "agentA::flash::critic",
+                     "mode": "flash", "status": "running",
+                     "runtime_attached": True, "pending_messages": 0,
+                     "started_at": now - 1})
+        finished = [{"task_id": f"done{i}", "target": "GameDev4",
+                     "mode": "shared", "status": "completed", "error": "",
+                     "duration_ms": 1234.5678,
+                     "finished_at": now - i - 0.123456,
+                     "response": "x" * 4000} for i in range(100)]
+        handler = module.DelegateStatusHandler.__new__(
+            module.DelegateStatusHandler)
+        handler._conversation_id = "conv"
+        handler._user_id = "owner"
+        with patch.object(module.DelegateStatusHandler,
+                          "_resolve_source_context",
+                          return_value=("agentA", "")), \
+                patch.object(module, "_merged_state",
+                             return_value=(live, finished)), \
+                patch("core.service_registry._parent_conversation_id",
+                      return_value=""):
+            raw = handler.execute({})
+        out = json.loads(raw)
+
+        assert "\n" not in raw
+        assert len(raw) < 25_000
+        assert out["counts"] == {
+            "live": 121, "finished": 100, "stale": 0, "consumed": 0}
+        assert len(out["live"]) == module._LIVE_SHOWN
+        assert set(out["live"][0]) == {
+            "task_id", "mode", "status", "agent", "age_seconds"}
+        assert out["live"][-1]["name"] == "critic"
+        assert "kind" not in out["live"][-1]
+        done = out["finished"][0]
+        assert set(done) == {"task_id", "mode", "status", "agent",
+                             "duration_ms", "finished_at", "response_chars"}
+        assert done["duration_ms"] == 1235
+        assert done["finished_at"] == round(done["finished_at"], 1)
 
 
 class TestDelegateResultHandler:
@@ -369,7 +616,8 @@ class TestDelegateResultHandler:
                     "task_id": "tid-pending-once",
                 }))
 
-        assert result["status"] == "pending"
+        # Not in the reviewer's queue: taken, and no answer yet.
+        assert result["status"] == "read"
         scan.assert_called_once()
 
     def test_finished_isolated_delegate_is_recovered_from_display_trace(

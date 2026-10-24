@@ -96,21 +96,34 @@ class _CsTranscriptMixin:
 
     def load_delegate_state(self, cid: str, caller: str, user_id: str = "",
                             finished_limit: int = 100,
-                            response_limit: int = 200_000) -> Dict[str, List[Dict]]:
+                            response_limit: int = 200_000) -> Dict[str, Any]:
         """Rebuild one caller's delegate state from the append-only transcript.
 
-        Shared delegate requests and replies already carry the same task_id.
-        Isolated and flash delegates persist a sub_agent_trace anchor followed
-        by trace_update rows. Streaming those rows is the durable counterpart
-        to the process-local live registry and finished-result ring: context
-        compaction or a runtime restart cannot make an acknowledged delegate
-        disappear from delegate_status or delegate_result.
+        A shared request and its reply carry the same task_id, and so does
+        every row of the turn the target answers it in: its tool calls and
+        intermediate messages make the request ``running``, and the turn's
+        ``turn_final`` row completes it. The target answers one turn at a
+        time, so its row under another task_id also completes a turn it left
+        without that marker. Isolated and flash delegates persist a
+        sub_agent_trace anchor followed by trace_update rows. Streaming those
+        rows is the durable counterpart to the process-local live registry
+        and finished-result ring: context compaction or a runtime restart
+        cannot make an acknowledged delegate disappear from delegate_status or
+        delegate_result.
+
+        ``contact`` maps each agent, casefolded, to the time of the last
+        delegate row it addressed to the caller, a reply under any task_id or
+        a new request. A target does not always answer under the request's
+        task_id: it answers a batch under its newest request, a message
+        injected into a running turn under that turn's task_id, or the caller
+        with a new delegate. delegate_status compares a request with no reply
+        of its own to the target's queue and to that time.
 
         Only delegate rows are read, memoised per segment so a call re-reads
         just the segment being appended to; it never materializes the full
         conversation.
         """
-        empty = {"live": [], "finished": []}
+        empty = {"live": [], "finished": [], "contact": {}}
         if not caller or not self.exists(cid):
             return empty
         if user_id:
@@ -127,6 +140,9 @@ class _CsTranscriptMixin:
         active: Dict[str, Dict[str, Any]] = {}
         traces: Dict[str, Dict[str, Any]] = {}
         finished: Dict[str, Dict[str, Any]] = {}
+        contact: Dict[str, float] = {}
+        # Per target, casefolded: the shared task its open turn answers.
+        answering: Dict[str, str] = {}
         order = 0
 
         def _time(value: Dict[str, Any]) -> float:
@@ -151,8 +167,12 @@ class _CsTranscriptMixin:
             nonlocal order
             started = active.pop(task_id, None) or {}
             trace = traces.pop(task_id, None) or {}
+            # A task can finish again, in a second turn under its task_id;
+            # its duration still runs from the request.
+            previous = finished.get(task_id) or {}
             started_at = float(
-                started.get("started_at") or trace.get("started_at") or 0.0)
+                started.get("started_at") or trace.get("started_at")
+                or previous.get("_started_at") or 0.0)
             target = str(
                 target or started.get("target") or trace.get("target") or "")
             mode = str(mode or started.get("mode") or trace.get("mode")
@@ -173,7 +193,15 @@ class _CsTranscriptMixin:
                 "response": str(response or "")[:response_limit],
                 "mode": mode,
                 "_order": order,
+                "_started_at": started_at,
             }
+
+        def _close_turn(task_id: str, target: str) -> None:
+            """Complete a shared turn that ended without turn_final."""
+            last = active[task_id]
+            _finish(task_id, target, "completed", "", "",
+                    float(last.get("_last_at") or 0.0), "shared")
+            finished[task_id]["_response_ref"] = last.get("_last_ref")
 
         from core._conversation_store_delegate_rows import DELEGATE_ROWS
 
@@ -249,8 +277,13 @@ class _CsTranscriptMixin:
             if not task_id:
                 continue
             is_reply = source.get("kind") == "reply"
-            if (not is_reply
-                    and str(source.get("from") or "").casefold() == caller_key):
+            sender = str(source.get("from") or "")
+            sender_key = sender.casefold()
+            to_caller = str(source.get("to") or "").casefold() == caller_key
+            if to_caller and sender_key != caller_key:
+                contact[sender_key] = max(
+                    contact.get(sender_key, 0.0), _time(row))
+            if not is_reply and sender_key == caller_key:
                 target = str(
                     source.get("to") or source.get("target_agent") or "")
                 finished.pop(task_id, None)
@@ -263,19 +296,31 @@ class _CsTranscriptMixin:
                     "mode": "shared",
                     "status": "pending",
                 }
-            elif (is_reply
-                  and str(source.get("to") or "").casefold() == caller_key):
-                _finish(
-                    task_id,
-                    str(source.get("from") or ""),
-                    "completed",
-                    "",
-                    "",
-                    _time(row),
-                    "shared",
-                )
-                # The reply text is read back only if this result is returned.
-                finished[task_id]["_response_ref"] = row.get("_ref")
+            elif is_reply and to_caller:
+                # A reply delivered while the caller was busy is persisted
+                # again as the caller's user row: it can close the task, not
+                # extend one already closed.
+                if row.get("role") == "user":
+                    if task_id not in finished:
+                        _finish(task_id, sender, "completed", "", "",
+                                _time(row), "shared")
+                        finished[task_id]["_response_ref"] = row.get("_ref")
+                    continue
+                earlier = answering.pop(sender_key, "")
+                if earlier and earlier != task_id and earlier in active:
+                    _close_turn(earlier, sender)
+                if row.get("terminal"):
+                    _finish(task_id, sender, "completed", "", "",
+                            _time(row), "shared")
+                    # The reply text is read back only if this result is
+                    # returned.
+                    finished[task_id]["_response_ref"] = row.get("_ref")
+                elif task_id in active:
+                    running = active[task_id]
+                    running["status"] = "running"
+                    running["_last_at"] = _time(row)
+                    running["_last_ref"] = row.get("_ref")
+                    answering[sender_key] = task_id
 
         ordered_finished = sorted(
             finished.values(),
@@ -288,16 +333,22 @@ class _CsTranscriptMixin:
             ordered_finished = []
         for item in ordered_finished:
             item.pop("_order", None)
+            item.pop("_started_at", None)
             ref = item.pop("_response_ref", None)
             if ref:
                 item["response"] = _text(
                     DELEGATE_ROWS.content(log, ref))[:response_limit]
         return {
-            "live": sorted(
-                active.values(),
-                key=lambda item: item.get("started_at") or 0.0,
-            ),
+            "live": [
+                {key: value for key, value in item.items()
+                 if not key.startswith("_")}
+                for item in sorted(
+                    active.values(),
+                    key=lambda item: item.get("started_at") or 0.0,
+                )
+            ],
             "finished": ordered_finished,
+            "contact": contact,
         }
 
     def load_range_by_msg_id(self, cid: str,

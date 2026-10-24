@@ -21,6 +21,15 @@ _FLASH_MARKER = "::flash::"
 # reported as stale: counted, and only the most recent few listed.
 _STALE_AFTER_SECONDS = 24 * 3600
 _STALE_SHOWN = 10
+# At most this many live entries are listed (the most recent); the count
+# covers all of them. With the 100 finished results this keeps a status far
+# below the 50,000-character tool-result cap of core/tool_registry.py, past
+# which the caller gets a FileStore pointer instead of its status.
+_LIVE_SHOWN = 50
+
+_CONSUMED_MESSAGE = (
+    "The target read this request and has written to you since, under "
+    "another task_id or in a new delegate: no result carries this task_id.")
 
 
 def _display_name(target: str) -> Dict[str, str]:
@@ -31,7 +40,7 @@ def _display_name(target: str) -> Dict[str, str]:
 
 
 def _durable_state(parent_conv_id: str, caller: str,
-                   user_id: str) -> Dict[str, list]:
+                   user_id: str) -> Dict[str, Any]:
     """Load transcript-backed delegate state without hiding runtime entries."""
     try:
         from core.conversation_store import ConversationStore
@@ -41,7 +50,51 @@ def _durable_state(parent_conv_id: str, caller: str,
         logger.warning(
             "delegate durable-state scan failed for %s/%s",
             parent_conv_id, caller, exc_info=True)
-        return {"live": [], "finished": []}
+        return {"live": [], "finished": [], "contact": {}}
+
+
+def _queued_task_ids(conv_id: str, agent: str) -> set:
+    """Task ids of the delegate requests still waiting in an agent's queue."""
+    from core.pending_queue import PendingQueue
+
+    ids = set()
+    for entry in PendingQueue.for_agent(conv_id, agent).peek():
+        source = entry.get("source") if isinstance(entry, dict) else None
+        if (isinstance(source, dict) and source.get("task_id")
+                and source.get("kind") != "reply"):
+            ids.add(str(source["task_id"]))
+    return ids
+
+
+def _classify_shared(parent_conv_id: str, live: list,
+                     contact: Dict[str, float]) -> None:
+    """Tell a shared request the target has not read from one it took.
+
+    A target answers under a request's own task_id only when that request
+    opened its turn: it answers a batch under the newest request, a message
+    injected into a running turn under that turn's task_id, and it may answer
+    with a new delegate instead. Matching on task_id alone left those
+    requests pending forever: 342 live for one coordinator (2026-10-24),
+    each followed by a message from its target, and 7,192 stale.
+    The target's pending queue holds what it has not read: a request still
+    there stays ``pending``. One it took is ``consumed`` when the target has
+    written to the caller since, and ``read`` while it has not.
+    """
+    queued: Dict[str, set] = {}
+    for item in live:
+        if item.get("mode") != "shared" or item.get("status") != "pending":
+            continue
+        target = str(item.get("target") or "")
+        if not target:
+            continue
+        key = target.casefold()
+        if key not in queued:
+            queued[key] = _queued_task_ids(parent_conv_id, target)
+        if str(item.get("task_id") or "") in queued[key]:
+            continue
+        sent_at = float(item.get("started_at") or 0.0)
+        item["status"] = (
+            "consumed" if contact.get(key, 0.0) > sent_at else "read")
 
 
 def _merged_state(parent_conv_id: str, caller: str,
@@ -84,6 +137,7 @@ def _merged_state(parent_conv_id: str, caller: str,
         live_by_id.values(),
         key=lambda item: item.get("started_at") or 0.0,
     )
+    _classify_shared(parent_conv_id, live, durable.get("contact") or {})
     finished = sorted(
         finished_by_id.values(),
         key=lambda item: item.get("finished_at") or 0.0,
@@ -104,6 +158,26 @@ def _render_entry(entry: Dict[str, Any], *, include_response: bool) -> Dict:
     return item
 
 
+def _status_entry(entry: Dict[str, Any]) -> Dict:
+    """One compact status line: no response text, no empty or repeated field.
+
+    ``kind`` repeats ``mode``, and ``name`` repeats ``agent`` except for a
+    flash delegate.
+    """
+    item = _render_entry(entry, include_response=False)
+    item.pop("kind", None)
+    if item.get("name") == item.get("agent"):
+        item.pop("name", None)
+    for key in ("error", "pending_messages", "response_chars", "duration_ms"):
+        if not item.get(key):
+            item.pop(key, None)
+    if "duration_ms" in item:
+        item["duration_ms"] = round(item["duration_ms"])
+    if item.get("finished_at"):
+        item["finished_at"] = round(item["finished_at"], 1)
+    return item
+
+
 class DelegateStatusHandler(SpawnAgentsHandler):
     """Report the caller's delegates: live ones and recent finished ones."""
 
@@ -115,11 +189,16 @@ class DelegateStatusHandler(SpawnAgentsHandler):
     def description(self) -> str:
         return (
             "Check durable status for your shared, isolated, and flash "
-            "delegates, including after context compaction. Returns pending/"
-            "running work with task IDs and runtime details, plus the latest "
-            "100 finished results. Delegates unanswered for over a day with "
-            "nothing running for them are counted under 'stale' (the 10 most "
-            "recent listed). Use delegate_result to fetch one output."
+            "delegates, including after context compaction. Lists live work "
+            "with task IDs and runtime details (the 50 most recent): a shared "
+            "request is 'pending' while it waits in the target's queue, "
+            "'read' once the target took it without writing back to you, and "
+            "'running' while the target answers it. A request the target "
+            "took and answered since under another task_id or in a new "
+            "delegate is only counted, under 'consumed'. Also returns the "
+            "latest 100 finished results. Live work unanswered for over a "
+            "day with nothing running for it is counted under 'stale' (the "
+            "10 most recent listed). Use delegate_result to fetch one output."
         )
 
     @property
@@ -146,8 +225,12 @@ class DelegateStatusHandler(SpawnAgentsHandler):
             parent_conv_id, src_agent, self._user_id)
         live = []
         stale = []
+        consumed = 0
         for entry in raw_live:
-            item = _render_entry(entry, include_response=False)
+            if entry.get("status") == "consumed":
+                consumed += 1
+                continue
+            item = _status_entry(entry)
             started = item.pop("started_at", 0.0)
             item["age_seconds"] = round(now - started, 1) if started else None
             # A transcript request with no reply and nothing running for it
@@ -159,18 +242,15 @@ class DelegateStatusHandler(SpawnAgentsHandler):
             else:
                 live.append(item)
 
-        finished = [
-            _render_entry(entry, include_response=False)
-            for entry in raw_finished
-        ]
+        finished = [_status_entry(entry) for entry in raw_finished]
 
         return json.dumps({
-            "live": live,
+            "live": live[-_LIVE_SHOWN:],
             "finished": finished,
             "stale": stale[-_STALE_SHOWN:],
             "counts": {"live": len(live), "finished": len(finished),
-                       "stale": len(stale)},
-        }, ensure_ascii=False, indent=2)
+                       "stale": len(stale), "consumed": consumed},
+        }, ensure_ascii=False, separators=(",", ":"))
 
 
 class DelegateResultHandler(DelegateStatusHandler):
@@ -245,8 +325,10 @@ class DelegateResultHandler(DelegateStatusHandler):
                 return json.dumps({
                     "task_id": task_id,
                     "status": status,
-                    "message": "Delegate has no terminal result yet. "
-                               "Check again with delegate_status.",
+                    "message": (
+                        _CONSUMED_MESSAGE if status == "consumed" else
+                        "Delegate has no terminal result yet. "
+                        "Check again with delegate_status."),
                 }, ensure_ascii=False)
 
         return (

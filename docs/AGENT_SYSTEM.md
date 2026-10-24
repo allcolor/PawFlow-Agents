@@ -915,7 +915,27 @@ tool calls, and tool results are not appended to the caller's private context.
 Delegate replies are never projected into shared context.
 
 Delegate observability uses that same durable transcript as its source of
-truth. Shared requests and replies carry the same `task_id`; isolated and
+truth. A shared request and the turn that answers it carry the same
+`task_id`: every row of that turn, tool calls and intermediate messages
+included, is tagged as a reply to it, so the request is `running` from the
+target's first row and finished on the turn's `turn_final` row. A target
+answers one turn at a time, so its next row under another `task_id` also
+finishes a turn left without that marker; the caller's copy of a reply
+delivered while it was busy can finish a request but never extends one. A
+target does not always answer under the request's own `task_id`: it answers
+a batch of queued requests under the newest one, a message injected into its
+running turn under that turn's `task_id`, and it may answer the caller with a
+new delegate. `delegate_status` therefore reads the target's pending queue
+(`PendingQueue.peek`): a request still in it is `pending`, one it took is
+`read` until the target writes to the caller, then only counted under
+`consumed`. Matching replies on `task_id` alone had listed 342 answered
+requests as pending, and counted 7,192 as stale, for one coordinator agent
+(2026-10-24). Its 117,938-character status exceeded the 50,000-character
+tool-result cap, so the agent received a FileStore pointer instead. Replayed
+on that conversation's delegate rows, the fixed status took 17,272
+characters: 27 live entries, the 100 finished results with their duration,
+and 597 consumed requests counted. Its output is compact (no indentation, no
+empty or repeated field) and lists at most 50 live entries. Isolated and
 flash work writes an append-only `sub_agent_trace` before pool submission and
 a terminal update on every exit, including preflight failures.
 `delegate_status` rebuilds state from those rows and merges it with the
@@ -925,8 +945,9 @@ on clear-text metadata before any content is decoded and are memoised per
 transcript segment against the file's inode, size and mtime
 (`core/_conversation_store_delegate_rows.py`), so a call re-reads only the
 segment being appended to, or one that was rewritten. Shared delegate rows are
-cached compactly as routing metadata plus the row's byte offset; the reply
-text is read back from disk only for the at most 100 terminal results that a
+cached compactly as routing metadata plus the row's byte offset, and a reply
+row that ends the target's turn is flagged `terminal`; the reply
+text is read back from disk only for the at most 100 finished results that a
 call returns, and is empty if that row has moved. On a 439,000-row transcript
 this took a call from about 16 s to 0.2 s after the first scan, which still
 reads every segment once per server process, for about 68 MB of retained rows.

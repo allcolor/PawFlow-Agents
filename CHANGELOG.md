@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `delegate_status` listed shared requests as pending long after their target
+  had answered them. It matched replies on `task_id` alone, but a target
+  answers a batch of queued requests under the newest one, a message injected
+  into its running turn under that turn's `task_id`, and it may answer with a
+  new delegate. One coordinator agent saw 342 pending requests, each followed
+  by an answer from its target, and 7,192 stale ones, in a 117,938-character
+  status over the 50,000-character tool-result cap, so it received a
+  FileStore pointer instead of its status. A shared request is now `pending`
+  while it waits in the target's queue, `read` once the target took it,
+  `running` during the target's turn and finished on that turn's
+  `turn_final` row; one the target took and answered since elsewhere is only
+  counted, under `consumed`, and `delegate_result` says so. Replayed on that
+  conversation's delegate rows, the status takes 17,272 characters.
+- `delegate_status` marked a shared request completed at the target's first
+  tool call and lost its duration (0 for 96 of the last 100): every row of the
+  target's turn is tagged as a reply. Only the turn's last row completes the
+  request now, and the duration runs from the request.
+- The `delegate_status` output is compact JSON without empty or repeated
+  fields, and lists at most 50 live entries; the counts cover all of them.
+
 ## [1.0.0-beta.310] — 2026-10-23
 
 ### Added

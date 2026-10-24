@@ -63,6 +63,20 @@ def test_clear_drops_pending_without_replay(fake_store):
     assert q.drain() == []
 
 
+def test_peek_lists_waiting_messages_without_consuming(fake_store):
+    q = PendingQueue.for_agent("c1", "claude")
+    assert q.peek() == []
+    q.enqueue(_msg("first", "m1", 1), source="delegate_reply")
+    q.enqueue(_msg("second", "m2", 2), source="http")
+
+    waiting = q.peek()
+    assert [m["msg_id"] for m in waiting] == ["m1", "m2"]
+    assert waiting[0]["_pending_source"] == "delegate_reply"
+    assert q.peek_count() == 2
+    assert [m["msg_id"] for m in q.drain()] == ["m1", "m2"]
+    assert q.peek() == []
+
+
 @pytest.mark.parametrize("cutoff_key", [
     "last_force_stop_at",
     "last_force_stop_at:claude",
@@ -209,11 +223,14 @@ def test_explicit_sqlite_migration_keeps_pending_queue_facade(fake_store, tmp_pa
         migrated = PendingQueue.migrate_agent_to_inbox("c1", "claude")
         assert migrated["migrated"] is True
         assert queue.peek_count() == 1
+        assert [row["msg_id"] for row in queue.peek()] == ["m1"]
 
         queue.enqueue(_msg("sqlite", "m2", 2), source="http")
         assert ("c1", "claude", 2) in PendingQueue.all_nonempty()
+        assert [row["msg_id"] for row in queue.peek()] == ["m1", "m2"]
         assert [row["msg_id"] for row in queue.drain()] == ["m1", "m2"]
         assert queue.peek_count() == 0
+        assert queue.peek() == []
         assert PendingQueue.migrate_agent_to_inbox(
             "c1", "claude")["migrated"] is False
     finally:

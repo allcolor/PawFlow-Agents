@@ -12,7 +12,11 @@ that stays in clear text before any content is decoded.
 Shared delegate messages are by far the most numerous delegate rows and carry
 the full request or reply text. They are kept compact: routing metadata plus
 the row's byte offset, and ``content`` re-reads one row only for the results a
-call actually returns.
+call actually returns. A reply row that ends the target's turn also carries
+``terminal``: its ``turn_final`` is set, or it has no such marker, like rows
+that predate it and the caller's copy of a reply delivered while it was busy.
+The target's tool calls and intermediate messages are reply rows too, tagged
+with the same task_id, and are by far the most numerous; they carry no flag.
 """
 
 from __future__ import annotations
@@ -104,13 +108,16 @@ class DelegateRowMemo:
                     or raw.get("role") == "sub_agent_trace"):
                 rows.append(_decoded(log, raw))
                 continue
-            rows.append({
+            row = {
                 "role": raw.get("role"),
                 "timestamp": raw.get("timestamp"),
                 "ts": raw.get("ts"),
                 "source": {k: source[k] for k in _SOURCE_KEYS if k in source},
                 "_ref": (path, offset, str(source.get("task_id") or "")),
-            })
+            }
+            if source.get("kind") == "reply" and raw.get("turn_final", True):
+                row["terminal"] = True
+            rows.append(row)
         return rows
 
     @staticmethod

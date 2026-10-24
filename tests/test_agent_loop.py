@@ -1809,13 +1809,17 @@ class TestContextActionsAsync(unittest.TestCase):
             producer = threading.Thread(target=_produce)
             producer.start()
             try:
-                started_while_traffic_continued = first_started.wait(0.5)
+                # Arrivals continue for the whole wait, so a scheduler that
+                # lets them postpone a queued action never starts it within
+                # this bound. The bound only covers a thread hop on a loaded
+                # runner, where 0.5 s once fell short in a full run.
+                started_while_traffic_continued = first_started.wait(5.0)
             finally:
                 producer_stop.set()
                 producer.join(timeout=1.0)
             agent_actions._schedule_bg_action(
                 queue_drained.set, action="sentinel", call_id="last")
-            assert queue_drained.wait(1.0)
+            assert queue_drained.wait(5.0)
 
         assert started_while_traffic_continued, (
             "new UI actions must not postpone an already queued action")

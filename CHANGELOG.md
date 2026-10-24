@@ -47,6 +47,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   now rebuilds the compacted context through the ordinary cold path, which
   resolves the service again: an edited service reaches a running agent at
   its next compaction. Task sub-conversations keep their loop's service.
+- The UI action starvation test no longer fails on a loaded runner. It gave
+  the first queued action 0.5 s to start while new actions kept arriving,
+  which a full validation run on the 2-CPU, 2 GiB relay container exceeded
+  once; it now allows 5 s. Arrivals continue for the whole wait, so a
+  scheduler that lets them postpone a queued action still fails the test.
 
 ## [1.0.0-beta.311] — 2026-10-24
 

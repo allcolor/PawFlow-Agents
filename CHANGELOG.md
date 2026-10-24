@@ -16,6 +16,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   got an unexpected keyword argument 'relay_id'`, and `generate_image` returned
   the same error. The proxy now accepts that context; a package service
   provider still runs on the agent's or the conversation's default relay.
+- The Media Studio workflow could not edit an image or generate audio. Since
+  beta.246 `submitMediaGeneration` hands the run's frozen relay (its ID and
+  local flag) to every media handler, but the image edit and audio handlers
+  accepted only the relay ID: the task failed with
+  `EditImageHandler.set_relay_id() takes 2 positional arguments but 3 were
+  given` (`AudioGenerationHandler` for audio) after recording the provider
+  job as submitted, so a retry stopped with "submitted provider job cannot be
+  safely replayed". These two handlers and the image model info handler now
+  take the relay and its local flag like the image and video handlers, and
+  pass both to the media service.
 
 ## [1.0.0-beta.311] — 2026-10-24
 

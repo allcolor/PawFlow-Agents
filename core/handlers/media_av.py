@@ -432,8 +432,9 @@ class AudioGenerationHandler(ToolHandler):
     def set_agent_name(self, agent_name: str):
         self._agent_name = agent_name
 
-    def set_relay_id(self, relay_id: str):
+    def set_relay_id(self, relay_id: str, relay_local=None):
         self._relay_id = str(relay_id or "")
+        self._relay_local = relay_local
 
     def set_service_resolver(self, resolver):
         """Set a resolver function: () -> (service, error_msg)."""

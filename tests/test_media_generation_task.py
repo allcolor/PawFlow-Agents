@@ -307,6 +307,66 @@ def test_comfyui_submission_requires_and_injects_frozen_relay(
     assert service.context_calls[0]["relay_id"] == "Relay-B"
 
 
+@pytest.mark.parametrize("media_kind, operation, references", [
+    ("audio", "generate_audio", []),
+    ("image", "edit_image", [{
+        "role": "source_image",
+        "file_id": "source-id",
+        "filename": "source.png",
+    }]),
+])
+def test_audio_and_image_edit_submissions_hand_the_frozen_relay_to_the_service(
+        stores, monkeypatch, media_kind, operation, references):
+    project_store, file_store = stores
+    definition = _definition()
+
+    class RelayAwareService:
+        TYPE = "testImage"
+        VERSION = "1.0.0"
+        ACCEPTS_FILESTORE_URLS = True
+
+        def __init__(self):
+            self.contexts = []
+            self.calls = []
+
+        def set_runtime_context(self, **kwargs):
+            self.contexts.append(kwargs)
+
+        def generate(self, **kwargs):
+            self.calls.append("generate")
+            return {"audio_bytes": b"audio-data", "content_type": "audio/mpeg"}
+
+        def edit_image(self, **kwargs):
+            self.calls.append("edit_image")
+            return {"image_bytes": b"image-data", "content_type": "image/png"}
+
+    service = RelayAwareService()
+    _patch_registry(monkeypatch, Registry(definition, service))
+    state = _state(project_store, definition)
+    state["selection"]["selected"].update({
+        "engine": "comfyui",
+        "media_kinds": [media_kind],
+        "operations": [operation],
+    })
+    state["brief"].update({
+        "media_kind": media_kind,
+        "operation": operation,
+        "references": references,
+    })
+    state["relay"] = {"relay_id": "Relay-B", "local": True}
+    flowfile = FlowFile(content=json.dumps(state).encode("utf-8"))
+
+    _task().execute(flowfile)
+
+    result = json.loads(flowfile.get_content().decode("utf-8"))
+    assert result["provider_jobs"][0]["status"] == "completed"
+    assert file_store.get_metadata(result["artifacts"][0]["file_id"])
+    assert service.calls == [
+        "edit_image" if operation == "edit_image" else "generate"]
+    assert service.contexts[-1]["relay_id"] == "Relay-B"
+    assert service.contexts[-1]["relay_local"] is True
+
+
 def test_comfyui_authorization_target_contains_frozen_relay(stores):
     project_store, _ = stores
     state = _state(project_store)

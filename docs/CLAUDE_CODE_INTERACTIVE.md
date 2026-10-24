@@ -694,7 +694,10 @@ The provider assembles responses from those events:
   Code's auto-compact offer (`modelSettings.<model>.autoCompactWindow`),
   suppresses that offer, and is capped at the model's context window. Like
   every `cli_environment` entry, it is read when PawFlow starts the Claude
-  Code process.
+  Code process. The restart after a compaction resolves the service again,
+  so an agent that keeps working picks up an edited `cli_environment` or
+  `max_context_size` at its next compaction (see `docs/AGENT_SYSTEM.md`,
+  Auto-compact trigger).
 - Only the Claude Code `Stop` hook closes a PawFlow turn. Anthropic
   `message_stop` events are observed for diagnostics but do not terminate the
   interactive turn, because Claude Code can issue intermediate model requests

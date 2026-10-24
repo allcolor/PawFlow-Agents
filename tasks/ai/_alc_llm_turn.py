@@ -311,9 +311,44 @@ class _ALCLlmTurnMixin:
                 # keeps piling up (orphan workers also
                 # wrote to it) and fills the session dir.
                 # 4. Prepare for new CC session — PawFlow ctx
-                # was just compacted and saved; CC receives the
-                # same compacted messages (no trimmed view).
-                st.llm_context = list(st.messages)
+                # was just compacted and saved. Start it from the
+                # ordinary cold path, as ColdStartRequired does below:
+                # the rebuild loads that compacted context and resolves
+                # the service again. Restarting on this loop's client
+                # kept the settings the loop started with (context
+                # size, compact threshold, CLI environment), so an
+                # edited service never reached an agent that kept
+                # working, however many times it compacted.
+                st._rebuild_args = dict(st.ctx.get("_context_rebuild_args") or {})
+                st._rebuild_ff = st._rebuild_args.pop("flowfile", None)
+                if st._rebuild_ff is not None and not st.ctx.get("_independent_context"):
+                    # The compacted context IS the conversation now: the
+                    # request that started this loop, any preloaded or
+                    # retrigger input and the cancel checkpoint were
+                    # consumed before it, and are in it or in its summary.
+                    # Replaying them would hand the agent its request
+                    # again in the middle of the work.
+                    st._rebuild_args.update(
+                        preloaded_messages=None, preloaded_conversation_id="",
+                        skip_current_user_inject=True)
+                    st._cold_ctx = self._prepare_agent_context(
+                        st._rebuild_ff, force_cold=True, **st._rebuild_args)
+                    # The rebuild takes a moment: a newer generation started
+                    # meanwhile keeps its client registration.
+                    st.emitter.check_cancelled()
+                    self._alc_rebind_context(st, st._cold_ctx)
+                    logger.info(
+                        "[compact-restart:%s/%s] cold rebuild done service=%s max_ctx=%d elapsed_ms=%.1f",
+                        st.conversation_id[:8], st._agent_name,
+                        st.ctx.get("active_llm_service", ""),
+                        int(st.ctx.get("max_context_size", 0) or 0),
+                        st._compact_restart_ms())
+                else:
+                    # Nothing to rebuild from, or a task sub-conversation:
+                    # the poller builds that context on the parent
+                    # conversation and points it at the task afterwards,
+                    # so a rebuild would load the parent's context.
+                    st.llm_context = list(st.messages)
                 logger.info("[agent:%s] PawFlow compact done, provider turn will restart immediately",
                             st.conversation_id[:8])
                 # _compact() already emits its own compact_progress:done

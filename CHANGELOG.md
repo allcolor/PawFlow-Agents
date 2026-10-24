@@ -36,6 +36,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `cli_environment` to keep it beyond PawFlow's threshold; the variable takes
   precedence over the window Claude Code saves when its auto-compact offer is
   accepted.
+- An agent on a stateful CLI provider (Claude Code, Codex, Gemini,
+  Antigravity) that kept working never picked up an edit to its LLM service.
+  The agent loop resolves its service when it starts, and the restart after a
+  compaction reused that client, so the loop kept the context size, compact
+  threshold and CLI environment it started with however many times it
+  compacted: after a service moved from 380K to 600K, such agents still
+  compacted at 95% of 380K, and Claude Code processes relaunched after a
+  compaction lacked a `cli_environment` variable added meanwhile. The restart
+  now rebuilds the compacted context through the ordinary cold path, which
+  resolves the service again: an edited service reaches a running agent at
+  its next compaction. Task sub-conversations keep their loop's service.
 
 ## [1.0.0-beta.311] — 2026-10-24
 

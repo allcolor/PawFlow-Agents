@@ -342,6 +342,32 @@ def _gauge_client(conversation_id: str, agent_name: str, user_id: str,
         return None
 
 
+def _running_turn_client(conversation_id: str, agent_name: str) -> Any:
+    """Return the client the live turn of this agent is running on, or None.
+
+    ``_alc_setup`` clones the resolver's client per main loop and registers the
+    clone in ``_active_claude_client``; the turn records its wire usage on that
+    clone. The observation maps are shared by reference between a client and
+    its OWN descendants only, so a measurement written on the turn's clone is
+    invisible to the resolver's object the active context points at. Reading
+    only the active context is what left GameDev7 unmeasured for a whole hour
+    (2026-10-24 21:05-22:07: 246 skipped compact-checks at ~840K).
+    """
+    if not conversation_id or not agent_name:
+        return None
+    try:
+        from tasks.ai.agent_loop import AgentLoopTask
+        inst = AgentLoopTask._live_instance
+        if not inst:
+            return None
+        clients = getattr(inst, "_active_claude_client", None)
+        if not isinstance(clients, dict):
+            return None
+        return clients.get(f"{conversation_id}:{agent_name}")
+    except Exception:
+        return None
+
+
 def _observed_context_measurement(conversation_id: str, agent_name: str,
                                   user_id: str,
                                   active_ctx: Optional[Dict[str, Any]]) -> tuple:
@@ -354,19 +380,37 @@ def _observed_context_measurement(conversation_id: str, agent_name: str,
     Unlike the bootstrap counts this is read WITHOUT an active context too, so
     the gauge survives a conversation switch: the value lives on the resolved
     service client, which outlives any one turn.
+
+    The running turn's own client is asked FIRST. A loop runs on a per-turn
+    clone and records there, so asking only the active context (the resolver's
+    object) reports 0 for the whole turn. A client holding nothing for this
+    stream falls through instead of answering 0: a measured 0 is a real value
+    that could trip a compaction.
     """
-    client = _gauge_client(conversation_id, agent_name, user_id, active_ctx)
-    counts = getattr(client, "_cli_observed_context_tokens_by_stream", None)
-    if not isinstance(counts, dict):
-        return 0, "", 0
     key = (conversation_id, agent_name)
-    modes = getattr(client, "_observed_context_mode_by_stream", None)
-    revisions = getattr(client, "_observed_context_revision_by_stream", None)
-    return (
-        max(0, int(counts.get(key, 0) or 0)),
-        str(modes.get(key, "session") if isinstance(modes, dict) else "session"),
-        max(0, int(revisions.get(key, 0) or 0)) if isinstance(revisions, dict) else 0,
+    candidates = (
+        _running_turn_client(conversation_id, agent_name),
+        _gauge_client(conversation_id, agent_name, user_id, active_ctx),
     )
+    seen = []
+    for client in candidates:
+        if client is None or any(client is c for c in seen):
+            continue
+        seen.append(client)
+        counts = getattr(client, "_cli_observed_context_tokens_by_stream", None)
+        if not isinstance(counts, dict):
+            continue
+        tokens = max(0, int(counts.get(key, 0) or 0))
+        if tokens <= 0:
+            continue
+        modes = getattr(client, "_observed_context_mode_by_stream", None)
+        revisions = getattr(client, "_observed_context_revision_by_stream", None)
+        return (
+            tokens,
+            str(modes.get(key, "session") if isinstance(modes, dict) else "session"),
+            max(0, int(revisions.get(key, 0) or 0)) if isinstance(revisions, dict) else 0,
+        )
+    return 0, "", 0
 
 
 def context_usage_for_messages(conversation_id: str, agent_name: str,

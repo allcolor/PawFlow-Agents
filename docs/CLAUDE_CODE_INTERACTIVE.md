@@ -1926,11 +1926,20 @@ Responses usage describes only the current exchange.
   Codex moves the fallback gauge down.
 - `record_observed_cli_context` stores it per `(conversation_id, agent_name)`
   on `_cli_observed_context_tokens_by_stream`, created in `LLMClient.__init__`
-  and shared by reference with call clones — so the clone that runs the turn
-  and the resolver client the gauge reads expose one value.
+  and shared by reference with that client's own call clones.
 - `compute_context_usage` prefers that number over the reconstructed one and
   reports `cli_context_state="active"`. It is read without an active context
   too, which is what makes the gauge survive a conversation switch.
+- The gauge reads the client the **running turn** recorded on first
+  (`_active_claude_client[conversation_id:agent_name]`), then the active
+  context's client, then the service's. Sharing is by reference down a clone
+  chain, so a measurement written on a per-turn clone is invisible to the
+  resolver's object the active context points at. Reading only the active
+  context left GameDev7 unmeasured for a whole hour on 2026-10-24 (246
+  `SKIP: gauge not natively measured` at ~840K of a 600K window): its loop had
+  restarted on an edited service and reused the live Claude Code process, so
+  the turn ran on a clone the gauge never asked. A client holding nothing for
+  the stream falls through instead of answering a measured 0.
 - `reset_cli_context_usage` drops it: after a session is invalidated the old
   measurement describes a window that no longer exists.
 

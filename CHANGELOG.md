@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Auto-compaction never fired for an agent whose loop restarted on a live
+  Claude Code process, so its context grew past the window. The context gauge
+  read the provider's native measurement from the active context's client (the
+  resolver's object) and from the service. A main loop runs on its own
+  per-turn clone and records the wire usage there, and a clone shares the
+  observation maps only with its own descendants. The measurement was written
+  on a client nobody read: GameDev7 logged 246 consecutive
+  `[compact-check] ... SKIP: gauge not natively measured` between 21:05 and
+  22:07 on 2026-10-24 while the CLI reported ~840K of a 600K window. The gauge
+  now asks the running turn's client first, then the active context, then the
+  service, and a client holding nothing for the stream falls through instead
+  of reporting a measured 0.
+
 ## [1.0.0-beta.312] — 2026-10-24
 
 ### Fixed

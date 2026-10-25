@@ -696,6 +696,10 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
     def get_live_instance_cached(self, scope: str, scope_id: str,
                                  service_id: str) -> Optional[Service]:
         """Return a live instance snapshot without lazy-connecting."""
+        # Same cold-read gap as is_connected: without loading the scope the
+        # table is empty and every relay looks absent, which also blanked the
+        # relay login list (2026-10-25).
+        self._ensure_loaded(scope, scope_id)
         sid = self._resolve_scope_id(scope, scope_id)
         with self._data_lock:
             from core.identifier import resolve_identifier
@@ -715,6 +719,10 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
             ]
 
     def is_connected(self, scope: str, scope_id: str, service_id: str) -> bool:
+        # Load the scope first: _live_instances only holds what _ensure_loaded
+        # populated, so a cold read reported every relay as disconnected. That
+        # emptied the "Login via relay" list (2026-10-25).
+        self._ensure_loaded(scope, scope_id)
         sid = self._resolve_scope_id(scope, scope_id)
         with self._data_lock:
             from core.identifier import resolve_identifier

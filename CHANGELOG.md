@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- "Login via relay" did nothing: the button lists relays with
+  `claude_code_list_relays`, which drops every entry reporting
+  `connected=false`, and on the live server all six relays reported disconnected
+  -- including the one that was connected and serving traffic. `is_connected`
+  and `get_live_instance_cached` read `_live_instances` directly, while only
+  `_ensure_loaded` populates that table for a scope, so a process that had not
+  touched the scope yet saw an empty table and reported everything as
+  disconnected. Both now load the scope first, as `get_compatible` already did.
 - `read_history` results now show the persisted `seq` next to the position
   index (`[#12] assistant seq=4821`), and a new `range_by_index` action slices
   on the position index. The rendered header used to show only `[#N]`, a

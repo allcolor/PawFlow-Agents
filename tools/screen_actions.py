@@ -315,7 +315,10 @@ def _native_uia_elements(hwnd: int, req: dict):
                              max(0, int(box.bottom - box.top))],
                 })
             except Exception:
-                continue
+                # One unreadable element must not drop the whole tree; log it
+                # so a systematically failing control is still diagnosable.
+                logger.debug("uiautomation element %d unreadable", index,
+                             exc_info=True)
         return rows
     except Exception:
         return None

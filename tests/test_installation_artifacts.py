@@ -20,7 +20,10 @@ def test_relay_desktop_packages_the_windows_terminal_backend():
         encoding="utf-8")
 
     assert 'pywinpty>=3.0.5; sys_platform == "win32"' in requirements
-    assert "process.platform === 'win32' ? ['winpty'] : []" in build_script
+    # The win32 list may carry more than winpty (uiautomation ships too), so
+    # assert on membership rather than on the exact literal line.
+    assert "process.platform === 'win32'" in build_script
+    assert "'winpty'" in build_script
     assert "'--hidden-import', name" in build_script
     assert "'--collect-all', name" in build_script
     assert "__pawflow_winpty_check__" in entry

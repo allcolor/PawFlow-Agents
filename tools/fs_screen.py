@@ -375,23 +375,27 @@ def action_screen_status(root_dir, abs_path, req):
 
 
 def action_screen_windows(root_dir, abs_path, req):
-    """AX window list (CUA mode only)."""
+    """AX window list (CUA mode in containers; native on a Windows relay)."""
     cua = _cua_route("screen_windows", req)
     if cua is not None:
         return cua
-    return {"error": ("screen_windows needs the CUA backend: set "
-                      "PAWFLOW_SCREEN_MODE=cua (cua-driver is bundled in "
-                      "desktop-capable relay images)")}
+    return {"error": ("screen_windows needs the CUA backend in a container: "
+                      "set PAWFLOW_SCREEN_MODE=cua (cua-driver ships in "
+                      "desktop-capable relay images). On a Windows relay the "
+                      "native backend answers this action, so no CUA is "
+                      "needed there.")}
 
 
 def action_screen_window_state(root_dir, abs_path, req):
-    """AX element tree + grounding screenshot (CUA mode only)."""
+    """AX element tree + grounding screenshot (CUA in containers; native on Windows)."""
     cua = _cua_route("screen_window_state", req)
     if cua is not None:
         return cua
-    return {"error": ("screen_window_state needs the CUA backend: set "
-                      "PAWFLOW_SCREEN_MODE=cua (cua-driver is bundled in "
-                      "desktop-capable relay images)")}
+    return {"error": ("screen_window_state needs the CUA backend in a "
+                      "container: set PAWFLOW_SCREEN_MODE=cua (cua-driver "
+                      "ships in desktop-capable relay images). On a Windows "
+                      "relay the native backend answers this action, so no "
+                      "CUA is needed there.")}
 
 
 def action_screen_drag(root_dir, abs_path, req):

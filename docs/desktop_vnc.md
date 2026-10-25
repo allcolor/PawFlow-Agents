@@ -154,8 +154,8 @@ Actions:
 | `scroll` | `x`, `y`, `amount` | Scroll at a coordinate. |
 | `mouse_position` | - | Read current pointer location. |
 | `status` | - | Screen backend health report (`pawflow` or `cua` mode, driver health). |
-| `windows` | - | List windows with `pid`/`window_id`/title (CUA backend only). |
-| `window_state` | `pid` and/or `window_id` | Accessibility-tree snapshot of one window: element list with indexes plus a grounding screenshot (CUA backend only). |
+| `windows` | - | List windows with `pid`/`window_id`/title/rect (native on a Windows relay; CUA backend in a container). |
+| `window_state` | `pid` and/or `window_id` | Window snapshot: rect/title plus the accessibility tree with element indexes (native on Windows via `uiautomation`; CUA in a container). |
 
 Always take a screenshot first. The result includes the screen resolution and an opaque `screen revision`; all coordinates are physical pixels in that screenshot coordinate space. Do not derive click positions from the resized screenshot preview rendered inside the chat; use the returned resolution, for example `2560x1440`, as the coordinate space for `x` and `y`.
 

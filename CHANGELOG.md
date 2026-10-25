@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `screen_windows` and `screen_window_state` now work on a Windows relay. They
+  existed only in the CUA backend, and `cua-driver` is installed by a Linux-only
+  script with no Windows build, so on Windows the tool answered with an error
+  telling the user to set `PAWFLOW_SCREEN_MODE=cua` -- advice that can never
+  work there. Both actions now use the native Windows API: window enumeration
+  through `user32` (pid, window_id, title, rect) and the accessibility tree
+  through `uiautomation` when it is installed, with window geometry still
+  reported when it is not. Linux containers keep the CUA path, and the
+  container error no longer points a Windows user at CUA.
+
 ### Added
 
 - A reasoning-only Codex turn now shows a sign of life in the webchat. Codex

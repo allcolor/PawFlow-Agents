@@ -73,8 +73,8 @@ def _handle_screen_action_direct(action: str, req: dict) -> dict:
         "screen_mouse_position": _mouse_position,
         "screen_keyboard_state": _keyboard_state,
         "screen_status": _status_pawflow,
-        "screen_windows": _cua_only,
-        "screen_window_state": _cua_only,
+        "screen_windows": _dispatch_windows,
+        "screen_window_state": _dispatch_window_state,
     }
     fn = _dispatch.get(action)
     if not fn:
@@ -137,6 +137,222 @@ def _cua_only(req: dict) -> dict:
         "PAWFLOW_SCREEN_MODE=cua on the relay (cua-driver must be "
         "installed). AX window/element addressing is not available in "
         "the default pawflow backend.")}
+
+
+# ── Native Windows window enumeration (no external binary) ──────────────
+#
+# cua-driver is installed by a Linux-only script and has no Windows build, so
+# PAWFLOW_SCREEN_MODE=cua can never work on a Windows relay. Windows exposes
+# window enumeration through user32 and the accessibility tree through UIA,
+# both reachable from ctypes/pywin32 with nothing to install.
+
+_NATIVE_WINDOWS_HINT = (
+    "window enumeration needs the Windows accessibility API: install "
+    "pywin32 (pip install pywin32) or uiautomation on the relay host")
+
+
+def _native_windows_available() -> bool:
+    """Whether this process can enumerate Windows windows natively."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        return bool(ctypes.windll.user32)
+    except Exception:
+        return False
+
+
+def _native_list_windows(req: dict) -> list:
+    """Enumerate top-level windows through user32.
+
+    Returns one dict per visible window with the same identifiers the CUA
+    backend exposes (pid, window_id, title) plus the window rectangle, so
+    screen_window_state and coordinate math work unchanged.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    rows: list = []
+
+    WNDENUMPROC = ctypes.WINFUNCTYPE(
+        wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def _callback(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        title = buf.value.strip()
+        if not title:
+            return True
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        rect = wintypes.RECT()
+        try:
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            box = [rect.left, rect.top,
+                   max(0, rect.right - rect.left),
+                   max(0, rect.bottom - rect.top)]
+        except Exception:
+            box = [0, 0, 0, 0]
+        rows.append({
+            "pid": int(pid.value),
+            "window_id": hex(int(hwnd)),
+            "title": title,
+            "rect": box,
+        })
+        return True
+
+    user32.EnumWindows(WNDENUMPROC(_callback), 0)
+    limit = int(req.get("limit") or 0)
+    return rows[:limit] if limit > 0 else rows
+
+
+def _native_window_state(req: dict) -> dict:
+    """Snapshot one window: rectangle, title and its accessibility tree.
+
+    The tree comes from UIA when ``uiautomation`` is installed; without it the
+    window is still described (title/rect/pid) so callers get a usable answer
+    instead of a dead end. Element indexes are only produced by the UIA path.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    window_id = req.get("window_id")
+    pid = req.get("pid")
+    if not window_id and pid is None:
+        return {"error": ("screen_window_state requires pid and/or "
+                          "window_id (see screen_windows)")}
+    user32 = ctypes.windll.user32
+    hwnd = None
+    if window_id:
+        try:
+            hwnd = int(str(window_id), 16) if str(window_id).startswith("0x") \
+                else int(window_id)
+        except (TypeError, ValueError):
+            return {"error": f"invalid window_id: {window_id!r}"}
+    if hwnd is None:
+        # Resolve by pid: first visible window owned by that process.
+        target = int(pid)
+        found = []
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(
+            wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def _callback(h, _l):
+            if not user32.IsWindowVisible(h):
+                return True
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(h, ctypes.byref(owner))
+            if int(owner.value) == target:
+                found.append(int(h))
+                return False
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(_callback), 0)
+        if not found:
+            return {"error": f"no visible window for pid {pid}"}
+        hwnd = found[0]
+    if not user32.IsWindow(hwnd):
+        return {"error": f"window not found: {window_id or pid}"}
+
+    length = user32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    owner = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+
+    out = {
+        "backend": "native",
+        "pid": int(owner.value),
+        "window_id": hex(hwnd),
+        "title": buf.value.strip(),
+        "rect": [rect.left, rect.top,
+                 max(0, rect.right - rect.left),
+                 max(0, rect.bottom - rect.top)],
+    }
+    elements = _native_uia_elements(hwnd, req)
+    if elements is not None:
+        out["state"] = {"elements": elements}
+    else:
+        out["state"] = {"elements": [],
+                        "note": ("accessibility tree needs uiautomation "
+                                 "(pip install uiautomation); window "
+                                 "geometry is still reported")}
+    return out
+
+
+def _native_uia_elements(hwnd: int, req: dict):
+    """Return the window's UIA elements, or None when UIA is unavailable."""
+    try:
+        import uiautomation as auto
+    except ImportError:
+        return None
+    try:
+        control = auto.ControlFromHandle(hwnd)
+        if control is None:
+            return []
+        limit = int(req.get("max_elements") or 400)
+        rows = []
+        for index, child in enumerate(control.GetChildren()):
+            if index >= limit:
+                break
+            try:
+                box = child.BoundingRectangle
+                rows.append({
+                    "element_index": index,
+                    "name": child.Name or "",
+                    "control_type": child.ControlTypeName or "",
+                    "automation_id": child.AutomationId or "",
+                    "rect": [int(box.left), int(box.top),
+                             max(0, int(box.right - box.left)),
+                             max(0, int(box.bottom - box.top))],
+                })
+            except Exception:
+                continue
+        return rows
+    except Exception:
+        return None
+
+
+def _windows_native_or_error(req: dict) -> dict:
+    """screen_windows on win32: native list, or an honest error."""
+    if not _native_windows_available():
+        return {"error": _NATIVE_WINDOWS_HINT}
+    try:
+        return {"windows": _native_list_windows(req), "backend": "native"}
+    except Exception as e:
+        return {"error": f"native window enumeration failed: {e}"}
+
+
+def _window_state_native_or_error(req: dict) -> dict:
+    """screen_window_state on win32: native snapshot, or an honest error."""
+    if not _native_windows_available():
+        return {"error": _NATIVE_WINDOWS_HINT}
+    try:
+        return _native_window_state(req)
+    except Exception as e:
+        return {"error": f"native window snapshot failed: {e}"}
+
+
+def _dispatch_windows(req: dict) -> dict:
+    """Route window enumeration: native on win32, CUA-only elsewhere."""
+    if sys.platform == "win32":
+        return _windows_native_or_error(req)
+    return _cua_only(req)
+
+
+def _dispatch_window_state(req: dict) -> dict:
+    """Route a window snapshot: native on win32, CUA-only elsewhere."""
+    if sys.platform == "win32":
+        return _window_state_native_or_error(req)
+    return _cua_only(req)
 
 
 def _screen_action_subprocess(action: str, req: dict) -> dict:

@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Automatic project wiki maintenance is now opt-in and off by default
+  (`PAWFLOW_PROJECT_WIKI_AUTO`, same resolution as the graph switch, or an
+  explicit `project_wiki` agent binding). It used to scan the whole relay tree
+  and spend an LLM batch on every relay unconditionally, scheduled from every
+  filesystem write and from context preparation. On a large relay the scan
+  alone takes hours, so the wiki ran all day for nothing. ScratchDir expiry
+  cleanup still runs when the wiki is off, and `project_wiki(action='update')`
+  still processes on demand.
 - A delivery's compaction request was only served on the running turn's next
   assistant/tool message append. A Claude Code turn blocked on its own native
   autocompact offer appends nothing, so the request sat unserved and the queued

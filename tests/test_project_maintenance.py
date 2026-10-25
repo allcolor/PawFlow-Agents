@@ -12,6 +12,9 @@ from core.project_maintenance import ProjectMaintenanceScheduler, _MaintenanceJo
 def _graph_auto_opted_in(monkeypatch):
     """Most tests exercise the full refresh; opt-out cases override this."""
     monkeypatch.setenv("PAWFLOW_PROJECT_GRAPH_AUTO", "1")
+    # The wiki is opt-in too (test_wiki_auto_switch.py pins that switch);
+    # these tests are about the graph and the scan they expect.
+    monkeypatch.setenv("PAWFLOW_PROJECT_WIKI_AUTO", "1")
 
 
 def _run_with_graph(monkeypatch):

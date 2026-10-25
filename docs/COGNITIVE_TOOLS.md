@@ -291,8 +291,9 @@ from the process environment first, then the conversation → user → global
 variable cascade (for example `manage_variable` at user scope). When opted in,
 initial context preparation schedules a background build, and successful
 relay writes and shell commands schedule a debounced incremental refresh.
-Otherwise project maintenance skips the graph (the wiki scan still runs,
-seeded from the existing graph). The manual `build` action and the UI Build
+Otherwise project maintenance skips the graph (the wiki scan still runs when
+the wiki itself is opted in, seeded from the existing graph). The manual
+`build` action and the UI Build
 button always work, for a first build, recovery or an explicit root change.
 Automatic maintenance always indexes the relay container, even when a server-local
 mutation triggered the refresh; otherwise it would index the deployed runtime
@@ -385,7 +386,17 @@ The project wiki is a persistent set of generated Markdown pages for one
 SHA-256 source metadata, generated pages, an index, an append-only activity log,
 and exact source provenance for every factual page.
 
-Automatic wiki maintenance resolves the conversation's effective
+Automatic wiki maintenance is opt-in. It runs only when
+`PAWFLOW_PROJECT_WIKI_AUTO` is truthy (`1`, `true`, `yes`, `on`), resolved from
+the process environment first, then the conversation → user → global variable
+cascade, or when a `project_wiki` agent is explicitly bound. It is off by
+default: a scan walks the whole relay tree and a batch spends an LLM call, and
+on a large relay the scan alone takes hours, so an unconditional wiki is
+permanently busy for no benefit. When it is off, maintenance still expires
+ScratchDirs; `project_wiki(action='update')` and the UI refresh still process
+on demand.
+
+When opted in, automatic maintenance resolves the conversation's effective
 `summarizer_service` for every job, then uses only the LLM service configured by
 that summarizer. It never reuses the active agent's LLM client and does not fall
 back to another LLM when the summarizer binding is unavailable.

@@ -37,6 +37,7 @@ _BACKLOG_PROCESS_SECONDS = 10.0
 _WIKI_FLOW_FQN = "pawflow.agents.wiki:1.0.0"
 _WIKI_WORKFLOW_CUTOVER_ENV = "PAWFLOW_WIKI_WORKFLOW_CUTOVER"
 _GRAPH_AUTO_VARIABLE = "PAWFLOW_PROJECT_GRAPH_AUTO"
+_WIKI_AUTO_VARIABLE = "PAWFLOW_PROJECT_WIKI_AUTO"
 
 
 def _truthy(value: Any) -> bool:
@@ -287,20 +288,49 @@ class ProjectMaintenanceScheduler:
         return os.environ.get(_WIKI_WORKFLOW_CUTOVER_ENV, "").strip() == "1"
 
     @staticmethod
-    def _graph_auto_enabled(user_id: str, conversation_id: str) -> bool:
-        """Whether automatic project graph rebuilds were opted into."""
-        if _GRAPH_AUTO_VARIABLE in os.environ:
-            return _truthy(os.environ.get(_GRAPH_AUTO_VARIABLE))
+    def _variable_auto_enabled(name: str, user_id: str,
+                               conversation_id: str) -> bool:
+        """Resolve an automatic-maintenance switch: env, then the cascade."""
+        if name in os.environ:
+            return _truthy(os.environ.get(name))
         try:
             from core.expression import resolve_expression
             raw = resolve_expression(
-                "$" + "{" + _GRAPH_AUTO_VARIABLE + ":default(\"\")}",
+                "$" + "{" + name + ":default(\"\")}",
                 owner=user_id, conversation_id=conversation_id)
         except Exception:
-            logger.debug("Failed to resolve %s", _GRAPH_AUTO_VARIABLE,
-                         exc_info=True)
+            logger.debug("Failed to resolve %s", name, exc_info=True)
             raw = ""
         return _truthy(raw)
+
+    @staticmethod
+    def _graph_auto_enabled(user_id: str, conversation_id: str) -> bool:
+        """Whether automatic project graph rebuilds were opted into."""
+        return ProjectMaintenanceScheduler._variable_auto_enabled(
+            _GRAPH_AUTO_VARIABLE, user_id, conversation_id)
+
+    @staticmethod
+    def _wiki_auto_enabled(user_id: str, conversation_id: str) -> bool:
+        """Whether automatic project wiki maintenance was opted into.
+
+        Off by default. A full scan walks the whole relay tree and a batch
+        spends an LLM call, and on a large relay the scan alone takes hours,
+        so an unconditional wiki is permanently busy for no benefit. An
+        explicit ``project_wiki`` agent binding counts as opting in: an
+        operator who bound one asked for it.
+        """
+        if ProjectMaintenanceScheduler._variable_auto_enabled(
+                _WIKI_AUTO_VARIABLE, user_id, conversation_id):
+            return True
+        try:
+            from core.linked_service_bindings import resolve_agent_override
+            agent, _config, _explicit = resolve_agent_override(
+                "project_wiki", user_id, conversation_id)
+            return bool(agent)
+        except Exception:
+            logger.debug("Failed to resolve the project_wiki agent",
+                         exc_info=True)
+            return False
 
     def _run(self, job: _MaintenanceJob) -> None:
         if job.conversation_id and job.agent_name:
@@ -340,16 +370,25 @@ class ProjectMaintenanceScheduler:
                                 "reason": "automatic graph not opted in"}
             # The wiki always scans the relay container, whatever surface
             # the graph build used: local=true would index the server/host tree.
-            wiki_result = wiki.scan_from_relay(
-                job.service, job.root, local=False,
-                initial_paths=self._graph_seed_paths(graph))
+            if self._wiki_auto_enabled(job.user_id, job.conversation_id):
+                wiki_result = wiki.scan_from_relay(
+                    job.service, job.root, local=False,
+                    initial_paths=self._graph_seed_paths(graph))
+            else:
+                wiki_result = {"status": "skipped",
+                               "reason": "automatic wiki not opted in"}
         else:
             graph_result = {"status": "skipped", "reason": "scan not due"}
             wiki_result = {"status": "skipped", "reason": "scan not due"}
         from core.linked_service_bindings import resolve_agent_override
         wiki_agent, _config, _explicit = resolve_agent_override(
             "project_wiki", job.user_id, job.conversation_id)
-        if self._workflow_cutover_enabled() or wiki_agent:
+        if not self._wiki_auto_enabled(job.user_id, job.conversation_id):
+            # Off by default: no scan above, and no LLM batch here either.
+            # ``project_wiki(action='update')`` still processes on demand.
+            update_result = {"status": "skipped",
+                             "reason": "automatic wiki not opted in"}
+        elif self._workflow_cutover_enabled() or wiki_agent:
             update_result = self._submit_wiki_workflow(job)
         else:
             from core.linked_service_bindings import resolve_llm_override

@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A project wiki source the LLM keeps rejecting is blocked after three
+  deterministic failures (`invalid_payload`, `invalid_response`) instead of
+  being deferred by the transient retry delay forever. The failure counter was
+  recorded but never read, so a batch the model always refused kept the wiki
+  busy every minute and the backlog never drained. Rate limits and other
+  transient errors still retry after their delay.
 - A relay mutation no longer forces an immediate project scan, and scans are
   spaced by what they cost. Every successful `bash` call and every filesystem
   write used to force a scan of the whole relay tree, so on a relay whose scan

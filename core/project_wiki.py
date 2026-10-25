@@ -33,6 +33,12 @@ _MAX_INDEX_BYTES = 24 * 1024
 _MAX_AFFECTED_PAGES_BYTES = 64 * 1024
 _MINIFIED_LINE_BYTES = 16 * 1024
 _TRANSIENT_RETRY_SECONDS = 60.0
+# A source the wiki LLM keeps rejecting deterministically (invalid payload or
+# response) is blocked after this many attempts instead of being deferred
+# forever. Each rejection used to defer it by the transient delay only, so a
+# batch the model always refused kept the wiki busy and the backlog never
+# drained.
+_MAX_WIKI_FAILURES = 3
 
 
 def _clip_utf8_bytes(value: str, limit: int, marker: str) -> tuple[str, bool]:
@@ -1074,6 +1080,12 @@ class ProjectWiki:
             failure_category in {"context_overflow", "caller_invalid"}
             or provider_status in {400, 413}
         )
+        # A deterministic rejection of the batch itself (the model answered
+        # with no JSON object, or a payload that fails validation) cannot be
+        # fixed by waiting: block it after a few attempts instead of deferring
+        # it by the transient delay forever.
+        deterministic = failure_category in {
+            "invalid_payload", "invalid_response"}
         now = _now()
         retry_delay = max(
             _TRANSIENT_RETRY_SECONDS,
@@ -1090,9 +1102,11 @@ class ProjectWiki:
                     continue
                 current["wiki_failure_count"] = int(
                     current.get("wiki_failure_count", 0) or 0) + 1
+                failures = int(current["wiki_failure_count"] or 0)
                 current["wiki_last_failure_at"] = now
                 current["wiki_failure_category"] = failure_category
-                if permanent:
+                if permanent or (deterministic
+                                 and failures >= _MAX_WIKI_FAILURES):
                     current["wiki_update_blocked"] = True
                     current.pop("wiki_retry_after", None)
                 else:

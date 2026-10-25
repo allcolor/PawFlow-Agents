@@ -401,6 +401,13 @@ When opted in, automatic maintenance resolves the conversation's effective
 that summarizer. It never reuses the active agent's LLM client and does not fall
 back to another LLM when the summarizer binding is unavailable.
 
+A source the wiki LLM keeps rejecting deterministically (no JSON object, or a
+payload that fails validation) is blocked after three attempts instead of being
+deferred by the transient retry delay forever. The failure counter existed but
+was never read, so the same refused batch kept the wiki busy every minute and
+the backlog never drained. Rate limits and other transient errors keep retrying
+after their delay.
+
 Context preparation and successful relay mutations schedule the same coalesced
 background worker as the Project Graph. A mutation is a hint, not a reason to
 rescan immediately: the scan walks the whole relay tree, so it keeps a cadence

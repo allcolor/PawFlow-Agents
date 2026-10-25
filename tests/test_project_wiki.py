@@ -80,6 +80,44 @@ def wiki(tmp_path, monkeypatch):
     ProjectWiki._instances.clear()
 
 
+def test_a_source_rejected_three_times_is_blocked_not_retried(wiki):
+    """A deterministic rejection must not be retried every minute forever.
+
+    The wiki LLM rejected the same batch on every attempt, and each rejection
+    only deferred the source by the transient retry delay, so the backlog never
+    drained and the wiki stayed busy. ``wiki_failure_count`` was recorded but
+    never read.
+    """
+    from core.project_wiki import _MAX_WIKI_FAILURES
+
+    scan = {"README.md": _source("overview")}
+    wiki.scan_from_relay(_Relay([scan]))
+    selection = wiki.select_update_batch()
+    assert selection, "the scan must leave a selectable batch"
+
+    for _attempt in range(_MAX_WIKI_FAILURES):
+        wiki._record_update_failure(selection, category="invalid_payload")
+
+    dirty = wiki._manifest["dirty_sources"]["README.md"]
+    assert dirty["wiki_update_blocked"] is True
+    assert "wiki_retry_after" not in dirty
+    assert wiki.status()["blocked_sources"] >= 1
+
+
+def test_a_transient_failure_still_retries_after_the_delay(wiki):
+    """Only deterministic rejections block; rate limits keep retrying."""
+    scan = {"README.md": _source("overview")}
+    wiki.scan_from_relay(_Relay([scan]))
+    selection = wiki.select_update_batch()
+
+    for _attempt in range(5):
+        wiki._record_update_failure(selection, category="rate_limit")
+
+    dirty = wiki._manifest["dirty_sources"]["README.md"]
+    assert not dirty.get("wiki_update_blocked")
+    assert dirty.get("wiki_retry_after")
+
+
 def test_first_scan_only_queues_high_signal_sources(wiki):
     scan = {
         "README.md": _source("overview"),

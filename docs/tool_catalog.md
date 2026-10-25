@@ -353,6 +353,15 @@ bounds of each sealed segment are read once from its raw bytes and cached in
 `field_bounds.json` beside the segment index, keyed by file identity, so a
 rewritten segment is scanned again. Encrypted transcripts keep the full pass.
 
+Every result header carries both identifiers a caller can slice by:
+`[#N]` is the position index in the displayed transcript and `seq=N` is the
+persisted sequence number. They are not the same number — compaction and
+hidden rows make them drift apart by thousands on a long conversation — so
+`range_by_index` slices on the position index and `range_by_seq` on the
+persisted seq. Showing only the position index used to leave an agent with a
+number `range_by_seq` would not accept: GameDev2 reused the displayed numbers
+and got older messages back (2026-10-25).
+
 A `search` with `role_filter` `user` or `assistant` is answered from the
 conversation index (`core/handlers/_history_indexed_search.py`) when the
 searching user owns the conversation and its index is current. Each indexed

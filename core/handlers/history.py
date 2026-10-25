@@ -274,7 +274,7 @@ class ReadHistoryHandler(ToolHandler):
                     "type": "string",
                     "enum": [
                         "recent", "oldest", "search", "read", "count",
-                        "range", "range_by_seq", "range_by_date", "around",
+                        "range", "range_by_seq", "range_by_index", "range_by_date", "around",
                     ],
                     "description": (
                         "recent: last N messages (default). "
@@ -283,7 +283,10 @@ class ReadHistoryHandler(ToolHandler):
                         "read: read a specific message by index. "
                         "count: total message count. "
                         "range: inclusive slice between two msg_ids. "
-                        "range_by_seq: inclusive slice between two seq values. "
+                        "range_by_seq: inclusive slice between two seq values "
+                        "(the seq= shown in each result header). "
+                        "range_by_index: inclusive slice between two [#N] "
+                        "position indexes shown in each result header. "
                         "range_by_date: inclusive slice between two ISO dates. "
                         "around: N messages before/after an anchor point "
                         "(set exactly one of from_msg_id / from_seq / from_date; "
@@ -334,11 +337,19 @@ class ReadHistoryHandler(ToolHandler):
                 },
                 "from_seq": {
                     "type": "integer",
-                    "description": "Start seq. Used by range_by_seq (inclusive start) and around (anchor).",
+                    "description": "Start seq. Used by range_by_seq (inclusive start) and around (anchor). This is the seq= value shown in each result header.",
                 },
                 "to_seq": {
                     "type": "integer",
                     "description": "End seq for range_by_seq (inclusive).",
+                },
+                "from_index": {
+                    "type": "integer",
+                    "description": "Start position index. Used by range_by_index (inclusive). This is the [#N] value shown in each result header.",
+                },
+                "to_index": {
+                    "type": "integer",
+                    "description": "End position index for range_by_index (inclusive).",
                 },
                 "from_date": {
                     "type": "string",
@@ -407,6 +418,8 @@ class ReadHistoryHandler(ToolHandler):
             return self._do_range(store, arguments, role_filter, agent_filter)
         if action == "range_by_seq":
             return self._do_range_by_seq(store, arguments, role_filter, agent_filter)
+        if action == "range_by_index":
+            return self._do_range_by_index(store, arguments, role_filter, agent_filter)
         if action == "range_by_date":
             return self._do_range_by_date(store, arguments, role_filter, agent_filter)
         if action == "around":
@@ -417,7 +430,8 @@ class ReadHistoryHandler(ToolHandler):
             return self._do_recent(store, arguments, role_filter, agent_filter)
         return ("Error: action must be one of "
                 "['recent', 'oldest', 'search', 'read', 'count', "
-                "'range', 'range_by_seq', 'range_by_date', 'around']")
+                "'range', 'range_by_seq', 'range_by_index', 'range_by_date', "
+                "'around']")
 
     # ── Loader helper ─────────────────────────────────────────────────
 
@@ -803,6 +817,35 @@ class ReadHistoryHandler(ToolHandler):
             role_filter, agent_filter, action="range_by_seq",
             offset=offset, limit=limit, total=total)
 
+    def _do_range_by_index(self, store, arguments,
+                           role_filter: str, agent_filter: str) -> str:
+        """Slice by the POSITION index a result header shows as ``[#N]``.
+
+        The displayed index is a position in the transcript, not the persisted
+        ``seq``: compaction and hidden rows make the two drift apart by
+        thousands on a long conversation. An agent that reads a slice and asks
+        for it back by the numbers it was shown needs this action; asking
+        ``range_by_seq`` with those numbers returns an unrelated slice.
+        """
+        try:
+            from_index = int(arguments.get("from_index", 0))
+            to_index = int(arguments.get("to_index", 0))
+        except (TypeError, ValueError):
+            return "Error: from_index and to_index must be integers"
+        if from_index < 0 or to_index < 0 or to_index < from_index:
+            return "Error: range_by_index requires from_index <= to_index, both >= 0"
+        offset, limit, budget = self._budget(
+            arguments.get("offset"), arguments.get("limit"))
+        kept, total = self._collect(
+            store,
+            lambda i, m: (from_index <= i <= to_index
+                          and self._matches(m, role_filter, agent_filter)),
+            budget)
+        return self._render_slice(
+            kept, f"Index range {from_index}..{to_index}",
+            role_filter, agent_filter, action="range_by_index",
+            offset=offset, limit=limit, total=total)
+
     def _do_range_by_date(self, store, arguments,
                           role_filter: str, agent_filter: str) -> str:
         from_ts = _parse_date(arguments.get("from_date", ""))
@@ -1045,6 +1088,13 @@ class ReadHistoryHandler(ToolHandler):
         if role_filter == "thinking" and role == "thinking":
             label = "thinking"
         header = f"[#{index}] {label}"
+        # The persisted seq is what range_by_seq filters on. Showing only the
+        # position index left an agent with a number the tool would not accept:
+        # GameDev2 reused [#N] with range_by_seq and got older messages back
+        # (2026-10-25). Both numbers are rendered so either path is usable.
+        seq = _msg_seq(msg)
+        if seq > 0:
+            header += f" seq={seq}"
         if agent:
             header += f" ({agent})"
 

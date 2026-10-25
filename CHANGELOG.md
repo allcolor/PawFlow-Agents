@@ -4,6 +4,21 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- `read_history` results now show the persisted `seq` next to the position
+  index (`[#12] assistant seq=4821`), and a new `range_by_index` action slices
+  on the position index. The rendered header used to show only `[#N]`, a
+  position in the displayed transcript, while `range_by_seq` filtered on the
+  persisted `seq` field -- a number the tool never displayed. Compaction and
+  hidden rows make the two drift apart by thousands on a long conversation, so
+  an agent that reused the numbers it was shown got an unrelated slice:
+  GameDev2 asked for a range and received older September messages
+  (2026-10-25). Both identifiers are now rendered, and each slice action names
+  the one it accepts.
+
 ## [1.0.0-beta.314] — 2026-10-25
 
 ### Fixed

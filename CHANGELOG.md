@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A relay mutation no longer forces an immediate project scan, and scans are
+  spaced by what they cost. Every successful `bash` call and every filesystem
+  write used to force a scan of the whole relay tree, so on a relay whose scan
+  takes about two hours the next one started the moment the previous ended, all
+  day. The scan cadence is now ten times the previous scan's duration (never
+  less than a minute), and only an explicit force (UI Build, on-demand refresh)
+  scans immediately.
 - Automatic project wiki maintenance is now opt-in and off by default
   (`PAWFLOW_PROJECT_WIKI_AUTO`, same resolution as the graph switch, or an
   explicit `project_wiki` agent binding). It used to scan the whole relay tree

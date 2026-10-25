@@ -402,7 +402,12 @@ that summarizer. It never reuses the active agent's LLM client and does not fall
 back to another LLM when the summarizer binding is unavailable.
 
 Context preparation and successful relay mutations schedule the same coalesced
-background worker as the Project Graph. The worker scans source hashes, selects
+background worker as the Project Graph. A mutation is a hint, not a reason to
+rescan immediately: the scan walks the whole relay tree, so it keeps a cadence
+scaled by the previous scan's duration (ten times it, never less than a
+minute). Without that, a relay whose scan takes two hours rescanned as soon as
+each scan ended. Only an explicit force (the UI Build button, an on-demand
+refresh) scans immediately. The worker scans source hashes, selects
 one batch of at most eight changed high-signal files by default, and makes one
 ephemeral LLM call. `batch_files=0` now means this safe default, not an unbounded
 snapshot; positive configuration is hard-capped at 32 files. Selection and prompt

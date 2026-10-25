@@ -30,6 +30,9 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 _LAZY_REFRESH_SECONDS = 60.0
+# A scan walks the whole relay tree, so its cost decides how often it may run
+# again: ten times the previous duration, never less than the lazy interval.
+_SCAN_INTERVAL_FACTOR = 10.0
 _WRITE_DEBOUNCE_SECONDS = 2.0
 # Minimum spacing between process-only runs (wiki batch without a fresh scan)
 # while a ready backlog persists.
@@ -42,6 +45,21 @@ _WIKI_AUTO_VARIABLE = "PAWFLOW_PROJECT_WIKI_AUTO"
 
 def _truthy(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _scan_interval_seconds(last_scan_seconds: float) -> float:
+    """Minimum spacing before the next scan, from the last scan's cost.
+
+    A fixed one-minute cadence made a relay whose scan takes two hours rescan
+    continuously: the next scan started as soon as the previous one ended. The
+    interval grows with the measured duration, so a cheap scan keeps the short
+    cadence and an expensive one is left alone.
+    """
+    try:
+        duration = max(0.0, float(last_scan_seconds or 0.0))
+    except (TypeError, ValueError):
+        duration = 0.0
+    return max(_LAZY_REFRESH_SECONDS, duration * _SCAN_INTERVAL_FACTOR)
 
 
 @dataclass
@@ -58,6 +76,8 @@ class _MaintenanceJob:
     rerun: bool = False
     last_run_at: float = 0.0
     last_scan_at: float = 0.0
+    # Duration of the last scan, which sets the next scan's minimum spacing.
+    last_scan_seconds: float = 0.0
     changed_paths: set[str] = field(default_factory=set)
     # Whether the next started run must refresh the graph and rescan sources.
     scan_pending: bool = False
@@ -114,8 +134,15 @@ class ProjectMaintenanceScheduler:
                 job.rerun = job.rerun or force or bool(changed_path)
                 return False
             scan_due = bool(
-                force or changed_path
-                or now - job.last_scan_at >= _LAZY_REFRESH_SECONDS)
+                force
+                or now - job.last_scan_at >= _scan_interval_seconds(
+                    job.last_scan_seconds))
+            if not scan_due and changed_path:
+                # A relay mutation is a hint, not a reason to rescan now: the
+                # scan walks the whole tree, so it keeps the cost-based
+                # cadence. Only an explicit force (UI Build, an on-demand
+                # refresh) scans immediately.
+                job.changed_paths.add(str(changed_path).replace("\\", "/"))
             if not scan_due:
                 # Scan cadence is separate from backlog processing: a ready
                 # wiki backlog earns a process-only run, never an early scan.
@@ -164,6 +191,7 @@ class ProjectMaintenanceScheduler:
             job.scan = job.scan_pending
             job.scan_pending = False
         try:
+            _scan_started_at = time.time()
             self._run(job)
         except Exception:
             logger.warning("Project maintenance failed for relay=%s",
@@ -175,6 +203,8 @@ class ProjectMaintenanceScheduler:
                 job.runs += 1
                 if job.scan:
                     job.last_scan_at = job.last_run_at
+                    job.last_scan_seconds = max(
+                        0.0, job.last_scan_at - _scan_started_at)
                     job.scans += 1
                 rerun = job.rerun
                 job.rerun = False

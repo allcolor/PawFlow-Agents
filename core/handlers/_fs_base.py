@@ -423,7 +423,7 @@ class BaseFsHandler(ToolHandler):
                 user_id=self._user_id, relay_id=relay_id, service=service,
                 conversation_id=self._conversation_id,
                 agent_name=self._agent_name, local=bool(local),
-                changed_path=path, force=True)
+                changed_path=path, force=False)
         except Exception:
             logger.debug("[project-maint] schedule failed for %s", path,
                          exc_info=True)

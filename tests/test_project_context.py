@@ -87,7 +87,9 @@ def test_filesystem_mutation_hook_schedules_relay_maintenance(monkeypatch):
 
     handler._schedule_project_refresh(service, "core/auth.py", local=True)
 
+    # A mutation is a hint, not a reason to rescan now: the scan walks the
+    # whole relay tree, so it keeps the cost-based cadence (test_scan_cadence).
     schedule.assert_called_once_with(
         user_id="alice", relay_id="relay-a", service=service,
         conversation_id="conversation-a", agent_name="assistant",
-        local=True, changed_path="core/auth.py", force=True)
+        local=True, changed_path="core/auth.py", force=False)

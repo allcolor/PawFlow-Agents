@@ -418,7 +418,13 @@ class TestMaintenanceScanCadence:
         assert job.scans == 1 and job.runs == 1
         assert time.time() - job.last_scan_at < 5
 
-    def test_a_write_forces_a_scan_even_inside_the_interval(self, maintenance):
+    def test_a_write_does_not_force_a_scan_inside_the_interval(self, maintenance):
+        """A mutation is a hint, not a reason to rescan the whole tree.
+
+        This used to assert the opposite: every write forced a scan, so a relay
+        whose scan takes hours rescanned continuously (2026-10-24). The path is
+        still recorded for the next due scan.
+        """
         scheduler, runs, pm = maintenance
         scheduler._wiki_backlog_ready = lambda u, r: False
         job = pm._MaintenanceJob(user_id="alice", relay_id="r", service=MagicMock(),
@@ -426,9 +432,21 @@ class TestMaintenanceScanCadence:
         scheduler._jobs["alice::r"] = job
 
         assert scheduler.schedule(user_id="alice", relay_id="r", service=job.service,
-                                  changed_path="core/x.py") is True
-        assert job.scan_pending is True
+                                  changed_path="core/x.py") is False
+        assert job.scan_pending is False
         assert job.changed_paths == {"core/x.py"}
+
+    def test_an_explicit_force_still_scans_inside_the_interval(self, maintenance):
+        """The UI Build button and an on-demand refresh keep the escape hatch."""
+        scheduler, runs, pm = maintenance
+        scheduler._wiki_backlog_ready = lambda u, r: False
+        job = pm._MaintenanceJob(user_id="alice", relay_id="r", service=MagicMock(),
+                                 last_scan_at=time.time(), last_run_at=time.time())
+        scheduler._jobs["alice::r"] = job
+
+        assert scheduler.schedule(user_id="alice", relay_id="r", service=job.service,
+                                  force=True) is True
+        assert job.scan_pending is True
 
     def test_a_backlog_request_never_downgrades_a_pending_scan(self, maintenance):
         scheduler, runs, pm = maintenance
@@ -461,6 +479,9 @@ class TestMaintenanceScanCadence:
 
     def test_process_only_run_skips_graph_and_scan_but_updates_wiki(self, monkeypatch):
         import core.project_maintenance as pm
+        # The wiki is opt-in (test_wiki_auto_switch.py pins that switch); this
+        # test is about what a process-only run does once it is opted in.
+        monkeypatch.setenv("PAWFLOW_PROJECT_WIKI_AUTO", "1")
         graph_for_relay = MagicMock(side_effect=AssertionError("graph must not be touched"))
         wiki = MagicMock()
         wiki.scan_from_relay.side_effect = AssertionError("scan must not run")

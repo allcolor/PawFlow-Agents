@@ -147,8 +147,8 @@ def _cua_only(req: dict) -> dict:
 # both reachable from ctypes/pywin32 with nothing to install.
 
 _NATIVE_WINDOWS_HINT = (
-    "window enumeration needs the Windows accessibility API: install "
-    "pywin32 (pip install pywin32) or uiautomation on the relay host")
+    "window enumeration needs the Windows user32 API, which this relay build "
+    "does not expose; update the relay to a build that ships uiautomation")
 
 
 def _native_windows_available() -> bool:

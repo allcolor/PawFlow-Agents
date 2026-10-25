@@ -14,9 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   telling the user to set `PAWFLOW_SCREEN_MODE=cua` -- advice that can never
   work there. Both actions now use the native Windows API: window enumeration
   through `user32` (pid, window_id, title, rect) and the accessibility tree
-  through `uiautomation` when it is installed, with window geometry still
-  reported when it is not. Linux containers keep the CUA path, and the
-  container error no longer points a Windows user at CUA.
+  through `uiautomation`, which the packaged desktop relay now ships by default
+  (`requirements-build.txt` plus a PyInstaller collected package) so no relay
+  host ever has to install it. Linux containers keep the CUA path -- the module
+  depends on `comtypes` and cannot be installed there -- and the container error
+  no longer points a Windows user at CUA.
 
 ### Added
 

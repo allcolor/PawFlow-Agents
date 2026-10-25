@@ -79,7 +79,7 @@ def test_the_windows_error_no_longer_points_at_cua_on_win32(monkeypatch):
 
     assert "error" in result
     assert "PAWFLOW_SCREEN_MODE" not in result["error"]
-    assert "pywin32" in result["error"] or "uiautomation" in result["error"]
+    assert "uiautomation" in result["error"]
 
 
 def test_window_state_requires_a_target_on_win32(monkeypatch):

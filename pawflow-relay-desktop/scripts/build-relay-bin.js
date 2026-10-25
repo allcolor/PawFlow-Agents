@@ -24,8 +24,8 @@ const runtimeToolHiddenImports = [
   'urllib.request',
   'uuid',
 ];
-const platformHiddenImports = process.platform === 'win32' ? ['winpty'] : [];
-const platformCollectedPackages = process.platform === 'win32' ? ['winpty'] : [];
+const platformHiddenImports = process.platform === 'win32' ? ['winpty', 'uiautomation'] : [];
+const platformCollectedPackages = process.platform === 'win32' ? ['winpty', 'uiautomation'] : [];
 
 function pythonCommand() {
   return process.env.PAWFLOW_RELAY_PYTHON || process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');

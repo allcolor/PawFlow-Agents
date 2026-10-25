@@ -43,6 +43,12 @@ def _is_subagent_agent(agent_name: str) -> bool:
     name = str(agent_name or "")
     return any(marker in name for marker in _SUBAGENT_AGENT_MARKERS)
 
+
+def _is_subagent_conversation(conv_id: str) -> bool:
+    """Whether this conversation id is itself a sub-agent conversation."""
+    name = str(conv_id or "")
+    return any(marker in name for marker in _SUBAGENT_AGENT_MARKERS)
+
 # Composite key: every dimension that would invalidate reuse if it drifts.
 #   user_id       — credential boundary
 #   conv_id       — per-conv session file
@@ -281,11 +287,14 @@ class LiveSessionRegistry:
 
         Sub-agent sessions are skipped: a sub-agent running in ``full`` context
         mode is keyed to the parent conversation, and its own cleanup path owns
-        it (see InteractiveClaudeCodePool.kill_and_evict_by_conv).
+        it (see InteractiveClaudeCodePool.kill_and_evict_by_conv). A sub-agent
+        conversation's own cleanup still evicts everything in it.
         """
+        parent_scope = not _is_subagent_conversation(conv_id)
         with self._lock:
             victims = [(k, s) for k, s in self._sessions.items()
-                       if k[1] == conv_id and not _is_subagent_agent(k[2])]
+                       if k[1] == conv_id
+                       and not (parent_scope and _is_subagent_agent(k[2]))]
             for k, _s in victims:
                 self._sessions.pop(k, None)
         for key, session in victims:

@@ -56,6 +56,25 @@ def test_parent_invalidation_keeps_subagent_sessions(monkeypatch):
     assert key_main not in pool._sessions
 
 
+def test_a_subagent_conversation_cleanup_still_kills_its_sessions(monkeypatch):
+    """A sub-agent's OWN cleanup must not be skipped by the new rule.
+
+    When the conversation being cleaned up is itself a sub-conversation
+    (``parent::task::<id>``), every session in it is a victim -- including the
+    flash worker. Otherwise finishing a task would leak its container.
+    """
+    sub_conv = "conv::task::done"
+    victim = _State("c-victim", sub_conv, "assistant::flash::worker")
+    key = ("user", sub_conv, "assistant::flash::worker", "svc")
+    pool, killed = _pool_with(monkeypatch, {key: victim})
+
+    count = pool.kill_and_evict_by_conv(sub_conv, reason="subagent_run_finished")
+
+    assert count == 1
+    assert killed == ["c-victim"]
+    assert pool._sessions == {}
+
+
 def test_task_and_delegate_sessions_also_survive(monkeypatch):
     markers = ["::task::t1", "::delegate::d1", "::a2a::a1",
                "::task_verify::v1"]

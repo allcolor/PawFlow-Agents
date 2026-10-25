@@ -69,6 +69,12 @@ def _is_subagent_agent(agent_name: str) -> bool:
     return any(marker in name for marker in _SUBAGENT_AGENT_MARKERS)
 
 
+def _is_subagent_conversation(conv_id: str) -> bool:
+    """Whether this conversation id is itself a sub-agent conversation."""
+    name = str(conv_id or "")
+    return any(marker in name for marker in _SUBAGENT_AGENT_MARKERS)
+
+
 
 
 class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
@@ -1868,11 +1874,16 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         running: on 2026-10-25 00:23:00 a flash agent died mid-work with
         ``CC interactive session closed``. Those sessions are not part of the
         parent's context and their own cleanup path owns them.
+
+        A sub-agent conversation's OWN cleanup still works: when ``conv_id`` is
+        the sub-conversation (``parent::task::<id>``), every session in it is a
+        victim, sub-agent or not.
         """
+        parent_scope = not _is_subagent_conversation(conv_id)
         with self._lock:
             victims = [(key, state) for key, state in self._sessions.items()
                        if key[1] == conv_id
-                       and not _is_subagent_agent(key[2])]
+                       and not (parent_scope and _is_subagent_agent(key[2]))]
             for key, _state in victims:
                 self._sessions.pop(key, None)
         for key, state in victims:

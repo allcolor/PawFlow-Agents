@@ -144,6 +144,44 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         self._failed_exchange_detail = ""
         self._failed_exchange_at = 0.0
         self._turn_boundary_at = 0.0
+        # Completed reasoning items this turn. Codex encrypts its reasoning and
+        # usually publishes an EMPTY summary (1472 of 1514 items on 2026-10-25),
+        # so no reasoning delta ever reaches us and a turn can look dead for
+        # minutes while the model works. The count is the only honest signal:
+        # it proves movement without inventing content.
+        self._reasoning_cycles = 0
+
+    def _observe_reasoning_item(self, item: dict) -> None:
+        """Publish a liveness signal for a completed reasoning item.
+
+        Codex encrypts its reasoning: ``encrypted_content`` carries the real
+        text and ``summary`` is usually empty, so no
+        ``response.reasoning_*_text.delta`` is ever emitted and the webchat
+        shows nothing while the model thinks. Measured 2026-10-25: 1472 of 1514
+        reasoning items had an empty summary, with reasoning-only streaks of 3+
+        items lasting a median of 68 s and up to 303 s.
+
+        When the model DOES publish a summary, the deltas already carried it and
+        this stays silent. Otherwise it reports the cycle count, which is the
+        only honest statement available: reasoning happened, its content is not
+        ours to invent.
+        """
+        summary = item.get("summary") or []
+        readable = "".join(
+            str(part.get("text") or "")
+            for part in summary if isinstance(part, dict))
+        if readable.strip():
+            return
+        self._reasoning_cycles += 1
+        if not self.thinking_callback:
+            return
+        try:
+            self.thinking_callback(
+                f"[Reasoning cycle {self._reasoning_cycles} — the model is "
+                "thinking; it does not expose this reasoning's content.]")
+        except Exception:
+            logger.debug("codex reasoning liveness callback failed",
+                         exc_info=True)
 
     def _accept_turn_boundary(self, event: dict) -> bool:
         # Match CCInteractiveEventService: hooks and proxy requests travel on
@@ -493,6 +531,10 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                         "name": name,
                         "arguments": args,
                     })
+                elif str(item.get("type") or "") == "reasoning":
+                    # Encrypted reasoning: no delta will ever arrive, so this
+                    # completed item is the only evidence the model is alive.
+                    self._observe_reasoning_item(item)
                 elif str(item.get("type") or "").endswith("_call"):
                     logger.warning(
                         "[codex-interactive] tool call item without an id: "

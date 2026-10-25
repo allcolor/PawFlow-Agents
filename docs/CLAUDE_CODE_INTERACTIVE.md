@@ -1288,6 +1288,25 @@ The window left is two CLIs renewing on their own in the same instant, for
 example in a turn that outlives the 30-minute margin. The central renewal
 makes it rare, not impossible.
 
+## Encrypted reasoning and the liveness signal
+
+Codex encrypts its reasoning: a completed `reasoning` item carries the real
+text in `encrypted_content` and an empty `summary`, so no
+`response.reasoning_text.delta` or `response.reasoning_summary_text.delta` is
+ever emitted. Measured 2026-10-25: 1472 of 1514 reasoning items had an empty
+summary, and 757 carried encrypted content. PawFlow therefore had nothing to
+forward, and a turn could look dead for minutes while the model worked:
+GameDev2 showed `Working (50m 14s)` in the Codex TUI with nothing at all in the
+webchat. On that day there were 81 reasoning-only streaks of 3+ items, median
+68 s, p90 142 s, longest 303 s.
+
+`_observe_reasoning_item` closes that gap without inventing content. A
+completed reasoning item with no readable summary publishes its cycle count
+(`[Reasoning cycle N — the model is thinking; it does not expose this
+reasoning's content.]`) through the normal thinking callback. When the model
+does publish a summary the deltas already carried it, and the signal stays
+silent so nothing is duplicated.
+
 ## Live Debugging
 
 The chat UI action menu exposes `CC Interactive Tmux` for the selected agent. It

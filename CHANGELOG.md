@@ -4,6 +4,20 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- A reasoning-only Codex turn now shows a sign of life in the webchat. Codex
+  encrypts its reasoning and usually publishes an EMPTY summary (1472 of 1514
+  reasoning items on 2026-10-25), so no reasoning delta is ever emitted and a
+  turn could look dead for minutes while the model worked: GameDev2 displayed
+  `Working (50m 14s)` with nothing at all in the webchat. Measured that day: 81
+  reasoning-only streaks of 3+ items, median 68 s, p90 142 s, longest 303 s. A
+  completed reasoning item with no readable text now reports its cycle count.
+  When the model does publish a summary the deltas already carried it, and the
+  signal stays silent.
+
 ## [1.0.0-beta.313] — 2026-10-25
 
 ### Fixed

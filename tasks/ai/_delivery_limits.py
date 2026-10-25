@@ -73,6 +73,19 @@ def submission_needs_compaction(conversation_id: str, agent_name: str,
     return True
 
 
+def take_compact_request(conversation_id: str, agent_name: str) -> bool:
+    """Consume a pending compaction request for this agent's running turn.
+
+    Read by the CLI coordinator's idle probe: a turn that produces no message
+    cannot wait for its next append to compact, so the request is served from
+    the idle path instead (see ``_probe_compact_request``).
+    """
+    ctx = running_turn_context(conversation_id, agent_name)
+    if not ctx:
+        return False
+    return bool(ctx.pop(COMPACT_REQUEST_KEY, False))
+
+
 def backlog_exceeded(pending: list, max_ctx: int, chars_per_token: float,
                      now: float | None = None) -> bool:
     """Whether accepted-but-unread submissions must unblock the CLI."""

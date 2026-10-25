@@ -497,6 +497,20 @@ Timing controls are read once when the provider modules are imported:
   on `end_turn`, with model content, no request open and no follow-up owed --
   one idle probe is enough (`_IDLE_PANE_PROBES_AFTER_END_TURN`), so a lost Stop
   releases Active Agents one silence window after the answer instead of two.
+- A delivery's compaction request is served from the idle path, not only on
+  the next message append. `submission_needs_compaction`
+  (`tasks/ai/_delivery_limits.py`) sets `ctx["_compact_before_submit"]` when
+  the message it is about to submit would cross the threshold, and the running
+  turn is meant to compact before that message lands. That request used to be
+  consumed only by `_alc_maybe_auto_compact_after_append`, which runs on the
+  turn's next assistant/tool message. A turn blocked on its own native
+  autocompact offer appends nothing, so the request sat unserved and the
+  queued message waited behind it: GameDev7 on 2026-10-24 requested compaction
+  at 22:16:56, 22:42:10, 23:11:20 and 23:12:35 with 839K against a 570K
+  trigger, and nothing compacted until 23:29:55. The coordinator's idle probe
+  now calls `_probe_compact_request` (at most every 5 s) and raises the same
+  `CCCompactDetected` the provider already turns into compact-and-restart. The
+  request is consumed once, and a probe failure is logged, never raised.
 - Lifecycle hooks (UserPromptSubmit, Stop, StopFailure, compaction,
   SessionEnd) run under a 30-second command timeout
   (`OBSERVATION_HOOK_TIMEOUT_SECONDS`) for Claude Code, Codex and agy. It was

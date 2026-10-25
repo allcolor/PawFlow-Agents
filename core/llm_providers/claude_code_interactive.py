@@ -35,6 +35,12 @@ def unblock_backlog(pool, state, conversation_id: str, agent_name: str) -> bool:
     return _unblock(pool, state, conversation_id, agent_name)
 
 
+def take_compact_request(conversation_id: str, agent_name: str) -> bool:
+    """A delivery's pending compaction request for this live turn."""
+    from tasks.ai._delivery_limits import take_compact_request as _take
+    return _take(conversation_id, agent_name)
+
+
 class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
     """Claude Code interactive provider using a transparent MITM proxy."""
 
@@ -135,7 +141,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     submissions_callback=lambda: len(
                         pool.unprocessed_submissions(state)),
                     backlog_callback=lambda: unblock_backlog(
-                        pool, state, conversation_id, agent_name))
+                        pool, state, conversation_id, agent_name),
+                    compact_request_callback=lambda: take_compact_request(
+                        conversation_id, agent_name))
                 response = coord.run(getattr(self, "_abort", None))
             except CCCompactDetected:
                 pool.kill_session(
@@ -210,7 +218,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     submissions_callback=lambda: len(
                         pool.unprocessed_submissions(state)),
                     backlog_callback=lambda: unblock_backlog(
-                        pool, state, conversation_id, agent_name))
+                        pool, state, conversation_id, agent_name),
+                    compact_request_callback=lambda: take_compact_request(
+                        conversation_id, agent_name))
                 response = coord.run(getattr(self, "_abort", None))
             except CCCompactDetected:
                 pool.kill_session(

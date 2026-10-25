@@ -171,7 +171,8 @@ class _CCITurnCoordinator:
                  emitted_tool_use_ids=None, emitted_tool_result_ids=None,
                  consumer_epoch: int = 0, consumer_kind: str = "request",
                  liveness_callback=None, pane_callback=None,
-                 submissions_callback=None, backlog_callback=None):
+                 submissions_callback=None, backlog_callback=None,
+                 compact_request_callback=None):
         self.event_service = event_service
         self.session_token = session_token
         # Exclusive read ownership of the session's event queue. Without it
@@ -288,6 +289,14 @@ class _CCITurnCoordinator:
         # while the wire is idle, which is exactly while a tool blocks.
         self.backlog_callback = backlog_callback
         self._backlog_checked_at = 0.0
+        # A delivery can ask this turn to compact before the message it is
+        # about to submit lands (tasks/ai/_delivery_limits). The request used
+        # to be served only on the turn's next assistant/tool append, so a CLI
+        # blocked on its own native autocompact offer -- appending nothing for
+        # an hour -- never compacted and the queued message sat behind it.
+        # Polled from the idle path instead.
+        self.compact_request_callback = compact_request_callback
+        self._compact_request_checked_at = 0.0
 
     def _publish_usage_observation(self) -> None:
         """Hand the current prompt size to the gauge, mid-stream.
@@ -304,6 +313,42 @@ class _CCITurnCoordinator:
             self.usage_callback(dict(self.usage))
         except Exception:
             logger.debug("cci usage observation callback failed", exc_info=True)
+
+    def _probe_compact_request(self) -> None:
+        """Serve a delivery's pending compaction request while the CLI is idle.
+
+        ``submission_needs_compaction`` sets the request when the message it is
+        about to submit would cross the threshold. Waiting for the turn's next
+        append is only correct when the turn is producing events: a CLI blocked
+        on its native autocompact offer produces none, so the turn never
+        compacted and the queued message waited behind it (GameDev7,
+        2026-10-24 22:16-23:29, 839K against a 570K trigger).
+
+        Raises ``CCCompactDetected`` -- the signal the provider already turns
+        into compact-and-restart. Never raises anything else: a delivery or
+        gauge hiccup must not be able to kill a live turn.
+        """
+        if self.compact_request_callback is None:
+            return
+        now = time.time()
+        if now - self._compact_request_checked_at < 5.0:
+            return
+        self._compact_request_checked_at = now
+        try:
+            requested = bool(self.compact_request_callback())
+        except Exception:
+            logger.warning("[cci-provider] session=%s compact request probe "
+                           "failed", self.session_token[:8], exc_info=True)
+            return
+        if not requested:
+            return
+        logger.warning(
+            "[cci-provider] session=%s idle with a pending compaction request "
+            "— compacting before the queued message",
+            self.session_token[:8])
+        from core.llm_client import CCCompactDetected
+        raise CCCompactDetected(
+            "delivery requested compaction before submitting a message")
 
     def _probe_backlog(self) -> None:
         """At most every 5 s: let the backlog rule cancel a blocking tool."""
@@ -654,6 +699,7 @@ class _CCITurnCoordinator:
                 self._probe_liveness(started_at)
                 self._probe_pane_blocker(started_at)
                 self._probe_backlog()
+                self._probe_compact_request()
                 if not self._saw_proxy_event:
                     waited = time.time() - started_at
                     if (_NO_PROXY_EVENT_TIMEOUT_SECONDS > 0

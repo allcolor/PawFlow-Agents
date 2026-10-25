@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A delivery's compaction request was only served on the running turn's next
+  assistant/tool message append. A Claude Code turn blocked on its own native
+  autocompact offer appends nothing, so the request sat unserved and the queued
+  message waited behind it: GameDev7 requested compaction at 22:16:56, 22:42:10,
+  23:11:20 and 23:12:35 on 2026-10-24 with 839K against a 570K trigger, and
+  nothing compacted until 23:29:55. The CLI coordinator now serves a pending
+  request from its idle path (`_probe_compact_request`, at most every 5 s) by
+  raising the same `CCCompactDetected` signal the provider already turns into
+  compact-and-restart. The request is consumed once, and a failing probe never
+  breaks the turn.
 - Auto-compaction never fired for an agent whose loop restarted on a live
   Claude Code process, so its context grew past the window. The context gauge
   read the provider's native measurement from the active context's client (the

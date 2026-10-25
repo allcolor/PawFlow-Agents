@@ -16,6 +16,8 @@ _BUTTON_MAP = {"left": "left", "right": "right", "middle": "middle"}
 _CHILD_ENV = "PAWFLOW_SCREEN_ACTION_CHILD"
 _SCREEN_GUARD_MAX_DIFFERENCE = 0.06
 
+logger = logging.getLogger(__name__)
+
 # Make process DPI-aware on Windows so coordinates use physical pixels matching
 # the screenshots returned by ImageGrab/pyautogui.
 if sys.platform == "win32":

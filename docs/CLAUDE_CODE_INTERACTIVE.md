@@ -45,6 +45,15 @@ proxy. The provider does not read Claude Code transcripts or terminal output.
 - Every interactive tmux window and browser viewer uses the same pinned
   220x50 grid as Codex Interactive. The browser never resizes the shared tmux
   window; xterm renders the fixed grid and letterboxes it when necessary.
+- A conversation-wide invalidation (`invalidate_claude_sessions`) skips
+  sub-agent sessions. A sub-agent in `full` context mode runs on the parent's
+  conversation id, so evicting "every session of this conversation" killed
+  whatever flash/task/delegate agent was working at that moment: on 2026-10-25
+  00:23:00 a flash agent died mid-work with `CC interactive session closed` and
+  its turn failed non-retryably. Both the interactive pool and the live-session
+  registry now ignore agents whose name carries a sub-agent marker
+  (`::task::`, `::task_verify::`, `::delegate::`, `::flash::`, `::a2a::`); their
+  own cleanup path owns them.
 - Every eviction path (compact invalidation, idle sweep, stopped container,
   force stop) drops the pool entry BEFORE removing the container, so the
   removal must be verified: `_kill_container` reads the exit status of

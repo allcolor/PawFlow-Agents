@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Editing a conversation's context no longer kills the sub-agents running in
+  it. `invalidate_claude_sessions` evicts every live interactive session whose
+  conversation id matches, and a sub-agent in `full` context mode runs on the
+  parent's conversation id. On 2026-10-25 00:23:00 a flash agent
+  (`GameDev7::flash::M0-distance-Eb`) died mid-work with `CC interactive
+  session closed`, its turn failing non-retryably. Both the interactive pool and
+  the live-session registry now skip agents whose name carries a sub-agent
+  marker (`::task::`, `::task_verify::`, `::delegate::`, `::flash::`, `::a2a::`);
+  their own cleanup path owns them.
 - A project wiki source the LLM keeps rejecting is blocked after three
   deterministic failures (`invalid_payload`, `invalid_response`) instead of
   being deferred by the transient retry delay forever. The failure counter was

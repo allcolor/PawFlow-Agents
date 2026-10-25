@@ -55,6 +55,19 @@ _DISALLOWED_BUILTIN_TOOLS = (
 # idle daemon: ~0.16s. See InteractiveClaudeCodePool._kill_container.
 _SLOW_KILL_SECONDS = 2.0
 
+# Agent-name markers of a sub-agent. A sub-agent in ``full`` context mode runs
+# on the parent's conversation id, so a conversation-wide invalidation must not
+# treat its live session as part of the parent's context.
+_SUBAGENT_AGENT_MARKERS = (
+    "::task::", "::task_verify::", "::delegate::", "::flash::", "::a2a::",
+)
+
+
+def _is_subagent_agent(agent_name: str) -> bool:
+    """Whether this agent name belongs to a delegated/sub-agent run."""
+    name = str(agent_name or "")
+    return any(marker in name for marker in _SUBAGENT_AGENT_MARKERS)
+
 
 
 
@@ -1846,10 +1859,20 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         return 1
 
     def kill_and_evict_by_conv(self, conv_id: str, reason: str) -> int:
-        """Kill live containers for every interactive session in a conversation."""
+        """Kill live containers for every interactive session in a conversation.
+
+        Sub-agent sessions are skipped. A sub-agent running in ``full`` context
+        mode is keyed to the parent conversation (``_agent_executor_loop``
+        leaves ``sub_conv_id`` empty), so a user editing the parent's context
+        used to tear down every flash/task/delegate agent that happened to be
+        running: on 2026-10-25 00:23:00 a flash agent died mid-work with
+        ``CC interactive session closed``. Those sessions are not part of the
+        parent's context and their own cleanup path owns them.
+        """
         with self._lock:
             victims = [(key, state) for key, state in self._sessions.items()
-                       if key[1] == conv_id]
+                       if key[1] == conv_id
+                       and not _is_subagent_agent(key[2])]
             for key, _state in victims:
                 self._sessions.pop(key, None)
         for key, state in victims:

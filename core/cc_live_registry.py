@@ -32,6 +32,17 @@ from core.log_context import bind_session
 
 logger = logging.getLogger(__name__)
 
+# Agent-name markers of a sub-agent (mirrors claude_code_interactive_pool).
+_SUBAGENT_AGENT_MARKERS = (
+    "::task::", "::task_verify::", "::delegate::", "::flash::", "::a2a::",
+)
+
+
+def _is_subagent_agent(agent_name: str) -> bool:
+    """Whether this agent name belongs to a delegated/sub-agent run."""
+    name = str(agent_name or "")
+    return any(marker in name for marker in _SUBAGENT_AGENT_MARKERS)
+
 # Composite key: every dimension that would invalidate reuse if it drifts.
 #   user_id       — credential boundary
 #   conv_id       — per-conv session file
@@ -267,10 +278,14 @@ class LiveSessionRegistry:
         Triggered when the user edits the conversation context (delete
         messages, manual compact, branch switch) — CC's view of history
         is now stale so the warm session is unreusable and must die.
+
+        Sub-agent sessions are skipped: a sub-agent running in ``full`` context
+        mode is keyed to the parent conversation, and its own cleanup path owns
+        it (see InteractiveClaudeCodePool.kill_and_evict_by_conv).
         """
         with self._lock:
             victims = [(k, s) for k, s in self._sessions.items()
-                       if k[1] == conv_id]
+                       if k[1] == conv_id and not _is_subagent_agent(k[2])]
             for k, _s in victims:
                 self._sessions.pop(k, None)
         for key, session in victims:

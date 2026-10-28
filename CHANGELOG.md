@@ -4,6 +4,20 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- A retrigger turn with nothing new to paste no longer fails the agent with
+  `no new message for the live CLI session: this turn has nothing to submit`,
+  which the user saw as "Claude Code session lost" and which lost the delegate
+  reply (2026-10-28 10:26:24, GameDev8). The loop finished, `retrigger-check`
+  re-triggered it for queued messages, and every message of that turn's tail was
+  already in `state.submitted_msg_ids` -- the live-submit path had drained the
+  queue during the previous turn. `_cci_prompt` now returns `None` when the tail
+  existed but was fully submitted, and the provider finishes the turn without a
+  provider call. A genuinely blank turn still raises: an empty paste is a bug.
+
 ## [1.0.0-beta.315] — 2026-10-25
 
 ### Fixed

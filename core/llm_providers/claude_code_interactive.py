@@ -50,7 +50,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         block_callback=None, *, call_user_id=None, call_conversation_id=None,
         call_agent_name=None, call_event_cid=None, call_ephemeral_stream=None,
     ):
-        from core.llm_client import CCCompactDetected, LLMClientError
+        from core.llm_client import CCCompactDetected, LLMClientError, LLMResponse
 
         user_id = call_user_id or getattr(self, "_user_id", "") or ""
         conversation_id = call_conversation_id or getattr(self, "_conversation_id", "") or ""
@@ -94,6 +94,17 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 user_id, conversation_id,
                 initial_context=not state.initial_context_loaded,
                 agent_name=agent_name, state=state)
+            if prompt is None:
+                # Nothing to paste and nothing owed: every message of this
+                # turn's tail already reached the CLI during a previous turn
+                # (a retrigger after the live-submit path drained the queue).
+                # Failing here surfaced "Claude Code session lost" and lost
+                # the delegate reply (2026-10-28 10:26:24, GameDev8).
+                logger.info(
+                    "[cci] %s/%s: retrigger turn has nothing new to paste — "
+                    "finishing without a provider call",
+                    conversation_id[:8], agent_name)
+                return LLMResponse(content="", tool_calls=[])
             from services.cc_interactive_event_service import (
                 get_or_create_cc_interactive_event_service)
             _, _, event_service = get_or_create_cc_interactive_event_service()
@@ -318,6 +329,12 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 parts.append(current)
         rendered = "\n\n".join(parts).strip()
         if not initial_context and not rendered:
+            if getattr(self, "_cci_live_all_submitted", False):
+                # The tail existed and every message in it was already pasted
+                # into this live session: there is nothing new to submit, and
+                # nothing is wrong. Returning None lets the caller finish the
+                # turn quietly instead of failing it as a lost session.
+                return None
             # A blank paste is never submitted: the TUI ignores it, no hook or
             # request follows, and the turn used to fail a minute later as a
             # paste failure that hid the missing message.

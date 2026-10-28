@@ -7,13 +7,11 @@ must:
    first goes in the turn's prompt, each other one right after it;
 2. never re-paste a msg_id the session has already submitted (dedup);
 3. not fall back to re-pasting the latest user text when the whole tail was
-   already submitted.
+   already submitted -- that case now finishes the turn quietly.
 """
 
-import pytest
-
-from core.llm_client import LLMClient, LLMClientError, LLMMessage
 from core._cci_pool_spawn import InteractiveContainer
+from core.llm_client import LLMClient, LLMMessage
 
 
 def _client():
@@ -139,12 +137,17 @@ def test_failed_followup_is_not_counted_as_submitted():
 def test_prompt_does_not_repaste_fully_submitted_tail(tmp_path):
     client = _client()
     # The old fallback re-pasted the latest user text -> double delivery.
-    # Nothing is left to submit, and a blank paste is refused as well.
-    with pytest.raises(LLMClientError, match="nothing to submit"):
-        client._cci_prompt(
-            _msgs(), None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv",
-            initial_context=False, agent_name="a",
-            state=_state(submitted={"m2", "m3", "m4"}))
+    # Nothing is left to submit, and nothing is owed either: the caller gets
+    # None so the turn finishes quietly instead of being failed as a lost
+    # session (2026-10-28, GameDev8).
+    prompt = client._cci_prompt(
+        _msgs(), None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv",
+        initial_context=False, agent_name="a",
+        state=_state(submitted={"m2", "m3", "m4"}))
+
+    assert prompt is None
+    # Nothing was queued for a follow-up paste either.
+    assert client._cci_live_followups == []
 
 
 def test_prompt_without_state_still_renders_tail(tmp_path):

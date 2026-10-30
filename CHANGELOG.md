@@ -4,6 +4,21 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Locating an older message for a patch no longer parses every `msg_id`
+  sidecar. The beta.317 sidecars were JSON: a patch whose row was not in the
+  tail loaded all 645 of them and built 2.2 M ids, 1,941 ms and 197 MB, and the
+  step accounted for 5,843 ms of a 6,057 ms patch under the conversation lock
+  (2026-10-30) without the patch log naming any stage. A sidecar is now plain
+  text -- one identity line (dev, inode, size), then one `msg_id` per line --
+  and a lookup is a byte search of the file. The lookup is timed as the `find`
+  stage of the patch log. Old `.json` sidecars are ignored; the poller's warmer
+  writes the `.txt` ones, and now runs once per conversation per process instead
+  of being restarted on every tick.
+
 ## [1.0.0-beta.317] — 2026-10-30
 
 ### Fixed

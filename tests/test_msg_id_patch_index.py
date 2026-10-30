@@ -109,15 +109,17 @@ class PatchReadsOnlyTheTailTest(unittest.TestCase):
         self.assertIsNotNone(got)
         self.assertEqual(got.get("turn_final"), True)
 
-    def test_sidecars_are_written_once_and_reused(self):
+    def test_sidecars_are_plain_text_and_reused(self):
         self.log.find_segment_for_msg_id("id003")
         sidecar_dir = self.log.segment_dir / "msg_ids"
         self.assertTrue(sidecar_dir.is_dir())
-        files = sorted(p.name for p in sidecar_dir.glob("*.json"))
+        files = sorted(p.name for p in sidecar_dir.glob("*.txt"))
         self.assertTrue(files)
-        entry = json.loads((sidecar_dir / files[0]).read_text(encoding="utf-8"))
-        self.assertEqual(entry.get("signature") is not None, True)
-        self.assertIsInstance(entry.get("ids"), list)
+        # Plain text: an identity line, then one msg_id per line. No JSON to
+        # parse on the search path.
+        body = (sidecar_dir / files[0]).read_text(encoding="utf-8")
+        self.assertTrue(body.splitlines()[0].split())
+        self.assertIn("id", body)
 
         # A second lookup must not rescan a segment whose sidecar is valid.
         scanned = []

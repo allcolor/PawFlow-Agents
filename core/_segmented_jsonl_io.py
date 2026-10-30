@@ -25,8 +25,14 @@ _FIELD_BOUNDS_VERSION = 1
 # A patch of a live row lives in the tail: reading the last segments is enough,
 # and measured 14 ms against 4,898 ms for the whole 645-segment log (2026-10-30).
 _MSG_ID_RECENT_SEGMENTS = 2
-# Sidecar directory holding {segment}.json with the segment's msg_ids.
+# Sidecar directory holding {segment}.txt: one identity line, then one msg_id
+# per line. Plain text on purpose -- a reader searches the bytes.
 _MSG_ID_SIDECAR_DIR = "msg_ids"
+
+
+def _sidecar_header(signature: list) -> bytes:
+    """Identity line of a sidecar: dev, inode and size, space separated."""
+    return (" ".join(str(part) for part in (signature or []))).encode("utf-8")
 _ROLE_KEY_BYTES = b'"role":'
 _ROLE_STRING_PREFIX = b'{"role": "'
 # A row's numeric ts/timestamp/seq as json.dumps writes it. Nested or escaped
@@ -520,40 +526,39 @@ class _SegmentedJsonlIOMixin:
             return None
         return [stat.st_dev, stat.st_ino, stat.st_size]
 
-    def _msg_id_sidecar_cached(self, path: Path) -> Optional[List[str]]:
-        """The segment's msg_ids if a valid sidecar exists, else None.
+    def _msg_id_sidecar_cached(self, path: Path) -> Optional[bytes]:
+        """The sidecar's id bytes when it still belongs to this segment, else None.
 
-        Read-only: a search path must never spend a segment scan to discover
-        that it does not know where a row is.
+        Read-only, and deliberately raw: the caller only needs a byte search, so
+        no JSON is parsed and no list is built. Parsing 645 JSON sidecars and
+        materialising their 2.2 M ids cost 1,941 ms and 197 MB, and 5,843 ms of
+        uninstrumented time inside a 6,057 ms patch (2026-10-30).
         """
-        sidecar = self.segment_dir / _MSG_ID_SIDECAR_DIR / f"{path.name}.json"
+        sidecar = self.segment_dir / _MSG_ID_SIDECAR_DIR / f"{path.name}.txt"
         key = self._msg_id_sidecar_key(path)
         if key is None:
             return None
         try:
-            cached = json.loads(sidecar.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            with open(sidecar, "rb") as fh:
+                if fh.readline().strip() != _sidecar_header(key):
+                    return None
+                return fh.read()
+        except OSError:
             return None
-        if (isinstance(cached, dict)
-                and cached.get("signature") == key
-                and isinstance(cached.get("ids"), list)):
-            return [str(mid) for mid in cached["ids"]]
-        return None
 
     def _msg_id_sidecar(self, path: Path) -> List[str]:
-        """The segment's msg_ids, from its sidecar or built and persisted once.
+        """The segment's msg_ids, read whole (for callers that need the list).
 
         msg_id is stored in clear (it is not part of the encrypted content), so
         the list needs no key. One small file per segment beats one global map:
         a single map would be about 17 MB and would be rewritten on every
         append, while a sidecar is written once and never changes because a
-        sealed segment never does. Callers that must stay fast use
-        ``_msg_id_sidecar_cached`` instead, so a missing sidecar never turns
-        into a scan on a request path.
+        sealed segment never does.
         """
-        cached = self._msg_id_sidecar_cached(path)
-        if cached is not None:
-            return cached
+        data = self._msg_id_sidecar_cached(path)
+        if data is not None:
+            return [line.decode("utf-8", "replace")
+                    for line in data.splitlines() if line]
         key = self._msg_id_sidecar_key(path)
         if key is None:
             return []
@@ -567,12 +572,18 @@ class _SegmentedJsonlIOMixin:
 
     def _write_msg_id_sidecar(self, path: Path, signature: list,
                               ids: List[str]) -> None:
-        sidecar = self.segment_dir / _MSG_ID_SIDECAR_DIR / f"{path.name}.json"
+        """Write one line of identity then one msg_id per line, as plain text.
+
+        Plain text, not JSON: a reader searches the bytes, and a format it does
+        not have to parse is the whole point of this file.
+        """
+        sidecar = self.segment_dir / _MSG_ID_SIDECAR_DIR / f"{path.name}.txt"
         try:
             sidecar.parent.mkdir(parents=True, exist_ok=True)
             tmp = sidecar.with_name(f"{sidecar.name}.{uuid.uuid4().hex}.tmp")
-            tmp.write_text(json.dumps({"signature": signature, "ids": ids},
-                                      separators=(",", ":")), encoding="utf-8")
+            body = "\n".join(str(mid) for mid in ids)
+            tmp.write_bytes(_sidecar_header(signature) + b"\n"
+                            + body.encode("utf-8") + b"\n")
             self._replace_path(tmp, sidecar)
         except OSError:
             logging.getLogger(__name__).debug(
@@ -597,14 +608,19 @@ class _SegmentedJsonlIOMixin:
         return True
 
     def find_segment_for_msg_id(self, msg_id: str) -> Optional[Path]:
-        """The segment holding ``msg_id``, searched the cheap way first.
+        """The segment holding ``msg_id``, searched the cheapest way that works.
 
         A patch almost always targets a row appended moments ago, so the tail
-        segments are read directly: measured on the 2026-10-30 conversation the
-        last two segments cost 3.4 ms to read where the whole log cost 4,898 ms.
-        Only when they miss are the per-segment sidecars consulted, which locate
-        an older row without opening any segment body. A segment whose sidecar
-        has not been built yet is read directly: that is slower, never wrong.
+        segments are read directly (21 ms on the 2026-10-30 conversation, where
+        the whole 645-segment log cost 3,162 ms).
+
+        An older row is located from the per-segment sidecars, and this is the
+        part that must stay cheap: it runs under the conversation lock, once per
+        stream per patch. The sidecar is a plain text file, so a hit is a byte
+        search of the file, with no JSON parse and no list of 2.2 M strings. The
+        earlier version parsed every sidecar and materialised its ids, which
+        cost 5,843 ms of uninstrumented time inside a 6,057 ms patch -- slower
+        than the full segment walk it replaced.
 
         Returns None when no segment holds the id -- the normal answer for the
         streams a patch touches but does not own (patch_message patches the
@@ -622,21 +638,35 @@ class _SegmentedJsonlIOMixin:
         for path in recent:
             if self._segment_bytes_mentioning(path, needles) is not None:
                 return path
-        # B: an older row is found from the sidecars, never by opening segments.
-        # The tail was just read in full, so it is the rest of the log that
-        # needs locating here.
+        # B: an older row is located from the sidecars, newest first. The tail
+        # was just read in full, so only the rest of the log needs locating.
         older = paths[:len(paths) - len(recent)]
         for path in reversed(older):
-            ids = self._msg_id_sidecar_cached(path)
-            if ids is None:
-                # No sidecar yet: answer correctly now, and let the warmer make
-                # this cheap for every later patch.
-                if self._segment_bytes_mentioning(path, needles) is not None:
-                    return path
-                continue
-            if str(msg_id) in ids:
+            if self._sidecar_mentions_msg_id(path, needles):
                 return path
         return None
+
+    def _sidecar_mentions_msg_id(self, path: Path, needles: tuple) -> bool:
+        """True when this segment's sidecar lists ``msg_id``.
+
+        A byte search of a small text file, checked only when the sidecar still
+        belongs to the segment (same inode and size). A segment whose sidecar is
+        missing or stale is read directly: that is slower, never wrong, and the
+        warmer makes it rare.
+        """
+        sidecar = self.segment_dir / _MSG_ID_SIDECAR_DIR / f"{path.name}.txt"
+        try:
+            with open(sidecar, "rb") as fh:
+                header = fh.readline()
+                key = self._msg_id_sidecar_key(path)
+                if key is None or header.strip() != _sidecar_header(key):
+                    return self._segment_bytes_mentioning(path, needles) is not None
+                data = fh.read()
+        except FileNotFoundError:
+            return self._segment_bytes_mentioning(path, needles) is not None
+        except OSError:
+            return self._segment_bytes_mentioning(path, needles) is not None
+        return any(needle in data for needle in needles)
 
     @staticmethod
     def _iter_file_reverse(path: Path, chunk_size: int = 1024 * 1024) -> Iterator[Dict[str, Any]]:

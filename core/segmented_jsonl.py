@@ -486,16 +486,19 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         from core.secret_sanitization import strip_secret_runtime_values
 
         started = time.monotonic()
-        stages = {"flush": 0.0, "scan": 0.0, "locate": 0.0, "write": 0.0}
+        stages = {"find": 0.0, "flush": 0.0, "scan": 0.0,
+                  "locate": 0.0, "write": 0.0}
         scanned = 0
         patched: Optional[Dict[str, Any]] = None
         fields = strip_secret_runtime_values(fields)
         needles = self._msg_id_needles(msg_id)
         # Asking where the id lives beats walking the log: the tail is where a
-        # live row is, and the sidecars locate an older one. Walking every
-        # segment to learn an id is absent read 4,075 ms of transcript per patch
-        # on the 2026-10-30 conversation, all of it under the conversation lock.
+        # live row is, and the sidecars locate an older one. This step is timed:
+        # it once cost 5,843 ms inside a 6,057 ms patch while the log blamed no
+        # stage at all, because it ran outside every measurement (2026-10-30).
+        t_find = time.monotonic()
         owner = self.find_segment_for_msg_id(msg_id)
+        stages["find"] = time.monotonic() - t_find
         paths = [owner] if owner is not None else []
         try:
             for path in reversed(paths):

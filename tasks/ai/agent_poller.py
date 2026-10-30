@@ -16,6 +16,12 @@ from tasks.ai._agent_poll_checkin import _AgentPollCheckinMixin
 
 logger = logging.getLogger(__name__)
 
+# Conversations whose sidecar pass already ran in this process. The poller runs
+# every tick; without this guard a finished pass would be rebuilt each time,
+# stat-ing and header-reading every segment of the heaviest conversations.
+_MSG_ID_WARMED: set = set()
+_MSG_ID_WARM_LOCK = threading.Lock()
+
 _WATCHDOG_INTERVAL_SECONDS = int(
     os.getenv("PAWFLOW_AGENT_WATCHDOG_INTERVAL_SECONDS", "300") or "300")
 
@@ -367,10 +373,18 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             except Exception:
                 logger.debug(f"[msg-id-sidecar] {str(cid)[:8]} unreadable", exc_info=True)
                 continue
-            # Only segments still missing a valid sidecar.
+            # Only segments still missing a valid sidecar. Checked per poll, so
+            # it must stay a stat plus one header line per segment -- parsing the
+            # sidecars here would rebuild 2.2 M ids on every tick.
             pending = [p for p in paths if log._msg_id_sidecar_cached(p) is None]
             if not pending:
                 continue
+            # One warmer per conversation per process: a finished pass must not
+            # be restarted by the next tick, and two passes must not overlap.
+            with _MSG_ID_WARM_LOCK:
+                if cid in _MSG_ID_WARMED:
+                    continue
+                _MSG_ID_WARMED.add(cid)
 
             def _build(items=pending, seg_log=log, conv_id=cid) -> None:
                 for path in items:

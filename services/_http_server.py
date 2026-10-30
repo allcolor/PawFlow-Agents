@@ -108,27 +108,44 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
         super().handle_error(request, client_address)
 
     def get_request(self):
-        client_socket, client_address = self.socket.accept()
-        if self._ssl_ctx:
+        """Accept only. TLS detection and the handshake run in the dispatch
+        thread (_secure_accepted): done here they block the single accept
+        loop, with no timeout, on any client that connects and stays silent
+        or handshakes slowly -- and every new connection (Caddy, relay
+        reconnects, relay health checks, /api/ui) then waits behind it
+        (2026-10-30: all relays of one host timed out together).
+        """
+        return self.socket.accept()
+
+    def _secure_accepted(self, sock, client_address):
+        """TLS auto-detect + handshake for a freshly accepted socket.
+
+        Bounded by the header read timeout. Returns the socket to serve, or
+        None when the connection was closed (redirect sent, failed handshake,
+        silent client).
+        """
+        if not self._ssl_ctx:
+            return sock
+        try:
+            sock.settimeout(self._header_read_timeout)
+            first_byte = sock.recv(1, socket.MSG_PEEK)
+            if first_byte == b'\x16':
+                return self._ssl_ctx.wrap_socket(sock, server_side=True)
+            # Plain HTTP on an HTTPS port. By default redirect to HTTPS, but
+            # allow public + private_only routes (proxy endpoints with token
+            # auth) to pass through unencrypted since they're LAN-only and
+            # the TLS cert may not match.
+            if self._http_route_allows_plain(sock, client_address):
+                return sock
+            self._redirect_to_https(sock)
+            return None
+        except (ssl.SSLError, OSError) as e:
+            logger.debug("TLS auto-detect failed for %s: %s", client_address, e)
             try:
-                first_byte = client_socket.recv(1, socket.MSG_PEEK)
-                if first_byte == b'\x16':
-                    client_socket = self._ssl_ctx.wrap_socket(
-                        client_socket, server_side=True)
-                else:
-                    # Plain HTTP on an HTTPS port. By default redirect to
-                    # HTTPS, but allow public + private_only routes (proxy
-                    # endpoints with token auth) to pass through unencrypted
-                    # since they're LAN-only and TLS cert may not match.
-                    if self._http_route_allows_plain(client_socket, client_address):
-                        return client_socket, client_address
-                    self._redirect_to_https(client_socket)
-                    raise OSError("HTTP→HTTPS redirect sent")
-            except (ssl.SSLError,) as e:
-                logger.debug("TLS auto-detect failed for %s: %s", client_address, e)
-            except OSError:
-                raise  # re-raise redirect OSError
-        return client_socket, client_address
+                sock.close()
+            except Exception:
+                logger.debug("Ignored exception", exc_info=True)
+            return None
 
     def _http_route_allows_plain(self, sock, client_address):
         """Peek at the request to decide if plain HTTP is allowed.
@@ -331,6 +348,9 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
         Runs in its own thread so the accept loop is never blocked by
         slow clients, half-open TCP, or browser preflight connections.
         """
+        request = self._secure_accepted(request, client_address)
+        if request is None:
+            return
         # Read headers to determine HTTP vs WS (64KB max to prevent abuse)
         try:
             request.settimeout(self._header_read_timeout)

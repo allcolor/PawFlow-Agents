@@ -963,6 +963,14 @@ class _RelayConnMixin:
         request_id = msg.get("request_id", "")
         with self._pending_lock:
             entry = self._pending.pop(request_id, None)
+        if not entry:
+            # The waiter already gave up (Relay timeout) or was cancelled: the
+            # relay did the work but its answer came back too late. Dropping
+            # it silently hid every such case from the server log.
+            logger.warning(
+                "[relay] late %s for %s rid=%s: no waiter (timed out or cancelled)",
+                msg.get("type"), self._service_id, request_id)
+            return
         if entry:
             evt, holder = entry
             if msg.get("type") == "error":

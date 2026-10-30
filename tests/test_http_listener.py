@@ -363,6 +363,32 @@ def test_http_dispatch_slot_released_after_request(monkeypatch):
         server.server_close()
 
 
+def test_silent_client_does_not_block_accept_on_tls_listener(monkeypatch):
+    """A client that connects and sends nothing must not stall the accept
+    loop: TLS detection runs in the dispatch thread, bounded by the header
+    timeout (2026-10-30 outage: every relay of one host timed out)."""
+    monkeypatch.setenv("PAWFLOW_HTTP_HEADER_TIMEOUT", "0.3")
+    server = _HTTPServerWithRegistry(
+        ("127.0.0.1", 0), object, RouteRegistry())
+    server._ssl_ctx = object()  # never reached: the silent peer sends no byte
+    silent = socket.create_connection(server.server_address)
+    second = socket.create_connection(server.server_address)
+    try:
+        started = time.monotonic()
+        first_sock, _ = server.get_request()
+        second_sock, _ = server.get_request()
+        assert time.monotonic() - started < 0.2
+
+        started = time.monotonic()
+        assert server._secure_accepted(first_sock, ("127.0.0.1", 1)) is None
+        assert time.monotonic() - started < 2
+        second_sock.close()
+    finally:
+        silent.close()
+        second.close()
+        server.server_close()
+
+
 def test_long_lived_dispatch_transfer_releases_short_slot(monkeypatch):
     monkeypatch.setenv("PAWFLOW_HTTP_MAX_DISPATCH_THREADS", "1")
     monkeypatch.setenv("PAWFLOW_HTTP_MAX_LONG_DISPATCH_THREADS", "1")

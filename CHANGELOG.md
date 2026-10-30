@@ -18,6 +18,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stage of the patch log. Old `.json` sidecars are ignored; the poller's warmer
   writes the `.txt` ones, and now runs once per conversation per process instead
   of being restarted on every tick.
+- A silent or slow TLS client no longer stalls every new connection to the
+  listener. `get_request()` peeked the first byte and ran the TLS handshake in
+  the single accept loop, with no timeout, so one client that connected and
+  sent nothing held up Caddy's requests, relay reconnects and health checks,
+  and `/api/ui` behind it. The accept loop now only accepts; detection and
+  handshake run in the dispatch thread, bounded by `header_read_timeout`.
+- A relay answer that arrives after its waiter gave up is now logged
+  (`[relay] late result for <relay> rid=...: no waiter`) instead of being
+  dropped silently, which tells a late answer from a lost one.
 
 ## [1.0.0-beta.317] — 2026-10-30
 

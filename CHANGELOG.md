@@ -4,6 +4,24 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Message patches no longer read whole transcripts under the conversation lock.
+  On 2026-10-30 one conversation held 2,240,519 rows in 645 segments (5 GB).
+  `patch_message` patches the transcript, `shared.jsonl` and every agent
+  context, and for each stream where the `msg_id` was absent the code read
+  every segment looking for it: measured on that transcript, a single patch
+  read 4,075 ms of transcript while holding the lock. Lock waits reached 13.3 s
+  and the webchat queued behind them (`list_active` was submitted after 2.8 s).
+  A msg_id-to-segment index now answers the question; because building it means
+  reading the log once (59 s on that conversation), the poller warms it on a
+  background thread with no conversation lock, and a patch only trusts it once
+  the build is complete -- a half index answering "absent" would drop rows.
+  Verified on a log shaped like the bug: an absent id now reads 0 bytes instead
+  of 813 KB, a hit reads one segment.
+
 ## [1.0.0-beta.316] — 2026-10-28
 
 ### Fixed

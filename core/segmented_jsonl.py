@@ -460,8 +460,18 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         scanned = 0
         patched: Optional[Dict[str, Any]] = None
         fields = strip_secret_runtime_values(fields)
-        paths = self._segment_paths()
         needles = self._msg_id_needles(msg_id)
+        # Ask the msg_id index where this id lives. Reading every segment to
+        # learn it is absent cost 4,075 ms of transcript per patch on the
+        # 2026-10-30 conversation, under the conversation lock. The index is
+        # only consulted once this process has finished building it: a half
+        # index answering "absent" would drop real rows.
+        built = self.msg_id_index_if_ready()
+        if built is not None:
+            owner = built.get(str(msg_id))
+            paths = [self.segment_dir / owner] if owner else []
+        else:
+            paths = self._segment_paths()
         try:
             for path in reversed(paths):
                 t0 = time.monotonic()

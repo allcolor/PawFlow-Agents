@@ -337,6 +337,40 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             name="agent-poller-checkpoint-cleanup",
         ).start()
 
+    def _warm_transcript_msg_id_indexes(self) -> None:
+        """Build the msg_id index of every known conversation, in the background.
+
+        patch_message patches the transcript, shared.jsonl and every agent
+        context while holding the conversation lock. Without an index each
+        stream whose msg_id is absent is read end to end, which was 4,075 ms of
+        transcript per patch on the 2026-10-30 conversation (2,240,519 rows,
+        645 segments). Warming here, once per process, moves that one read off
+        every lock.
+        """
+        from core.conversation_store import ConversationStore
+        from core.segmented_jsonl import SegmentedJsonl
+
+        store = ConversationStore.instance()
+        try:
+            conversations = store.list_conversations() or []
+        except Exception as _list_err:
+            logger.debug(f"[msg-id-index] conversation list failed: {_list_err}")
+            return
+        started = 0
+        for conv in conversations:
+            cid = conv.get("conversation_id") if isinstance(conv, dict) else None
+            if not cid:
+                continue
+            try:
+                log = store._transcript_log(cid)
+                if isinstance(log, SegmentedJsonl):
+                    if log.warm_msg_id_index_async():
+                        started += 1
+            except Exception:
+                logger.debug(f"[msg-id-index] warm failed for {cid[:8]}", exc_info=True)
+        if started:
+            logger.info(f"[msg-id-index] warming {started} transcript index(es)")
+
     def _poll_once(self) -> None:
         """Single poll iteration: check scheduled rechecks and active conversations."""
         from core.conversation_event_bus import ConversationEventBus
@@ -347,6 +381,16 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         store = ConversationStore.instance()
         scheduler = PollScheduler.instance()
         _pt0 = time.time()
+
+        # Warm the msg_id indexes in the background so that message patches
+        # stop scanning whole transcripts under the conversation lock. Doing it
+        # here keeps that cost off the request paths: building one index means
+        # reading the log once (59 s on the 2026-10-30 conversation, 2.2 M
+        # rows) and this thread holds no conversation lock.
+        try:
+            self._warm_transcript_msg_id_indexes()
+        except Exception as _mid_err:
+            logger.debug(f"[msg-id-index] warm failed: {_mid_err}")
 
         # Checkpoint cleanup scans FileStore metadata and can be slow on a warm
         # workspace. Schedule it from the poller, but never run it inline with

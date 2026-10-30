@@ -22,11 +22,11 @@ from typing import Any, Dict, Iterator, List, Optional
 _SEGMENT_INDEX_VERSION = 2
 _SECRET_SCRUB_VERSION = 2
 _FIELD_BOUNDS_VERSION = 1
-# segment_dir -> {"signatures": {segment: identity}, "ids": {segment: [msg_id]}}
-# Built once per process and refreshed only for segments whose identity moved.
-_MSG_ID_INDEX_CACHE: Dict[str, Dict[str, Dict[str, Any]]] = {}
-_MSG_ID_INDEX_WARMING: Dict[str, bool] = {}
-_MSG_ID_INDEX_LOCK = threading.Lock()
+# A patch of a live row lives in the tail: reading the last segments is enough,
+# and measured 14 ms against 4,898 ms for the whole 645-segment log (2026-10-30).
+_MSG_ID_RECENT_SEGMENTS = 2
+# Sidecar directory holding {segment}.json with the segment's msg_ids.
+_MSG_ID_SIDECAR_DIR = "msg_ids"
 _ROLE_KEY_BYTES = b'"role":'
 _ROLE_STRING_PREFIX = b'{"role": "'
 # A row's numeric ts/timestamp/seq as json.dumps writes it. Nested or escaped
@@ -486,126 +486,6 @@ class _SegmentedJsonlIOMixin:
         except FileNotFoundError:
             return
 
-    def msg_id_index(self) -> Dict[str, str]:
-        """Map every msg_id of this log to the segment file that holds it.
-
-        patch_first_by_msg_id used to read every segment to learn whether an
-        id was present. On the 2026-10-30 conversation (2,240,519 rows, 645
-        segments, 5 GB) one patch whose id was absent in this stream read
-        4,075 ms of transcript, and patch_message holds the CONVERSATION lock
-        while it patches the transcript, shared.jsonl and every agent context.
-        Lock waits reached 13.3 s and the webchat queued behind them.
-
-        msg_id is stored in clear (it is not part of the encrypted content),
-        so the index needs no key. It is kept in memory, keyed by segment
-        identity: an exact index would hold 2.2 M entries (about 17 MB) and
-        rewriting that file on every patch would cost more than the scans it
-        replaces.
-
-        Building it means reading the whole log once (59 s on that
-        conversation), which is why no request path calls it: the poller warms
-        it from a background thread, and patch_first_by_msg_id asks
-        ``msg_id_index_if_ready`` first.
-        """
-        paths = self._segment_paths() if self.is_segmented() else []
-        if not paths:
-            return {}
-        # Appends are buffered in open handles: the tail segment is empty on
-        # disk until they are flushed, and an index built from it would claim
-        # every new id is absent.
-        self._flush_own_append_handles()
-        cache_key = str(self.segment_dir)
-        with _MSG_ID_INDEX_LOCK:
-            cached = _MSG_ID_INDEX_CACHE.get(cache_key)
-            if cached is None:
-                cached = {"signatures": {}, "ids": {}, "complete": False}
-                _MSG_ID_INDEX_CACHE[cache_key] = cached
-        result: Dict[str, str] = {}
-        for path in paths:
-            try:
-                signature = self._scrub_segment_signature(path)
-            except OSError:
-                continue
-            ids = cached["ids"].get(path.name)
-            if cached["signatures"].get(path.name) != signature or ids is None:
-                ids = self._scan_msg_ids(path)
-                try:
-                    if self._scrub_segment_signature(path) != signature:
-                        # The segment changed while it was scanned: leave it
-                        # out rather than record a stale mapping.
-                        continue
-                except OSError:
-                    continue
-                cached["signatures"][path.name] = signature
-                cached["ids"][path.name] = ids
-            for mid in ids:
-                result[str(mid)] = path.name
-        cached["complete"] = True
-        return result
-
-    def msg_id_index_if_ready(self) -> Optional[Dict[str, str]]:
-        """The index, or None when this process has not finished building it.
-
-        A caller that gets None must fall back to its own search: answering
-        "absent" from half an index would drop real rows.
-        """
-        cache_key = str(self.segment_dir)
-        with _MSG_ID_INDEX_LOCK:
-            cached = _MSG_ID_INDEX_CACHE.get(cache_key)
-            if not cached or not cached.get("complete"):
-                return None
-            signatures = dict(cached["signatures"])
-            per_segment = dict(cached["ids"])
-        result: Dict[str, str] = {}
-        for name, ids in per_segment.items():
-            try:
-                if self._scrub_segment_signature(self.segment_dir / name) != signatures.get(name):
-                    # A segment changed since the build: this answer would be
-                    # stale, so refuse it and let the caller search.
-                    return None
-            except OSError:
-                return None
-            for mid in ids:
-                result[str(mid)] = name
-        return result
-
-    def warm_msg_id_index_async(self) -> bool:
-        """Start building the index on a background thread; False if useless.
-
-        Reading the whole log takes 59 s on the 2026-10-30 conversation. Doing
-        it here, outside every conversation lock, is what keeps that cost off
-        the request paths that used to pay it per patch.
-        """
-        if not self.is_segmented():
-            return False
-        cache_key = str(self.segment_dir)
-        with _MSG_ID_INDEX_LOCK:
-            cached = _MSG_ID_INDEX_CACHE.get(cache_key)
-            if cached is not None and cached.get("complete"):
-                return False
-            if _MSG_ID_INDEX_WARMING.get(cache_key):
-                return False
-            _MSG_ID_INDEX_WARMING[cache_key] = True
-
-        def _build() -> None:
-            try:
-                self.msg_id_index()
-            except Exception:
-                logging.getLogger(__name__).warning(
-                    "Could not build msg_id index for %s", cache_key, exc_info=True)
-            finally:
-                with _MSG_ID_INDEX_LOCK:
-                    _MSG_ID_INDEX_WARMING.pop(cache_key, None)
-
-        try:
-            threading.Thread(target=_build, daemon=True,
-                             name=f"msg-id-index-{Path(self.segment_dir).name}").start()
-        except RuntimeError:
-            with _MSG_ID_INDEX_LOCK:
-                _MSG_ID_INDEX_WARMING.pop(cache_key, None)
-            return False
-        return True
-
     @staticmethod
     def _scan_msg_ids(path: Path) -> List[str]:
         """Every msg_id stored in one segment, in file order."""
@@ -625,6 +505,138 @@ class _SegmentedJsonlIOMixin:
         except FileNotFoundError:
             return ids
         return ids
+
+    def _msg_id_sidecar_key(self, path: Path) -> Optional[list]:
+        """Identity of a segment for sidecar purposes: dev, inode and size.
+
+        Deliberately not the scrub signature: mtime moves on a flush, a chown or
+        a chmod without changing a byte, and that would invalidate a sidecar for
+        nothing. A sealed segment never changes size, and a new size is exactly
+        what an append or a rewrite produces.
+        """
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return [stat.st_dev, stat.st_ino, stat.st_size]
+
+    def _msg_id_sidecar_cached(self, path: Path) -> Optional[List[str]]:
+        """The segment's msg_ids if a valid sidecar exists, else None.
+
+        Read-only: a search path must never spend a segment scan to discover
+        that it does not know where a row is.
+        """
+        sidecar = self.segment_dir / _MSG_ID_SIDECAR_DIR / f"{path.name}.json"
+        key = self._msg_id_sidecar_key(path)
+        if key is None:
+            return None
+        try:
+            cached = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if (isinstance(cached, dict)
+                and cached.get("signature") == key
+                and isinstance(cached.get("ids"), list)):
+            return [str(mid) for mid in cached["ids"]]
+        return None
+
+    def _msg_id_sidecar(self, path: Path) -> List[str]:
+        """The segment's msg_ids, from its sidecar or built and persisted once.
+
+        msg_id is stored in clear (it is not part of the encrypted content), so
+        the list needs no key. One small file per segment beats one global map:
+        a single map would be about 17 MB and would be rewritten on every
+        append, while a sidecar is written once and never changes because a
+        sealed segment never does. Callers that must stay fast use
+        ``_msg_id_sidecar_cached`` instead, so a missing sidecar never turns
+        into a scan on a request path.
+        """
+        cached = self._msg_id_sidecar_cached(path)
+        if cached is not None:
+            return cached
+        key = self._msg_id_sidecar_key(path)
+        if key is None:
+            return []
+        ids = self._scan_msg_ids(path)
+        if self._msg_id_sidecar_key(path) != key:
+            # The segment changed while it was scanned: keep the answer for this
+            # call, but do not persist a mapping that is already stale.
+            return ids
+        self._write_msg_id_sidecar(path, key, ids)
+        return ids
+
+    def _write_msg_id_sidecar(self, path: Path, signature: list,
+                              ids: List[str]) -> None:
+        sidecar = self.segment_dir / _MSG_ID_SIDECAR_DIR / f"{path.name}.json"
+        try:
+            sidecar.parent.mkdir(parents=True, exist_ok=True)
+            tmp = sidecar.with_name(f"{sidecar.name}.{uuid.uuid4().hex}.tmp")
+            tmp.write_text(json.dumps({"signature": signature, "ids": ids},
+                                      separators=(",", ":")), encoding="utf-8")
+            self._replace_path(tmp, sidecar)
+        except OSError:
+            logging.getLogger(__name__).debug(
+                "Could not persist msg_id sidecar for %s", path.name, exc_info=True)
+
+    def build_msg_id_sidecar(self, path: Path) -> bool:
+        """Build one segment's sidecar unless it is already valid.
+
+        Called from background workers (seal time and the poller warmer), never
+        from a request path: one segment of the 2026-10-30 conversation scans in
+        about 80 ms, and the whole 645-segment log takes 56 s.
+        """
+        if self._msg_id_sidecar_cached(path) is not None:
+            return False
+        key = self._msg_id_sidecar_key(path)
+        if key is None:
+            return False
+        ids = self._scan_msg_ids(path)
+        if self._msg_id_sidecar_key(path) != key:
+            return False
+        self._write_msg_id_sidecar(path, key, ids)
+        return True
+
+    def find_segment_for_msg_id(self, msg_id: str) -> Optional[Path]:
+        """The segment holding ``msg_id``, searched the cheap way first.
+
+        A patch almost always targets a row appended moments ago, so the tail
+        segments are read directly: measured on the 2026-10-30 conversation the
+        last two segments cost 3.4 ms to read where the whole log cost 4,898 ms.
+        Only when they miss are the per-segment sidecars consulted, which locate
+        an older row without opening any segment body. A segment whose sidecar
+        has not been built yet is read directly: that is slower, never wrong.
+
+        Returns None when no segment holds the id -- the normal answer for the
+        streams a patch touches but does not own (patch_message patches the
+        transcript, shared.jsonl and every agent context).
+        """
+        paths = self._segment_paths()
+        if not paths:
+            return None
+        # Appends sit in open handles: the newest rows are not on disk until
+        # they are flushed, and a patch of the row just written must find them.
+        self._flush_own_append_handles()
+        needles = self._msg_id_needles(msg_id)
+        # A: a patch of a live row lives in the tail.
+        recent = list(reversed(paths))[:_MSG_ID_RECENT_SEGMENTS]
+        for path in recent:
+            if self._segment_bytes_mentioning(path, needles) is not None:
+                return path
+        # B: an older row is found from the sidecars, never by opening segments.
+        # The tail was just read in full, so it is the rest of the log that
+        # needs locating here.
+        older = paths[:len(paths) - len(recent)]
+        for path in reversed(older):
+            ids = self._msg_id_sidecar_cached(path)
+            if ids is None:
+                # No sidecar yet: answer correctly now, and let the warmer make
+                # this cheap for every later patch.
+                if self._segment_bytes_mentioning(path, needles) is not None:
+                    return path
+                continue
+            if str(msg_id) in ids:
+                return path
+        return None
 
     @staticmethod
     def _iter_file_reverse(path: Path, chunk_size: int = 1024 * 1024) -> Iterator[Dict[str, Any]]:

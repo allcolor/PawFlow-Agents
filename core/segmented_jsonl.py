@@ -220,7 +220,37 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         t0 = time.monotonic()
         self._maybe_write_index_hot(index, force=(index_missing or created_segment))
         mark("index_write", t0)
+        if created_segment:
+            # A segment just sealed: record its msg_ids now, on a background
+            # thread. A sealed segment never changes again, so its sidecar is
+            # written once -- and building it later on a request path would cost
+            # a full segment scan under the conversation lock (56 s for the whole
+            # 2026-10-30 log, about 80 ms per segment).
+            self._schedule_msg_id_sidecar(index)
         self._log_append_diag(started, len(lines), total_bytes, timings)
+
+    def _schedule_msg_id_sidecar(self, index: Dict[str, Any]) -> None:
+        """Queue sidecar builds for every sealed segment that lacks one."""
+        sealed = [s.get("file") for s in (index.get("segments") or [])[:-1]]
+        if not sealed:
+            return
+        paths = [self.segment_dir / name for name in sealed if name]
+
+        def _build() -> None:
+            for path in paths:
+                try:
+                    self.build_msg_id_sidecar(path)
+                except Exception:
+                    logging.getLogger(__name__).debug(
+                        "msg_id sidecar build failed for %s", path.name,
+                        exc_info=True)
+
+        try:
+            threading.Thread(target=_build, daemon=True,
+                             name=f"msg-id-sidecars-{self.segment_dir.name}").start()
+        except RuntimeError:
+            logging.getLogger(__name__).debug(
+                "could not start msg_id sidecar builder", exc_info=True)
 
     def _log_append_diag(self, started: float, rows: int, total_bytes: int,
                          timings: Dict[str, float]) -> None:
@@ -461,17 +491,12 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         patched: Optional[Dict[str, Any]] = None
         fields = strip_secret_runtime_values(fields)
         needles = self._msg_id_needles(msg_id)
-        # Ask the msg_id index where this id lives. Reading every segment to
-        # learn it is absent cost 4,075 ms of transcript per patch on the
-        # 2026-10-30 conversation, under the conversation lock. The index is
-        # only consulted once this process has finished building it: a half
-        # index answering "absent" would drop real rows.
-        built = self.msg_id_index_if_ready()
-        if built is not None:
-            owner = built.get(str(msg_id))
-            paths = [self.segment_dir / owner] if owner else []
-        else:
-            paths = self._segment_paths()
+        # Asking where the id lives beats walking the log: the tail is where a
+        # live row is, and the sidecars locate an older one. Walking every
+        # segment to learn an id is absent read 4,075 ms of transcript per patch
+        # on the 2026-10-30 conversation, all of it under the conversation lock.
+        owner = self.find_segment_for_msg_id(msg_id)
+        paths = [owner] if owner is not None else []
         try:
             for path in reversed(paths):
                 t0 = time.monotonic()

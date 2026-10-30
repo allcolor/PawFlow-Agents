@@ -11,16 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Message patches no longer read whole transcripts under the conversation lock.
   On 2026-10-30 one conversation held 2,240,519 rows in 645 segments (5 GB).
   `patch_message` patches the transcript, `shared.jsonl` and every agent
-  context, and for each stream where the `msg_id` was absent the code read
-  every segment looking for it: measured on that transcript, a single patch
-  read 4,075 ms of transcript while holding the lock. Lock waits reached 13.3 s
-  and the webchat queued behind them (`list_active` was submitted after 2.8 s).
-  A msg_id-to-segment index now answers the question; because building it means
-  reading the log once (59 s on that conversation), the poller warms it on a
-  background thread with no conversation lock, and a patch only trusts it once
-  the build is complete -- a half index answering "absent" would drop rows.
-  Verified on a log shaped like the bug: an absent id now reads 0 bytes instead
-  of 813 KB, a hit reads one segment.
+  context, and for each stream where the `msg_id` was absent the code read every
+  segment looking for it: 3,162 ms of transcript for a single patch, held under
+  the conversation lock. Lock waits reached 13.3 s and the webchat queued behind
+  them (`list_active` was submitted after 2.8 s).
+  The server logs settled where the rows are: of 300 patches that found their
+  row, all 300 scanned exactly one segment -- a live row is in the tail. So a
+  patch now reads the last two segments only (8.5 ms measured), and an older row
+  is located from a per-segment sidecar of its `msg_id`s without opening any
+  segment body. Sidecars are written when a segment seals, on a background
+  thread, and built for existing logs by the poller's warmer: building one from
+  a request path would have cost a full segment scan under the lock. A segment
+  whose sidecar is missing is read directly, which is slower but never wrong.
 
 ## [1.0.0-beta.316] — 2026-10-28
 

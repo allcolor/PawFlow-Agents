@@ -337,39 +337,58 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             name="agent-poller-checkpoint-cleanup",
         ).start()
 
-    def _warm_transcript_msg_id_indexes(self) -> None:
-        """Build the msg_id index of every known conversation, in the background.
+    def _warm_msg_id_sidecars(self) -> None:
+        """Build the msg_id sidecars of the heaviest conversations, in background.
 
-        patch_message patches the transcript, shared.jsonl and every agent
-        context while holding the conversation lock. Without an index each
-        stream whose msg_id is absent is read end to end, which was 4,075 ms of
-        transcript per patch on the 2026-10-30 conversation (2,240,519 rows,
-        645 segments). Warming here, once per process, moves that one read off
-        every lock.
+        A sealed segment gets its sidecar when it seals, so only logs written
+        before that existed need this catch-up. Locating an old row without a
+        sidecar means reading the segment, which is how one patch came to read
+        4,075 ms of transcript under the conversation lock (2026-10-30).
         """
         from core.conversation_store import ConversationStore
-        from core.segmented_jsonl import SegmentedJsonl
 
         store = ConversationStore.instance()
         try:
             conversations = store.list_conversations() or []
         except Exception as _list_err:
-            logger.debug(f"[msg-id-index] conversation list failed: {_list_err}")
+            logger.debug(f"[msg-id-sidecar] list failed: {_list_err}")
             return
-        started = 0
-        for conv in conversations:
-            cid = conv.get("conversation_id") if isinstance(conv, dict) else None
+        heaviest = sorted(
+            (c for c in conversations if isinstance(c, dict)),
+            key=lambda c: int(c.get("message_count") or 0),
+            reverse=True)[:3]
+        for conv in heaviest:
+            cid = conv.get("conversation_id")
             if not cid:
                 continue
             try:
                 log = store._transcript_log(cid)
-                if isinstance(log, SegmentedJsonl):
-                    if log.warm_msg_id_index_async():
-                        started += 1
+                paths = log._segment_paths() or []
             except Exception:
-                logger.debug(f"[msg-id-index] warm failed for {cid[:8]}", exc_info=True)
-        if started:
-            logger.info(f"[msg-id-index] warming {started} transcript index(es)")
+                logger.debug(f"[msg-id-sidecar] {str(cid)[:8]} unreadable", exc_info=True)
+                continue
+            # Only segments still missing a valid sidecar.
+            pending = [p for p in paths if log._msg_id_sidecar_cached(p) is None]
+            if not pending:
+                continue
+
+            def _build(items=pending, seg_log=log, conv_id=cid) -> None:
+                for path in items:
+                    try:
+                        seg_log.build_msg_id_sidecar(path)
+                    except Exception:
+                        logger.debug(
+                            "[msg-id-sidecar] build failed %s", path.name,
+                            exc_info=True)
+
+            try:
+                threading.Thread(target=_build, daemon=True,
+                                 name=f"msg-id-sidecar-{str(cid)[:8]}").start()
+                logger.info("[msg-id-sidecar] warming %d segment(s) of %s",
+                            len(pending), str(cid)[:8])
+            except RuntimeError:
+                logger.debug("[msg-id-sidecar] could not start builder",
+                             exc_info=True)
 
     def _poll_once(self) -> None:
         """Single poll iteration: check scheduled rechecks and active conversations."""
@@ -382,15 +401,14 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         scheduler = PollScheduler.instance()
         _pt0 = time.time()
 
-        # Warm the msg_id indexes in the background so that message patches
-        # stop scanning whole transcripts under the conversation lock. Doing it
-        # here keeps that cost off the request paths: building one index means
-        # reading the log once (59 s on the 2026-10-30 conversation, 2.2 M
-        # rows) and this thread holds no conversation lock.
+        # Locating a patched row without a sidecar means reading its segment,
+        # which is what put 4,075 ms of transcript under the conversation lock
+        # per patch (2026-10-30). Sealing writes sidecars from now on; this is
+        # the catch-up for logs written before that, on background threads.
         try:
-            self._warm_transcript_msg_id_indexes()
-        except Exception as _mid_err:
-            logger.debug(f"[msg-id-index] warm failed: {_mid_err}")
+            self._warm_msg_id_sidecars()
+        except Exception as _sidecar_err:
+            logger.debug(f"[msg-id-sidecar] warm failed: {_sidecar_err}")
 
         # Checkpoint cleanup scans FileStore metadata and can be slow on a warm
         # workspace. Schedule it from the poller, but never run it inline with

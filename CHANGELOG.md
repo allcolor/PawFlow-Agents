@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.319] — 2026-10-31
+
 ### Fixed
 
 - A message patch no longer reads `shared.jsonl` and agent context segments

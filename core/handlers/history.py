@@ -6,12 +6,18 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.handlers._history_indexed_search import indexed_search_hits
+from core.handlers._history_search_process import run_search_process
 from core.tool_registry import ToolHandler
 
 logger = logging.getLogger(__name__)
 
 
 _ROLE_FILTERS = {"user", "assistant", "tool", "thinking"}
+
+#: A transcript scan larger than this runs in a child process (see
+#: core/handlers/_history_search_process.py), so its JSON decoding never holds
+#: the server's GIL. Zero sends every non-empty plaintext transcript there.
+_SEARCH_IN_PROCESS_MAX_BYTES = 0
 
 # Cap every action that returns a list so one call can't shove 40k
 # messages (a super-bucket range) into the LLM's context.
@@ -698,6 +704,34 @@ class ReadHistoryHandler(ToolHandler):
             hits, total = indexed
             return self._render_search_hits(query, hits, total, offset, limit,
                                             role_filter, agent_filter)
+        if not self._owns_conversation(store):
+            return self._render_search_hits(query, [], 0, offset, limit,
+                                            role_filter, agent_filter)
+        snapshot_reader = getattr(store, "history_search_snapshot", None)
+        snapshot = (snapshot_reader(self._conversation_id)
+                    if snapshot_reader is not None else None)
+        if snapshot is None or snapshot["bytes"] <= _SEARCH_IN_PROCESS_MAX_BYTES:
+            return self._scan_search(store, query, role_filter, agent_filter,
+                                     offset, limit)
+        request = dict(snapshot, conversation_id=self._conversation_id,
+                       query=query, role_filter=role_filter,
+                       agent_filter=agent_filter, offset=offset, limit=limit)
+        try:
+            return run_search_process(request)
+        except (OSError, RuntimeError, ValueError, KeyError) as exc:
+            logger.warning("read_history: search process failed for %s: %s",
+                           str(self._conversation_id)[:8], exc)
+            return f"Error: history search failed: {exc}"
+
+    def _scan_search(self, store, query: str, role_filter: str,
+                     agent_filter: str, offset: int, limit: int) -> str:
+        """Search the transcript itself: exact phrase, then keywords.
+
+        Runs in the child process for a real transcript, and in this process
+        for an empty or encrypted one.
+        """
+        budget = offset + limit
+        tokens = _search_tokens(query)
         exact_hits = []      # (index, msg), first `budget` of them
         exact_total = 0
         query_lower = query.lower()

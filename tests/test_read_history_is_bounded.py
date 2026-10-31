@@ -30,9 +30,23 @@ from core.handlers.history import ReadHistoryHandler
 CONV_SIZE = 5000
 
 
+def _scan_in_process(test):
+    """Keep the search scan in this process, where the test's patches apply.
+
+    These tests measure the store readers themselves. The child process a
+    real search runs in has its own tests
+    (tests/test_history_search_process.py).
+    """
+    patcher = patch("core.handlers.history._SEARCH_IN_PROCESS_MAX_BYTES",
+                    float("inf"))
+    patcher.start()
+    test.addCleanup(patcher.stop)
+
+
 class BoundedReads(unittest.TestCase):
 
     def setUp(self):
+        _scan_in_process(self)
         ConversationStore.reset()
         self._tmpdir = tempfile.mkdtemp()
         store = ConversationStore.instance()
@@ -188,6 +202,7 @@ class StillCorrect(unittest.TestCase):
     """Bounded is worthless if it also became wrong."""
 
     def setUp(self):
+        _scan_in_process(self)
         ConversationStore.reset()
         self._tmpdir = tempfile.mkdtemp()
         store = ConversationStore.instance()
@@ -328,7 +343,12 @@ class StillCorrect(unittest.TestCase):
         token_only_paths = set(paths[:2])
         iter_file = SegmentedJsonl._iter_file
 
-        def search_result(*_args, **kwargs):
+        def search_result(argv, **kwargs):
+            if "--pcre2" in argv:
+                # The rg threshold pass fails: the Python threshold must then
+                # narrow the list (the rg pass has its own tests in
+                # tests/test_history_search_rg_threshold.py).
+                return SimpleNamespace(returncode=2, stdout="", stderr="x")
             if "alpha beta gamma" in kwargs["input"]:
                 return SimpleNamespace(returncode=1, stdout="", stderr="")
             return SimpleNamespace(
@@ -351,7 +371,7 @@ class StillCorrect(unittest.TestCase):
                 "action": "search", "query": "alpha beta gamma", "limit": 10,
             })
 
-        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_count, 3)
         self.assertIn("alpha and later beta qualify together", out)
 
     def test_keyword_segment_prefilter_keeps_structured_standalone_terms(self):

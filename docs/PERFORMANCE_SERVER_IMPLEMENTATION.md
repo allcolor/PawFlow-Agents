@@ -388,6 +388,52 @@ segments. If rg fails, the Python path runs as before.
 `tests/test_history_search_rg_threshold.py` compares both paths on a
 multi-segment store and checks that no segment is read in Python.
 
+## 14. History search scan in a child process
+
+Files: `core/handlers/history.py`, `core/handlers/_history_search_process.py`,
+`core/_conversation_store_transcript.py`.
+
+With section 13 deployed, a py-spy `--gil` profile still gave 57 % and then
+78 % of the GIL samples to `read_history search`. The time was now in
+`json.loads`: the rows of every candidate segment are decoded, composed and
+matched. A thread that holds the GIL that much starves every other thread.
+Each relay or socket call has to take the GIL back after its I/O, so
+unrelated work waited behind the search: an `edit` of a note took 21.8 s,
+reads 23 to 30 s, and a `delegate_result`, which never touches a relay, went
+unanswered for 50 s.
+
+A search the full-text index cannot answer (section 11) now runs
+`ReadHistoryHandler._scan_search` in a child interpreter
+(`python -m core.handlers._history_search_process`):
+
+1. The server checks ownership, then takes
+   `ConversationStore.history_search_snapshot`. Under the conversation lock
+   it flushes buffered appends and records the segment paths and the display
+   rows per segment. It also adds up the segment sizes.
+2. The request goes to the child on stdin. The child runs the same scan over
+   a read-only view of those segments (`_SnapshotStore`), with the same `rg`
+   prefilter, secret stripping and rendering. It writes the rendered answer on
+   stdout.
+3. The server thread only waits on the pipe, without the GIL. A failed
+   child is reported to the caller as `Error: history search failed: ...`.
+   The search is never retried in process, because that is what stalled the
+   server.
+
+Each search gets its own child, with no shared gate and no deadline:
+searches are independent, so one never waits for another. The child lowers
+its priority with `os.nice(10)`. It costs about 0.2 s of start-up and 24 MB of
+memory. In-process scanning remains for an empty transcript
+(`_SEARCH_IN_PROCESS_MAX_BYTES = 0`). It also remains for an encrypted
+conversation, whose rows can only be decoded with a key the server process
+holds.
+
+`tests/test_history_search_process.py` checks that a real transcript is
+scanned by the child, and that the child's answer matches the in-process scan
+character for character. It also covers the cases that stay in process, and
+checks that a failure is reported and that no deadline is set.
+`tests/test_read_history_is_bounded.py` measures the store readers
+themselves, so it keeps the scan in process.
+
 ## Configuration
 
 | Variable | Default | Meaning |

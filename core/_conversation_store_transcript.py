@@ -772,6 +772,37 @@ class _CsTranscriptMixin:
         with self._get_conv_lock(cid):
             return sum(int(n) for n in log.role_rows_by_path().values())
 
+    def history_search_snapshot(self, cid: str) -> Optional[Dict[str, Any]]:
+        """What a child process needs to search ``cid``'s transcript.
+
+        Buffered appends are flushed and the segment display counts measured
+        under the conversation lock, as the in-process search does. ``bytes``
+        is the size of the segments. ``None`` keeps the search in this
+        process: there is no transcript, or its rows are encrypted with a key
+        only this process holds.
+        """
+        if not self.exists(cid):
+            return None
+        log = self._transcript_log(cid)
+        if log.codec is not None or not log.exists():
+            return None
+        with self._get_conv_lock(cid):
+            paths = log.iter_paths()
+            role_rows = log.role_rows_by_path()
+        size = 0
+        for path in paths:
+            try:
+                size += path.stat().st_size
+            except OSError:
+                continue
+        return {
+            "transcript_path": str(log.flat_path),
+            "paths": [str(path) for path in paths],
+            "role_rows": {str(path): int(rows)
+                          for path, rows in role_rows.items()},
+            "bytes": size,
+        }
+
     def load_window_by_index(self, cid: str, start: int, count: int) -> List[Dict]:
         """``count`` display messages from absolute display index ``start``.
 

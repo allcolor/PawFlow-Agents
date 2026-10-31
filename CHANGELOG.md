@@ -30,6 +30,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that took 35 s per search, held 94 % of the server's GIL, and agents saw
   searches above 30 s (2026-10-31). The rule now runs as `rg --pcre2` passes,
   2.6 s on the same query with the same segments selected.
+- A `read_history search` that scans the transcript now runs in a child
+  Python process, so its JSON decoding no longer holds the server's GIL. With
+  the prefilter fixed, decoding the candidate segments still took 57-78 % of
+  the GIL samples on the Ultima7 transcript, and unrelated calls of other
+  agents waited behind it: a note `edit` took 21.8 s, a `delegate_result`
+  stayed unanswered for 50 s (2026-10-31). Each search gets its own child at
+  `nice` 10, with no shared gate and no deadline. Searches answered from the
+  full-text index, and encrypted conversations, stay in process.
 
 ### Changed
 

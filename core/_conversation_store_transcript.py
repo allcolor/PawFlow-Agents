@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import shutil
 import subprocess  # nosec B404 -- fixed argv, no shell
 import time
@@ -539,9 +540,47 @@ class _CsTranscriptMixin:
             separator = b"\n" if ascii_patterns else "\n"
             return separator.join(lines)
 
+        def _rg_qualified(files):
+            """Apply ``_qualifies`` to ``files`` with one rg -P pass per term.
+
+            The Python path reads, lowers and splits every candidate segment
+            under the GIL (35 s for one search on a 5 GB transcript); rg
+            evaluates the same line exclusion and term threshold outside it.
+            ``None`` asks for the Python path.
+            """
+            exclusion = ""
+            if excluded_tools:
+                exclusion = '(?!(?=.*"role": ?"tool")(?=.*(?:%s)))' % "|".join(
+                    re.escape(marker) for marker in
+                    sorted(excluded_markers | excluded_name_markers))
+            counts: Dict[str, int] = {}
+            standalone_hits = set()
+            for pattern in dict.fromkeys(lowered + sorted(standalone)):
+                result = subprocess.run(  # nosec B603 -- fixed executable + argv
+                    [searcher, "--files-with-matches", "--ignore-case",
+                     "--pcre2", "--no-messages", "--regexp",
+                     "^" + exclusion + ".*" + re.escape(pattern)]
+                    + sorted(files),
+                    capture_output=True, text=True, timeout=60, check=False)
+                if result.returncode not in (0, 1):
+                    logger.debug("history search rg threshold failed: %s",
+                                 result.stderr.strip())
+                    return None
+                for line in result.stdout.splitlines():
+                    name = line.strip()
+                    if not name:
+                        continue
+                    counts[name] = counts.get(name, 0) + lowered.count(pattern)
+                    if pattern in standalone:
+                        standalone_hits.add(name)
+            return {name for name, count in counts.items()
+                    if count >= minimum_matches} | standalone_hits
+
         matched = None
+        ripgrep = False
         searcher = shutil.which("rg")
         if searcher:
+            ripgrep = True
             argv = [searcher, "--files-with-matches", "--fixed-strings",
                     "--ignore-case", "--no-messages", "--file", "-"]
         else:
@@ -574,8 +613,15 @@ class _CsTranscriptMixin:
                              exc_info=True)
                 return None
         elif minimum_matches > 1 or excluded_tools:
+            qualified = None
+            if ripgrep and matched:
+                try:
+                    qualified = _rg_qualified(matched)
+                except (OSError, subprocess.SubprocessError):
+                    logger.debug("history search rg threshold unavailable",
+                                 exc_info=True)
             try:
-                matched = {
+                matched = qualified if qualified is not None else {
                     str(path) for path in paths
                     if str(path) in matched and _qualifies(_read_haystack(path))
                 }

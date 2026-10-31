@@ -364,6 +364,30 @@ answered after 60 s, abandoned them, and stopped calling `read_history`.
 The tests in `tests/test_transcript_hot_paths_are_bounded.py` count the JSON
 rows each call decodes and compare every answer with the full pass.
 
+## 13. History search threshold in ripgrep
+
+File: `core/_conversation_store_transcript.py`.
+
+After section 12 was deployed, a py-spy `--gil` profile still gave 94 % of
+the GIL samples to `read_history search`, inside the segment prefilter of
+`iter_display_search_windows`. Searches without a role filter are not
+answered from the index (section 11). They exclude read_history's own
+results, and the keyword fallback needs two terms per segment. To apply
+either rule, the prefilter read every segment rg had matched in Python, then
+lowered it, split it and filtered its lines. On the Ultima7 transcript, that
+took 35 s for the query `capture claire` (662 segments), while agents
+reported searches above 30 s.
+
+When rg is installed, the threshold and the exclusion now run as one
+`rg --pcre2 --files-with-matches` pass per term over the candidate segments.
+A negative lookahead drops a line that is a `"role": "tool"` row carrying an
+excluded tool's marker, which is the Python rule. On the same query and
+segments the passes took 2.6 s outside the GIL and selected the same 662
+segments. If rg fails, the Python path runs as before.
+
+`tests/test_history_search_rg_threshold.py` compares both paths on a
+multi-segment store and checks that no segment is read in Python.
+
 ## Configuration
 
 | Variable | Default | Meaning |

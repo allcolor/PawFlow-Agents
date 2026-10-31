@@ -25,6 +25,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   past it; the anchor is found from the cached segment bounds and display-row
   counts. Rows from a sealed segment that never mentions a runtime secret key
   skip `strip_secret_runtime_values`, which was 21.6 % of the server's CPU.
+- `read_history search` no longer reads candidate segments in Python to drop
+  its own results or apply the keyword threshold. On the Ultima7 transcript
+  that took 35 s per search, held 94 % of the server's GIL, and agents saw
+  searches above 30 s (2026-10-31). The rule now runs as `rg --pcre2` passes,
+  2.6 s on the same query with the same segments selected.
 
 ## [1.0.0-beta.318] — 2026-10-30
 

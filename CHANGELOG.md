@@ -4,6 +4,20 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- A message patch no longer reads `shared.jsonl` and agent context segments
+  to learn a `msg_id` is absent. Only the transcript had `msg_id` sidecars, so
+  each patch spent 1.3-4.3 s in `find` on the shared stream of the 17 GB
+  Ultima7 conversation (2026-10-31). The poller's warmer now covers every
+  stream `patch_message` searches (`_patch_stream_paths`), skips the open tail
+  segment, and runs its segment listing and sidecar checks on the builder
+  thread instead of the poll loop. The check reads a sidecar's identity line
+  only, and the pass runs at most every 10 minutes and once per conversation
+  per process: it had been re-reading every sidecar on each tick.
+
 ## [1.0.0-beta.318] — 2026-10-30
 
 ### Fixed

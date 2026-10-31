@@ -546,6 +546,23 @@ class _SegmentedJsonlIOMixin:
         except OSError:
             return None
 
+    def _msg_id_sidecar_valid(self, path: Path) -> bool:
+        """True when the segment has a sidecar that still belongs to it.
+
+        Reads the identity line only. The poller's warmer asks this for every
+        segment of the heaviest conversations; reading the bodies there loaded
+        every sidecar of a 663-segment log on each pass (2026-10-31).
+        """
+        key = self._msg_id_sidecar_key(path)
+        if key is None:
+            return False
+        sidecar = self.segment_dir / _MSG_ID_SIDECAR_DIR / f"{path.name}.txt"
+        try:
+            with open(sidecar, "rb") as fh:
+                return fh.readline().strip() == _sidecar_header(key)
+        except OSError:
+            return False
+
     def _msg_id_sidecar(self, path: Path) -> List[str]:
         """The segment's msg_ids, read whole (for callers that need the list).
 

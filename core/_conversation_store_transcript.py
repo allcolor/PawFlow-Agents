@@ -971,6 +971,20 @@ class _CsTranscriptMixin:
         return {"messages": page, "total_count": total_msgs,
                 "offset": offset, "limit": limit, "has_more": has_more}
 
+    def _patch_stream_paths(self, cid: str) -> List[Path]:
+        """Every stream ``patch_message`` searches, in the order it patches them.
+
+        The poller's msg_id sidecar warmer covers the same list, so a patch
+        never falls back to reading a stream's segments for want of a sidecar.
+        """
+        paths = [self._transcript_path(cid), self._shared_ctx_path(cid)]
+        conv_dir = self._conv_dir(cid)
+        if conv_dir.is_dir():
+            for entry in conv_dir.iterdir():
+                if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
+                    paths.append(entry / "context.jsonl")
+        return paths
+
     def patch_message(self, cid: str, msg_id: str, **fields) -> None:
         """Update an existing message row in transcript and contexts."""
         if not msg_id or not fields:
@@ -993,14 +1007,11 @@ class _CsTranscriptMixin:
         patched_streams = 0
         transcript_patched = 0
         with lock:
-            transcript_patched = _patch_stream(self._transcript_path(cid))
+            streams = self._patch_stream_paths(cid)
+            transcript_patched = _patch_stream(streams[0])
             patched_streams += transcript_patched
-            patched_streams += _patch_stream(self._shared_ctx_path(cid))
-            conv_dir = self._conv_dir(cid)
-            if conv_dir.is_dir():
-                for entry in conv_dir.iterdir():
-                    if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
-                        patched_streams += _patch_stream(entry / "context.jsonl")
+            for path in streams[1:]:
+                patched_streams += _patch_stream(path)
             # The generation tells the search index its rows are stale; it
             # indexes content/role/ts/msg_id. A metadata patch (turn_final,
             # is_error, attachments, source enrichment) leaves those rows

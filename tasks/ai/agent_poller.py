@@ -16,11 +16,17 @@ from tasks.ai._agent_poll_checkin import _AgentPollCheckinMixin
 
 logger = logging.getLogger(__name__)
 
-# Conversations whose sidecar pass already ran in this process. The poller runs
-# every tick; without this guard a finished pass would be rebuilt each time,
-# stat-ing and header-reading every segment of the heaviest conversations.
+# Conversations whose sidecar pass already ran in this process. Sealing writes
+# the sidecar of every new segment, so one catch-up pass per conversation and
+# per process is enough; repeating it stat-ed every segment of the heaviest
+# conversations and read every sidecar on every tick (2026-10-31: the pass
+# held the poller up to 158 s while the GIL was contended).
 _MSG_ID_WARMED: set = set()
 _MSG_ID_WARM_LOCK = threading.Lock()
+# The pass lists every conversation to find the heaviest ones; that listing is
+# not free either, so the pass runs at most this often.
+_MSG_ID_WARM_INTERVAL_SECONDS = 600.0
+_MSG_ID_WARM_LAST = [0.0]
 
 _WATCHDOG_INTERVAL_SECONDS = int(
     os.getenv("PAWFLOW_AGENT_WATCHDOG_INTERVAL_SECONDS", "300") or "300")
@@ -350,9 +356,21 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         before that existed need this catch-up. Locating an old row without a
         sidecar means reading the segment, which is how one patch came to read
         4,075 ms of transcript under the conversation lock (2026-10-30).
+
+        Every stream a patch searches is covered -- transcript, shared context
+        and each agent context: shared.jsonl alone cost 1.3-4.3 s per patch
+        while only the transcript had sidecars (2026-10-31). The poller only
+        picks the conversations; listing segments and checking sidecars run on
+        the builder thread, once per conversation per process.
         """
         from core.conversation_store import ConversationStore
 
+        now = time.monotonic()
+        with _MSG_ID_WARM_LOCK:
+            if (_MSG_ID_WARM_LAST[0]
+                    and now - _MSG_ID_WARM_LAST[0] < _MSG_ID_WARM_INTERVAL_SECONDS):
+                return
+            _MSG_ID_WARM_LAST[0] = now
         store = ConversationStore.instance()
         try:
             conversations = store.list_conversations() or []
@@ -367,39 +385,49 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             cid = conv.get("conversation_id")
             if not cid:
                 continue
-            try:
-                log = store._transcript_log(cid)
-                paths = log._segment_paths() or []
-            except Exception:
-                logger.debug(f"[msg-id-sidecar] {str(cid)[:8]} unreadable", exc_info=True)
-                continue
-            # Only segments still missing a valid sidecar. Checked per poll, so
-            # it must stay a stat plus one header line per segment -- parsing the
-            # sidecars here would rebuild 2.2 M ids on every tick.
-            pending = [p for p in paths if log._msg_id_sidecar_cached(p) is None]
-            if not pending:
-                continue
-            # One warmer per conversation per process: a finished pass must not
-            # be restarted by the next tick, and two passes must not overlap.
+            # One pass per conversation per process: a finished pass must not
+            # be restarted, and two passes must not overlap.
             with _MSG_ID_WARM_LOCK:
                 if cid in _MSG_ID_WARMED:
                     continue
                 _MSG_ID_WARMED.add(cid)
 
-            def _build(items=pending, seg_log=log, conv_id=cid) -> None:
-                for path in items:
+            def _build(conv_id=cid) -> None:
+                built = 0
+                try:
+                    streams = store._patch_stream_paths(conv_id)
+                except OSError:
+                    logger.debug("[msg-id-sidecar] %s unreadable",
+                                 str(conv_id)[:8], exc_info=True)
+                    return
+                for stream in streams:
+                    seg_log = store._content_seg(conv_id, stream)
+                    if not seg_log.exists():
+                        continue
                     try:
-                        seg_log.build_msg_id_sidecar(path)
+                        # The open tail segment is left out: it still grows,
+                        # and a patch reads the tail directly anyway.
+                        paths = (seg_log._segment_paths() or [])[:-1]
                     except Exception:
-                        logger.debug(
-                            "[msg-id-sidecar] build failed %s", path.name,
-                            exc_info=True)
+                        logger.debug("[msg-id-sidecar] %s unreadable",
+                                     seg_log.segment_dir, exc_info=True)
+                        continue
+                    for path in paths:
+                        if seg_log._msg_id_sidecar_valid(path):
+                            continue
+                        try:
+                            built += int(seg_log.build_msg_id_sidecar(path))
+                        except Exception:
+                            logger.debug(
+                                "[msg-id-sidecar] build failed %s", path.name,
+                                exc_info=True)
+                if built:
+                    logger.info("[msg-id-sidecar] built %d sidecar(s) for %s",
+                                built, str(conv_id)[:8])
 
             try:
                 threading.Thread(target=_build, daemon=True,
                                  name=f"msg-id-sidecar-{str(cid)[:8]}").start()
-                logger.info("[msg-id-sidecar] warming %d segment(s) of %s",
-                            len(pending), str(cid)[:8])
             except RuntimeError:
                 logger.debug("[msg-id-sidecar] could not start builder",
                              exc_info=True)

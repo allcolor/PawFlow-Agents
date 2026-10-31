@@ -221,7 +221,7 @@ def test_codex_mcp_config_sets_long_tool_timeout():
     from core.llm_providers.codex_session import CodexSessionMixin
 
     src = inspect.getsource(CodexSessionMixin._codex_setup_mcp_config)
-    assert "tool_timeout_sec = 3600" in src
+    assert "tool_timeout_sec = 10800" in src
     assert "tool_timeout_sec = 120" not in src
     assert "tool_timeout_sec = 300" not in src
     assert "startup_timeout_sec = 20" in src

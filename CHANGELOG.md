@@ -31,6 +31,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   searches above 30 s (2026-10-31). The rule now runs as `rg --pcre2` passes,
   2.6 s on the same query with the same segments selected.
 
+### Changed
+
+- The generated Codex MCP config sets `tool_timeout_sec = 10800` (3 hours)
+  instead of 3600, so long PawFlow tool calls from Codex agents are not cut
+  off after one hour.
+
 ## [1.0.0-beta.318] — 2026-10-30
 
 ### Fixed

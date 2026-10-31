@@ -186,7 +186,7 @@ default initialize or `tools/call` deadline; it waits until the MCP server
 responds unless a caller provides an explicit timeout. Provider clients may still
 impose their own MCP tool timeout outside PawFlow, so generated provider configs
 must not rely on omitting a timeout field to disable a provider default. PawFlow's
-generated Codex MCP config pins `tool_timeout_sec` to `3600` seconds to avoid
+generated Codex MCP config pins `tool_timeout_sec` to `10800` seconds (3 hours) to avoid
 Codex's short default while keeping an explicit provider-required value.
 
 ### Killing a Single Tool Call

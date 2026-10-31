@@ -706,7 +706,7 @@ class CodexSessionMixin:
             f'command = "{_toml_escape(python_bin)}"\n'
             f'args = ["{_toml_escape(mcp_bridge)}"]\n'
             "startup_timeout_sec = 20\n"
-            "tool_timeout_sec = 3600\n"
+            "tool_timeout_sec = 10800\n"
             "supports_parallel_tool_calls = true\n"
             "enabled = true\n"
             "required = true\n"

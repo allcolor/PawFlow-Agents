@@ -6,6 +6,10 @@ from typing import Any, Tuple
 
 
 _SECRET_RUNTIME_KEYS = frozenset({"_secret_env"})
+# The keys as json.dumps writes them: a stored segment whose bytes contain none
+# of these has nothing to strip, so its rows can skip the recursive walk.
+SECRET_RUNTIME_KEY_NEEDLES = tuple(
+    f'"{key}"'.encode("utf-8") for key in sorted(_SECRET_RUNTIME_KEYS))
 
 
 def strip_secret_runtime_values(value: Any) -> Any:

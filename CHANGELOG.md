@@ -17,6 +17,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   thread instead of the poll loop. The check reads a sidecar's identity line
   only, and the pass runs at most every 10 minutes and once per conversation
   per process: it had been re-reading every sidecar on each tick.
+- `read_history` no longer walks the whole transcript for `range_by_index` or
+  for an `around` anchored on `from_seq`/`from_date`. On the 2.3 M-row Ultima7
+  conversation these passes held the GIL for every other thread: a relay
+  `echo` took 5-10 s and agents gave up on reads after 60 s (2026-10-31).
+  `range_by_index` now decodes only the segments covering the range and stops
+  past it; the anchor is found from the cached segment bounds and display-row
+  counts. Rows from a sealed segment that never mentions a runtime secret key
+  skip `strip_secret_runtime_values`, which was 21.6 % of the server's CPU.
 
 ## [1.0.0-beta.318] — 2026-10-30
 

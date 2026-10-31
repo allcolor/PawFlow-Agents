@@ -513,6 +513,23 @@ class ReadHistoryHandler(ToolHandler):
         for start, msgs in store.iter_display_windows(self._conversation_id):
             yield start, msgs
 
+    def _index_windows(self, store, low: int, high: int):
+        """Windows of the segments holding display indexes [low, high]."""
+        if not self._owns_conversation(store):
+            return
+        index_reader = getattr(store, "iter_display_index_windows", None)
+        if index_reader is not None:
+            try:
+                windows = index_reader(self._conversation_id, low, high)
+            except Exception:
+                logger.debug("history index prefilter failed", exc_info=True)
+                windows = None
+            if windows is not None:
+                yield from windows
+                return
+        for start, msgs in store.iter_display_windows(self._conversation_id):
+            yield start, msgs
+
     def _collect(self, store, keep, budget: int, done=None, windows=None):
         """Stream the transcript, keep what ``keep`` accepts, up to ``budget``.
 
@@ -836,11 +853,18 @@ class ReadHistoryHandler(ToolHandler):
             return "Error: range_by_index requires from_index <= to_index, both >= 0"
         offset, limit, budget = self._budget(
             arguments.get("offset"), arguments.get("limit"))
+        past = [False]
+
+        def _keep(i, m):
+            if i > to_index:
+                past[0] = True
+                return False
+            return (from_index <= i
+                    and self._matches(m, role_filter, agent_filter))
+
         kept, total = self._collect(
-            store,
-            lambda i, m: (from_index <= i <= to_index
-                          and self._matches(m, role_filter, agent_filter)),
-            budget)
+            store, _keep, budget, done=lambda: past[0],
+            windows=self._index_windows(store, from_index, to_index))
         return self._render_slice(
             kept, f"Index range {from_index}..{to_index}",
             role_filter, agent_filter, action="range_by_index",

@@ -622,6 +622,40 @@ class _CsTranscriptMixin:
         selected |= {i + 1 for i in selected if i + 1 < len(paths)}
         return self._iter_selected_display_windows(cid, log, paths, selected)
 
+    def iter_display_index_windows(self, cid: str, low: int, high: int):
+        """Windows of the segments holding display indexes ``low..high``.
+
+        The per-segment display-row counts place the range without decoding
+        the prefix: ``range_by_index`` read the transcript from row 0 to its
+        end on every call, which on the 2.3 M-row Ultima7 conversation kept
+        the GIL busy for every other thread (2026-10-31). Neighbours of a kept
+        segment are kept too, so a trace composed across a boundary stays
+        whole. ``None`` requests the full pass (encrypted rows are not read
+        by the selected-window reader).
+        """
+        if not self.exists(cid):
+            return iter(())
+        log = self._transcript_log(cid)
+        if log.codec is not None:
+            return None
+        with self._get_conv_lock(cid):
+            paths = log.iter_paths()
+            role_rows = log.role_rows_by_path()
+        if not paths:
+            return iter(())
+        selected = set()
+        start = 0
+        for i, path in enumerate(paths):
+            rows = int(role_rows.get(path, 0))
+            if start <= high and start + rows > low:
+                selected.add(i)
+            start += rows
+        if not selected:
+            return iter(())
+        selected |= {i - 1 for i in selected if i}
+        selected |= {i + 1 for i in selected if i + 1 < len(paths)}
+        return self._iter_selected_display_windows(cid, log, paths, selected)
+
     def _iter_selected_display_windows(self, cid: str, log, paths,
                                        selected) -> Any:
         """Display windows of the ``selected`` segment indexes.
@@ -640,6 +674,7 @@ class _CsTranscriptMixin:
 
             start_index = 0
             last_match = max(selected)
+            tail = len(paths) - 1
             raw: List[Dict[str, Any]] = []
             seen = 0
             for i, path in enumerate(paths):
@@ -654,13 +689,16 @@ class _CsTranscriptMixin:
                         seen = 0
                     start_index += int(role_rows.get(path, 0))
                     continue
+                strip = log._rows_may_hold_secrets(path, i == tail)
                 for row in log._iter_file(path):
+                    if strip:
+                        row = strip_secret_runtime_values(row)
                     if self._is_trace_update_row(row):
-                        raw.append(strip_secret_runtime_values(row))
+                        raw.append(row)
                         continue
                     if not row.get("role"):
                         continue
-                    raw.append(strip_secret_runtime_values(row))
+                    raw.append(row)
                     seen += 1
                     if seen >= self._WINDOW_CHUNK:
                         messages = self._compose_display_traces(raw)
@@ -724,10 +762,14 @@ class _CsTranscriptMixin:
         idx = 0
         taken = 0
         codec = log.codec
-        for path in paths[first_path:]:
+        tail = len(paths) - 1
+        for path_index in range(first_path, len(paths)):
+            path = paths[path_index]
+            strip = log._rows_may_hold_secrets(path, path_index == tail)
             for stored_row in log._iter_file(path):
                 row = codec.decode(stored_row) if codec is not None else stored_row
-                row = strip_secret_runtime_values(row)
+                if strip:
+                    row = strip_secret_runtime_values(row)
                 if self._is_trace_update_row(row):
                     if taken:
                         raw.append(row)
@@ -758,6 +800,10 @@ class _CsTranscriptMixin:
             return -1
         if msg_id:
             return self._find_display_index_by_msg_id(log, cid, msg_id)
+        located = self._find_display_index_by_bounds(log, cid, seq, ts,
+                                                     backward)
+        if located is not None:
+            return located
         idx = -1
         best = -1
         for row in log.iter_rows():
@@ -783,6 +829,81 @@ class _CsTranscriptMixin:
             if ts and float(row.get("ts") or row.get("timestamp") or 0.0) >= ts:
                 return idx
         return best
+
+    def _find_display_index_by_bounds(self, log: SegmentedJsonl, cid: str,
+                                      seq: int, ts: float,
+                                      backward: bool) -> Optional[int]:
+        """The answer of the full pass below, reading only segments that can
+        hold it. ``None`` asks for the full pass.
+
+        The cached ts/seq bounds of the sealed segments rule out the rest, and
+        the display-row counts give each segment's first index, so the prefix
+        is never decoded. ``around`` by seq or date read the 2.3 M-row Ultima7
+        transcript from row 0 on every call (2026-10-31). A segment without
+        bounds (the open tail) is always read.
+        """
+        if log.codec is not None:
+            return None
+        field, target = ("seq", float(seq)) if seq else ("ts", float(ts or 0.0))
+        if not target:
+            return None
+        with self._get_conv_lock(cid):
+            paths = log.iter_paths()
+            role_rows = log.role_rows_by_path()
+        bounds = log.field_bounds_by_path()
+        starts = []
+        start = 0
+        for path in paths:
+            starts.append(start)
+            start += int(role_rows.get(path, 0))
+
+        def _span(path):
+            if path not in bounds:
+                return None           # unknown: may hold anything
+            return bounds[path].get(field) or []
+
+        def _value(row) -> float:
+            if field == "seq":
+                return float(int(row.get("seq") or 0))
+            return float(row.get("ts") or row.get("timestamp") or 0.0)
+
+        def _rows(i):
+            idx = starts[i] - 1
+            for row in log._iter_file(paths[i]):
+                if self._is_trace_update_row(row) or not row.get("role"):
+                    continue
+                idx += 1
+                yield idx, _value(row)
+
+        if not (field == "seq" and backward):
+            # First row at or after the target, in display order.
+            for i, path in enumerate(paths):
+                span = _span(path)
+                if span is not None and (not span or span[1] < target):
+                    continue
+                for idx, value in _rows(i):
+                    if value and value >= target:
+                        return idx
+            return -1
+        # Backward seq: the first exact match wins, else the last row before.
+        for i, path in enumerate(paths):
+            span = _span(path)
+            if span is not None and (not span or not span[0] <= target <= span[1]):
+                continue
+            for idx, value in _rows(i):
+                if value == target:
+                    return idx
+        for i in range(len(paths) - 1, -1, -1):
+            span = _span(paths[i])
+            if span is not None and (not span or span[0] > target):
+                continue
+            best = -1
+            for idx, value in _rows(i):
+                if value and value <= target:
+                    best = idx
+            if best >= 0:
+                return best
+        return -1
 
     def _find_display_index_by_msg_id(self, log: SegmentedJsonl, cid: str,
                                       msg_id: str) -> int:

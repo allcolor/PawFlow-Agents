@@ -351,7 +351,15 @@ from the stored bytes. `range` stops at `to_msg_id`, and an unfiltered
 bounds meet the range, plus their neighbours and the open tail segment. The
 bounds of each sealed segment are read once from its raw bytes and cached in
 `field_bounds.json` beside the segment index, keyed by file identity, so a
-rewritten segment is scanned again. Encrypted transcripts keep the full pass.
+rewritten segment is scanned again. `range_by_index` places its range from
+the per-segment display-row counts, decodes only those segments and their
+neighbours, and stops past `to_index`. An `around` anchored on `from_seq` or
+`from_date` reads only the segments whose bounds can hold the anchor, the
+open tail included. Encrypted transcripts keep the full pass.
+
+Rows are stripped of runtime-only secret keys (`_secret_env`) only when they
+come from a segment whose bytes mention such a key, or from the open tail
+segment; a sealed segment without one is returned as decoded.
 
 Every result header carries both identifiers a caller can slice by:
 `[#N]` is the position index in the displayed transcript and `seq=N` is the

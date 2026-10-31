@@ -63,10 +63,29 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         from core.secret_sanitization import strip_secret_runtime_values
 
         codec = self.codec
-        for path in self.iter_paths():
+        paths = self.iter_paths()
+        last = len(paths) - 1
+        for i, path in enumerate(paths):
+            strip = self._rows_may_hold_secrets(path, i == last)
             for row in self._iter_file(path):
                 decoded = codec.decode(row) if codec is not None else row
-                yield strip_secret_runtime_values(decoded)
+                yield strip_secret_runtime_values(decoded) if strip else decoded
+
+    def _rows_may_hold_secrets(self, path: Path, is_tail: bool) -> bool:
+        """Whether rows read from ``path`` need strip_secret_runtime_values.
+
+        A sealed plaintext segment whose bytes never mention a runtime secret
+        key has nothing to strip. Walking every row recursively anyway was
+        21.6 % of the server's CPU while agents searched the 2.3 M-row Ultima7
+        transcript (2026-10-31). The open tail can grow between this check and
+        the read, and encrypted rows hide their content, so both are always
+        stripped.
+        """
+        if is_tail or self.codec is not None:
+            return True
+        from core.secret_sanitization import SECRET_RUNTIME_KEY_NEEDLES
+
+        return self._segment_mentions(path, SECRET_RUNTIME_KEY_NEEDLES)
 
     def iter_rows_in_range(self, field: str, low: float,
                            high: float) -> Iterator[Dict[str, Any]]:

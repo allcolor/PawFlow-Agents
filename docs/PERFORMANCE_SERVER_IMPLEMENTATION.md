@@ -335,6 +335,35 @@ loaded index (a stat per listed segment, no glob, nothing on the append
 path). On a copy of that transcript: 18 of 140 segments recounted in 0.29 s,
 result equal to a full recount; later calls take 2 ms.
 
+## 12. read_history position reads and secret stripping
+
+Files: `core/_conversation_store_transcript.py`, `core/handlers/history.py`,
+`core/segmented_jsonl.py`, `core/secret_sanitization.py`.
+
+On 2026-10-31 the Ultima7 conversation held 2.3 M rows (5.2 GB of
+transcript). The server process used one full core, the poll loop took 53 to
+158 s and a relay `echo` took 5 to 10 s. A py-spy `--gil` profile gave about
+55 % of the GIL samples to agents' `read_history` calls, and 21.6 % to
+`strip_secret_runtime_values` alone. Agents saw relay reads that had not
+answered after 60 s, abandoned them, and stopped calling `read_history`.
+
+- `range_by_index` streamed the transcript from row 0 to its end. It now
+  reads `iter_display_index_windows`: the per-segment display-row counts
+  place the range, only those segments and their neighbours are decoded, and
+  the pass stops past `to_index`.
+- `around` with `from_seq` or `from_date` located its anchor with a full
+  `iter_rows` pass. `_find_display_index_by_bounds` reads only the segments
+  whose cached ts/seq bounds can hold the anchor (the open tail always) and
+  takes each segment's first index from the display-row counts. The answer is
+  the full pass's, exact-seq rule included.
+- Every decoded row went through the recursive secret walk. A sealed
+  plaintext segment whose bytes never mention a runtime secret key
+  (`SECRET_RUNTIME_KEY_NEEDLES`) is now returned as decoded; the open tail and
+  encrypted segments are still stripped.
+
+The tests in `tests/test_transcript_hot_paths_are_bounded.py` count the JSON
+rows each call decodes and compare every answer with the full pass.
+
 ## Configuration
 
 | Variable | Default | Meaning |

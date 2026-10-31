@@ -192,6 +192,79 @@ class HotPaths(unittest.TestCase):
         self.assertBounded(decoded.count, "range_by_seq",
                            cap=self.RANGE_CAP)
 
+    def test_range_by_index_decodes_only_the_segments_it_covers(self):
+        # 2026-10-31: range_by_index read the 2.3 M-row Ultima7 transcript
+        # from row 0 to its end on every call.
+        arguments = {"action": "range_by_index", "from_index": 2600,
+                     "to_index": 2610, "role_filter": "user"}
+        with _Decoded() as decoded:
+            out = self.handler.execute(arguments)
+        self.assertIn("[#2600]", out)
+        self.assertIn("[#2610]", out)
+        self.assertNotIn("[#2612]", out)
+        with patch.object(ConversationStore, "iter_display_index_windows",
+                          return_value=None):
+            self.assertEqual(out, self.handler.execute(arguments))
+        self.assertBounded(decoded.count, "range_by_index",
+                           cap=self.RANGE_CAP)
+
+    def _full_find(self, **kwargs):
+        with patch.object(ConversationStore, "_find_display_index_by_bounds",
+                          return_value=None):
+            return self.store.find_display_index(CONV, **kwargs)
+
+    def test_find_by_seq_or_date_reads_only_the_segments_that_hold_it(self):
+        cases = [
+            ({"seq": 2601}, 2600),
+            ({"seq": 2601, "backward": True}, 2600),
+            ({"ts": 1000.0 + 3333}, 3333),
+            ({"ts": 1.0}, 0),
+            ({"seq": 999999}, -1),
+            ({"seq": 999999, "backward": True}, CONV_SIZE - 1),
+        ]
+        for kwargs, expected in cases:
+            with _Decoded() as decoded:
+                found = self.store.find_display_index(CONV, **kwargs)
+            self.assertEqual(found, expected, kwargs)
+            self.assertEqual(found, self._full_find(**kwargs), kwargs)
+            self.assertBounded(decoded.count, f"find_display_index({kwargs})",
+                               cap=2 * SEGMENT_ROWS + 50)
+
+    def test_around_by_seq_matches_the_full_pass(self):
+        arguments = {"action": "around", "from_seq": 3001, "limit": -5}
+        out = self.handler.execute(arguments)
+        self.assertIn("[#3000]", out)
+        self.assertIn("[#2996]", out)
+        with patch.object(ConversationStore, "_find_display_index_by_bounds",
+                          return_value=None):
+            self.assertEqual(out, self.handler.execute(arguments))
+
+    def test_only_segments_that_store_a_secret_are_walked(self):
+        # 2026-10-31: strip_secret_runtime_values walked every decoded row
+        # and was 21.6 % of the server's CPU. A sealed segment whose bytes
+        # never mention a runtime secret key has nothing to strip.
+        from core import secret_sanitization
+
+        log = self.store._transcript_log(CONV)
+        paths = log.iter_paths()
+        planted = paths[2]
+        lines = [line for line in planted.read_text(encoding="utf-8").splitlines()
+                 if line.strip()]
+        row = json.loads(lines[0])
+        row["_secret_env"] = {"TOKEN": "runtime-only"}
+        lines[0] = json.dumps(row)
+        planted.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tail_rows = sum(1 for line in paths[-1].read_text(
+            encoding="utf-8").splitlines() if line.strip())
+
+        walked = []
+        real = secret_sanitization.strip_secret_runtime_values
+        with patch.object(secret_sanitization, "strip_secret_runtime_values",
+                          side_effect=lambda v: walked.append(1) or real(v)):
+            rows = list(log.iter_rows())
+        self.assertFalse(any("_secret_env" in r for r in rows))
+        self.assertEqual(len(walked), len(lines) + tail_rows)
+
     def test_range_in_the_open_tail_segment(self):
         arguments = {"action": "range_by_seq", "from_seq": 4998,
                      "to_seq": 5000}

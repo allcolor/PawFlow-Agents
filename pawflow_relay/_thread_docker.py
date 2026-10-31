@@ -14,6 +14,7 @@ from pawflow_relay._thread_base import (
 )
 from pawflow_relay.utils import (
     docker_cmd,
+    docker_secret_env,
     find_free_port,
     get_host_ip,
     to_host_path,
@@ -28,9 +29,12 @@ class _RelayDockerMixin:
     """docker relay run loop."""
 
     def _spawn_docker_process(self, command):
+        # The command passes `-e PAWFLOW_RELAY_TOKEN` by name; the value
+        # comes from this environment so it is in no process's argv.
         return subprocess.Popen(  # nosec B603
             command, stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=docker_secret_env("PAWFLOW_RELAY_TOKEN", self.ws_token))
 
     def _stop_windows_host_bridge(self):
         """Stop the tracked WSL bridge process, if one is running."""
@@ -154,14 +158,9 @@ class _RelayDockerMixin:
 
         while not self._stop_event.is_set():
             # Guard: every restart MUST carry a non-empty token. An empty
-            # value has caused two distinct failure modes in the wild:
-            # (a) the Windows wsl.exe wrapper silently drops "" args so
-            #     the inner argparse sees `--token --relay-id …` and
-            #     rejects with "expected one argument", (b) even if the
-            #     "" reaches the container, pawflow_relay.py's mode
-            #     selector (tools/pawflow_relay.py:2371) treats empty
-            #     token as "enter auto-registration" and tries to open
-            #     a browser from inside Docker, which has no display.
+            # PAWFLOW_RELAY_TOKEN makes the relay's mode selector treat the
+            # run as "enter auto-registration", and it tries to open a
+            # browser from inside Docker, which has no display.
             # Better to stop the loop loud than to burn restart budget.
             if not self.ws_token:
                 self._log(
@@ -397,6 +396,10 @@ class _RelayDockerMixin:
                 "-e", "GIT_CONFIG_VALUE_3=false",
                 "-e", f"PAWFLOW_HOST_HELPER=host.docker.internal:{host_helper_endpoint_port}",
                 "-e", f"PAWFLOW_SESSION_TOKEN={self.session_token}",
+                # Name only: docker copies the value from the environment
+                # _spawn_docker_process gives it, so the token never shows
+                # in `ps` on the host or in the container.
+                "-e", "PAWFLOW_RELAY_TOKEN",
                 *_desktop_publish_args,
                 "-e", f"PAWFLOW_HOST_WORKDIR={self.directory.replace(chr(92), '/')}",
                 "-e", "HOME=/home/pawflow",
@@ -416,10 +419,6 @@ class _RelayDockerMixin:
                 self.docker_image,
                 "python3", "-u", "/opt/pawflow/pawflow_relay_launcher.py",
                 "--server", ws_url,
-                # token_urlsafe() can generate values beginning with "--".
-                # Pass the token with --token=VALUE so argparse cannot
-                # mistake a random token for another option during reconnect.
-                f"--token={self.ws_token}",
                 "--relay-id", self.relay_id,
                 "--dir", "/workspace",
                 *_relay_permission_args,

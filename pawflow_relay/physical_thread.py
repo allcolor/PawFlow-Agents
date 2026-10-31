@@ -218,7 +218,7 @@ class PhysicalRelayThread(RelayThread):
             command = [
                 "python3", "-u", "/opt/pawflow/pawflow_relay_launcher.py",
                 "--server", ws_url.rsplit("/", 1)[0] + "/" + quote(member.relay_id, safe=""),
-                f"--token={member.ws_token}", "--relay-id", member.relay_id,
+                "--relay-id", member.relay_id,
                 "--dir", "/workspace", "--server-mount", "/cc_sessions",
                 "--filestore-mount", "/filestore", "--skills-mount", "/skills",
             ]
@@ -234,6 +234,9 @@ class PhysicalRelayThread(RelayThread):
                 "relay_id": export.relay_id, "root_mount": export.root_mount,
                 "home_mount": export.home_mount, "mode": export.mode, "command": command,
                 "environment": {
+                    # Read by the launcher's --token default, so the token
+                    # is in no argv (`ps` in the container shows argv).
+                    "PAWFLOW_RELAY_TOKEN": member.ws_token,
                     "PAWFLOW_GATEWAY_KEY": member.gateway_key,
                     "PAWFLOW_GATEWAY_COOKIE": "" if member.gateway_key else member.gateway_cookie,
                     "PAWFLOW_SESSION_TOKEN": member.session_token,

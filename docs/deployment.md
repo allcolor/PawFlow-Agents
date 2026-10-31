@@ -312,6 +312,7 @@ PawFlow runs as one container in a pod/task. Claude Code and relays run as **sid
 | `PAWFLOW_CLAUDE_SIDECAR_URL` | PawFlow | WebSocket URL of Claude Code sidecar (e.g., `ws://localhost:9092`) |
 | `PAWFLOW_TOOL_RELAY_URL` | Claude Code sidecar | Tool relay WebSocket URL on the main PawFlow listener (e.g., `ws://pawflow:PORT/ws/tools/_tool_relay`) |
 | `PAWFLOW_TOOL_RELAY_TOKEN` | Claude Code sidecar | Auth token for tool relay |
+| `PAWFLOW_RELAY_TOKEN` | Relay sidecar | Relay auth token. Pass it in the environment, not as `--token`: a command-line argument shows in `ps`. The relay removes it from its environment at startup, so the commands it runs do not inherit it. |
 
 ### 3a. Kubernetes (EKS / GKE / AKS)
 
@@ -361,13 +362,17 @@ spec:
             - /opt/pawflow/pawflow_relay.py
             - --server
             - ws://localhost:PORT/ws/relay
-            - --token
-            - $(RELAY_TOKEN)
             - --relay-id
             - relay-sidecar
             - --dir
             - /workspace
             - --allow-exec
+          env:
+            - name: PAWFLOW_RELAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: pawflow-secrets
+                  key: relay-token
           volumeMounts:
             - name: shared-data
               mountPath: /workspace
@@ -446,13 +451,13 @@ services:
       - /opt/pawflow/pawflow_relay.py
       - --server
       - ws://pawflow:PORT/ws/relay
-      - --token
-      - ${RELAY_TOKEN}
       - --relay-id
       - relay-sidecar
       - --dir
       - /workspace
       - --allow-exec
+    environment:
+      PAWFLOW_RELAY_TOKEN: ${RELAY_TOKEN}
     volumes:
       - workspace:/workspace
 
@@ -526,6 +531,7 @@ Works in: ExecuteScript (containerized), custom Docker scripts, any container wi
 | `PAWFLOW_DOCKER_IMAGE` | Containers | Image name (set in Dockerfile, used for detection) |
 | `PAWFLOW_TOOL_RELAY_URL` | MCP bridge / sidecars | Tool relay WebSocket URL |
 | `PAWFLOW_TOOL_RELAY_TOKEN` | MCP bridge / sidecars | Auth token for tool relay |
+| `PAWFLOW_RELAY_TOKEN` | Relay containers | Relay auth token, read at startup and removed from the relay's environment; never passed as `--token` by PawFlow's own launchers |
 | `PAWFLOW_USER_ID` | MCP bridge | User context for tool execution |
 | `PAWFLOW_CONVERSATION_ID` | MCP bridge | Conversation context |
 | `PAWFLOW_AGENT_NAME` | MCP bridge | Agent identity |

@@ -13,8 +13,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # do inside the relay container, so tools/ must be importable.
 sys.path.append(str(Path(__file__).resolve().parent.parent / "tools"))
 
-from pawflow_relay.utils import translate_path
+from pawflow_relay.utils import docker_secret_env, translate_path
 from tools.fs_common import windows_shell_cwd
+
+
+class TestDockerSecretEnv:
+    """docker_secret_env hands a secret to `docker run -e NAME` by environment."""
+
+    def test_posix_sets_value_without_wslenv(self, monkeypatch):
+        monkeypatch.delenv("WSLENV", raising=False)
+        with patch("pawflow_relay.utils.os.name", "posix"):
+            env = docker_secret_env("PAWFLOW_RELAY_TOKEN", "secret")
+        assert env["PAWFLOW_RELAY_TOKEN"] == "secret"
+        assert "WSLENV" not in env
+
+    def test_windows_forwards_name_through_wslenv_once(self, monkeypatch):
+        monkeypatch.setenv("WSLENV", "USERPROFILE/p:PAWFLOW_RELAY_TOKEN/w")
+        with patch("pawflow_relay.utils.os.name", "nt"):
+            env = docker_secret_env("PAWFLOW_RELAY_TOKEN", "secret")
+        assert env["PAWFLOW_RELAY_TOKEN"] == "secret"
+        assert env["WSLENV"] == "USERPROFILE/p:PAWFLOW_RELAY_TOKEN"
+
+    def test_does_not_modify_process_environment(self, monkeypatch):
+        monkeypatch.delenv("PAWFLOW_RELAY_TOKEN", raising=False)
+        docker_secret_env("PAWFLOW_RELAY_TOKEN", "secret")
+        import os
+        assert "PAWFLOW_RELAY_TOKEN" not in os.environ
 
 
 class TestTranslatePathPosix:

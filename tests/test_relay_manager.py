@@ -453,13 +453,31 @@ def test_relay_docker_loop_reregisters_service_without_killing_container():
     assert "_full_reconnect_requested.set()" in health_block
 
 
-def test_relay_docker_launcher_passes_token_as_equals_arg():
+def test_relay_docker_launcher_keeps_token_out_of_argv():
     source = inspect.getsource(RelayThread._run_docker_relay)
 
-    assert 'f"--token={self.ws_token}"' in source
-    assert '"--token", self.ws_token' not in source
+    assert '"-e", "PAWFLOW_RELAY_TOKEN",' in source
+    assert "--token" not in source
+    assert "{self.ws_token}" not in source
     assert 'PAWFLOW_GATEWAY_KEY={self.gateway_key or \'\'}' in source
     assert '"python3", "-u", "/opt/pawflow/pawflow_relay_launcher.py"' in source
+
+
+def test_relay_docker_spawn_passes_token_in_environment(monkeypatch):
+    launched = {}
+
+    def popen(command, **kwargs):
+        launched["command"] = command
+        launched["env"] = kwargs["env"]
+        return object()
+
+    monkeypatch.setattr("pawflow_relay._thread_docker.subprocess.Popen", popen)
+    relay = RelayThread.__new__(RelayThread)
+    relay.ws_token = "relay-secret"
+    relay._spawn_docker_process(["docker", "run", "-e", "PAWFLOW_RELAY_TOKEN", "img"])
+
+    assert launched["env"]["PAWFLOW_RELAY_TOKEN"] == "relay-secret"
+    assert "relay-secret" not in " ".join(launched["command"])
 
 
 def test_relay_docker_launchers_mount_graphify_for_the_project_graph():

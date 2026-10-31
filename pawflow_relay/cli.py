@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 
 from pawflow_relay.utils import (
-    docker_cmd, get_host_ip, translate_path, to_host_path,
+    docker_cmd, docker_secret_env, get_host_ip, translate_path, to_host_path,
 )
 from pawflow_relay.register import (
     acquire_gateway_cookie,
@@ -109,7 +109,9 @@ def worker_main():
 
     # Env var fallback — used when running as a server-spawned container
     _env_server = os.environ.get("PAWFLOW_RELAY_SERVER", "")
-    _env_token = os.environ.get("PAWFLOW_RELAY_TOKEN", "")
+    # Popped, not read: the commands the relay runs inherit its environment,
+    # and `env` in one of them must not print the relay token.
+    _env_token = os.environ.pop("PAWFLOW_RELAY_TOKEN", "")
     _env_relay_id = os.environ.get("PAWFLOW_RELAY_ID", "")
     _env_dir = os.environ.get("PAWFLOW_RELAY_DIR", "")
     _env_allow_exec = os.environ.get("PAWFLOW_RELAY_ALLOW_EXEC", "").lower() in ("1", "true", "yes")
@@ -325,6 +327,9 @@ def worker_main():
         docker_run_args += [
             "--init",
             "-e", "TINI_SUBREAPER=1",
+            # Name only: the value comes from the Popen environment below,
+            # so the token never shows in `ps` on the host or in the container.
+            "-e", "PAWFLOW_RELAY_TOKEN",
             "--add-host", "host.docker.internal:host-gateway",
             "--cpus", args.docker_cpus,
             "--memory", args.docker_memory,
@@ -332,7 +337,6 @@ def worker_main():
             args.docker_image,
             "python3", "/opt/pawflow/pawflow_relay_launcher.py",
             "--server", ws_url.replace("localhost", get_host_ip()).replace("127.0.0.1", get_host_ip()),
-            "--token", token,
             "--relay-id", args.relay_id,
             "--dir", "/workspace",
         ]
@@ -348,7 +352,9 @@ def worker_main():
 
         sys.stderr.write("[FSRelay] Container relay connecting to server...\n")
         try:
-            proc = subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)  # nosec B603
+            proc = subprocess.Popen(  # nosec B603
+                cmd, stdout=sys.stdout, stderr=sys.stderr,
+                env=docker_secret_env("PAWFLOW_RELAY_TOKEN", token))
 
             def _cleanup_docker():
                 try:

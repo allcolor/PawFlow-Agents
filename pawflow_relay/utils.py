@@ -18,6 +18,24 @@ def docker_cmd():
     return ["docker"]
 
 
+def docker_secret_env(name, value):
+    """Return an environment for a docker CLI run that passes ``-e NAME``.
+
+    ``-e NAME`` without ``=value`` makes docker copy the value from its own
+    environment, so the secret appears in no command line: neither the
+    docker CLI's on the host nor the relay's inside the container. On
+    Windows the CLI runs as ``wsl docker``, which sees a Windows variable
+    only when WSLENV lists it.
+    """
+    env = os.environ.copy()
+    env[name] = value
+    if os.name == "nt":
+        entries = [entry for entry in env.get("WSLENV", "").split(":")
+                   if entry and entry.split("/", 1)[0] != name]
+        env["WSLENV"] = ":".join([*entries, name])
+    return env
+
+
 def translate_path(p):
     """Translate a Windows path to WSL/Docker mount path.
 

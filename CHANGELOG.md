@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- The relay token no longer appears on any command line. Docker relays,
+  physical relays, and `pawflow-relay` container mode passed it as
+  `--token=...`, so `ps` inside the relay container printed it, and any
+  agent command could read it (2026-10-31). The launchers now pass
+  `-e PAWFLOW_RELAY_TOKEN` by name, with the value in the docker CLI's
+  environment (forwarded through `WSLENV` for `wsl docker`), and physical
+  relays put it in each export's environment. The relay removes the
+  variable from its environment at startup, so the commands it runs do not
+  inherit it.
+
 ## [1.0.0-beta.319] — 2026-10-31
 
 ### Fixed

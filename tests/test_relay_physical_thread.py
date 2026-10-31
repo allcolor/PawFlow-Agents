@@ -104,7 +104,10 @@ def test_group_command_has_one_container_and_private_mounts(tmp_path, monkeypatc
         assert export["environment"]["PAWFLOW_SESSION_TOKEN"] == "session-test"
     assert "--allow-exec" in first["command"]
     assert "--allow-exec" not in second["command"]
-    assert "--token=token-two" in second["command"]
+    for export, token in zip(config["exports"], ("token-one", "token-two")):
+        assert export["environment"]["PAWFLOW_RELAY_TOKEN"] == token
+        assert not any(token in part for part in export["command"])
+    assert "token-one" not in " ".join(command)
     assert first["environment"]["PAWFLOW_HOST_HELPER_TOKEN"] == "helper-one"
     assert second["environment"]["PAWFLOW_HOST_HELPER_TOKEN"] == "helper-two"
 

@@ -381,7 +381,7 @@ def _desktop_cleanup_locked(state, reason=""):
     stop_voxl(getattr(state, "desktop_voxl_proc", None))
     state.desktop_voxl_proc = None
     state.desktop_voxl_port = None
-    state.desktop_voxl_password = ""
+    state.desktop_voxl_password = ""  # nosec B105 - cleared on stop, not a secret
     state.desktop_procs = None
     state.desktop_essential_procs = None
     state.desktop_vnc_port = None
@@ -879,7 +879,7 @@ def _stop_local_desktop_locked(state, msg=None):
         state.local_desktop_novnc_port = None
         state.local_desktop_voxl_proc = None
         state.local_desktop_voxl_port = None
-        state.local_desktop_voxl_password = ""
+        state.local_desktop_voxl_password = ""  # nosec B105 - cleared on stop, not a secret
         state.local_desktop_session_id = None
         state.local_desktop_started_at = None
         sys.stderr.write("[FSRelay] Local desktop stopped\n")

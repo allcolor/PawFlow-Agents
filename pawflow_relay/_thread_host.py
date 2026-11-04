@@ -514,7 +514,7 @@ class _RelayHostHelperMixin:
                     p.kill()
             self._local_desktop_procs = None
             self._local_desktop_voxl_port = 0
-            self._local_desktop_voxl_password = ""
+            self._local_desktop_voxl_password = ""  # nosec B105 - cleared on stop, not a secret
             self._local_desktop_session_id = None
             self._local_desktop_started_at = None
             self._log("[Relay] Local desktop stopped")

@@ -6,6 +6,10 @@
 FROM ubuntu:24.04 AS voxl-build
 ARG VOXL_VERSION=0.3.3
 ENV DEBIAN_FRONTEND=noninteractive
+# CVE-2026-109518: never let APT retry a download, and upgrade APT first.
+RUN echo 'Acquire::Retries "0";' > /etc/apt/apt.conf.d/00pawflow-no-retries \
+    && apt-get update && apt-get install -y --no-install-recommends --only-upgrade apt \
+    && rm -rf /var/lib/apt/lists/*
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl build-essential pkg-config clang libclang-dev \
     libx264-dev libyuv-dev libopus-dev libpulse-dev libxcb1-dev nodejs npm \
@@ -26,6 +30,13 @@ ENV LC_ALL=C.UTF-8
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # Force clean PATH — Docker Desktop WSL2 injects host PATH otherwise
 ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# CVE-2026-109518: an unpatched APT can install an unsigned .deb when it
+# retries a failed HTTP download. Never retry, and upgrade APT first. The
+# setting stays in the image: relays and agents run apt themselves.
+RUN echo 'Acquire::Retries "0";' > /etc/apt/apt.conf.d/00pawflow-no-retries \
+    && apt-get update && apt-get install -y --no-install-recommends --only-upgrade apt \
+    && rm -rf /var/lib/apt/lists/*
 
 # ── System user ───────────────────────────────────────────────────────
 # ubuntu:24.04 ships with a default user 'ubuntu' at UID 1000. We rename it to

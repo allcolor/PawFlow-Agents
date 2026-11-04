@@ -217,6 +217,12 @@ rebuilding the CLI LLM image (and, from source, the server and relay images):
   label that every local PawFlow build (including `docker compose` builds)
   carries, so images from other projects are never touched.
 
+Every PawFlow image build stage that uses APT first sets `Acquire::Retries`
+to 0 (`/etc/apt/apt.conf.d/00pawflow-no-retries`) and upgrades APT before
+installing anything else (CVE-2026-109518: an unpatched APT that retries a
+failed HTTP download can install an unsigned package). The setting stays in
+the images, so `apt` run later by agents inside a relay never retries either.
+
 
 ```bash
 bash scripts/install-pawflow.sh --check-updates

@@ -1,5 +1,10 @@
 FROM node:22-slim
 
+# CVE-2026-109518: never let APT retry a download, and upgrade APT first.
+RUN echo 'Acquire::Retries "0";' > /etc/apt/apt.conf.d/00pawflow-no-retries \
+    && apt-get update && apt-get install -y --no-install-recommends --only-upgrade apt \
+    && rm -rf /var/lib/apt/lists/*
+
 # System deps for Claude Code/Codex/Gemini + Python for MCP bridge + display for auth login.
 # ripgrep + GNU time are baseline tools every PawFlow image ships (agent CLIs
 # and the MCP bridge shell out to `rg`; benchmarks use `/usr/bin/time`).

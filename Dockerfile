@@ -18,6 +18,11 @@ ARG SQLITE_VERSION
 ARG SQLITE_AUTOCONF_VERSION
 ARG SQLITE_SOURCE_SHA3
 COPY scripts/check-sqlite-runtime.py /usr/local/bin/check-sqlite-runtime.py
+# CVE-2026-109518: an unpatched APT can install an unsigned .deb when it
+# retries a failed HTTP download. Never retry, and upgrade APT first.
+RUN echo 'Acquire::Retries "0";' > /etc/apt/apt.conf.d/00pawflow-no-retries \
+    && apt-get update && apt-get install -y --no-install-recommends --only-upgrade apt \
+    && rm -rf /var/lib/apt/lists/*
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
@@ -49,6 +54,12 @@ COPY --from=search-cli-builder /src/search-cli/target/release/search /usr/local/
 COPY --from=search-cli-builder /src/search-cli/LICENSE /usr/share/licenses/search-cli/LICENSE
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# CVE-2026-109518: never let APT retry a download, and upgrade APT first. The
+# setting stays in the image: agents run apt inside the server container too.
+RUN echo 'Acquire::Retries "0";' > /etc/apt/apt.conf.d/00pawflow-no-retries \
+    && apt-get update && apt-get install -y --no-install-recommends --only-upgrade apt \
+    && rm -rf /var/lib/apt/lists/*
 
 # System deps. openssl is required for bootstrap TLS. Playwright/Scrapling
 # need browser dependencies and Chromium inside the server image.

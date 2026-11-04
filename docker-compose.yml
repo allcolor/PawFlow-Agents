@@ -1,6 +1,10 @@
 services:
   pawflow:
-    build: .
+    build:
+      context: .
+      # Lets the post-update cleanup drop the image this rebuild supersedes.
+      labels:
+        org.pawflow.build: "1"
     ports:
       - "${PAWFLOW_PORT}:${PAWFLOW_PORT}"
     command: ["python", "cli.py", "start", "--host", "0.0.0.0", "--port", "${PAWFLOW_PORT}"]
@@ -77,7 +81,10 @@ services:
 
   # Optional: relay container for sandboxed tool execution
   relay:
-    build: docker/relay-dev
+    build:
+      context: docker/relay-dev
+      labels:
+        org.pawflow.build: "1"
     volumes:
       - relay-workspace:/workspace
       # Mount point for the server-fs FUSE proxy. Bind-propagation must
@@ -127,6 +134,8 @@ services:
     build:
       context: .
       dockerfile: docker/livekit-worker/Dockerfile
+      labels:
+        org.pawflow.build: "1"
     network_mode: host
     environment:
       - LIVEKIT_URL=${LIVEKIT_URL:-ws://localhost:7880}

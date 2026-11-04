@@ -18,6 +18,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import core.update_manager as um
@@ -250,6 +251,100 @@ class BothUpdatePathsClean(unittest.TestCase):
             proc = subprocess.run(["sh", "-n"], input=script,
                                   capture_output=True, text=True, timeout=60)
             self.assertEqual(proc.returncode, 0, proc.stderr)
+
+
+class BuildLeftoversAreReclaimed(unittest.TestCase):
+    """Each CLI/relay/server rebuild leaves a superseded untagged image and
+    gigabytes of build cache; 41 GB of cache filled a VPS before this ran."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.calls = self.tmp / "calls.log"
+        self._shim("exit 0")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _shim(self, body):
+        shim = self.tmp / "docker"
+        shim.write_text(f'#!/bin/sh\necho "$*" >> "{self.calls}"\n{body}\n',
+                        encoding="utf-8")
+        shim.chmod(0o755)
+
+    def _run(self, limit):
+        env = dict(os.environ)
+        env["PATH"] = f"{self.tmp}{os.pathsep}{env.get('PATH', '')}"
+        script = "set -eu\n" + "\n".join(um.build_cleanup_shell(limit))
+        proc = subprocess.run(["sh", "-c", script], env=env,
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return self.calls.read_text(encoding="utf-8").splitlines()
+
+    def test_only_pawflow_labelled_images_are_pruned_and_cache_is_capped(self):
+        calls = self._run("10GB")
+        self.assertEqual(calls, [
+            f"image prune -f --filter label={um.BUILD_LABEL}",
+            "builder prune -f --max-used-space 10GB",
+        ])
+
+    def test_an_older_daemon_falls_back_to_keep_storage(self):
+        self._shim('case "$*" in *max-used-space*) exit 1 ;; esac\nexit 0')
+        calls = self._run("10GB")
+        self.assertEqual(calls[-1], "builder prune -f --keep-storage 10GB")
+
+    def test_a_failing_cleanup_never_fails_the_build(self):
+        self._shim("exit 1")
+        self._run("10GB")
+
+    def test_cache_trim_can_be_disabled(self):
+        for value in ("0", "off", ""):
+            with unittest.mock.patch.dict(os.environ,
+                                          {"PAWFLOW_BUILD_CACHE_MAX": value}):
+                self.assertEqual(um.build_cache_limit(), "")
+        self.calls.unlink(missing_ok=True)
+        self.assertEqual(self._run(""), [
+            f"image prune -f --filter label={um.BUILD_LABEL}"])
+
+    def test_cache_limit_defaults_and_overrides(self):
+        env = {k: v for k, v in os.environ.items()
+               if k != "PAWFLOW_BUILD_CACHE_MAX"}
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(um.build_cache_limit(), um.DEFAULT_BUILD_CACHE_MAX)
+        with unittest.mock.patch.dict(os.environ,
+                                      {"PAWFLOW_BUILD_CACHE_MAX": "25GB"}):
+            self.assertEqual(um.build_cache_limit(), "25GB")
+
+    def test_the_ui_update_script_reclaims_build_leftovers_last(self):
+        script = um._updater_script("/srv/pawflow", pull_source=True,
+                                    keep_images=["ghcr.io/allcolor/pawflow:1"])
+        self.assertIn("builder prune", script)
+        self.assertGreater(script.index("builder prune"),
+                           script.index("docker compose up -d --build"))
+
+    def test_local_builds_carry_the_label_the_prune_filters_on(self):
+        import yaml
+        compose = yaml.safe_load(Path("docker-compose.yml").read_text(
+            encoding="utf-8"))
+        for name, service in compose["services"].items():
+            if "build" in service:
+                self.assertEqual(
+                    service["build"].get("labels", {}).get("org.pawflow.build"),
+                    "1", name)
+        source = Path(um.__file__).read_text(encoding="utf-8")
+        self.assertEqual(source.count('["--label", BUILD_LABEL, "-t", image'), 2)
+
+    def test_both_installers_trim_the_cache_after_every_cleanup(self):
+        sh = Path("scripts/install-pawflow.sh").read_text(encoding="utf-8")
+        ps1 = Path("scripts/install-pawflow.ps1").read_text(encoding="utf-8")
+        self.assertEqual(sh.count("  cleanup_retagged_pawflow_images\n"),
+                         sh.count("  cleanup_retagged_pawflow_images\n  trim_build_cache\n"))
+        self.assertEqual(ps1.count("Cleanup-RetaggedPawFlowImages\n"),
+                         ps1.count("Cleanup-RetaggedPawFlowImages\n    Trim-BuildCache\n")
+                         + ps1.count("Cleanup-RetaggedPawFlowImages\nTrim-BuildCache\n"))
+        for src in (sh, ps1):
+            self.assertIn("PAWFLOW_BUILD_CACHE_MAX", src)
+            self.assertIn("--max-used-space", src)
+            self.assertIn("--keep-storage", src)
 
 
 if __name__ == "__main__":

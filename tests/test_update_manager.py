@@ -256,7 +256,9 @@ def _capture_build(monkeypatch, returncode=0, lines=None):
     out = list(lines if lines is not None else ["#1 building\n", "done\n"])
 
     def fake_popen(cmd, **kwargs):
-        captured["cmd"] = cmd
+        # First command is the build; a successful one is followed by cleanup.
+        captured.setdefault("cmd", cmd)
+        captured.setdefault("all", []).append(cmd)
         return _FakeProc(out, returncode)
 
     monkeypatch.setattr(update_manager.subprocess, "Popen", fake_popen)
@@ -274,6 +276,17 @@ def test_rebuild_pins_resolved_versions_and_omits_no_cache_by_default(monkeypatc
     for cli in update_manager.CLI_PACKAGES:
         assert "{}=9.9.9".format(cli["build_arg"]) in captured["cmd"]
     assert captured["cmd"][-1] == str(update_manager.CLI_BUILD_CONTEXT)
+    assert captured["cmd"][captured["cmd"].index("--label") + 1] == update_manager.BUILD_LABEL
+    cleanup = captured["all"][-1]
+    assert cleanup[:2] == ["sh", "-c"] and "builder prune" in cleanup[2]
+
+
+def test_a_failed_build_runs_no_cleanup(monkeypatch):
+    captured = _capture_build(monkeypatch, returncode=1)
+
+    update_manager.rebuild_cli_image(force=False)
+
+    assert len(captured["all"]) == 1
 
 
 def test_forced_rebuild_passes_no_cache(monkeypatch):
@@ -301,7 +314,7 @@ def test_unresolvable_npm_version_falls_back_to_latest(monkeypatch):
     captured = {}
 
     def fake_popen(cmd, **kwargs):
-        captured["cmd"] = cmd
+        captured.setdefault("cmd", cmd)
         return _FakeProc([])
 
     monkeypatch.setattr(update_manager.subprocess, "Popen", fake_popen)
@@ -397,8 +410,8 @@ def test_relay_dev_build_uses_the_repo_root_context_and_its_dockerfile(monkeypat
     result = update_manager.rebuild_relay_image("relay-dev")
 
     assert result["ok"] is True
-    assert len(cmds) == 1  # no generator step for this one
-    cmd = cmds[0]
+    cmd, cleanup = cmds  # no generator step for this one
+    assert "builder prune" in cleanup[-1]
     # Same context/dockerfile split as .github/workflows/docker-publish.yml.
     assert "--no-cache" not in cmd
     assert cmd[cmd.index("-f") + 1] == str(tmp_path / "docker" / "relay-dev" / "Dockerfile")
@@ -412,7 +425,8 @@ def test_relay_minimal_build_generates_its_context_first(monkeypatch, tmp_path):
     result = update_manager.rebuild_relay_image("relay-minimal", force=True)
 
     assert result["ok"] is True
-    generate, build = cmds
+    generate, build, cleanup = cmds
+    assert "builder prune" in cleanup[-1]
     assert str(tmp_path / "scripts" / "generate-relay-image.py") in generate
     assert generate[generate.index("--profile") + 1] == "server-minimal"
     assert generate[generate.index("--image") + 1] == "img:relay-minimal"

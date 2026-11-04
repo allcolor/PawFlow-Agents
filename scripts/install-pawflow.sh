@@ -418,6 +418,25 @@ cleanup_retagged_pawflow_images() {
   # reach images that belong to somebody else's project on the same daemon.
 }
 
+# Every install builds the CLI LLM image (and source installs the server and
+# relay images) and leaves gigabytes of build cache behind; without a ceiling
+# it grows on each update until the disk is full. Trim it oldest-first down to
+# PAWFLOW_BUILD_CACHE_MAX (default 10GB, "0"/"off" disables), never wipe it:
+# the daemon may be shared. Same rule as the update launched from the UI.
+trim_build_cache() {
+  if [[ "$CLEAN_OLD_IMAGES" != "1" && "$CLEAN_OLD_IMAGES" != "true" && "$CLEAN_OLD_IMAGES" != "yes" ]]; then
+    return 0
+  fi
+  local limit
+  limit="$(printenv PAWFLOW_BUILD_CACHE_MAX || true)"
+  if [[ -z "$limit" ]]; then limit="10GB"; fi
+  case "$limit" in 0|off|false|no) return 0 ;; esac
+  echo "Trimming the Docker build cache to $limit."
+  docker builder prune -f --max-used-space "$limit" >/dev/null 2>&1 \
+    || docker builder prune -f --keep-storage "$limit" >/dev/null 2>&1 \
+    || echo "Warning: could not trim the Docker build cache." >&2
+}
+
 if [[ "$SELF_UPDATE" == "1" ]]; then
   self_update_installer
   exit 0
@@ -1069,6 +1088,7 @@ fi
 if [[ "$START_SERVER" != "1" ]]; then
   cleanup_old_pawflow_images
   cleanup_retagged_pawflow_images
+  trim_build_cache
   echo "Image build complete. Server start skipped because --no-start was set."
   exit 0
 fi
@@ -1076,12 +1096,14 @@ fi
 if [[ "$START_TARGET" == "native" ]]; then
   cleanup_old_pawflow_images
   cleanup_retagged_pawflow_images
+  trim_build_cache
   run_native_server
 elif [[ "$START_TARGET" == "container" ]]; then
   PAWFLOW_IMAGE="$IMAGE" PAWFLOW_CONTAINER="$CONTAINER" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_NETWORK_MODE="$NETWORK_MODE" PAWFLOW_HOME="$PAWFLOW_HOME" PAWFLOW_SERVER_RELAY_IMAGE="$RELAY_DEV_IMAGE" PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE" bash "$REPO_DIR/scripts/run-pawflow-docker.sh"
   STOPPED_SERVER=""
   cleanup_old_pawflow_images
   cleanup_retagged_pawflow_images
+  trim_build_cache
 else
   echo "Invalid PAWFLOW_START_TARGET: $START_TARGET (expected container or native)" >&2
   exit 2

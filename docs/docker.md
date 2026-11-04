@@ -204,7 +204,19 @@ For updates, first check GitHub releases, optionally refresh the installer
 scripts, then run the requested version. The update recreates the server
 container on the new image while preserving `PAWFLOW_HOME` data and removes older
 PawFlow server/relay image tags unless `--keep-old-images` or `-KeepOldImages`
-is set:
+is set. It also trims the Docker build cache, which every update grows by
+rebuilding the CLI LLM image (and, from source, the server and relay images):
+
+- The cache is trimmed oldest-first down to `PAWFLOW_BUILD_CACHE_MAX`
+  (default `10GB`, Docker size syntax). It is never wiped, because the Docker
+  daemon may be shared with other projects. `PAWFLOW_BUILD_CACHE_MAX=off` (or
+  `--keep-old-images`) disables the trim.
+- The update launched from the UI does the same after a successful CLI or
+  relay rebuild and at the end of a server update. It also drops the untagged
+  images a rebuild superseded. Those are selected by the `org.pawflow.build=1`
+  label that every local PawFlow build (including `docker compose` builds)
+  carries, so images from other projects are never touched.
+
 
 ```bash
 bash scripts/install-pawflow.sh --check-updates

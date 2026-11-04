@@ -154,6 +154,56 @@ PRUNABLE_REPOSITORIES = (
     "ghcr.io/allcolor/pawflow-relay-minimal",
 )
 
+#: Label on every image PawFlow builds locally (CLI tools image, relay
+#: images). A rebuild leaves the previous image untagged; only untagged
+#: images carrying this label are pruned, never someone else's.
+BUILD_LABEL = "org.pawflow.build=1"
+
+#: Default ceiling for Docker's build cache after a PawFlow build or update.
+#: Each CLI/relay rebuild adds gigabytes of cache; without a ceiling it grows
+#: until the disk is full (41 GB observed on a VPS). The cache is trimmed
+#: oldest-first down to the ceiling, never wiped: the daemon is shared, so
+#: other builds keep their recent cache. PAWFLOW_BUILD_CACHE_MAX overrides it
+#: (Docker size syntax, e.g. "20GB"); "0" or "off" disables the trim.
+DEFAULT_BUILD_CACHE_MAX = "10GB"
+
+
+def build_cache_limit() -> str:
+    value = os.environ.get("PAWFLOW_BUILD_CACHE_MAX", DEFAULT_BUILD_CACHE_MAX)
+    value = str(value or "").strip()
+    return "" if value.lower() in ("", "0", "off", "false", "no") else value
+
+
+def build_cleanup_shell(limit: str = "", docker: str = "docker") -> List[str]:
+    """Shell lines dropping PawFlow's untagged builds and trimming the cache.
+
+    Every step tolerates failure: cleanup costs disk space when it fails and
+    must never fail a build or an update. ``--max-used-space`` is Docker 28+;
+    older daemons take ``--keep-storage`` with the same meaning.
+    """
+    lines = [
+        "echo 'Removing untagged images left by earlier PawFlow builds.'",
+        f"{docker} image prune -f --filter label={BUILD_LABEL} >/dev/null 2>&1 || true",
+    ]
+    if limit:
+        q = shlex.quote(limit)
+        lines += [
+            f"echo 'Trimming the Docker build cache to {limit}.'",
+            f"{docker} builder prune -f --max-used-space {q} >/dev/null 2>&1"
+            f" || {docker} builder prune -f --keep-storage {q} >/dev/null 2>&1 || true",
+        ]
+    return lines
+
+
+def prune_build_artifacts(on_output: Optional[Callable[[str], None]] = None) -> None:
+    """Run ``build_cleanup_shell`` after a successful local build."""
+    script = "\n".join(build_cleanup_shell(
+        build_cache_limit(), docker=shlex.join(docker_cmd())))
+    try:
+        _stream_command(["sh", "-c", script], on_output)
+    except Exception:
+        logger.warning("Post-build Docker cleanup failed", exc_info=True)
+
 #: Name of the throwaway container that restarts the stack. Kept (not --rm) so
 #: `docker logs pawflow-updater` still explains a failed update afterwards.
 UPDATER_CONTAINER = "pawflow-updater"
@@ -494,12 +544,14 @@ def _rebuild_cli_image(force: bool,
     except ValueError as exc:
         return {"ok": False, "image": image, "forced": bool(force), "exit_code": -1,
                 "output": str(exc)}
-    args.extend(["-t", image, str(CLI_BUILD_CONTEXT)])
+    args.extend(["--label", BUILD_LABEL, "-t", image, str(CLI_BUILD_CONTEXT)])
 
     exit_code, lines = _stream_command(docker_cmd() + args, on_output)
     if exit_code is None:
         return {"ok": False, "image": image, "forced": bool(force), "exit_code": -1,
                 "output": "\n".join(lines)}
+    if exit_code == 0:
+        prune_build_artifacts(on_output)
 
     return {
         "ok": exit_code == 0,
@@ -628,12 +680,14 @@ def _rebuild_relay_image(target: Dict[str, Any], force: bool,
         if not path.is_file():
             return _failed(f"Dockerfile not found: {path}")
         args.extend(["-f", str(path)])
-    args.extend(["-t", image, str(context)])
+    args.extend(["--label", BUILD_LABEL, "-t", image, str(context)])
 
     exit_code, build_lines = _stream_command(docker_cmd() + args, on_output)
     lines.extend(build_lines)
     if exit_code is None:
         return _failed("\n".join(lines[-40:]))
+    if exit_code == 0:
+        prune_build_artifacts(on_output)
     return {
         "ok": exit_code == 0,
         "key": key,
@@ -934,6 +988,7 @@ def _updater_script(working_dir: str, pull_source: bool,
         "docker compose up -d --build",
     ])
     lines.extend(_image_cleanup_lines(keep_images or []))
+    lines.extend(build_cleanup_shell(build_cache_limit()))
     return "\n".join(lines)
 
 

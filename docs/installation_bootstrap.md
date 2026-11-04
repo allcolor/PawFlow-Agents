@@ -120,7 +120,9 @@ zip, and a versioned `--pull-images` run recreates the existing server container
 on the requested GHCR tag while preserving persistent data. Relay image tags are
 resolved from the requested server image's catalog. Older PawFlow server/relay
 image tags are removed after a successful update unless
-`--keep-old-images` is set.
+`--keep-old-images` is set, and the Docker build cache is trimmed down to
+`PAWFLOW_BUILD_CACHE_MAX` (default `10GB`, `off` disables it; see
+`docs/docker.md`).
 
 ```bash
 bash scripts/install-pawflow.sh --check-updates

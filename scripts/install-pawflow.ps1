@@ -283,6 +283,19 @@ function Cleanup-RetaggedPawFlowImages {
     # PawFlow images this install untagged. A dangling sweep can therefore only
     # reach images that belong to somebody else's project on the same daemon.
 }
+# Every install builds the CLI LLM image and leaves gigabytes of build cache
+# behind; without a ceiling it grows on each update until the disk is full.
+# Trim it oldest-first down to PAWFLOW_BUILD_CACHE_MAX (default 10GB,
+# "0"/"off" disables), never wipe it: the daemon may be shared.
+function Trim-BuildCache {
+    if ($KeepOldImages) { return }
+    $limit = if ($env:PAWFLOW_BUILD_CACHE_MAX) { $env:PAWFLOW_BUILD_CACHE_MAX } else { "10GB" }
+    if (@("0", "off", "false", "no") -contains $limit.ToLower()) { return }
+    Info "Trimming the Docker build cache to $limit."
+    & docker builder prune -f --max-used-space $limit *> $null
+    if ($LASTEXITCODE -ne 0) { & docker builder prune -f --keep-storage $limit *> $null }
+    if ($LASTEXITCODE -ne 0) { Warn "Could not trim the Docker build cache." }
+}
 
 
 if ($SelfUpdate) { Self-UpdateInstaller; exit 0 }
@@ -334,6 +347,7 @@ Build-CliImage $repoDir
 if ($NoStart) {
     Cleanup-OldImages
     Cleanup-RetaggedPawFlowImages
+    Trim-BuildCache
     Ok "Image preparation complete. Server start skipped because -NoStart was set."
     exit 0
 }
@@ -341,3 +355,4 @@ if ($NoStart) {
 Run-ServerContainer $repoDir
 Cleanup-OldImages
 Cleanup-RetaggedPawFlowImages
+Trim-BuildCache

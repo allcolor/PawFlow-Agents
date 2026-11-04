@@ -1679,6 +1679,10 @@ def test_no_installer_path_prunes_images_globally():
     installer knows nothing about. Each of these three paths already removes,
     by id, the images it untagged itself -- the sweep only ever reached
     somebody else's.
+
+    The one exception is a *capped* build-cache trim: the cache cannot be
+    scoped to a project, and uncapped it filled a server disk (41 GB). It
+    trims oldest-first down to PAWFLOW_BUILD_CACHE_MAX and never wipes.
     """
     for path in ("scripts/install-pawflow.sh",
                  "scripts/install-pawflow.ps1",
@@ -1688,5 +1692,9 @@ def test_no_installer_path_prunes_images_globally():
         # commands on purpose, and the assertion is about the calls.
         code = src.replace("No global `docker image prune`", "")
         code = code.replace("No `docker builder prune`", "")
-        assert "prune" not in code, f"{path} prunes Docker globally again"
+        lines = [line for line in code.splitlines() if "prune" in line]
+        for line in lines:
+            assert "builder prune" in line, f"{path} prunes Docker globally again: {line}"
+            assert "--max-used-space" in line or "--keep-storage" in line, (
+                f"{path} wipes the shared build cache: {line}")
         assert "rmi" in src, f"{path} no longer cleans its own images at all"

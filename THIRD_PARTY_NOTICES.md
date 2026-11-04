@@ -47,8 +47,10 @@ The project source code is licensed separately under the repository license. Thi
   local builds use BuildKit.
 - `search` — [paperfoot/search-cli](https://github.com/paperfoot/search-cli)
   0.9.0, MIT. The PawFlow server image builds the Linux binary from pinned
-  commit `3ebd955e51035c53c7f8bf3c5b62be652ff441ff` with Cargo's locked
-  dependency graph and without the unsupported Linux stealth feature.
+  commit `a46957728f36c91dba1e5dc3746976c19d146651` (source tree
+  `952704acbbe8c4dd89a0914f2472d118d6b91d18`, verified at build time) with
+  Cargo's locked dependency graph and without the unsupported Linux stealth
+  feature.
 - `voxl` — [tembo/voxl](https://github.com/tembo/voxl) 0.3.3 (crate
   `voxl-server`), MIT. Remote-desktop streamer built from crates.io with
   Cargo's locked dependency graph and shipped as `/usr/local/bin/voxl` in

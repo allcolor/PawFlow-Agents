@@ -5,11 +5,15 @@ ARG SQLITE_SOURCE_SHA3=454e45f61c6bd75b7420e7190732dea03ce6639c63ada47bbc592f67f
 
 FROM rust:1.89-bookworm AS search-cli-builder
 
-ARG SEARCH_CLI_COMMIT=3ebd955e51035c53c7f8bf3c5b62be652ff441ff
+# search-cli 0.9.0. Upstream rewrote its history on 2026-11-04, so commits are
+# re-identified; the source tree hash pins the content itself.
+ARG SEARCH_CLI_COMMIT=a46957728f36c91dba1e5dc3746976c19d146651
+ARG SEARCH_CLI_TREE=952704acbbe8c4dd89a0914f2472d118d6b91d18
 RUN git clone https://github.com/paperfoot/search-cli.git /src/search-cli \
     && cd /src/search-cli \
     && git checkout --detach "$SEARCH_CLI_COMMIT" \
     && test "$(git rev-parse HEAD)" = "$SEARCH_CLI_COMMIT" \
+    && test "$(git rev-parse 'HEAD^{tree}')" = "$SEARCH_CLI_TREE" \
     && cargo build --release --locked --no-default-features
 
 FROM python:3.12-slim AS sqlite-builder

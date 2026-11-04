@@ -402,7 +402,10 @@ def test_agent_cli_image_installs_ripgrep_and_gnu_time():
         line for line in src.splitlines()
         if "ripgrep" in line and not line.lstrip().startswith("#"))
     assert " ripgrep time " in apt_line + " "
-    assert src.index("ripgrep time") < src.index("rm -rf /var/lib/apt/lists/*")
+    # Installed before that RUN cleans the lists (an earlier RUN, the APT
+    # self-upgrade, cleans its own lists first).
+    install = src.index("ripgrep time")
+    assert src.find("rm -rf /var/lib/apt/lists/*", install) > install
 
 
 def test_agent_cli_image_installs_bubblewrap_for_codex_sandbox():

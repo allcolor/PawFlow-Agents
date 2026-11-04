@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.320] — 2026-11-04
+
 ### Security
 
 - The relay token no longer appears on any command line. Docker relays,
@@ -17,6 +19,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   relays put it in each export's environment. The relay removes the
   variable from its environment at startup, so the commands it runs do not
   inherit it.
+- Every image build stage that uses APT (server, CLI LLM, relay-dev and its
+  voxl build stage, generated relay images) now sets `Acquire::Retries` to 0
+  and upgrades APT before installing anything else (CVE-2026-109518: an
+  unpatched APT that retries a failed HTTP download can install a package
+  that fails signature verification). The setting stays in the images, so
+  `apt` run later by agents never retries either.
+
+### Added
+
+- voxl is the default desktop viewer: it streams the screen as H.264 over
+  one WebSocket, decoded by the browser with WebCodecs, with clipboard,
+  desktop audio, file transfer and touch input. The relay starts it next to
+  the noVNC stack for the Docker desktop and for the local screen on Linux
+  X11, Windows and macOS, on a random port with a random password that only
+  the server knows; a missing or failing voxl keeps noVNC. The server serves
+  it under the existing `/vnc/<session>/<token>/voxl/` route and strips the
+  browser's cookies and `Origin`. The chat UI opens voxl when the browser can
+  decode it, noVNC otherwise, with a remembered switch next to fullscreen.
+- voxl 0.3.3 ships in the relay-dev image, the Relay CLI bundles and Relay
+  Desktop (built from crates.io in CI; its binaries link x264, see
+  `THIRD_PARTY_NOTICES.md`). Relay images move to `2026.11.04`, so they are
+  rebuilt with current system packages.
+
+### Changed
+
+- The relay link carries binary data as binary WebSocket frames instead of
+  JSON + base64: desktop, audio, code-server and HTTP proxy streams, and the
+  bytes inside messages (file reads and writes, chunked transfers, FUSE
+  reads and writes, HTTP request bodies, screenshots), which travel as
+  attachment frames right before their JSON message
+  (`docs/relay_binary_frames.md`).
+- Each browser viewer (desktop, audio, code-server) has its own sender thread
+  and a bounded backlog: a slow or paused tab no longer blocks the relay
+  connection for files, tool results and other viewers; a viewer too far
+  behind is dropped and reconnects.
+- Updates from the UI and `install-pawflow.sh` / `install-pawflow.ps1` now
+  reclaim build leftovers: untagged images superseded by a PawFlow rebuild
+  (selected by the `org.pawflow.build=1` label, never other projects'
+  images) are removed, and the Docker build cache is trimmed oldest-first
+  down to `PAWFLOW_BUILD_CACHE_MAX` (default 10GB, `off` disables it).
+  Without it, each update added gigabytes until the disk was full.
+
+### Fixed
+
+- Large host-helper responses are no longer copied quadratically.
 
 ## [1.0.0-beta.319] — 2026-10-31
 

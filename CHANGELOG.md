@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.321] — 2026-11-04
+
+### Fixed
+
+- The server image builds again. `paperfoot/search-cli` rewrote its history on
+  2026-11-04, so the pinned 0.9.0 commit was no longer reachable and the
+  `ghcr.io/allcolor/pawflow:1.0.0-beta.320` image was never published (the
+  beta.320 release assets and relay images were). search-cli 0.9.0 is now
+  pinned to its re-identified commit, whose source tree is identical, and the
+  build also checks that tree hash. Server installs should use beta.321.
+
 ## [1.0.0-beta.320] — 2026-11-04
 
 ### Security

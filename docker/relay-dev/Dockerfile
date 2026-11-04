@@ -1,3 +1,23 @@
+# ── voxl remote-desktop streamer (build stage) ─────────────────────
+# voxl-server is published on crates.io only (no prebuilt binaries). Build the
+# pinned release with its locked dependency graph; only the binary is copied
+# into the final image. The binary links x264, so it is distributed under the
+# GPL (see THIRD_PARTY_NOTICES.md).
+FROM ubuntu:24.04 AS voxl-build
+ARG VOXL_VERSION=0.3.3
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl build-essential pkg-config clang libclang-dev \
+    libx264-dev libyuv-dev libopus-dev libpulse-dev libxcb1-dev nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+# build.rs bundles the web client with esbuild, which must be on PATH.
+RUN npm install -g esbuild && esbuild --version
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --profile minimal
+RUN . "$HOME/.cargo/env" \
+    && cargo install voxl-server --version "${VOXL_VERSION}" --locked --root /opt/voxl \
+    && /opt/voxl/bin/voxl --version
+
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -210,10 +230,12 @@ ARG PAWFLOW_DOCKER_IMAGE="pawflow-relay-dev:latest"
 ENV PAWFLOW_DOCKER_IMAGE="${PAWFLOW_DOCKER_IMAGE}"
 
 # ── Desktop environment (VNC + audio) ───────────────────────────────────
+# noVNC stays installed as the fallback viewer; voxl runtime libraries follow.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb xfce4 xfce4-goodies dbus-x11 \
     x11vnc novnc websockify autocutsel \
     pulseaudio pulseaudio-utils \
+    libx264-164 libyuv0 libopus0 libpulse0 libxcb1 libx11-xcb1 \
     xdotool xclip xsel scrot wmctrl \
     fonts-dejavu fonts-liberation fonts-noto-color-emoji \
     libgtk-3-0 libnotify4 \
@@ -222,6 +244,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        mss pyautogui pytesseract opencv-python-headless \
     && apt-get purge -y xfce4-pulseaudio-plugin 2>/dev/null || true \
     && rm -rf /var/lib/apt/lists/*
+
+# ── voxl remote-desktop streamer ────────────────────────────────────────
+COPY --from=voxl-build /opt/voxl/bin/voxl /usr/local/bin/voxl
+RUN voxl --version
 
 # ── cua-driver (background computer use, PAWFLOW_SCREEN_MODE=cua) ───────
 RUN curl -fsSL https://cua.ai/driver/install.sh | bash \

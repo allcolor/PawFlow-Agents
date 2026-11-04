@@ -49,6 +49,16 @@ The project source code is licensed separately under the repository license. Thi
   0.9.0, MIT. The PawFlow server image builds the Linux binary from pinned
   commit `3ebd955e51035c53c7f8bf3c5b62be652ff441ff` with Cargo's locked
   dependency graph and without the unsupported Linux stealth feature.
+- `voxl` — [tembo/voxl](https://github.com/tembo/voxl) 0.3.3 (crate
+  `voxl-server`), MIT. Remote-desktop streamer built from crates.io with
+  Cargo's locked dependency graph and shipped as `/usr/local/bin/voxl` in
+  `ghcr.io/allcolor/pawflow-relay-dev` and as `bin/voxl` / `bin/voxl.exe` in
+  the Relay CLI and Relay Desktop packages for Linux x64 and Windows x64.
+  Distributed voxl binaries link x264 (GPL-2.0-or-later) and are therefore
+  distributed under the GPL (GPL-2.0-or-later). Corresponding source:
+  crates.io `voxl-server` 0.3.3
+  (https://crates.io/crates/voxl-server/0.3.3) and the GitHub tag
+  [`v0.3.3`](https://github.com/tembo/voxl/tree/v0.3.3).
 
 ## Physical Relay Seccomp Profile
 

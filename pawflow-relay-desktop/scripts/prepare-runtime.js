@@ -78,4 +78,20 @@ copyDir(path.join(repoRoot, 'pawflow_cli'), path.join(runtimeRoot, 'pawflow_cli'
 // Mounted at /opt/pawflow/graphify for the relay-side project graph build.
 copyDir(path.join(repoRoot, 'core', 'graphify'), path.join(runtimeRoot, 'core', 'graphify'));
 
+// voxl (remote-desktop streamer) is built separately with cargo and handed in
+// by path. Local builds may leave the variable unset; a set variable pointing
+// nowhere is an error so release builds never ship without it.
+const voxlBinary = (process.env.PAWFLOW_VOXL_BINARY || '').trim();
+if (voxlBinary) {
+  if (!fs.existsSync(voxlBinary) || !fs.statSync(voxlBinary).isFile()) {
+    throw new Error(`PAWFLOW_VOXL_BINARY does not exist: ${voxlBinary}`);
+  }
+  const voxlDest = path.join(runtimeRoot, 'bin', process.platform === 'win32' ? 'voxl.exe' : 'voxl');
+  copyFile(voxlBinary, voxlDest);
+  if (process.platform !== 'win32') fs.chmodSync(voxlDest, 0o755);
+  console.log(`Bundled voxl at ${voxlDest}`);
+} else {
+  console.log('PAWFLOW_VOXL_BINARY is not set; runtime prepared without voxl.');
+}
+
 console.log(`Prepared PawFlow Relay Desktop runtime at ${runtimeRoot}`);

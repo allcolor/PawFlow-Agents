@@ -54,6 +54,46 @@ def test_relay_cli_installer_bundles_frpc():
     assert "download_frpc(binary.parent)" in source
 
 
+def test_bundle_voxl_skips_when_unset(monkeypatch, tmp_path):
+    builder = _relay_builder()
+    monkeypatch.delenv("PAWFLOW_VOXL_BINARY", raising=False)
+    assert builder.bundle_voxl(tmp_path) is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_bundle_voxl_refuses_a_missing_binary(monkeypatch, tmp_path):
+    builder = _relay_builder()
+    monkeypatch.setenv("PAWFLOW_VOXL_BINARY", str(tmp_path / "nope"))
+    with pytest.raises(SystemExit):
+        builder.bundle_voxl(tmp_path)
+
+
+def test_bundle_voxl_copies_an_executable_next_to_frpc(monkeypatch, tmp_path):
+    builder = _relay_builder()
+    source = tmp_path / "build" / "voxl"
+    source.parent.mkdir()
+    source.write_bytes(b"\x7fELF")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    monkeypatch.setenv("PAWFLOW_VOXL_BINARY", str(source))
+    monkeypatch.setattr(builder.platform, "system", lambda: "Linux")
+    copied = builder.bundle_voxl(bin_dir)
+    assert copied == bin_dir / "voxl"
+    assert copied.read_bytes() == b"\x7fELF"
+    assert copied.stat().st_mode & 0o777 == 0o755
+
+
+def test_relay_packages_install_voxl_when_bundled():
+    source = (ROOT / "scripts" / "build-relay-cli-installer.py").read_text(
+        encoding="utf-8")
+    assert "bundle_voxl(binary.parent)" in source
+    assert 'cp "$(dirname "$0")/bin/voxl" "$target/voxl"' in source
+    assert '"bin\\voxl.exe"' in source
+    desktop = (ROOT / "pawflow-relay-desktop" / "scripts" / "prepare-runtime.js"
+               ).read_text(encoding="utf-8")
+    assert "PAWFLOW_VOXL_BINARY" in desktop
+
+
 def test_relay_cli_collects_pkg_resources_vendor(monkeypatch, tmp_path):
     builder = _relay_builder()
     builder.DIST_ROOT = tmp_path / "dist"

@@ -153,6 +153,27 @@ def download_frpc(bin_dir: Path) -> Path:
         return destination
 
 
+def bundle_voxl(bin_dir: Path) -> Path | None:
+    """Copy the prebuilt voxl streamer named by PAWFLOW_VOXL_BINARY into bin/.
+
+    voxl is built separately with cargo (see release-assets.yml). Local builds
+    may leave the variable unset; a set variable pointing nowhere is an error.
+    """
+    configured = os.environ.get("PAWFLOW_VOXL_BINARY", "").strip()
+    if not configured:
+        print("PAWFLOW_VOXL_BINARY is not set; packaging without voxl.", file=sys.stderr)
+        return None
+    source = Path(configured).expanduser()
+    if not source.is_file():
+        raise SystemExit(f"PAWFLOW_VOXL_BINARY does not exist: {source}")
+    windows = platform.system().lower() == "windows"
+    destination = bin_dir / ("voxl.exe" if windows else "voxl")
+    shutil.copy2(source, destination)
+    if not windows:
+        destination.chmod(0o755)
+    return destination
+
+
 def ensure_pyinstaller(python: str) -> None:
     check = _capture([python, "-m", "PyInstaller", "--version"])
     if check.returncode == 0:
@@ -224,6 +245,10 @@ cp "$(dirname "$0")/bin/pawflow-relay" "$target/pawflow-relay"
 cp "$(dirname "$0")/bin/frpc" "$target/frpc"
 chmod 755 "$target/pawflow-relay"
 chmod 755 "$target/frpc"
+if [ -f "$(dirname "$0")/bin/voxl" ]; then
+  cp "$(dirname "$0")/bin/voxl" "$target/voxl"
+  chmod 755 "$target/voxl"
+fi
 echo "Installed pawflow-relay to $target/pawflow-relay"
 """,
         encoding="utf-8",
@@ -235,6 +260,9 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\PawFlow Relay CLI"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item -Force -Path (Join-Path $PSScriptRoot "bin\pawflow-relay.exe") -Destination (Join-Path $InstallDir "pawflow-relay.exe")
 Copy-Item -Force -Path (Join-Path $PSScriptRoot "bin\frpc.exe") -Destination (Join-Path $InstallDir "frpc.exe")
+if (Test-Path (Join-Path $PSScriptRoot "bin\voxl.exe")) {
+    Copy-Item -Force -Path (Join-Path $PSScriptRoot "bin\voxl.exe") -Destination (Join-Path $InstallDir "voxl.exe")
+}
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (-not ($UserPath -split ';' | Where-Object { $_ -eq $InstallDir })) {
     [Environment]::SetEnvironmentVariable("Path", (($UserPath, $InstallDir) -ne '' -join ';'), "User")
@@ -293,6 +321,7 @@ def main() -> None:
         raise SystemExit(f"Missing existing relay CLI binary: {binary}")
 
     download_frpc(binary.parent)
+    bundle_voxl(binary.parent)
     artifacts = package(binary, version)
     print("PawFlow relay CLI artifacts:")
     for artifact in artifacts:

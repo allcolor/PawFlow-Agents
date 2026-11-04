@@ -116,7 +116,7 @@ def attach_fuse_clients(sock, send_lock, swaps):
             clients.append(None)
             continue
         client = ServerFsClient(
-            send_callable=lambda b: _ws_frame_send(sock, b),
+            send_callable=lambda b, opcode=0x01: _ws_frame_send(sock, b, opcode),
             send_lock=send_lock)
         swap.set_inner(client)
         clients.append(client)

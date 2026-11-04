@@ -6,7 +6,6 @@ the health/cleanup/watchdog helpers are unit-tested with fake processes.
 State is a SimpleNamespace carrying the desktop_* fields the functions
 touch.
 """
-import base64
 import threading
 import types
 
@@ -63,7 +62,7 @@ def test_novnc_asset_reads_relay_runtime(monkeypatch, tmp_path):
 
     html = dt.novnc_asset({"path": "vnc.html"})
     assert html["ok"] is True
-    assert base64.b64decode(html["data"]["body"]) == b"<html>relay UI</html>"
+    assert html["data"]["body"] == b"<html>relay UI</html>"  # raw bytes
     assert html["data"]["content_type"] == "text/html"
 
     js = dt.novnc_asset({"path": "app/ui.js"})
@@ -89,7 +88,7 @@ def test_novnc_metadata_and_optional_configuration(monkeypatch, tmp_path):
                            ("mandatory.json", b"{}")):
         result = dt.novnc_asset({"path": name})
         assert result["ok"]
-        assert base64.b64decode(result["data"]["body"]) == expected
+        assert result["data"]["body"] == expected  # raw bytes
         assert result["data"]["content_type"] == "application/json"
 
 

@@ -250,23 +250,20 @@ class ScreenHandler(BaseFsHandler):
 
     def _handle_result(self, action: str, data, *, route_key: str = "") -> str:
         """Process screen action result — store screenshots, format responses."""
-        # Screenshot: accept both raw base64 string and {image, width, height} dict
+        # Screenshot: {image: <png bytes>, width, height}; the relay sends the
+        # PNG as a binary attachment, never as base64.
         if action == "screenshot":
-            b64_data = None
+            img_bytes = None
             width = height = None
             if isinstance(data, dict) and "image" in data:
-                b64_data = data["image"]
+                img_bytes = data["image"]
                 width = data.get("width")
                 height = data.get("height")
-            elif isinstance(data, str):
-                b64_data = data
-            if b64_data:
+            if isinstance(img_bytes, (bytes, bytearray)) and img_bytes:
                 try:
-                    import base64
-                    img_bytes = base64.b64decode(b64_data)
                     conversation_id = getattr(self, '_conversation_id', '') or ''
                     url, revision = store_screen_capture(
-                        img_bytes,
+                        bytes(img_bytes),
                         user_id=self._user_id,
                         conversation_id=conversation_id,
                         route_key=route_key)
@@ -277,7 +274,7 @@ class ScreenHandler(BaseFsHandler):
                         f"Screen revision: {revision}\n"
                         "Pass this exact revision as expected_screen_revision for the next "
                         "click/double_click based on this image.\n"
-                        f"{len(img_bytes):,} bytes, {b64_data[:20]}..."
+                        f"{len(img_bytes):,} bytes"
                         f"{size_info}{coord_hint}"
                     )
                 except Exception as e:
@@ -317,13 +314,11 @@ class ScreenHandler(BaseFsHandler):
         if action == "window_state" and isinstance(data, dict) and data.get("cua"):
             import json as _json
             lines = ["Window state captured."]
-            b64_image = data.get("image")
-            if b64_image:
+            img_bytes = data.get("image")
+            if isinstance(img_bytes, (bytes, bytearray)) and img_bytes:
                 try:
-                    import base64
-                    img_bytes = base64.b64decode(b64_image)
                     url, _revision = store_screen_capture(
-                        img_bytes,
+                        bytes(img_bytes),
                         user_id=self._user_id,
                         conversation_id=self._conversation_id or "",
                         route_key=route_key)

@@ -14,6 +14,21 @@ import struct
 _SEND_PIECE_BYTES = 64 * 1024
 
 
+def xor_mask(data, mask) -> bytes:
+    """XOR ``data`` with a 4-byte WebSocket mask as one big integer.
+
+    The per-byte generator this replaces ran one Python step per byte of
+    every frame the relay sent or read, which capped the relay's upload rate
+    and burned CPU on every file read, result and desktop frame.
+    """
+    n = len(data)
+    if not n:
+        return b""
+    key = (bytes(mask) * (n // 4 + 1))[:n]
+    return (int.from_bytes(data, "big")
+            ^ int.from_bytes(key, "big")).to_bytes(n, "big")
+
+
 def ws_send(sock, data, opcode=0x01, on_progress=None):
     """Send a single masked WS frame. `data` must be bytes.
 
@@ -35,7 +50,7 @@ def ws_send(sock, data, opcode=0x01, on_progress=None):
     if isinstance(data, str):
         data = data.encode("utf-8")
     mask = os.urandom(4)
-    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+    masked = xor_mask(data, mask)
     frame = bytes([0x80 | opcode])
     length = len(data)
     if length < 126:
@@ -67,13 +82,13 @@ def ws_recv(sock):
     frames. Raises ConnectionError if the socket closes mid-frame.
     """
     def _recv_exact(n):
-        buf = b""
+        buf = bytearray()
         while len(buf) < n:
             chunk = sock.recv(n - len(buf))
             if not chunk:
                 raise ConnectionError("WS connection closed")
             buf += chunk
-        return buf
+        return bytes(buf)
 
     hdr = _recv_exact(2)
     opcode = hdr[0] & 0x0F
@@ -85,7 +100,7 @@ def ws_recv(sock):
         length = struct.unpack("!Q", _recv_exact(8))[0]
     if masked:
         mask = _recv_exact(4)
-        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(_recv_exact(length)))
+        payload = xor_mask(_recv_exact(length), mask)
     else:
         payload = _recv_exact(length)
     return opcode, payload

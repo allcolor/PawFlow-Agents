@@ -384,9 +384,34 @@ def _screen_action_subprocess(action: str, req: dict) -> dict:
         err = (proc.stderr or proc.stdout or f"exit code {proc.returncode}").strip()
         return {"error": err}
     try:
-        return json.loads(proc.stdout or "{}")
+        return child_result(proc.stdout or "{}")
     except Exception as e:
         return {"error": f"Invalid {action} response: {e}"}
+
+
+# The child answers on stdout as JSON text; bytes (screenshots) cross it as
+# base64 references and come back as bytes, which the relay link then sends
+# as binary attachments. Same marker as pawflow_relay.binary_channel's line
+# codec, kept local: the child runs without the pawflow_relay package path.
+_CHILD_B64 = "$pawflow_b64"
+
+
+def child_output(result) -> str:
+    """Serialize a screen action result for the parent process."""
+    def _default(value):
+        if isinstance(value, (bytes, bytearray)):
+            return {_CHILD_B64: base64.b64encode(bytes(value)).decode("ascii")}
+        raise TypeError(f"{type(value).__name__} is not JSON serializable")
+    return json.dumps(result, default=_default)
+
+
+def child_result(text: str):
+    """Inverse of ``child_output``."""
+    def _hook(value):
+        if len(value) == 1 and _CHILD_B64 in value:
+            return base64.b64decode(value[_CHILD_B64])
+        return value
+    return json.loads(text, object_hook=_hook)
 
 
 def _screen_action_child_command(action: str) -> list[str]:
@@ -407,7 +432,7 @@ def _screenshot(req):
     w, h = screenshot.size
     buf = io.BytesIO()
     screenshot.save(buf, format="PNG")
-    return {"image": base64.b64encode(buf.getvalue()).decode("ascii"), "width": w, "height": h}
+    return {"image": buf.getvalue(), "width": w, "height": h}
 
 
 def _grab_screenshot():
@@ -670,4 +695,4 @@ def _mouse_position(req):
 
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1].startswith("screen_"):
     request = json.loads(sys.stdin.read() or "{}")
-    sys.stdout.write(json.dumps(handle_screen_action(sys.argv[1], request)))
+    sys.stdout.write(child_output(handle_screen_action(sys.argv[1], request)))

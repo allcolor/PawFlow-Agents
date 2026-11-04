@@ -14,6 +14,8 @@ byte-level read/encode is identical to the previous inline versions.
 import struct
 from dataclasses import dataclass
 
+from pawflow_relay.ws_frame import xor_mask
+
 
 @dataclass
 class WSFrame:
@@ -32,13 +34,13 @@ class WSFrame:
 
 def _recv_exactly(sock, n):
     """Read exactly n bytes, or return None if the peer closes first."""
-    buf = b""
+    buf = bytearray()
     while len(buf) < n:
         chunk = sock.recv(n - len(buf))
         if not chunk:
             return None
         buf += chunk
-    return buf
+    return bytes(buf)
 
 
 def read_ws_frame(sock):
@@ -75,16 +77,17 @@ def read_ws_frame(sock):
         if mask is None:
             return None
         parts.append(mask)
-    payload = b""
+    payload = bytearray()
     while len(payload) < plen:
         chunk = sock.recv(min(65536, plen - len(payload)))
         if not chunk:
             break
         payload += chunk
+    payload = bytes(payload)
     parts.append(payload)
     raw = b"".join(parts)
     if masked:
-        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        payload = xor_mask(payload, mask)
     return WSFrame(fin=fin, op=op, payload=payload, raw=raw)
 
 

@@ -2,7 +2,7 @@
 
 Extracted from `pawflow_relay/worker.py`'s `_ws_connect` closure. As with
 the terminal manager, the socket output path is inverted: the backend
-WS reader forwards frames through an injected ``send_frame(bytes)``
+WS reader forwards frames through an injected ``send_frame(bytes, opcode)``
 callback instead of writing to the relay socket directly. The worker
 passes a callback that takes the send lock and writes to the live relay
 socket (`ws_sock_ref[0]`); tests pass a capturing callback.
@@ -12,9 +12,10 @@ open backend WS sessions) is owned by the caller's ``RelayWorkerState``
 and passed in, so the per-connection lifecycle is unchanged by the
 extraction — only the code moved out of the closure.
 
-Frame shapes and the worker-protocol action contract are unchanged:
-  {"type": "cs_ws_data",  "session_id": <sid>, "frame": <b64>, "data": <b64>, "opcode": -1, "fin": <bool>}
-  {"type": "cs_ws_close", "session_id": <sid>}
+Wire shapes (see ``pawflow_relay.binary_channel``):
+  data, both directions: binary frame, CHANNEL_CODE_SERVER_WS, stream id =
+    WS session id, payload = one complete on-wire WS frame, forwarded as is
+  close: {"type": "cs_ws_close", "session_id": <sid>} (JSON text)
 """
 import base64
 import json
@@ -28,7 +29,9 @@ import threading
 import time
 from pathlib import Path
 
-from pawflow_relay._relay_ws_proto import encode_masked_frame, read_ws_frame
+from pawflow_relay.binary_channel import (
+    CHANNEL_CODE_SERVER_WS, encode as _encode_binary)
+from pawflow_relay._relay_ws_proto import read_ws_frame
 
 _log = logging.getLogger(__name__)
 
@@ -184,18 +187,9 @@ def cs_ws_open(state, msg, send_frame):
         # Reader thread: code-server WS -> relay WS -> server -> browser
         state.cs_ws_sessions[_ws_sid] = {"sock": _cs_sock}
 
-        def _forward_cs_ws_frame(_sid, _raw_frame, _op, _payload, _fin=True):
-            sys.stderr.write(f"[FSRelay] cs_ws_data: sid={_sid} op={_op} len={len(_payload)}\n")
-            _fwd = json.dumps({
-                "type": "cs_ws_data",
-                "session_id": _sid,
-                "frame": base64.b64encode(_raw_frame).decode("ascii"),
-                "data": base64.b64encode(_payload).decode("ascii"),
-                "opcode": -1,
-                "fin": _fin,
-            })
-            send_frame(_fwd.encode("utf-8"))
-            sys.stderr.write("[FSRelay] cs_ws_data sent ok\n")
+        def _forward_cs_ws_frame(_sid, _raw_frame):
+            send_frame(_encode_binary(
+                CHANNEL_CODE_SERVER_WS, _sid, _raw_frame), 0x02)
 
         def _cs_ws_reader(_sock, _sid):
             sys.stderr.write(f"[FSRelay] cs_ws_reader started for {_sid}\n")
@@ -206,8 +200,7 @@ def cs_ws_open(state, msg, send_frame):
                         break
                     # code-server tunnel forwards the raw on-wire frame
                     # (and the close frame too) up to the browser.
-                    _forward_cs_ws_frame(
-                        _sid, _frame.raw, _frame.op, _frame.payload, _frame.fin)
+                    _forward_cs_ws_frame(_sid, _frame.raw)
                     if _frame.op == 0x08:  # close
                         break
             except Exception:
@@ -227,7 +220,7 @@ def cs_ws_open(state, msg, send_frame):
         _hdr_end = _resp.index(b"\r\n\r\n") + 4
         _leftover = _resp[_hdr_end:]
         if _leftover:
-            _forward_cs_ws_frame(_ws_sid, _leftover, _leftover[0] & 0x0F, b"", bool(_leftover[0] & 0x80))
+            _forward_cs_ws_frame(_ws_sid, _leftover)
         _t = threading.Thread(target=_cs_ws_reader, args=(_cs_sock, _ws_sid), daemon=True)
         _t.start()
         state.cs_ws_sessions[_ws_sid]["reader"] = _t
@@ -237,25 +230,13 @@ def cs_ws_open(state, msg, send_frame):
 
 
 def cs_ws_send(state, msg):
-    """Send a frame (raw passthrough or masked-from-data) to a backend WS."""
+    """Pass one browser WS frame (raw bytes in ``frame``) to the backend WS."""
     _ws_sid = msg.get("session_id", "")
-    _ws_data = msg.get("data", "")
-    _ws_op = msg.get("opcode", 1)
     _ws_sess = state.cs_ws_sessions.get(_ws_sid)
     if not _ws_sess:
         return {"ok": False, "error": f"WS session not found: {_ws_sid}"}
     try:
-        _ws_frame = msg.get("frame", "")
-        if _ws_frame:
-            _frame = base64.b64decode(_ws_frame)
-            sys.stderr.write(f"[FSRelay] cs_ws_send frame: sid={_ws_sid} len={len(_frame)}\n")
-            _ws_sess["sock"].sendall(_frame)
-            return {"ok": True}
-        _raw = base64.b64decode(_ws_data)
-        sys.stderr.write(f"[FSRelay] cs_ws_send: sid={_ws_sid} op={_ws_op} len={len(_raw)}\n")
-        # Build WS frame (masked, client->server)
-        _frame = encode_masked_frame(_ws_op, _raw)
-        _ws_sess["sock"].sendall(_frame)
+        _ws_sess["sock"].sendall(bytes(msg.get("frame") or b""))
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}

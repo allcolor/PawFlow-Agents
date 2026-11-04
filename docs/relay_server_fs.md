@@ -95,7 +95,7 @@ an empty stale Claude directory must not hide a live Codex
 | `sfs.getattr` | `{path}` | `{st_mode, st_size, st_mtime, st_atime, st_ctime, st_uid, st_gid, st_nlink}` |
 | `sfs.readdir` | `{path}` | `{entries: [...]}` (sorted) |
 | `sfs.open` | `{path, flags}` | `{fh}` — `O_CREAT` is refused (use `sfs.create`); other flags accepted |
-| `sfs.read` | `{fh, offset, size}` | `{data_b64}` (size capped at `RelayServerFs.MAX_READ_CHUNK = 1 MiB`) |
+| `sfs.read` | `{fh, offset, size}` | `{data}`: raw bytes, sent as a binary attachment ([relay_binary_frames.md](relay_binary_frames.md)); size capped at `RelayServerFs.MAX_READ_CHUNK = 1 MiB` |
 | `sfs.release` | `{fh}` | `{}` |
 | `sfs.statfs` | `{path}` | `{f_bsize, f_frsize, f_blocks, f_bfree, f_bavail, f_files, f_ffree, f_favail, f_namemax}` |
 
@@ -104,7 +104,7 @@ an empty stale Claude directory must not hide a live Codex
 | Method | Args | Success payload |
 |---|---|---|
 | `sfs.create` | `{path, mode}` | `{fh}` — mode masked to `0o777` (no setuid/setgid/sticky) |
-| `sfs.write` | `{fh, offset, data_b64}` | `{bytes_written}` (chunk capped at `MAX_WRITE_CHUNK = 1 MiB`) |
+| `sfs.write` | `{fh, offset, data}` (`data`: raw bytes, binary attachment) | `{bytes_written}` (chunk capped at `MAX_WRITE_CHUNK = 1 MiB`) |
 | `sfs.truncate` | `{path \| fh, length}` | `{}` |
 | `sfs.unlink` | `{path}` | `{}` |
 | `sfs.mkdir` | `{path, mode}` | `{}` — mode masked to `0o777` |

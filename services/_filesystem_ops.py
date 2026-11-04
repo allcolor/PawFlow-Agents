@@ -6,13 +6,12 @@ for the <=800-line rule; mixed into RelayService (one MRO, shared self state).
 """
 
 import asyncio
-import base64
-import json
 import logging
 import threading
 import uuid
 from typing import Any, Dict, List
 
+from pawflow_relay.binary_channel import pack_message
 from services._relay_ws import (
     _is_relay_disconnect_error,
     _ws_send_frame,
@@ -22,6 +21,17 @@ from services._relay_ws import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _raw_bytes(value, action: str) -> bytes:
+    """A relay payload field: raw bytes, carried as a binary attachment."""
+    if value is None or value == "":
+        return b""
+    if not isinstance(value, (bytes, bytearray)):
+        raise ValueError(
+            f"relay {action} returned {type(value).__name__}, not raw bytes; "
+            "the relay is older than this server")
+    return bytes(value)
 
 
 class _RelayFsOpsMixin:
@@ -61,9 +71,13 @@ class _RelayFsOpsMixin:
         from services._server_local_exec import execute_server_local
         return execute_server_local(action, path, kwargs, on_output=on_output)
 
-    def _send_to_pool(self, pool: List[Dict], payload: bytes,
+    def _send_to_pool(self, pool: List[Dict], payload,
                       request_id: str = "", fence_guard=None):
         """Send `payload` over the WS pool, most-recently-connected first.
+
+        ``payload`` is a JSON frame (bytes) or the frames of one packed
+        message (``binary_channel.pack_message``): its bytes attachments then
+        its JSON, written back to back under the connection's send lock.
 
         Returns None on success, the last exception on total failure.
         Round-robin would be incoherent here — the pool only ever holds
@@ -81,6 +95,8 @@ class _RelayFsOpsMixin:
         before the bump). The blocking wait happens OUTSIDE the lock.
         """
         last_err = None
+        frames = ([(payload, 0x01)] if isinstance(payload, (bytes, bytearray))
+                  else list(payload))
         for conn in reversed(pool):
             writer, loop = conn["writer"], conn["loop"]
             send_lock = conn.get("send_lock")
@@ -88,9 +104,11 @@ class _RelayFsOpsMixin:
             async def _send(w=writer, lk=send_lock):
                 if lk is not None:
                     async with lk:
-                        await _ws_send_frame(w, payload)
+                        for data, opcode in frames:
+                            await _ws_send_frame(w, data, opcode)
                 else:
-                    await _ws_send_frame(w, payload)
+                    for data, opcode in frames:
+                        await _ws_send_frame(w, data, opcode)
 
             if request_id:
                 with self._pending_lock:
@@ -221,14 +239,16 @@ class _RelayFsOpsMixin:
         with self._pending_lock:
             self._pending[request_id] = (evt, holder)
 
-        payload = json.dumps({
+        # Bytes arguments (file contents, request bodies) travel as binary
+        # attachments, not base64 (pawflow_relay.binary_channel).
+        payload = pack_message({
             "type": "command",
             "request_id": request_id,
             "action": action,
             "path": path,
             **_fence_fields,
             **kwargs,
-        }).encode("utf-8")
+        })
 
         # The final check and the send are made ATOMIC with the fence
         # bump: the frame is scheduled under the SAME lock the bump holds
@@ -317,12 +337,12 @@ class _RelayFsOpsMixin:
         with self._pending_lock:
             self._pending[request_id] = (evt, holder)
 
-        payload = json.dumps({
+        payload = pack_message({
             "type": "command",
             "request_id": request_id,
             "action": action,
             **kwargs,
-        }).encode("utf-8")
+        })
 
         last_err = self._send_to_pool(pool, payload, request_id=request_id)
 
@@ -380,13 +400,13 @@ class _RelayFsOpsMixin:
         with self._pending_lock:
             self._pending[request_id] = (evt, holder)
 
-        payload = json.dumps({
+        payload = pack_message({
             "type": "command",
             "request_id": request_id,
             "action": action,
             "path": path,
             **kwargs,
-        }).encode("utf-8")
+        })
 
         last_err = self._send_to_pool(pool, payload, request_id=request_id)
 
@@ -430,7 +450,7 @@ class _RelayFsOpsMixin:
     def read_file(self, path: str, local: bool = False) -> bytes:
         data = self._request("read_file", path, local=local)
         if isinstance(data, dict) and "content" in data:
-            return base64.b64decode(data["content"])
+            return _raw_bytes(data["content"], "read_file")
         return data.encode("utf-8") if isinstance(data, str) else data
 
     def hash_file(self, path: str, local: bool = False) -> dict:
@@ -450,12 +470,12 @@ class _RelayFsOpsMixin:
             chunk_size=chunk_size)
         total_chunks = int(first.get("total_chunks", 1) or 1)
         actual_chunk_size = int(first.get("chunk_size", chunk_size) or chunk_size)
-        yield base64.b64decode(first.get("data") or "")
+        yield _raw_bytes(first.get("data"), "read_file_chunked")
         for index in range(1, total_chunks):
             chunk = self._request(
                 "read_chunk", path, index=index,
                 chunk_size=actual_chunk_size, local=local)
-            yield base64.b64decode(chunk.get("data") or "")
+            yield _raw_bytes(chunk.get("data"), "read_chunk")
             if chunk.get("done"):
                 break
 
@@ -477,7 +497,7 @@ class _RelayFsOpsMixin:
             chunk = self._request(
                 "read_chunk", path, index=index,
                 chunk_size=chunk_size, local=local)
-            data = base64.b64decode(chunk.get("data") or "")
+            data = _raw_bytes(chunk.get("data"), "read_chunk")
             data = data[skip:skip + remaining]
             if not data:
                 return
@@ -558,17 +578,16 @@ class _RelayFsOpsMixin:
         if len(content) > 50 * 1024 * 1024:  # > 50MB → chunked
             self._write_chunked(path, content, local=local)
         else:
-            self._request("write_file", path,
-                           content=base64.b64encode(content).decode("ascii"),
-                           base64=True, local=local)
+            # Raw bytes travel as a binary attachment (binary_channel).
+            self._request("write_file", path, content=bytes(content),
+                          local=local)
 
     def atomic_write_file(self, path: str, content: bytes,
                           local: bool = False) -> dict:
         """Atomically replace one bounded relay file."""
         return self._request(
             "atomic_write_file", path,
-            content=base64.b64encode(content).decode("ascii"),
-            base64=True, local=local,
+            content=bytes(content), local=local,
         )
 
     def append_file(self, path: str, content: bytes, expected_size: int,
@@ -576,8 +595,7 @@ class _RelayFsOpsMixin:
         """Append bytes at an exact checkpointed relay-file offset."""
         return self._request(
             "append_file", path,
-            content=base64.b64encode(content).decode("ascii"),
-            base64=True, expected_size=expected_size, local=local,
+            content=bytes(content), expected_size=expected_size, local=local,
         )
 
     def truncate_file(self, path: str, size: int, *, expected_size: int | None = None,
@@ -597,7 +615,7 @@ class _RelayFsOpsMixin:
             done = (i + chunk_size) >= total
             self._request("write_file_chunked", path,
                            index=i // chunk_size,
-                           data=base64.b64encode(chunk).decode("ascii"),
+                           data=bytes(chunk),
                            done=done, local=local)
 
     def write_file_stream(self, path: str, chunks, expected_size: int,
@@ -613,7 +631,7 @@ class _RelayFsOpsMixin:
                 raise ValueError("Upload stream exceeded Content-Length")
             self._request(
                 "write_file_chunked", path, index=index,
-                data=base64.b64encode(chunk).decode("ascii"),
+                data=bytes(chunk),
                 done=written == expected_size, local=local,
                 # This action appends every index after zero. If the relay wrote
                 # a chunk but its response was lost, replaying it after reconnect
@@ -625,8 +643,7 @@ class _RelayFsOpsMixin:
             raise ValueError(
                 f"Upload stream size mismatch: {written} != {expected_size}")
         if expected_size == 0:
-            self._request("write_file", path, content="", base64=True,
-                          local=local)
+            self._request("write_file", path, content=b"", local=local)
         return written
 
     def delete_file(self, path: str, local: bool = False):
@@ -757,15 +774,14 @@ class _RelayFsOpsMixin:
                     max_bytes: int = 0, public_only: bool = False) -> dict:
         """Sync HTTP fetch via the relay container.
 
-        Returns {ok, status, headers, body_bytes} — body is decoded
-        from the relay's base64 wire format. Use this when PawFlow's
+        Returns {ok, status, headers, body_bytes}; request and response
+        bodies cross the relay link as raw binary attachments. Use this when PawFlow's
         own HTTP stack is fingerprint-blocked (Cloudflare on Windows
         Python urllib) but the relay's Linux stack works.
 
         `local=True` forwards to the user's host helper (PAWFLOW_HOST_HELPER),
         same semantic as the screen / desktop actions.
         """
-        import base64 as _b64
         _body = body if isinstance(body, (bytes, bytearray)) else (body or b"")
         result = self._request(
             "http_fetch", ".",
@@ -773,7 +789,7 @@ class _RelayFsOpsMixin:
             url=url,
             method=method,
             headers=headers or {},
-            body=_b64.b64encode(bytes(_body)).decode("ascii") if _body else "",
+            body=bytes(_body),
             timeout=timeout,
             max_bytes=max(0, int(max_bytes or 0)),
             public_only=bool(public_only),
@@ -781,8 +797,7 @@ class _RelayFsOpsMixin:
         if not isinstance(result, dict) or not result.get("ok"):
             err = (result or {}).get("error", "http_fetch returned no result")
             raise Exception(f"relay http_fetch failed: {err}")
-        b64 = result.get("body", "")
-        body_bytes = _b64.b64decode(b64) if b64 else b""
+        body_bytes = _raw_bytes(result.get("body") or b"", "http_fetch")
         return {
             "ok": True,
             "status": int(result.get("status", 0)),
@@ -846,7 +861,6 @@ class _RelayFsOpsMixin:
         PawCode CLI), not inside the relay container — so 'localhost' in
         the target URL means the user's actual localhost.
         """
-        import base64 as _b64
         _body = body if isinstance(body, (bytes, bytearray)) else (body or b"")
         return self._request_stream(
             "http_fetch", ".",
@@ -855,7 +869,7 @@ class _RelayFsOpsMixin:
             url=url,
             method=method,
             headers=headers or {},
-            body=_b64.b64encode(bytes(_body)).decode("ascii") if _body else "",
+            body=bytes(_body),
             timeout=timeout,
         )
 
@@ -865,18 +879,16 @@ class _RelayFsOpsMixin:
                           on_output=None):
         """Stream one relay-container localhost HTTP response.
 
-        This is used for code-server and capability port forwards. Unlike the
-        removed inline ``http_proxy`` contract, no complete response body is
-        materialized or base64-encoded as one JSON value.
+        This is used for code-server, desktop viewers and capability port
+        forwards. The request body and the response chunks cross the relay
+        link as raw binary frames; no complete response is materialized.
         """
-        import base64 as _b64
         _body = body if isinstance(body, (bytes, bytearray)) else (body or b"")
         return self._request_stream(
             "http_proxy", ".", on_output=on_output,
             port=int(port), method=method, req_path=req_path,
             req_headers=req_headers or {},
-            req_body=_b64.b64encode(bytes(_body)).decode("ascii")
-            if _body else "",
+            req_body=bytes(_body),
             timeout=int(timeout),
         )
 

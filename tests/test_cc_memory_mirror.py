@@ -10,7 +10,6 @@ Covers:
   path-based truncate re-mirrors; MEMORY.md index is NOT mirrored.
 """
 
-import base64
 import os
 import tempfile
 import unittest
@@ -252,7 +251,7 @@ class TestRelayServerFsIntegration(unittest.TestCase):
         fh = r["data"]["fh"]
         r = self.fs.handle("sfs.write", {
             "fh": fh, "offset": 0,
-            "data_b64": base64.b64encode(data).decode("ascii"),
+            "data": data,
         })
         assert "error" not in r, r
         r = self.fs.handle("sfs.release", {"fh": fh})

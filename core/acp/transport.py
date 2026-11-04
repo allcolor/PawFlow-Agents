@@ -165,10 +165,8 @@ class RawWebSocketTransport:
 
         mask = await self._reader.readexactly(4)
         encoded = await self._reader.readexactly(length)
-        payload = bytes(
-            value ^ mask[index % 4]
-            for index, value in enumerate(encoded)
-        )
+        from pawflow_relay.ws_frame import xor_mask
+        payload = xor_mask(encoded, mask)
         return fin, opcode, payload
 
     async def _send_frame(self, opcode: int, payload: bytes) -> None:

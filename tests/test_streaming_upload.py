@@ -1,4 +1,3 @@
-import base64
 import io
 import json
 from pathlib import Path
@@ -89,7 +88,8 @@ def test_relay_stream_encodes_only_each_bounded_transport_chunk():
         "video.mp4", iter([b"abc", b"def"]), expected_size=6)
 
     assert written == 6
-    assert [base64.b64decode(call[2]["data"]) for call in relay.calls] == [b"abc", b"def"]
+    # Raw bytes: the relay link carries them as binary attachments.
+    assert [call[2]["data"] for call in relay.calls] == [b"abc", b"def"]
     assert all(call[2]["_retry_on_disconnect"] is False
                for call in relay.calls)
     assert relay.calls[-1][2]["done"] is True

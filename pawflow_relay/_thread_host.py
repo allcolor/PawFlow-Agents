@@ -15,6 +15,9 @@ from pathlib import Path
 from pawflow_relay.utils import (
     find_free_port,
 )
+# The host helper's local protocol is JSON lines; bytes (file contents,
+# screenshots) cross it as base64 references, decoded back on the other side.
+from pawflow_relay.binary_channel import json_line_dumps, json_line_loads
 
 # Split out of pawflow_relay/thread.py for the <=800-line rule; composed back
 # into RelayThread (invariant 2: MRO/shared state). Whole pkg is vendored via copytree.
@@ -103,7 +106,7 @@ class _RelayHostHelperMixin:
                 return
             buf += chunk
 
-        req = json.loads(buf.split(b"\n")[0])
+        req = json_line_loads(buf.split(b"\n")[0])
         action = req.get("action", "")
         expected = str(getattr(self, "_host_helper_token", "") or "")
         supplied = str(req.pop("_host_helper_token", "") or "")
@@ -154,7 +157,7 @@ class _RelayHostHelperMixin:
             from pawflow_relay.service_tunnels import handle_action
             try:
                 result = handle_action(action, req)
-                resp = json.dumps({"type": "result", "data": result}) + "\n"
+                resp = json_line_dumps({"type": "result", "data": result}) + "\n"
             except Exception as exc:
                 resp = json.dumps({"type": "error", "error": str(exc)}) + "\n"
             conn.sendall(resp.encode("utf-8"))
@@ -179,7 +182,7 @@ class _RelayHostHelperMixin:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             result = _login_fn(req, send_progress=_send_progress)
-            resp = json.dumps({"type": "result", "data": result}) + "\n"
+            resp = json_line_dumps({"type": "result", "data": result}) + "\n"
             conn.sendall(resp.encode("utf-8"))
 
         elif action in ("start_local_desktop", "stop_local_desktop",
@@ -213,7 +216,7 @@ class _RelayHostHelperMixin:
 
         elif action == "start_local_code_server":
             result = self._host_start_local_code_server(req)
-            resp = json.dumps({"type": "result", "data": result}) + "\n"
+            resp = json_line_dumps({"type": "result", "data": result}) + "\n"
             conn.sendall(resp.encode("utf-8"))
 
         elif action == "http_fetch":
@@ -227,12 +230,12 @@ class _RelayHostHelperMixin:
                 if kind == "start":
                     _chunk_stats["status"] = data.get("status") if isinstance(data, dict) else None
                 elif kind == "chunk":
-                    try:
-                        import base64 as _b64
-                        _chunk_stats["bytes"] += len(_b64.b64decode(data)) if isinstance(data, str) else len(data or b"")
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                    _chunk_stats["bytes"] += len(data or b"")
                     _chunk_stats["chunks"] += 1
+                    # This local line protocol is JSON: bytes travel as
+                    # base64 to the relay, which sends them on raw.
+                    import base64 as _b64
+                    data = _b64.b64encode(data or b"").decode("ascii")
                 try:
                     msg = json.dumps({"type": "http_response", "kind": kind,
                                        "data": data}) + "\n"
@@ -253,7 +256,7 @@ class _RelayHostHelperMixin:
                         f"[HostHelper] http_fetch status={_status} "
                         f"bytes={_chunk_stats['bytes']} "
                         f"chunks={_chunk_stats['chunks']} ok={_ok}")
-                resp = json.dumps({"type": "result", "data": result}) + "\n"
+                resp = json_line_dumps({"type": "result", "data": result}) + "\n"
             except Exception as e:
                 self._log(f"[HostHelper] http_fetch EXCEPTION: {e}")
                 resp = json.dumps({"type": "error", "error": str(e)}) + "\n"
@@ -274,7 +277,7 @@ class _RelayHostHelperMixin:
                     result = handler(self.directory, abs_path, req, allow_exec=self.allow_exec)
                 else:
                     result = handler(self.directory, abs_path, req)
-                resp = json.dumps({"type": "result", "data": result}) + "\n"
+                resp = json_line_dumps({"type": "result", "data": result}) + "\n"
             except Exception as e:
                 resp = json.dumps({"type": "error", "error": str(e)}) + "\n"
             conn.sendall(resp.encode("utf-8"))
@@ -292,7 +295,9 @@ class _RelayHostHelperMixin:
                 if not procs or any(proc.poll() is not None for proc in procs):
                     raise ValueError("Host desktop is not running")
                 port = int(req.get("port") or 0)
-                if not port or port != self._local_desktop_novnc_port:
+                allowed = {getattr(self, "_local_desktop_novnc_port", 0),
+                           getattr(self, "_local_desktop_voxl_port", 0)}
+                if not port or port not in allowed:
                     raise ValueError(
                         "Desktop port does not match the running host desktop")
                 upstream = socket.create_connection(("127.0.0.1", port), timeout=10)
@@ -335,7 +340,7 @@ class _RelayHostHelperMixin:
             if "error" in result:
                 resp = json.dumps({"type": "error", "error": result["error"]}) + "\n"
             else:
-                resp = json.dumps({"type": "result", "data": result}) + "\n"
+                resp = json_line_dumps({"type": "result", "data": result}) + "\n"
         except Exception as e:
             resp = json.dumps({"type": "error", "error": str(e)}) + "\n"
 
@@ -354,6 +359,8 @@ class _RelayHostHelperMixin:
             alive = all(p.poll() is None for p in self._local_desktop_procs)
             if alive:
                 return {"novnc_port": self._local_desktop_novnc_port,
+                        "voxl_port": getattr(self, "_local_desktop_voxl_port", 0) or 0,
+                        "voxl_password": getattr(self, "_local_desktop_voxl_password", ""),
                         "session_id": getattr(self, '_local_desktop_session_id', None),
                         "started_at": getattr(self, '_local_desktop_started_at', None),
                         "already_running": True}
@@ -378,19 +385,38 @@ class _RelayHostHelperMixin:
 
         procs = []
 
+        # voxl first: it streams the real screen on Linux (X11), Windows and
+        # macOS by itself. VNC + websockify below is the fallback viewer, and
+        # a missing VNC piece is fatal only when voxl is not running either.
+        from pawflow_relay.voxl import start_voxl
+        voxl = None
+        if _platform in ("win32", "darwin") or os.environ.get("DISPLAY"):
+            voxl = start_voxl(addr="127.0.0.1")
+        if voxl:
+            procs.append(voxl[0])
+
+        def _vnc_unavailable(error):
+            if not voxl:
+                for proc in procs:
+                    if proc.poll() is None:
+                        proc.kill()
+                return {"error": error}
+            self._log(f"[Relay] Local noVNC fallback unavailable: {error}")
+            return self._host_local_desktop_started(procs, 0, 0, voxl)
+
         websockify_cmd = shutil.which("websockify")
         if websockify_cmd:
             _ws_base = [websockify_cmd]
         else:
             _python_cmd = _host_python_command()
             if not _python_cmd:
-                return {"error": "websockify not installed. Install with: pip install websockify"}
+                return _vnc_unavailable("websockify not installed. Install with: pip install websockify")
             try:
                 _sp.run([_python_cmd, "-m", "websockify", "--help"],  # nosec B603
                         capture_output=True, timeout=5)
                 _ws_base = [_python_cmd, "-m", "websockify"]
             except Exception:
-                return {"error": "websockify not installed. Install with: pip install websockify"}
+                return _vnc_unavailable("websockify not installed. Install with: pip install websockify")
 
         if _platform == "win32":
             _existing = False
@@ -418,7 +444,7 @@ class _RelayHostHelperMixin:
                 if not winvnc:
                     winvnc = shutil.which("tvnserver") or shutil.which("winvnc")
                 if not winvnc:
-                    return {"error": "No VNC server found. Install TightVNC or UltraVNC."}
+                    return _vnc_unavailable("No VNC server found. Install TightVNC or UltraVNC.")
                 p_vnc = _sp.Popen([winvnc, "-rfbport", str(vnc_port), "-localhost"],  # nosec B603
                                   stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
                 procs.append(p_vnc)
@@ -426,7 +452,7 @@ class _RelayHostHelperMixin:
         elif _platform == "linux":
             display = os.environ.get("DISPLAY", ":0")
             if not shutil.which("x11vnc"):
-                return {"error": "x11vnc not installed"}
+                return _vnc_unavailable("x11vnc not installed")
             p_vnc = _sp.Popen(  # nosec B603, B607
                 ["x11vnc", "-display", display, "-forever", "-nopw",
                  "-rfbport", str(vnc_port), "-shared", "-noxdamage"],
@@ -436,22 +462,29 @@ class _RelayHostHelperMixin:
         elif _platform == "darwin":
             vnc_port = 5900
         else:
-            return {"error": f"Unsupported platform: {_platform}"}
+            return _vnc_unavailable(f"Unsupported platform: {_platform}")
 
         time.sleep(0.5)
 
         _ws_cmd = _ws_base + [str(novnc_port), f"localhost:{vnc_port}"]
         p_ws = _sp.Popen(_ws_cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)  # nosec B603
         procs.append(p_ws)
+        return self._host_local_desktop_started(procs, vnc_port, novnc_port, voxl)
 
+    def _host_local_desktop_started(self, procs, vnc_port, novnc_port, voxl):
+        """Record a started host desktop and answer the relay."""
         self._local_desktop_procs = procs
         self._local_desktop_vnc_port = vnc_port
         self._local_desktop_novnc_port = novnc_port
+        _proc, voxl_port, voxl_password = voxl or (None, 0, "")
+        self._local_desktop_voxl_port = voxl_port
+        self._local_desktop_voxl_password = voxl_password
         import uuid as _uuid
         self._local_desktop_session_id = _uuid.uuid4().hex
         self._local_desktop_started_at = time.time()
 
         return {"vnc_port": vnc_port, "novnc_port": novnc_port,
+                "voxl_port": voxl_port, "voxl_password": voxl_password,
                 "session_id": self._local_desktop_session_id,
                 "started_at": self._local_desktop_started_at,
                 "local_screen": True}
@@ -480,6 +513,8 @@ class _RelayHostHelperMixin:
                 except Exception:
                     p.kill()
             self._local_desktop_procs = None
+            self._local_desktop_voxl_port = 0
+            self._local_desktop_voxl_password = ""
             self._local_desktop_session_id = None
             self._local_desktop_started_at = None
             self._log("[Relay] Local desktop stopped")

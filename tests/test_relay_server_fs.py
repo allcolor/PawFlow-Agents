@@ -8,7 +8,6 @@ Coverage:
 - Cross-user isolation (one instance can't read another's slot)
 """
 
-import base64
 import os
 import tempfile
 import threading
@@ -97,7 +96,7 @@ class TestMultiProviderView(unittest.TestCase):
         fh = opened["data"]["fh"]
         chunk = self.fs.handle("sfs.read", {"fh": fh, "offset": 0, "size": 100})
         self.assertEqual(
-            base64.b64decode(chunk["data"]["data_b64"]), b"codex context")
+            chunk["data"]["data"], b"codex context")
         self.fs.handle("sfs.release", {"fh": fh})
 
     def test_root_listing_merges_provider_conversations(self):
@@ -128,7 +127,7 @@ class TestMultiProviderView(unittest.TestCase):
         self.fs.handle("sfs.write", {
             "fh": fh,
             "offset": 0,
-            "data_b64": base64.b64encode(payload).decode("ascii"),
+            "data": payload,
         })
         self.fs.handle("sfs.release", {"fh": fh})
 
@@ -195,7 +194,7 @@ class TestReadOps(_FsCase):
         chunk = self.fs.handle("sfs.read",
                                 {"fh": fh, "offset": 0, "size": 100})
         self.assertEqual(
-            base64.b64decode(chunk["data"]["data_b64"]).decode(),
+            chunk["data"]["data"].decode(),
             "hello from alice")
         rel = self.fs.handle("sfs.release", {"fh": fh})
         self.assertEqual(rel.get("data"), {})
@@ -208,7 +207,7 @@ class TestReadOps(_FsCase):
         chunk = self.fs.handle("sfs.read",
                                 {"fh": fh, "offset": 6, "size": 100})
         self.assertEqual(
-            base64.b64decode(chunk["data"]["data_b64"]).decode(),
+            chunk["data"]["data"].decode(),
             "from alice")
         self.fs.handle("sfs.release", {"fh": fh})
 
@@ -279,7 +278,6 @@ class TestMethodAllowlist(_FsCase):
 class TestWriteOps(_FsCase):
 
     def test_create_then_write_then_read_back(self):
-        import base64
         c = self.fs.handle("sfs.create",
                             {"path": "convA/claude/new.txt", "mode": 0o644})
         self.assertIn("data", c)
@@ -287,7 +285,7 @@ class TestWriteOps(_FsCase):
         payload = b"hello new file"
         w = self.fs.handle("sfs.write", {
             "fh": fh, "offset": 0,
-            "data_b64": base64.b64encode(payload).decode("ascii"),
+            "data": payload,
         })
         self.assertEqual(w["data"]["bytes_written"], len(payload))
         self.fs.handle("sfs.release", {"fh": fh})
@@ -298,18 +296,17 @@ class TestWriteOps(_FsCase):
         rd = self.fs.handle("sfs.read",
                              {"fh": rfh, "offset": 0, "size": 1024})
         self.assertEqual(
-            base64.b64decode(rd["data"]["data_b64"]), payload)
+            rd["data"]["data"], payload)
         self.fs.handle("sfs.release", {"fh": rfh})
 
     def test_write_chunk_size_capped(self):
-        import base64
         c = self.fs.handle("sfs.create",
                             {"path": "convA/claude/big.bin"})
         fh = c["data"]["fh"]
         too_big = b"X" * (RelayServerFs.MAX_WRITE_CHUNK + 1)
         w = self.fs.handle("sfs.write", {
             "fh": fh, "offset": 0,
-            "data_b64": base64.b64encode(too_big).decode("ascii"),
+            "data": too_big,
         })
         self.assertEqual(w.get("error"), "EINVAL")
         self.fs.handle("sfs.release", {"fh": fh})
@@ -418,7 +415,7 @@ class TestLifecycle(_FsCase):
             ("sfs.read", {"offset": 0, "size": 1}, "lseek", os.O_RDONLY),
             ("sfs.write", {
                 "offset": 0,
-                "data_b64": base64.b64encode(b"x").decode("ascii"),
+                "data": b"x",
             }, "lseek", os.O_RDWR),
             ("sfs.truncate", {"length": 1}, "ftruncate", os.O_RDWR),
         )

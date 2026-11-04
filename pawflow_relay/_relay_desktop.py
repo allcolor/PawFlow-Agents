@@ -6,7 +6,7 @@ of the containerized X11+VNC stack and the host-screen local desktop)
 still live in worker.py and will move here in a follow-up step.
 
 Like the code-server tunnel, the backend reader forwards frames through
-an injected ``send_frame(bytes)`` callback rather than writing to the
+an injected ``send_frame(bytes, opcode)`` callback rather than writing to the
 relay socket directly. State (the open backend WS sessions) lives in the
 caller's ``RelayWorkerState`` and is passed in, so the per-connection
 lifecycle is unchanged.
@@ -15,13 +15,14 @@ Differences from the code-server tunnel, preserved verbatim:
   - Browser/proxy headers ARE forwarded to the VNC backend handshake
     (minus the hop-by-hop WS handshake headers); code-server strips them.
   - The reader answers WS pings (0x09) with pongs (0x0A) locally.
-  - Forwarded frames carry the real opcode (not -1) and only the
-    unmasked payload (no raw frame).
-  - cs uses opcode 1 (text) for sends; desktop defaults to 2 (binary/VNC).
+  - Forwarded frames carry the real opcode and only the unmasked payload
+    (no raw frame).
 
-Frame shapes (unchanged):
-  {"type": "desktop_ws_data",  "session_id": <sid>, "data": <b64>, "opcode": <op>}
-  {"type": "desktop_ws_close", "session_id": <sid>}
+Wire shapes (see ``pawflow_relay.binary_channel``):
+  data, both directions: binary frame, CHANNEL_DESKTOP_WS, inner opcode,
+    stream id = WS session id, payload = the WS message payload
+  audio, relay -> server: binary frame, CHANNEL_DESKTOP_AUDIO, one Opus packet
+  close: {"type": "desktop_ws_close", "session_id": <sid>} (JSON text)
 """
 import base64
 import json
@@ -36,9 +37,13 @@ import time
 import uuid
 from pathlib import Path
 
+from pawflow_relay.binary_channel import (
+    CHANNEL_DESKTOP_AUDIO, CHANNEL_DESKTOP_WS, encode as _encode_binary)
 from pawflow_relay._relay_ws_proto import encode_masked_frame, read_ws_frame
 
 _log = logging.getLogger(__name__)
+
+_WS_BINARY = 0x02
 
 
 def novnc_asset(msg):
@@ -71,13 +76,14 @@ def novnc_asset(msg):
         if candidate.is_file():
             content_type = mimetypes.guess_type(candidate.name)[0]
             return {"ok": True, "data": {
-                "body": base64.b64encode(candidate.read_bytes()).decode("ascii"),
+                # Raw bytes: sent to the server as a binary attachment.
+                "body": candidate.read_bytes(),
                 "content_type": content_type or "application/octet-stream",
             }}
     if raw_path in {"defaults.json", "mandatory.json"}:
         # These optional noVNC configuration files mean no overrides when absent.
         return {"ok": True, "data": {
-            "body": base64.b64encode(b"{}").decode("ascii"),
+            "body": b"{}",
             "content_type": "application/json",
         }}
     return {"ok": False, "error": "noVNC asset not found in relay runtime"}
@@ -156,13 +162,8 @@ def desktop_ws_open(state, msg, send_frame):
                         except Exception:
                             break
                         continue
-                    _fwd = json.dumps({
-                        "type": "desktop_ws_data",
-                        "session_id": _sid,
-                        "data": base64.b64encode(_payload).decode("ascii"),
-                        "opcode": _op,
-                    })
-                    send_frame(_fwd.encode("utf-8"))
+                    send_frame(_encode_binary(
+                        CHANNEL_DESKTOP_WS, _sid, _payload, _op), _WS_BINARY)
             except Exception:
                 _log.debug("Ignored exception", exc_info=True)
             finally:
@@ -187,16 +188,14 @@ def desktop_ws_open(state, msg, send_frame):
 
 
 def desktop_ws_send(state, msg):
-    """Send a masked frame (binary by default) to a backend VNC WS."""
+    """Send one browser message (raw bytes in ``payload``) to a backend WS."""
     _ws_sid = msg.get("session_id", "")
-    _ws_data = msg.get("data", "")
-    _ws_op = msg.get("opcode", 2)  # binary by default for VNC
+    _ws_op = msg.get("opcode") or _WS_BINARY
     _ws_sess = state.desktop_ws_sessions.get(_ws_sid)
     if not _ws_sess:
         return {"ok": False, "error": f"Desktop WS session not found: {_ws_sid}"}
     try:
-        _raw = base64.b64decode(_ws_data)
-        _frame = encode_masked_frame(_ws_op, _raw)
+        _frame = encode_masked_frame(_ws_op, bytes(msg.get("payload") or b""))
         _ws_sess["sock"].sendall(_frame)
         return {"ok": True}
     except Exception as e:
@@ -264,11 +263,8 @@ def audio_stream_open(state, msg, send_frame):
                     packet = _audio_recv_exact(backend, packet_size, stop)
                     if not packet:
                         break
-                    send_frame(json.dumps({
-                        "type": "desktop_audio_data",
-                        "session_id": session_id,
-                        "data": base64.b64encode(packet).decode("ascii"),
-                    }).encode("utf-8"))
+                    send_frame(_encode_binary(
+                        CHANNEL_DESKTOP_AUDIO, session_id, packet), _WS_BINARY)
             except Exception:
                 _log.debug("Desktop audio relay reader failed", exc_info=True)
             finally:
@@ -313,6 +309,24 @@ def audio_stream_close(state, msg):
 
 
 # ── Desktop lifecycle (containerized X11+VNC and host-screen) ──
+
+
+def _voxl_fields(proc, port, password):
+    """voxl viewer fields of a desktop answer; zero/empty when voxl is down.
+
+    The password only ever goes to the PawFlow server, which sends it to voxl
+    as a bearer token on the requests it proxies.
+    """
+    alive = proc is not None and proc.poll() is None and bool(port)
+    return {"voxl_port": int(port) if alive else 0,
+            "voxl_password": password if alive else ""}
+
+
+def _state_voxl(state, prefix: str):
+    """``_voxl_fields`` for ``<prefix>_voxl_*`` state ("desktop"/"local_desktop")."""
+    return _voxl_fields(getattr(state, f"{prefix}_voxl_proc", None),
+                        getattr(state, f"{prefix}_voxl_port", None),
+                        getattr(state, f"{prefix}_voxl_password", ""))
 
 
 def novnc_http_ready(state, port=None, timeout=1.0):
@@ -363,6 +377,11 @@ def _desktop_cleanup_locked(state, reason=""):
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+    from pawflow_relay.voxl import stop_voxl
+    stop_voxl(getattr(state, "desktop_voxl_proc", None))
+    state.desktop_voxl_proc = None
+    state.desktop_voxl_port = None
+    state.desktop_voxl_password = ""
     state.desktop_procs = None
     state.desktop_essential_procs = None
     state.desktop_vnc_port = None
@@ -409,6 +428,7 @@ def _start_desktop_locked(state, msg):
             return {"ok": True, "data": {
                 "vnc_port": state.desktop_vnc_port,
                 "novnc_port": state.desktop_novnc_port,
+                **_state_voxl(state, "desktop"),
                 "display": state.desktop_display,
                 "session_id": state.desktop_session_id,
                 "started_at": state.desktop_started_at,
@@ -458,7 +478,9 @@ def _start_desktop_locked(state, msg):
         # 1. Xvfb
         _p_xvfb = subprocess.Popen(  # nosec B603, B607
             ["Xvfb", _display, "-screen", "0", f"{_resolution}x{_depth}",
-             "-ac", "+extension", "GLX", "+render", "-noreset"],
+             "-ac", "+extension", "GLX", "+render", "-noreset",
+             # Framebuffer in shared memory: voxl captures it without a copy.
+             "-shmem"],
             stdout=_log_d, stderr=_log_d)
         _procs.append(_p_xvfb)
         os.environ["DISPLAY"] = _display
@@ -572,11 +594,23 @@ def _start_desktop_locked(state, msg):
         if not _novnc_ready:
             return {"ok": False, "error": "noVNC failed to become ready"}
 
+        # voxl is the default viewer; noVNC above stays as the fallback, so a
+        # missing or failing voxl never fails the desktop.
+        from pawflow_relay.voxl import start_voxl
+        _voxl = start_voxl(
+            env=_user_env, addr="127.0.0.1",
+            audio_device="virtual_out.monitor" if _audio_port else "",
+            files_root=_desktop_home, log=_log_d)
+        if _voxl:
+            (state.desktop_voxl_proc, state.desktop_voxl_port,
+             state.desktop_voxl_password) = _voxl
+
         start_desktop_watchdog(state, _procs)
-        sys.stderr.write(f"[FSRelay] Desktop started: display={_display} vnc={_vnc_port} novnc={_novnc_port} audio={_audio_port} res={_resolution}\n")
+        sys.stderr.write(f"[FSRelay] Desktop started: display={_display} vnc={_vnc_port} novnc={_novnc_port} voxl={_state_voxl(state, 'desktop')['voxl_port']} audio={_audio_port} res={_resolution}\n")
         _started = True
         return {"ok": True, "data": {
             "vnc_port": _vnc_port, "novnc_port": _novnc_port,
+            **_state_voxl(state, "desktop"),
             "audio_port": _audio_port,
             "display": _display, "resolution": _resolution,
             "session_id": state.desktop_session_id,
@@ -637,16 +671,23 @@ def _desktop_status_locked(state):
     if state.local_desktop_procs:
         _local_running = all(p.poll() is None for p in state.local_desktop_procs)
     _novnc = state.desktop_novnc_port
+    _local_voxl = _state_voxl(state, "local_desktop")
     return {"ok": True, "data": {
         "running": _running,
         "display": state.desktop_display,
         "vnc_port": state.desktop_vnc_port,
         "novnc_port": _novnc,
+        **(_state_voxl(state, "desktop") if _running
+           else _voxl_fields(None, None, "")),
         "session_id": state.desktop_session_id if _running else None,
         "started_at": state.desktop_started_at if _running else None,
         "audio_port": (_novnc + 100) if _novnc and _running else 0,
         "local_screen_running": _local_running,
         "local_screen_novnc_port": state.local_desktop_novnc_port,
+        "local_screen_voxl_port": (
+            _local_voxl["voxl_port"] if _local_running else 0),
+        "local_screen_voxl_password": (
+            _local_voxl["voxl_password"] if _local_running else ""),
         "local_screen_session_id":
             state.local_desktop_session_id if _local_running else None,
         "local_screen_started_at":
@@ -667,6 +708,7 @@ def _start_local_desktop_locked(state, msg):
         if _alive:
             return {"ok": True, "data": {
                 "novnc_port": state.local_desktop_novnc_port,
+                **_state_voxl(state, "local_desktop"),
                 "session_id": state.local_desktop_session_id,
                 "started_at": state.local_desktop_started_at,
                 "already_running": True
@@ -693,97 +735,41 @@ def _start_local_desktop_locked(state, msg):
             _novnc_port = _s.getsockname()[1]
 
     try:
-        import shutil
         _procs = []
         _log_d = open("/tmp/local_desktop.log", "w") if _platform != "win32" else open(os.path.join(os.environ.get("TEMP", "."), "local_desktop.log"), "w")  # nosec B108 - relay-local desktop log.
 
-        if _platform == "linux":
-            # Linux: use x11vnc to share the real display :0
-            _display = os.environ.get("DISPLAY", ":0")
-            if not shutil.which("x11vnc"):
-                return {"ok": False, "error": "x11vnc not installed. Install with: apt install x11vnc"}
-            if not shutil.which("websockify"):
-                return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
-            _p_vnc = subprocess.Popen(  # nosec B603, B607
-                ["x11vnc", "-display", _display, "-forever", "-nopw",
-                 "-rfbport", str(_vnc_port), "-shared", "-noxdamage",
-                 "-defer", "33"],
-                stdout=_log_d, stderr=_log_d)
-            _procs.append(_p_vnc)
+        # voxl first: it streams the real screen on Linux (X11), Windows and
+        # macOS by itself. The VNC + websockify stack below is the fallback
+        # viewer; when voxl runs, a missing VNC server is no longer fatal.
+        from pawflow_relay.voxl import start_voxl
+        _voxl = None
+        if _platform in ("win32", "darwin") or os.environ.get("DISPLAY"):
+            _voxl = start_voxl(addr="127.0.0.1", log=_log_d)
+        if _voxl:
+            _procs.append(_voxl[0])
 
-        elif _platform == "win32":
-            # Windows: use TightVNC or UltraVNC via WinVNC if available,
-            # else try built-in Windows VNC (Remote Desktop) — but for noVNC we need a VNC server.
-            # Check for common VNC servers
-            _winvnc = None
-            for _candidate in [
-                r"C:\Program Files\TightVNC\tvnserver.exe",
-                r"C:\Program Files\uvnc bvba\UltraVNC\winvnc.exe",
-                r"C:\Program Files (x86)\TightVNC\tvnserver.exe",
-            ]:
-                if os.path.exists(_candidate):
-                    _winvnc = _candidate
-                    break
-            if not _winvnc:
-                _winvnc = shutil.which("tvnserver") or shutil.which("winvnc")
-            if not _winvnc:
-                return {"ok": False, "error": "No VNC server found on Windows. Install TightVNC or UltraVNC."}
-            _websockify = shutil.which("websockify")
-            if not _websockify:
-                return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
-            # Start VNC server on the specified port
-            _p_vnc = subprocess.Popen(  # nosec B603
-                [_winvnc, "-rfbport", str(_vnc_port), "-localhost"],
-                stdout=_log_d, stderr=_log_d)
-            _procs.append(_p_vnc)
-
-        elif _platform == "darwin":
-            # macOS: built-in VNC server (Screen Sharing)
-            # Enable via: System Preferences → Sharing → Screen Sharing
-            # Or start with: /System/Library/CoreServices/RemoteManagement/ARDAgent.app/...
-            if not shutil.which("websockify"):
-                return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
-            # macOS VNC server usually runs on port 5900
-            _vnc_port = 5900
-            # Just check it's accessible
-            try:
-                _test = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                _test.settimeout(2)
-                _test.connect(("localhost", 5900))
-                _test.close()
-            except Exception:
-                return {"ok": False, "error": "macOS Screen Sharing not enabled. Enable in System Preferences → Sharing → Screen Sharing."}
-
-        else:
-            return {"ok": False, "error": f"Unsupported platform for local screen: {_platform}"}
-
-        # Start websockify (noVNC)
-        import time as _time_mod
-        _time_mod.sleep(0.5)
-        _novnc_web = "/usr/share/novnc"
-        if _platform == "win32":
-            _novnc_web = os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"), "noVNC")
-            if not os.path.isdir(_novnc_web):
-                _novnc_web = ""
-        elif _platform == "darwin":
-            _novnc_web = "/usr/local/share/novnc"
-            if not os.path.isdir(_novnc_web):
-                _novnc_web = ""
-
-        _ws_args = ["websockify", str(_novnc_port), f"localhost:{_vnc_port}"]
-        if _novnc_web and os.path.isdir(_novnc_web):
-            _ws_args = ["websockify", "--web", _novnc_web, str(_novnc_port), f"localhost:{_vnc_port}"]
-        _p_novnc = subprocess.Popen(_ws_args, stdout=_log_d, stderr=_log_d)  # nosec B603
-        _procs.append(_p_novnc)
+        _vnc_port, _vnc_error = _start_local_vnc_stack(
+            _platform, _vnc_port, _novnc_port, _log_d, _procs)
+        if _vnc_error:
+            if not _voxl:
+                for _p in _procs:
+                    if _p.poll() is None:
+                        _p.kill()
+                return {"ok": False, "error": _vnc_error}
+            sys.stderr.write(f"[FSRelay] Local noVNC fallback unavailable: {_vnc_error}\n")
+            _vnc_port = _novnc_port = 0
 
         state.local_desktop_procs = _procs
         state.local_desktop_vnc_port = _vnc_port
         state.local_desktop_novnc_port = _novnc_port
+        (state.local_desktop_voxl_proc, state.local_desktop_voxl_port,
+         state.local_desktop_voxl_password) = _voxl or (None, None, "")
         state.local_desktop_session_id = uuid.uuid4().hex
         state.local_desktop_started_at = time.time()
-        sys.stderr.write(f"[FSRelay] Local desktop started: vnc={_vnc_port} novnc={_novnc_port} platform={_platform}\n")
+        sys.stderr.write(f"[FSRelay] Local desktop started: vnc={_vnc_port} novnc={_novnc_port} voxl={_state_voxl(state, 'local_desktop')['voxl_port']} platform={_platform}\n")
         return {"ok": True, "data": {
             "vnc_port": _vnc_port, "novnc_port": _novnc_port,
+            **_state_voxl(state, "local_desktop"),
             "platform": _platform, "local_screen": True,
             "session_id": state.local_desktop_session_id,
             "started_at": state.local_desktop_started_at,
@@ -792,6 +778,75 @@ def _start_local_desktop_locked(state, msg):
         return {"ok": False, "error": f"Local desktop dependency not installed: {e}"}
     except Exception as e:
         return {"ok": False, "error": f"Failed to start local desktop: {e}"}
+
+
+def _start_local_vnc_stack(platform, vnc_port, novnc_port, log, procs):
+    """Start the fallback VNC server + websockify for the host screen.
+
+    Appends the started processes to ``procs``. Returns ``(vnc_port,
+    error)``: ``error`` is "" on success, else why the fallback viewer is
+    unavailable (the caller fails only when voxl is not running either).
+    """
+    import shutil
+    if platform == "linux":
+        # Linux: use x11vnc to share the real display :0
+        display = os.environ.get("DISPLAY", ":0")
+        if not shutil.which("x11vnc"):
+            return vnc_port, "x11vnc not installed. Install with: apt install x11vnc"
+        if not shutil.which("websockify"):
+            return vnc_port, "websockify not installed. Install with: pip install websockify"
+        procs.append(subprocess.Popen(  # nosec B603, B607
+            ["x11vnc", "-display", display, "-forever", "-nopw",
+             "-rfbport", str(vnc_port), "-shared", "-noxdamage",
+             "-defer", "33"],
+            stdout=log, stderr=log))
+    elif platform == "win32":
+        # Windows: TightVNC or UltraVNC behind websockify.
+        winvnc = None
+        for candidate in [
+            r"C:\Program Files\TightVNC\tvnserver.exe",
+            r"C:\Program Files\uvnc bvba\UltraVNC\winvnc.exe",
+            r"C:\Program Files (x86)\TightVNC\tvnserver.exe",
+        ]:
+            if os.path.exists(candidate):
+                winvnc = candidate
+                break
+        if not winvnc:
+            winvnc = shutil.which("tvnserver") or shutil.which("winvnc")
+        if not winvnc:
+            return vnc_port, "No VNC server found on Windows. Install TightVNC or UltraVNC."
+        if not shutil.which("websockify"):
+            return vnc_port, "websockify not installed. Install with: pip install websockify"
+        procs.append(subprocess.Popen(  # nosec B603
+            [winvnc, "-rfbport", str(vnc_port), "-localhost"],
+            stdout=log, stderr=log))
+    elif platform == "darwin":
+        # macOS: the built-in Screen Sharing VNC server on port 5900.
+        if not shutil.which("websockify"):
+            return vnc_port, "websockify not installed. Install with: pip install websockify"
+        vnc_port = 5900
+        try:
+            with socket.create_connection(("localhost", 5900), timeout=2):
+                pass
+        except OSError:
+            return vnc_port, ("macOS Screen Sharing not enabled. Enable in System "
+                              "Preferences → Sharing → Screen Sharing.")
+    else:
+        return vnc_port, f"Unsupported platform for local screen: {platform}"
+
+    time.sleep(0.5)
+    novnc_web = "/usr/share/novnc"
+    if platform == "win32":
+        novnc_web = os.path.join(
+            os.environ.get("PROGRAMFILES", "C:\\Program Files"), "noVNC")
+    elif platform == "darwin":
+        novnc_web = "/usr/local/share/novnc"
+    ws_args = ["websockify", str(novnc_port), f"localhost:{vnc_port}"]
+    if novnc_web and os.path.isdir(novnc_web):
+        ws_args = ["websockify", "--web", novnc_web, str(novnc_port),
+                   f"localhost:{vnc_port}"]
+    procs.append(subprocess.Popen(ws_args, stdout=log, stderr=log))  # nosec B603
+    return vnc_port, ""
 
 
 def stop_local_desktop(state, msg=None):
@@ -822,6 +877,9 @@ def _stop_local_desktop_locked(state, msg=None):
         state.local_desktop_procs = None
         state.local_desktop_vnc_port = None
         state.local_desktop_novnc_port = None
+        state.local_desktop_voxl_proc = None
+        state.local_desktop_voxl_port = None
+        state.local_desktop_voxl_password = ""
         state.local_desktop_session_id = None
         state.local_desktop_started_at = None
         sys.stderr.write("[FSRelay] Local desktop stopped\n")

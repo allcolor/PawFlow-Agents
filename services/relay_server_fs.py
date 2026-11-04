@@ -37,7 +37,6 @@ Security invariants:
      unknown methods return ENOSYS.
 """
 
-import base64
 import errno
 import logging
 import os
@@ -352,7 +351,7 @@ class RelayServerFs:
         offset = int(args.get("offset", 0))
         size = int(args.get("size", 0))
         if size <= 0:
-            return {"data": {"data_b64": ""}}
+            return {"data": {"data": b""}}
         if size > self.MAX_READ_CHUNK:
             return _errno_response(errno.EINVAL,
                                     f"size {size} exceeds {self.MAX_READ_CHUNK}")
@@ -362,7 +361,8 @@ class RelayServerFs:
                 return _errno_response(errno.EBADF, f"unknown fh {fh}")
             os.lseek(fd, offset, os.SEEK_SET)
             chunk = os.read(fd, size)
-        return {"data": {"data_b64": base64.b64encode(chunk).decode("ascii")}}
+        # Raw bytes: sent to the relay as a binary attachment.
+        return {"data": {"data": chunk}}
 
     def _op_release(self, args: Dict[str, Any]) -> Dict[str, Any]:
         fh = int(args.get("fh", -1))
@@ -419,11 +419,9 @@ class RelayServerFs:
     def _op_write(self, args: Dict[str, Any]) -> Dict[str, Any]:
         fh = int(args.get("fh", -1))
         offset = int(args.get("offset", 0))
-        data_b64 = args.get("data_b64", "")
-        try:
-            data = base64.b64decode(data_b64)
-        except (ValueError, TypeError) as e:
-            return _errno_response(errno.EINVAL, f"bad base64: {e}")
+        data = args.get("data", b"")
+        if not isinstance(data, (bytes, bytearray)):
+            return _errno_response(errno.EINVAL, "write data must be raw bytes")
         if len(data) > self.MAX_WRITE_CHUNK:
             return _errno_response(errno.EINVAL,
                                     f"write chunk {len(data)} exceeds {self.MAX_WRITE_CHUNK}")

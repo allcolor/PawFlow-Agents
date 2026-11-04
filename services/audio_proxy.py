@@ -4,7 +4,6 @@ Backend protocol (TCP): 2-byte big-endian length + Opus payload.
 Browser protocol (WebSocket): binary frames containing raw Opus packets.
 """
 
-import base64
 import logging
 import select
 import socket
@@ -16,6 +15,8 @@ import uuid
 from typing import Dict, Tuple, Optional
 
 from core.socket_teardown import shutdown_socket
+from pawflow_relay.ws_frame import xor_mask
+from services._browser_sink import BrowserSink
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +119,10 @@ def _kill_proxies(proxies):
 def _kill_relay_proxies(proxies):
     if not proxies:
         return
-    from services.vnc_proxy import _send_command_to_relay
+    from services._relay_ws import send_command_to_relay
     for proxy in proxies:
         proxy["stop"].set()
-        _send_command_to_relay(proxy["relay_service"], {
+        send_command_to_relay(proxy["relay_service"], {
             "action": "desktop_audio_close",
             "session_id": proxy["relay_session_id"],
         })
@@ -192,6 +193,9 @@ def _audio_ws_relay_proxy(client_sock, session_id: str, source: dict):
         "relay_id": relay_id,
         "relay_session_id": relay_session_id,
         "browser_sock": client_sock,
+        # Audio is tiny; a viewer 2 MiB behind is seconds late and is dropped.
+        "sink": BrowserSink(client_sock, f"audio-{relay_session_id}",
+                            max_backlog_bytes=2 * 1024 * 1024),
         "stop": stop,
         "send_lock": threading.Lock(),
         "closed": False,
@@ -231,8 +235,8 @@ def _audio_ws_relay_proxy(client_sock, session_id: str, source: dict):
         logger.warning("Audio relay tunnel open failed for %s: %s", relay_id, exc)
         _ws_close(client_sock, 4002, f"Failed: {exc}")
     finally:
-        from services.vnc_proxy import _send_command_to_relay
-        _send_command_to_relay(relay_service, {
+        from services._relay_ws import send_command_to_relay
+        send_command_to_relay(relay_service, {
             "action": "desktop_audio_close",
             "session_id": relay_session_id,
         })
@@ -247,6 +251,7 @@ def _audio_ws_relay_proxy(client_sock, session_id: str, source: dict):
         # mark the proxy closed so a queued dispatcher cannot send afterward.
         with proxy["send_lock"]:
             proxy["closed"] = True
+            proxy["sink"].abort()
             try:
                 client_sock.close()
             except Exception:
@@ -256,7 +261,7 @@ def _audio_ws_relay_proxy(client_sock, session_id: str, source: dict):
 
 
 def dispatch_audio_data(relay_id: str, relay_session_id: str,
-                        data_b64: str) -> None:
+                        packet: bytes) -> None:
     """Forward one relay-side Opus packet to its browser WebSocket."""
     with _audio_lock:
         proxy = next((item for proxies in _active_relay_proxies.values()
@@ -268,16 +273,18 @@ def dispatch_audio_data(relay_id: str, relay_session_id: str,
         logger.debug("desktop_audio_data: no browser for relay=%s session=%s",
                      relay_id, relay_session_id)
         return
-    try:
-        with proxy["send_lock"]:
-            if proxy["closed"]:
-                return
-            from services.vnc_proxy import _ws_build_frame
-            proxy["browser_sock"].sendall(
-                _ws_build_frame(base64.b64decode(data_b64), opcode=0x02))
-    except Exception as exc:
-        logger.warning("desktop_audio_data send failed: %s", exc)
-        proxy["stop"].set()
+    from services.vnc_proxy import _ws_build_frame
+    with proxy["send_lock"]:
+        if proxy["closed"]:
+            return
+        sink = proxy.get("sink")
+        if sink is None:
+            sink = proxy["sink"] = BrowserSink(
+                proxy["browser_sock"], f"audio-{relay_session_id}",
+                max_backlog_bytes=2 * 1024 * 1024)
+        # Queued, never written here: this runs on the relay connection's loop.
+        if not sink.send(_ws_build_frame(packet, opcode=0x02)):
+            proxy["stop"].set()
 
 
 def dispatch_audio_close(relay_id: str, relay_session_id: str) -> None:
@@ -543,7 +550,7 @@ def _ws_recv_frame(sock) -> Tuple[Optional[bool], int, bytes]:
     if payload is None:
         return None, 0, b""
     if masked and mask_key:
-        payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+        payload = xor_mask(payload, mask_key)
     return fin, opcode, payload
 
 

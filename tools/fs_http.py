@@ -249,7 +249,7 @@ def action_http_fetch(root_dir: str, path: str, req: Dict[str, Any], *,
 
     If on_chunk is provided, streams chunks as they arrive:
       on_chunk("start", {"status": int, "headers": dict})
-      on_chunk("chunk", "<base64-encoded bytes>")
+      on_chunk("chunk", <raw bytes>)
       on_chunk("end", None)
 
     Returns {"ok": True} (result is fully streamed via on_chunk) or
@@ -478,8 +478,8 @@ def _consume(resp, on_chunk, max_bytes=0):
     replacement for `urllib.request.urlopen` (status, headers, body).
 
     Inline mode always returns:
-        {"ok": True, "status": int, "headers": dict, "body": str}
-    where `body` is base64-encoded so binary payloads survive JSON.
+        {"ok": True, "status": int, "headers": dict, "body": bytes}
+    The relay link carries `body` as a raw binary attachment.
     """
     status = int(getattr(resp, "status", None)
                   or getattr(resp, "code", 200))
@@ -501,7 +501,7 @@ def _consume(resp, on_chunk, max_bytes=0):
         "ok": True,
         "status": status,
         "headers": _headers,
-        "body": base64.b64encode(body).decode("ascii"),
+        "body": body,
         "url": str(resp.geturl()),
     }
 
@@ -509,10 +509,13 @@ def _consume(resp, on_chunk, max_bytes=0):
 def _emit_response_streaming(resp, on_chunk, status, _headers):
     """Stream chunks via on_chunk callback (start / chunk / end)."""
     on_chunk("start", {"status": int(status), "headers": _headers})
-    # Read in small chunks to support SSE streaming (no fixed delimiter)
+    # read1 hands over whatever has arrived (up to 64 KiB) without waiting
+    # for a full buffer: SSE events go out as soon as they land, and large
+    # bodies are not cut into 4 KiB pieces.
+    _read = getattr(resp, "read1", resp.read)
     while True:
-        chunk = resp.read(4096)
+        chunk = _read(64 * 1024)
         if not chunk:
             break
-        on_chunk("chunk", base64.b64encode(chunk).decode("ascii"))
+        on_chunk("chunk", chunk)
     on_chunk("end", None)

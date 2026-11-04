@@ -41,7 +41,7 @@ def test_http_proxy_roundtrip(http_backend):
     assert res["data"]["status"] == 200
     assert emitted[0][0] == "start"
     assert b"".join(
-        base64.b64decode(data) for kind, data in emitted if kind == "chunk"
+        data for kind, data in emitted if kind == "chunk"
     ) == b"hello-proxy"
     assert emitted[-1] == ("end", None)
 

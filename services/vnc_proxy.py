@@ -8,7 +8,6 @@ The proxy does not interpret frames — it relays raw bytes in both
 directions until one side closes.
 """
 
-import base64
 import json
 import logging
 import socket
@@ -16,6 +15,11 @@ import struct
 import threading
 import time
 import uuid
+
+from pawflow_relay.binary_channel import CHANNEL_DESKTOP_WS, encode as _encode_binary
+from pawflow_relay.ws_frame import xor_mask
+from services._browser_sink import BrowserSink
+from services._relay_ws import send_command_to_relay, send_to_relay
 
 logger = logging.getLogger(__name__)
 
@@ -160,23 +164,32 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
 
 
 def _vnc_ws_relay_proxy(client_sock, session_id: str, session: dict,
-                        meta: dict):
-    """Tunnel one browser VNC WebSocket through the relay connection."""
-    relay_service = session["relay_service"]
+                        meta: dict, *, port: int = 0,
+                        ws_path: str = "/websockify", headers=None,
+                        relay_service=None, local_screen=None):
+    """Tunnel one browser desktop WebSocket through the relay connection.
+
+    Defaults tunnel the noVNC websockify stream; the voxl viewer passes its
+    own ``port``, ``ws_path`` and a clean ``headers`` set (services.voxl_proxy).
+    """
+    relay_service = relay_service or session["relay_service"]
     relay_id = session.get("relay_id", "")
-    port = int(session.get("port") or 0)
+    port = int(port or session.get("port") or 0)
+    if local_screen is None:
+        local_screen = bool(session.get("local_screen"))
     ws_session_id = uuid.uuid4().hex[:12]
 
-    headers = {}
-    for key, value in meta.get("headers", {}).items():
-        if key.lower() in (
-                "host", "upgrade", "connection", "sec-websocket-key",
-                "sec-websocket-accept", "sec-websocket-version",
-                "sec-websocket-extensions"):
-            continue
-        headers[key] = value
-    headers["Host"] = f"127.0.0.1:{port}"
-    headers["Sec-WebSocket-Protocol"] = "binary"
+    if headers is None:
+        headers = {}
+        for key, value in meta.get("headers", {}).items():
+            if key.lower() in (
+                    "host", "upgrade", "connection", "sec-websocket-key",
+                    "sec-websocket-accept", "sec-websocket-version",
+                    "sec-websocket-extensions"):
+                continue
+            headers[key] = value
+        headers["Host"] = f"127.0.0.1:{port}"
+        headers["Sec-WebSocket-Protocol"] = "binary"
 
     with _lock:
         current = _sessions.get(session_id)
@@ -185,6 +198,7 @@ def _vnc_ws_relay_proxy(client_sock, session_id: str, session: dict,
             return
         current["vnc_ws_sessions"][ws_session_id] = {
             "browser_sock": client_sock,
+            "sink": BrowserSink(client_sock, f"vnc-{ws_session_id}"),
         }
 
     try:
@@ -192,9 +206,9 @@ def _vnc_ws_relay_proxy(client_sock, session_id: str, session: dict,
             "desktop_ws_open",
             session_id=ws_session_id,
             port=port,
-            ws_path="/websockify",
+            ws_path=ws_path,
             headers=headers,
-            local_screen=bool(session.get("local_screen")),
+            local_screen=bool(local_screen),
         )
         if not isinstance(result, dict) or not result.get("ok"):
             detail = (result.get("error", "Unknown")
@@ -221,24 +235,22 @@ def _vnc_ws_relay_proxy(client_sock, session_id: str, session: dict,
             opcode, payload = _ws_recv_frame(client_sock)
             if opcode == 0x08:
                 break
-            _send_command_to_relay(relay_service, {
-                "action": "desktop_ws_send",
-                "session_id": ws_session_id,
-                "data": base64.b64encode(payload).decode("ascii"),
-                "opcode": opcode,
-            })
+            send_to_relay(relay_service, _encode_binary(
+                CHANNEL_DESKTOP_WS, ws_session_id, payload, opcode), 0x02)
     except Exception as exc:
         logger.debug("VNC relay browser loop ended for %s: %s",
                      ws_session_id, exc)
     finally:
-        _send_command_to_relay(relay_service, {
+        send_command_to_relay(relay_service, {
             "action": "desktop_ws_close",
             "session_id": ws_session_id,
         })
         with _lock:
             current = _sessions.get(session_id)
-            if current:
-                current["vnc_ws_sessions"].pop(ws_session_id, None)
+            entry = (current["vnc_ws_sessions"].pop(ws_session_id, None)
+                     if current else None)
+        if entry and entry.get("sink") is not None:
+            entry["sink"].abort()
         try:
             client_sock.close()
         except Exception:
@@ -318,12 +330,15 @@ def _close_vnc_viewers(session):
         for ws_session_id, ws_session in list(
                 session.get("vnc_ws_sessions", {}).items()):
             if relay_service is not None:
-                _send_command_to_relay(relay_service, {
+                send_command_to_relay(relay_service, {
                     "action": "desktop_ws_close",
                     "session_id": ws_session_id,
                 })
             browser_sock = ws_session.get("browser_sock")
-            if browser_sock:
+            sink = ws_session.get("sink")
+            if sink is not None:
+                sink.abort()
+            elif browser_sock:
                 try:
                     browser_sock.close()
                 except Exception:
@@ -397,8 +412,8 @@ def _get_vnc_target(session_id: str) -> tuple:
 
 
 def dispatch_vnc_ws_data(relay_id: str, ws_session_id: str,
-                         data_b64: str, opcode: int = 2):
-    """Forward a VNC frame received from a relay to its browser socket."""
+                         payload: bytes, opcode: int = 2):
+    """Forward one desktop WS message received from a relay to its browser."""
     with _lock:
         ws_session = None
         for session in _sessions.values():
@@ -407,16 +422,26 @@ def dispatch_vnc_ws_data(relay_id: str, ws_session_id: str,
             ws_session = session.get("vnc_ws_sessions", {}).get(ws_session_id)
             if ws_session:
                 break
-    if not ws_session or not ws_session.get("browser_sock"):
+    sink = _viewer_sink(ws_session, ws_session_id)
+    if sink is None:
         logger.debug("desktop_ws_data: no browser for relay=%s session=%s",
                      relay_id, ws_session_id)
         return
-    try:
-        payload = base64.b64decode(data_b64)
-        ws_session["browser_sock"].sendall(
-            _ws_build_frame(payload, opcode=opcode))
-    except Exception as exc:
-        logger.warning("desktop_ws_data send failed: %s", exc)
+    # Queued, never written here: this runs on the relay connection's loop.
+    sink.send(_ws_build_frame(payload, opcode=opcode or 0x02))
+
+
+def _viewer_sink(ws_session, ws_session_id: str):
+    """Return the viewer's BrowserSink, creating it on first use."""
+    if not ws_session or not ws_session.get("browser_sock"):
+        return None
+    with _lock:
+        sink = ws_session.get("sink")
+        if sink is None:
+            sink = BrowserSink(ws_session["browser_sock"],
+                               f"vnc-{ws_session_id}")
+            ws_session["sink"] = sink
+    return sink
 
 
 def dispatch_vnc_ws_close(relay_id: str, ws_session_id: str):
@@ -430,44 +455,10 @@ def dispatch_vnc_ws_close(relay_id: str, ws_session_id: str):
                 ws_session_id, None)
             if ws_session:
                 break
-    if ws_session and ws_session.get("browser_sock"):
-        _ws_close(ws_session["browser_sock"], 1000, "Backend closed")
-
-
-def _send_command_to_relay(relay_service, command: dict):
-    """Send a fire-and-forget desktop command through a connected relay."""
-    import asyncio
-    from services.filesystem_service import _ws_send_frame
-
-    with relay_service._relay_pool_lock:
-        pool = relay_service._relay_pool[:]
-    if not pool:
-        return
-    payload = json.dumps({
-        "type": "command",
-        "request_id": uuid.uuid4().hex[:8],
-        **command,
-    }).encode("utf-8")
-    last_error = None
-    for connection in reversed(pool):
-        writer = connection["writer"]
-        loop = connection["loop"]
-        send_lock = connection.get("send_lock")
-
-        async def _send(w=writer, lock=send_lock):
-            if lock is not None:
-                async with lock:
-                    await _ws_send_frame(w, payload)
-            else:
-                await _ws_send_frame(w, payload)
-
-        try:
-            asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
-            return
-        except Exception as exc:
-            last_error = exc
-    if last_error is not None:
-        logger.warning("VNC relay command send failed: %s", last_error)
+    sink = _viewer_sink(ws_session, ws_session_id)
+    if sink is not None:
+        # After the frames already queued for this viewer.
+        sink.finish(_ws_close_frame(1000, "Backend closed"))
 
 
 def _ws_build_frame(data: bytes, opcode: int = 0x02) -> bytes:
@@ -503,8 +494,7 @@ def _ws_recv_frame(sock) -> tuple[int, bytes]:
     mask = _recv_exact(4) if masked else b""
     payload = _recv_exact(length)
     if masked:
-        payload = bytes(byte ^ mask[index % 4]
-                        for index, byte in enumerate(payload))
+        payload = xor_mask(payload, mask)
     return opcode, payload
 
 
@@ -797,17 +787,15 @@ def _serve_novnc_local(pending_req, sub_path: str) -> bool:
 def _serve_novnc_from_relay(pending_req, relay_service,
                             sub_path: str) -> bool:
     """Serve a noVNC UI asset from the relay runtime, not the host helper."""
-    import base64
-
     safe_path = _os.path.normpath(str(sub_path or "")).lstrip(
         _os.sep).lstrip("/")
     try:
         result = relay_service._request("novnc_asset", path=safe_path)
-        body_b64 = result.get("body", "") if isinstance(result, dict) else ""
-        if not body_b64:
+        # Raw bytes, sent by the relay as a binary attachment.
+        body = result.get("body", b"") if isinstance(result, dict) else b""
+        if not isinstance(body, (bytes, bytearray)) or not body:
             return False
-        body = base64.b64decode(body_b64, validate=True)
-        body = _patch_novnc_static_body(safe_path, body)
+        body = _patch_novnc_static_body(safe_path, bytes(body))
         if getattr(pending_req, "method", "GET") == "HEAD":
             body = b""
         pending_req.complete(200, {
@@ -988,6 +976,22 @@ def vnc_http_proxy(pending_req):
 
     with _lock:
         session = _sessions.get(session_id)
+
+    # voxl, the default viewer, lives under voxl/ (services.voxl_proxy).
+    if sub_path == "voxl":
+        pending_req.complete(
+            301, {"Location": f"/vnc/{session_id}/{token}/voxl/"}, b"")
+        return
+    if sub_path.startswith("voxl/"):
+        from services.voxl_proxy import voxl_http_proxy
+        voxl_http_proxy(pending_req, session_id, session or {},
+                        sub_path[len("voxl/"):])
+        return
+    if getattr(pending_req, "method", "GET") not in ("GET", "HEAD"):
+        pending_req.complete(405, {"Content-Type": "application/json"},
+                             b'{"error": "Method not allowed"}')
+        return
+
     host, port = _get_vnc_target(session_id)
     if not port:
         pending_req.complete(404, {"Content-Type": "application/json"},
@@ -1051,10 +1055,14 @@ def vnc_http_proxy(pending_req):
                              json.dumps({"error": str(e)}).encode())
 
 
+def _ws_close_frame(code: int, reason: str) -> bytes:
+    payload = struct.pack("!H", code) + reason.encode("utf-8")[:123]
+    return bytes([0x88, len(payload)]) + payload
+
+
 def _ws_close(sock, code: int, reason: str):
     """Send a WebSocket close frame."""
-    payload = struct.pack("!H", code) + reason.encode("utf-8")[:123]
-    frame = bytes([0x88, len(payload)]) + payload
+    frame = _ws_close_frame(code, reason)
     try:
         sock.sendall(frame)
         sock.close()

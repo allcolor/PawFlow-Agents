@@ -170,7 +170,7 @@ function desktopDockAttach(index) {
       if (!resp.url) { addMsg('error', t('desktopNoUrl')); return; }
       const label = row.mode === 'host'
         ? row.relay_id + ' (local)' : row.relay_id;
-      const tabId = addDesktopTab(label, resp.url);
+      const tabId = addDesktopTab(label, desktopViewerUrl(resp), resp);
       desktopDockStampTab(tabId, row.relay_id, row.mode,
                           row.desktop_session_id);
       if (resp.audio_session && resp.audio_token) {

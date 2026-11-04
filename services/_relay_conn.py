@@ -585,8 +585,11 @@ class _RelayConnMixin:
     async def _relay_main_loop(self, reader, writer, service, send_lock,
                                relay_tasks, conn_state=None):
         import asyncio
+        from pawflow_relay.binary_channel import AttachmentAssembler
         if conn_state is None:
             conn_state = {}
+        # Bytes attachments of this connection's next JSON messages.
+        attachments = AttachmentAssembler()
         KEEPALIVE = 120
         while True:
             try:
@@ -611,11 +614,15 @@ class _RelayConnMixin:
                 async with send_lock:
                     await _ws_send_frame(writer, payload, opcode=0x0A)
                 continue
+            if opcode == 0x02:
+                self._dispatch_relay_binary(payload, service, attachments)
+                continue
             if opcode != 0x01:
                 continue
             try:
                 msg = json.loads(payload.decode('utf-8'))
-            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                msg = attachments.resolve(msg)
+            except (ValueError, UnicodeDecodeError) as exc:
                 logger.warning('Ignoring malformed relay frame from %s: %s',
                                service._service_id, exc)
                 continue
@@ -668,31 +675,12 @@ class _RelayConnMixin:
                 dispatch_terminal_exit(msg.get('session_id', ''))
             except Exception as e:
                 logger.debug('terminal_exit dispatch failed: %s', e, exc_info=True)
-        elif mtype == 'cs_ws_data':
-            try:
-                from services.code_server_proxy import dispatch_cs_ws_data
-                dispatch_cs_ws_data(service._service_id,
-                                     msg.get('session_id', ''),
-                                     msg.get('frame') or msg.get('data', ''),
-                                     msg.get('opcode', 1))
-            except Exception as e:
-                logger.debug('cs_ws_data dispatch failed: %s', e, exc_info=True)
         elif mtype == 'cs_ws_close':
             try:
                 from services.code_server_proxy import dispatch_cs_ws_close
                 dispatch_cs_ws_close(service._service_id, msg.get('session_id', ''))
             except Exception as e:
                 logger.debug('cs_ws_close dispatch failed: %s', e, exc_info=True)
-        elif mtype == 'desktop_ws_data':
-            try:
-                from services.vnc_proxy import dispatch_vnc_ws_data
-                dispatch_vnc_ws_data(service._service_id,
-                                     msg.get('session_id', ''),
-                                     msg.get('data', ''),
-                                     msg.get('opcode', 2))
-            except Exception as e:
-                logger.debug('desktop_ws_data dispatch failed: %s', e,
-                             exc_info=True)
         elif mtype == 'desktop_ws_close':
             try:
                 from services.vnc_proxy import dispatch_vnc_ws_close
@@ -700,15 +688,6 @@ class _RelayConnMixin:
                                       msg.get('session_id', ''))
             except Exception as e:
                 logger.debug('desktop_ws_close dispatch failed: %s', e,
-                             exc_info=True)
-        elif mtype == 'desktop_audio_data':
-            try:
-                from services.audio_proxy import dispatch_audio_data
-                dispatch_audio_data(service._service_id,
-                                    msg.get('session_id', ''),
-                                    msg.get('data', ''))
-            except Exception as e:
-                logger.debug('desktop_audio_data dispatch failed: %s', e,
                              exc_info=True)
         elif mtype == 'desktop_audio_close':
             try:
@@ -722,6 +701,47 @@ class _RelayConnMixin:
             async with send_lock:
                 await _ws_send_frame(
                     writer, json.dumps({'type': 'pong'}).encode())
+
+    def _dispatch_relay_binary(self, frame: bytes, service,
+                               attachments=None) -> None:
+        """Route one binary stream frame (``pawflow_relay.binary_channel``).
+
+        Desktop, audio and code-server bytes go to their browser socket as
+        they came; HTTP body chunks go to the streaming request they belong
+        to; attachments wait in ``attachments`` for their JSON message. No
+        JSON and no base64 on this path.
+        """
+        from pawflow_relay.binary_channel import (
+            CHANNEL_ATTACHMENT, CHANNEL_CODE_SERVER_WS, CHANNEL_DESKTOP_AUDIO,
+            CHANNEL_DESKTOP_WS, CHANNEL_HTTP_CHUNK, decode)
+        try:
+            channel, opcode, stream_id, payload = decode(frame)
+        except ValueError as exc:
+            logger.warning('Ignoring malformed binary relay frame from %s: %s',
+                           service._service_id, exc)
+            return
+        relay_id = service._service_id
+        try:
+            if channel == CHANNEL_ATTACHMENT:
+                if attachments is None:
+                    raise ValueError('attachment outside a relay connection')
+                attachments.add(stream_id, payload)
+            elif channel == CHANNEL_DESKTOP_WS:
+                from services.vnc_proxy import dispatch_vnc_ws_data
+                dispatch_vnc_ws_data(relay_id, stream_id, payload, opcode)
+            elif channel == CHANNEL_DESKTOP_AUDIO:
+                from services.audio_proxy import dispatch_audio_data
+                dispatch_audio_data(relay_id, stream_id, payload)
+            elif channel == CHANNEL_CODE_SERVER_WS:
+                from services.code_server_proxy import dispatch_cs_ws_frame
+                dispatch_cs_ws_frame(relay_id, stream_id, payload)
+            elif channel == CHANNEL_HTTP_CHUNK:
+                service._dispatch_http_response({
+                    'request_id': stream_id, 'kind': 'chunk',
+                    'data': payload})
+        except Exception as exc:
+            logger.debug('Binary relay frame dispatch failed (channel %s): %s',
+                         channel, exc, exc_info=True)
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
@@ -829,8 +849,12 @@ class _RelayConnMixin:
         try:
             # Serialize so concurrent _handle_relay_request tasks (now
             # spawned via create_task) can't interleave WS frames.
+            # FUSE read data travels as a binary attachment, not base64.
+            from pawflow_relay.binary_channel import pack_message
+            frames = pack_message(envelope)
             async with send_lock:
-                await _ws_send_frame(writer, json.dumps(envelope).encode())
+                for data, opcode in frames:
+                    await _ws_send_frame(writer, data, opcode)
         except Exception as e:
             logger.warning('[server-fs] failed to send response for %s: %s',
                            request_id, e)

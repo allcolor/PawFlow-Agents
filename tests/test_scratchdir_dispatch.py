@@ -1,6 +1,5 @@
 """End-to-end relay dispatch tests for scoped ScratchDir operations."""
 
-import base64
 import sys
 import threading
 import time
@@ -73,8 +72,7 @@ def test_dispatch_write_read_and_exec_share_one_root(roots):
     written = dispatch.execute_command(ctx, {
         "action": "write_file",
         "path": "report.txt",
-        "content": base64.b64encode(b"hello").decode("ascii"),
-        "base64": True,
+        "content": b"hello",
         "scratchdir": ticket,
     })
     assert written["ok"] is True
@@ -160,8 +158,7 @@ def test_dispatch_isolates_neighboring_scopes(roots):
         result = dispatch.execute_command(ctx, {
             "action": "write_file",
             "path": "same.txt",
-            "content": base64.b64encode(value).decode("ascii"),
-            "base64": True,
+            "content": value,
             "scratchdir": ticket,
         })
         assert result["ok"] is True
@@ -218,7 +215,7 @@ def test_dispatch_supports_chunked_scratchdir_downloads(roots):
         "scratchdir": ticket,
     })
     assert first["ok"] is True
-    assert base64.b64decode(first["data"]["data"]) == payload[:3]
+    assert first["data"]["data"] == payload[:3]
     assert first["data"]["total_chunks"] == 3
 
     second = dispatch.execute_command(ctx, {
@@ -229,4 +226,4 @@ def test_dispatch_supports_chunked_scratchdir_downloads(roots):
         "scratchdir": ticket,
     })
     assert second["ok"] is True
-    assert base64.b64decode(second["data"]["data"]) == payload[3:6]
+    assert second["data"]["data"] == payload[3:6]

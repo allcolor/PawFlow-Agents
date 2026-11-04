@@ -1,5 +1,3 @@
-import base64
-
 from tasks.io import relay_proxy
 
 
@@ -45,8 +43,7 @@ class _Relay:
                 "X-Model": "local",
             },
         })
-        on_output(
-            "chunk", base64.b64encode(b"data: ok\n\n").decode("ascii"))
+        on_output("chunk", b"data: ok\n\n")
         on_output("end", {})
 
 

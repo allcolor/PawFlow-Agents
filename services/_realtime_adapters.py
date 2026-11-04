@@ -202,7 +202,8 @@ class RealtimeWSClient:
             hdr.append(0x80 | 127)
             hdr.extend(struct.pack("!Q", n))
         hdr.extend(mask)
-        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        from pawflow_relay.ws_frame import xor_mask
+        masked = xor_mask(payload, mask)
         with self._send_lock:
             sock = self._sock
             if sock is None:

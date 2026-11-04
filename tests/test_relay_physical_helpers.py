@@ -110,7 +110,9 @@ def test_explicit_host_grant_can_access_absolute_host_path(tmp_path, allow_exec,
     conn = Connection(helper, "read_file", path=str(outside))
     helper._handle_host_helper_conn(conn)
     assert conn.result()["type"] == "result"
-    assert base64.b64decode(conn.result()["data"]["content"]) == b"authorized host file"
+    # The helper's JSON-line protocol carries bytes as base64 references.
+    assert conn.result()["data"]["content"] == {
+        "$pawflow_b64": base64.b64encode(b"authorized host file").decode("ascii")}
 
 
 @pytest.mark.parametrize("action", ["exec", "exec_stream"])

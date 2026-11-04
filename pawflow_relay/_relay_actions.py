@@ -66,7 +66,7 @@ def http_proxy(msg, on_output=None):
     _method = msg.get("method", "GET")
     _req_path = msg.get("req_path", "/")
     _req_headers = msg.get("req_headers", {})
-    _req_body = msg.get("req_body", "")  # base64
+    _req_body = msg.get("req_body", b"")  # raw bytes (binary attachment)
     if not _target_port:
         return {"ok": False, "error": "Missing port"}
     if on_output is None:
@@ -79,7 +79,7 @@ def http_proxy(msg, on_output=None):
         _timeout = int(msg.get("timeout") or 300)
         conn = http.client.HTTPConnection(
             "127.0.0.1", _target_port, timeout=_timeout)
-        _body_bytes = base64.b64decode(_req_body) if _req_body else None
+        _body_bytes = bytes(_req_body) if _req_body else None
         conn.request(_method, _req_path, body=_body_bytes, headers=_req_headers)
         resp = conn.getresponse()
         _resp_headers = dict(resp.getheaders())
@@ -92,7 +92,7 @@ def http_proxy(msg, on_output=None):
             _chunk = resp.read(64 * 1024)
             if not _chunk:
                 break
-            on_output("chunk", base64.b64encode(_chunk).decode("ascii"))
+            on_output("chunk", _chunk)
         on_output("end", None)
         return {"ok": True, "data": {
             "status": resp.status,

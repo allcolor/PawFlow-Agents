@@ -36,7 +36,8 @@ class _StreamingProxyRelay:
         })
         encoded = result.get("body") or ""
         if encoded:
-            on_output("chunk", encoded)
+            # Relay HTTP body chunks reach the server as raw bytes.
+            on_output("chunk", base64.b64decode(encoded))
         on_output("end", None)
         return {"ok": True}
 
@@ -279,7 +280,8 @@ def test_code_server_ws_registers_browser_socket_under_session_id(tmp_path, monk
         return 0x08, b""
 
     monkeypatch.setattr(csp, "_ws_recv", fake_ws_recv)
-    monkeypatch.setattr(csp, "_send_command_to_relay", lambda *a, **k: None)
+    monkeypatch.setattr(csp, "send_command_to_relay", lambda *a, **k: None)
+    monkeypatch.setattr(csp, "send_to_relay", lambda *a, **k: None)
 
     sock = FakeSock()
     csp.code_ws_proxy(
@@ -323,7 +325,8 @@ def test_code_server_ws_forwards_selected_subprotocol(tmp_path, monkeypatch):
         "relay-1", 8765, relay, owner_user_id="alice")
 
     monkeypatch.setattr(csp, "_ws_recv", lambda sock: (0x08, b""))
-    monkeypatch.setattr(csp, "_send_command_to_relay", lambda *a, **k: None)
+    monkeypatch.setattr(csp, "send_command_to_relay", lambda *a, **k: None)
+    monkeypatch.setattr(csp, "send_to_relay", lambda *a, **k: None)
 
     csp.code_ws_proxy(
         FakeSock(),
@@ -1009,7 +1012,7 @@ def test_code_server_command_send_uses_relay_ws_frame(monkeypatch):
     import json
 
     from services import code_server_proxy as csp
-    import services.filesystem_service as fs
+    import services._relay_ws as relay_ws
 
     class FakeLock:
         def __enter__(self):
@@ -1024,10 +1027,10 @@ def test_code_server_command_send_uses_relay_ws_frame(monkeypatch):
     loop = object()
     sent = []
 
-    async def fake_ws_send_frame(writer, payload):
-        sent.append((writer, json.loads(payload.decode("utf-8"))))
+    async def fake_ws_send_frame(writer, payload, opcode=0x01):
+        sent.append((writer, opcode, json.loads(payload.decode("utf-8"))))
 
-    monkeypatch.setattr(fs, "_ws_send_frame", fake_ws_send_frame)
+    monkeypatch.setattr(relay_ws, "_ws_send_frame", fake_ws_send_frame)
 
     class FakeFuture:
         def __init__(self, coro):
@@ -1046,12 +1049,13 @@ def test_code_server_command_send_uses_relay_ws_frame(monkeypatch):
         _relay_pool_lock = FakeLock()
         _relay_pool = [{"writer": "writer-1", "loop": loop}]
 
-    csp._send_command_to_relay(FakeRelay(), {"action": "cs_ws_close", "session_id": "sid"})
+    csp.send_command_to_relay(FakeRelay(), {"action": "cs_ws_close", "session_id": "sid"})
 
     assert sent[0][0] == "writer-1"
-    assert sent[0][1]["type"] == "command"
-    assert sent[0][1]["action"] == "cs_ws_close"
-    assert sent[0][1]["session_id"] == "sid"
+    assert sent[0][1] == 0x01
+    assert sent[0][2]["type"] == "command"
+    assert sent[0][2]["action"] == "cs_ws_close"
+    assert sent[0][2]["session_id"] == "sid"
 
 
 def test_code_server_ws_recv_preserves_raw_masked_frame():
@@ -1076,7 +1080,6 @@ def test_code_server_ws_recv_preserves_raw_masked_frame():
 
 
 def test_code_server_dispatch_can_forward_raw_backend_frame():
-    import base64
     from services import code_server_proxy as csp
 
     class FakeBrowserSocket:
@@ -1095,8 +1098,11 @@ def test_code_server_dispatch_can_forward_raw_backend_frame():
         "cs_ws_sessions": {"ws-raw": {"browser_sock": sock}},
     }
     try:
-        csp.dispatch_cs_ws_data(
-            relay_id, "ws-raw", base64.b64encode(frame).decode("ascii"), opcode=-1)
+        csp.dispatch_cs_ws_frame(relay_id, "ws-raw", frame)
+        import time
+        deadline = time.time() + 5
+        while time.time() < deadline and sock.sent != frame:
+            time.sleep(0.01)
         assert sock.sent == frame
     finally:
         csp._sessions.pop(session_id, None)

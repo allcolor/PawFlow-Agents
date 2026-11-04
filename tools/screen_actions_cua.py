@@ -23,7 +23,6 @@ Phase 2 (AX-first addressing): ``screen_windows`` lists windows,
 backgrounded/minimized windows without any pointer movement.
 """
 
-import base64
 import json
 import logging
 import os
@@ -153,7 +152,7 @@ def _screenshot(req: dict) -> dict:
             return {"error": "cua-driver returned an empty screenshot"}
         width, height = _png_size(png)
         return {
-            "image": base64.b64encode(png).decode("ascii"),
+            "image": png,  # raw bytes, sent as a binary attachment
             "width": width, "height": height,
         }
     finally:
@@ -361,7 +360,7 @@ def _window_state(req: dict) -> dict:
             png = b""
         if png:
             width, height = _png_size(png)
-            out["image"] = base64.b64encode(png).decode("ascii")
+            out["image"] = png  # raw bytes, sent as a binary attachment
             out["width"], out["height"] = width, height
         return out
     finally:

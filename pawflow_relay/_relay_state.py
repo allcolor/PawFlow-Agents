@@ -25,6 +25,10 @@ class RelayWorkerState:
     desktop_essential_procs: Optional[List[subprocess.Popen]] = None
     desktop_vnc_port: Optional[int] = None
     desktop_novnc_port: Optional[int] = None
+    # voxl viewer (default); noVNC above stays as the fallback viewer
+    desktop_voxl_proc: Optional[subprocess.Popen] = None
+    desktop_voxl_port: Optional[int] = None
+    desktop_voxl_password: str = ""
     desktop_display: Optional[str] = None
     desktop_session_id: Optional[str] = None
     desktop_started_at: Optional[float] = None
@@ -40,5 +44,8 @@ class RelayWorkerState:
     local_desktop_procs: Optional[List[subprocess.Popen]] = None
     local_desktop_vnc_port: Optional[int] = None
     local_desktop_novnc_port: Optional[int] = None
+    local_desktop_voxl_proc: Optional[subprocess.Popen] = None
+    local_desktop_voxl_port: Optional[int] = None
+    local_desktop_voxl_password: str = ""
     local_desktop_session_id: Optional[str] = None
     local_desktop_started_at: Optional[float] = None

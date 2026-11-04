@@ -1,6 +1,5 @@
 """Relay lifecycle and server coordinator tests for ScratchDir."""
 
-import base64
 import subprocess
 import sys
 import time
@@ -340,7 +339,7 @@ class _FakeRelay:
                  "modified": "2026-08-21T00:00:00Z"},
             ]
         if action == "read_file_chunked":
-            return {"data": base64.b64encode(b"hello").decode(),
+            return {"data": b"hello",
                     "total_chunks": 1, "chunk_size": 1024}
         raise AssertionError(action)
 

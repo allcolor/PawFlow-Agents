@@ -12,8 +12,10 @@ import logging
 import os
 import struct
 import threading
+import uuid
 
 from core.socket_teardown import shutdown_socket
+from pawflow_relay.ws_frame import xor_mask
 
 # Hard cap on a single WebSocket frame (relay-declared length). A connected
 # relay is user-run and holds a token; a huge declared frame must not be
@@ -34,16 +36,16 @@ def _invalidate_tool_relay_registry_cache() -> None:
 def _short_args(args: dict) -> str:
     """Compact dict repr for logging — caps long values, hides bulky bytes.
 
-    FUSE ops carry args like {'path': '/...', 'fh': 3, 'data_b64': '<huge>'}.
-    A single 1 MB write would otherwise put a megabyte of base64 into the
-    log line; cap each value at 80 chars and replace bulky payloads with
-    `<N bytes>` markers so we keep the line scannable.
+    FUSE ops carry args like {'path': '/...', 'fh': 3, 'data': b'<huge>'}.
+    A single 1 MB write would otherwise put a megabyte into the log line;
+    cap each value at 80 chars and replace bulky payloads with `<N bytes>`
+    markers so we keep the line scannable.
     """
     if not args:
         return "{}"
     parts = []
     for k, v in args.items():
-        if k in ("data_b64",):
+        if isinstance(v, (bytes, bytearray)):
             try:
                 parts.append(f"{k}=<{len(v)}b>")
             except Exception:
@@ -255,11 +257,7 @@ def _ws_unmask(data: bytes, mask: bytes) -> bytes:
     A per-byte generator ran one Python step per byte of every relay frame
     and took about 13% of the server's GIL time under load.
     """
-    if not data:
-        return b""
-    n = len(data)
-    key = (mask * (n // 4 + 1))[:n]
-    return (int.from_bytes(data, "big") ^ int.from_bytes(key, "big")).to_bytes(n, "big")
+    return xor_mask(data, mask)
 
 
 async def _read_without_stall(reader, length, stall_timeout):
@@ -350,6 +348,49 @@ async def _ws_send_frame(writer, data, opcode=0x01):
     frame += data
     writer.write(frame)
     await writer.drain()
+
+
+def send_to_relay(relay_service, payload: bytes, opcode: int = 0x01) -> None:
+    """Send one frame to a connected relay from a non-event-loop thread.
+
+    Fire-and-forget: tries the newest pooled connection first and logs when
+    every connection fails. Holds the connection's send lock, so the frame
+    never interleaves with another writer on the same socket.
+    """
+    with relay_service._relay_pool_lock:
+        pool = relay_service._relay_pool[:]
+    if not pool:
+        return
+    last_error = None
+    for connection in reversed(pool):
+        writer = connection["writer"]
+        loop = connection["loop"]
+        send_lock = connection.get("send_lock")
+
+        async def _send(w=writer, lock=send_lock):
+            if lock is not None:
+                async with lock:
+                    await _ws_send_frame(w, payload, opcode=opcode)
+            else:
+                await _ws_send_frame(w, payload, opcode=opcode)
+
+        try:
+            asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
+            return
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        logger.warning("Relay frame send failed: %s", last_error)
+
+
+def send_command_to_relay(relay_service, command: dict) -> None:
+    """Send a fire-and-forget JSON ``command`` to a connected relay."""
+    import json
+    send_to_relay(relay_service, json.dumps({
+        "type": "command",
+        "request_id": uuid.uuid4().hex[:8],
+        **command,
+    }).encode("utf-8"))
 
 
 # Filesystem Service

@@ -1,6 +1,5 @@
 """Desktop audio keeps direct server relays and tunnels remote relays."""
 
-import base64
 import socket
 import threading
 
@@ -78,7 +77,7 @@ def test_remote_audio_uses_relay_without_server_local_tcp(
         lambda *_args, **_kwargs: pytest.fail(
             "remote audio must not use server-local TCP"))
     monkeypatch.setattr(
-        "services.vnc_proxy._send_command_to_relay",
+        "services._relay_ws.send_command_to_relay",
         lambda _relay, command: closes.append(command))
 
     audio_proxy.audio_ws_proxy(
@@ -125,10 +124,13 @@ def test_relay_audio_packet_is_forwarded_as_browser_binary_frame(cap_db):
             "closed": False,
         }]
 
-    audio_proxy.dispatch_audio_data(
-        "relay-1", "audio-1",
-        base64.b64encode(b"opus").decode("ascii"))
+    audio_proxy.dispatch_audio_data("relay-1", "audio-1", b"opus")
 
+    # Written by the viewer's sender thread, never inline on the relay loop.
+    import time
+    deadline = time.time() + 5
+    while time.time() < deadline and not browser.sent:
+        time.sleep(0.01)
     assert browser.sent == [b"\x82\x04opus"]
 
 

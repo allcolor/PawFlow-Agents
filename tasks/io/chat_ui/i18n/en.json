@@ -796,6 +796,7 @@
   "forkedConversation": "Forked → {id}",
   "formatLabel": "format: {format}",
   "fullscreenTitle": "Fullscreen (Escape to exit)",
+  "desktopViewerSwitch": "Switch this desktop to {viewer}",
   "global": "Global",
   "globalLower": "global",
   "globalOnly": "Global only",

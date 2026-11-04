@@ -7,7 +7,6 @@ Routes: /code/{path+}  where path starts with relay_id/...
 The proxy strips /code/{relay_id} and forwards to code-server at root.
 """
 
-import base64
 import json
 import logging
 import struct
@@ -18,6 +17,12 @@ _WS_MAX_FRAME_BYTES = 64 * 1024 * 1024
 import threading
 import time
 import uuid
+
+from pawflow_relay.binary_channel import (
+    CHANNEL_CODE_SERVER_WS, encode as _encode_binary)
+from pawflow_relay.ws_frame import xor_mask
+from services._browser_sink import BrowserSink
+from services._relay_ws import send_command_to_relay, send_to_relay
 
 logger = logging.getLogger(__name__)
 
@@ -471,12 +476,8 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
                 opcode, payload = received
                 frame = _ws_build_frame(payload, opcode=opcode)
             if opcode == 0x08:  # close
-                _send_command_to_relay(relay_service, {
-                    "action": "cs_ws_send",
-                    "session_id": ws_session_id,
-                    "frame": base64.b64encode(frame).decode("ascii"),
-                    "opcode": opcode,
-                })
+                send_to_relay(relay_service, _encode_binary(
+                    CHANNEL_CODE_SERVER_WS, ws_session_id, frame), 0x02)
                 break
             if opcode == 0x09:  # ping
                 # Browser-to-code-server frames are already masked exactly as
@@ -491,18 +492,13 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
                     ws_session_id, browser_frame_count, browser_byte_count, opcode)
                 last_diag = now
 
-            _send_command_to_relay(relay_service, {
-                "action": "cs_ws_send",
-                "session_id": ws_session_id,
-                "frame": base64.b64encode(frame).decode("ascii"),
-                "data": base64.b64encode(payload).decode("ascii"),
-                "opcode": opcode,
-            })
+            send_to_relay(relay_service, _encode_binary(
+                CHANNEL_CODE_SERVER_WS, ws_session_id, frame), 0x02)
     except Exception as e:
         logger.debug("Code WS proxy read loop ended: %s (session=%s)", e, ws_session_id)
     finally:
         try:
-            _send_command_to_relay(relay_service, {
+            send_command_to_relay(relay_service, {
                 "action": "cs_ws_close",
                 "session_id": ws_session_id,
             })
@@ -511,7 +507,10 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
 
         with _lock:
             if session_id in _sessions:
-                _sessions[session_id]["cs_ws_sessions"].pop(ws_session_id, None)
+                _entry = _sessions[session_id]["cs_ws_sessions"].pop(
+                    ws_session_id, None)
+                if _entry and _entry.get("sink") is not None:
+                    _entry["sink"].abort()
         try:
             client_sock.close()
         except Exception:
@@ -519,8 +518,8 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
         logger.debug("Code WS proxy: session=%s disconnected", ws_session_id)
 
 
-def dispatch_cs_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode: int = 1):
-    """Called when relay sends cs_ws_data — forward to browser."""
+def dispatch_cs_ws_frame(relay_id: str, ws_session_id: str, raw_frame: bytes):
+    """Forward one on-wire code-server WS frame from the relay to the browser."""
     with _lock:
         session_id = _relay_to_session.get(relay_id, "")
         sess = _sessions.get(session_id) if session_id else None
@@ -528,33 +527,37 @@ def dispatch_cs_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode
         logger.debug("cs_ws_data: no session for relay %s", relay_id)
         return
     ws_sess = sess["cs_ws_sessions"].get(ws_session_id)
-    if not ws_sess or not ws_sess.get("browser_sock"):
+    sink = _viewer_sink(ws_sess, ws_session_id)
+    if sink is None:
         logger.debug("cs_ws_data: no browser sock for ws_session %s", ws_session_id)
         return
-    try:
-        stats = ws_sess.setdefault("stats", {
-            "relay_frames": 0,
-            "relay_bytes": 0,
-            "last_diag": time.time(),
-        })
-        frame_b64 = data_b64 if opcode == -1 else ""
-        if frame_b64:
-            raw = base64.b64decode(frame_b64)
-            ws_sess["browser_sock"].sendall(raw)
-            stats["relay_bytes"] += len(raw)
-        else:
-            payload = base64.b64decode(data_b64)
-            _ws_send(ws_sess["browser_sock"], payload, opcode=opcode)
-            stats["relay_bytes"] += len(payload)
-        stats["relay_frames"] += 1
-        now = time.time()
-        if now - stats["last_diag"] >= 5.0:
-            logger.info(
-                "Code WS relay->browser: session=%s frames=%d bytes=%d last_op=%s",
-                ws_session_id, stats["relay_frames"], stats["relay_bytes"], opcode)
-            stats["last_diag"] = now
-    except Exception as e:
-        logger.warning("cs_ws_data: send error: %s", e)
+    stats = ws_sess.setdefault("stats", {
+        "relay_frames": 0,
+        "relay_bytes": 0,
+        "last_diag": time.time(),
+    })
+    # Queued, never written here: this runs on the relay connection's loop.
+    sink.send(raw_frame)
+    stats["relay_bytes"] += len(raw_frame)
+    stats["relay_frames"] += 1
+    now = time.time()
+    if now - stats["last_diag"] >= 5.0:
+        logger.info(
+            "Code WS relay->browser: session=%s frames=%d bytes=%d",
+            ws_session_id, stats["relay_frames"], stats["relay_bytes"])
+        stats["last_diag"] = now
+
+
+def _viewer_sink(ws_sess, ws_session_id: str):
+    """Return the browser's BrowserSink, creating it on first use."""
+    if not ws_sess or not ws_sess.get("browser_sock"):
+        return None
+    with _lock:
+        sink = ws_sess.get("sink")
+        if sink is None:
+            sink = BrowserSink(ws_sess["browser_sock"], f"code-{ws_session_id}")
+            ws_sess["sink"] = sink
+    return sink
 
 
 def dispatch_cs_ws_close(relay_id: str, ws_session_id: str):
@@ -565,41 +568,11 @@ def dispatch_cs_ws_close(relay_id: str, ws_session_id: str):
     if not sess:
         return
     ws_sess = sess["cs_ws_sessions"].pop(ws_session_id, None)
-    if ws_sess and ws_sess.get("browser_sock"):
-        try:
-            _ws_close(ws_sess["browser_sock"], 1000, "Backend closed")
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
-
-def _send_command_to_relay(relay_service, cmd: dict):
-    """Send a command to the relay via the command pipeline (fire-and-forget)."""
-    import asyncio
-    from services.filesystem_service import _ws_send_frame
-
-    with relay_service._relay_pool_lock:
-        pool = relay_service._relay_pool[:]
-    if not pool:
-        return
-
-    request_id = uuid.uuid4().hex[:8]
-    msg = {"type": "command", "request_id": request_id, **cmd}
-    payload = json.dumps(msg).encode("utf-8")
-    last_err = None
-    for conn in reversed(pool):
-        writer, loop = conn["writer"], conn["loop"]
-
-        async def _send(w=writer):
-            await _ws_send_frame(w, payload)
-
-        try:
-            asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
-            return
-        except Exception as e:
-            last_err = e
-            continue
-    if last_err is not None:
-        logger.warning("Code proxy command send error: %s", last_err)
+    sink = _viewer_sink(ws_sess, ws_session_id)
+    if sink is not None:
+        # After the frames already queued for this browser.
+        payload = struct.pack("!H", 1000) + b"Backend closed"
+        sink.finish(bytes([0x88, len(payload)]) + payload)
 
 
 # —— WS frame helpers ——
@@ -659,7 +632,7 @@ def _ws_recv_frame(sock):
         parts.append(mask)
         masked_payload = _recv_exact(length)
         parts.append(masked_payload)
-        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(masked_payload))
+        payload = xor_mask(masked_payload, mask)
     else:
         payload = _recv_exact(length)
         parts.append(payload)

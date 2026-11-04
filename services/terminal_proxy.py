@@ -477,7 +477,8 @@ def _ws_recv(sock):
         length = struct.unpack("!Q", _recv_exact(8))[0]
     if masked:
         mask = _recv_exact(4)
-        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(_recv_exact(length)))
+        from pawflow_relay.ws_frame import xor_mask
+        payload = xor_mask(_recv_exact(length), mask)
     else:
         payload = _recv_exact(length)
     return opcode, payload

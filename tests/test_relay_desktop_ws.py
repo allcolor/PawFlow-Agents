@@ -3,10 +3,10 @@
 Exercises desktop_ws_open/send/close against a real localhost WS backend,
 covering the behaviours that differ from the code-server tunnel: browser
 headers ARE forwarded, pings are answered locally with pongs, and frames
-carry their real opcode. Duck-typed state (SimpleNamespace) keeps the
-test free of worker.py's relay-only imports.
+carry their real opcode. Stream bytes leave the relay as binary frames
+(``pawflow_relay.binary_channel``), never as JSON + base64. Duck-typed state
+(SimpleNamespace) keeps the test free of worker.py's relay-only imports.
 """
-import base64
 import json
 import socket
 import threading
@@ -16,11 +16,30 @@ import types
 import pytest
 
 from pawflow_relay import _relay_desktop as dt
+from pawflow_relay.binary_channel import (
+    CHANNEL_DESKTOP_AUDIO, CHANNEL_DESKTOP_WS, decode as decode_binary)
 
 
 def _state():
     return types.SimpleNamespace(
         desktop_ws_sessions={}, desktop_audio_sessions={})
+
+
+def _capture(sink, lock=None):
+    """A ``send_frame(frame, opcode)`` that records what the relay sends.
+
+    Binary frames are recorded decoded, as (channel, opcode, stream_id,
+    payload); text frames as their JSON object.
+    """
+    def _send(frame, opcode=0x01):
+        item = (decode_binary(frame) if opcode == 0x02
+                else json.loads(frame.decode("utf-8")))
+        if lock is None:
+            sink.append(item)
+        else:
+            with lock:
+                sink.append(item)
+    return _send
 
 
 def _wait(predicate, timeout=5.0, interval=0.02):
@@ -173,19 +192,17 @@ def test_desktop_ws_open_reaches_host_screen_via_host_helper(
             state,
             {"session_id": "d-host", "port": backend.port,
              "ws_path": "/websockify", "local_screen": True},
-            lambda frame: frames.append(json.loads(frame)),
+            _capture(frames),
         ) == {"ok": True}
         backend.wait_connected()
         assert addresses == [("host.docker.internal", 48123)]
         assert f"Host: 127.0.0.1:{backend.port}".encode() in backend.handshake_request
         assert state.desktop_ws_sessions["d-host"]["sock"].gettimeout() is None
-        assert _wait(lambda: any(
-            frame.get("type") == "desktop_ws_data"
-            and base64.b64decode(frame["data"]) == b"RFB 003.008\n"
-            for frame in frames))
+        assert _wait(lambda: (
+            CHANNEL_DESKTOP_WS, 0x02, "d-host", b"RFB 003.008\n") in frames)
         assert dt.desktop_ws_send(state, {
             "session_id": "d-host",
-            "data": base64.b64encode(b"client-vnc-data").decode(),
+            "payload": b"client-vnc-data",
         }) == {"ok": True}
         assert _wait(lambda: b"client-vnc-data" in bytes(backend.received))
     finally:
@@ -278,21 +295,19 @@ def test_desktop_ws_open_streams_data_with_opcode(backend):
     frames = []
     lock = threading.Lock()
 
-    def send_frame(fb):
-        with lock:
-            frames.append(json.loads(fb.decode("utf-8")))
-
     assert dt.desktop_ws_open(
-        st, {"session_id": "d1", "port": backend.port, "ws_path": "/"}, send_frame
+        st, {"session_id": "d1", "port": backend.port, "ws_path": "/"},
+        _capture(frames, lock)
     ) == {"ok": True}
     backend.wait_connected()
     backend.send_frame(0x02, b"\x01\x02\x03vncframe")  # binary
+    backend.send_frame(0x01, b"text-message")  # text keeps its opcode
 
     def _got():
         with lock:
-            return any(f.get("type") == "desktop_ws_data" and f.get("opcode") == 2
-                       and base64.b64decode(f["data"]) == b"\x01\x02\x03vncframe"
-                       for f in frames)
+            return frames[:2] == [
+                (CHANNEL_DESKTOP_WS, 0x02, "d1", b"\x01\x02\x03vncframe"),
+                (CHANNEL_DESKTOP_WS, 0x01, "d1", b"text-message")]
     assert _wait(_got), "backend binary frame not forwarded with its opcode"
 
 
@@ -301,11 +316,8 @@ def test_desktop_ws_reader_answers_ping_locally(backend):
     forwarded = []
     lock = threading.Lock()
 
-    def send_frame(fb):
-        with lock:
-            forwarded.append(json.loads(fb.decode("utf-8")))
-
-    dt.desktop_ws_open(st, {"session_id": "d1", "port": backend.port, "ws_path": "/"}, send_frame)
+    dt.desktop_ws_open(st, {"session_id": "d1", "port": backend.port, "ws_path": "/"},
+                       _capture(forwarded, lock))
     backend.wait_connected()
     backend.send_frame(0x09, b"pingpayload")  # ping
 
@@ -314,22 +326,22 @@ def test_desktop_ws_reader_answers_ping_locally(backend):
         data = bytes(backend.received)
         return len(data) >= 2 and (data[0] & 0x0F) == 0x0A and b"pingpayload" in data
     assert _wait(_pong_received), "ping was not answered with a pong"
-    # ...and does NOT forward the ping as desktop_ws_data.
+    # ...and does NOT forward the ping to the server.
     with lock:
-        assert not any(f.get("type") == "desktop_ws_data" for f in forwarded)
+        assert not any(isinstance(f, tuple) for f in forwarded)
 
 
 def test_desktop_ws_send_writes_frame_to_backend(backend):
     st = _state()
     dt.desktop_ws_open(st, {"session_id": "d1", "port": backend.port, "ws_path": "/"}, lambda _f: None)
     backend.wait_connected()
-    res = dt.desktop_ws_send(st, {"session_id": "d1", "data": base64.b64encode(b"clickdata").decode()})
+    res = dt.desktop_ws_send(st, {"session_id": "d1", "payload": b"clickdata"})
     assert res == {"ok": True}
     assert _wait(lambda: b"clickdata" in bytes(backend.received))
 
 
 def test_desktop_ws_send_unknown_session_errors():
-    res = dt.desktop_ws_send(_state(), {"session_id": "nope", "data": ""})
+    res = dt.desktop_ws_send(_state(), {"session_id": "nope", "payload": b""})
     assert res["ok"] is False and "not found" in res["error"]
 
 
@@ -352,15 +364,12 @@ def test_desktop_audio_stream_forwards_framed_opus_packet(monkeypatch):
 
     assert dt.audio_stream_open(
         state, {"session_id": "audio-1", "port": 6180},
-        lambda frame: frames.append(json.loads(frame.decode("utf-8")))) == {
-            "ok": True}
+        _capture(frames)) == {"ok": True}
     packet = b"opus-packet"
     backend_sock.sendall(len(packet).to_bytes(2, "big") + packet)
 
-    assert _wait(lambda: any(
-        frame.get("type") == "desktop_audio_data"
-        and base64.b64decode(frame["data"]) == packet
-        for frame in frames))
+    assert _wait(lambda: (
+        CHANNEL_DESKTOP_AUDIO, 0, "audio-1", packet) in frames)
     assert dt.audio_stream_close(
         state, {"session_id": "audio-1"}) == {"ok": True}
     assert "audio-1" not in state.desktop_audio_sessions

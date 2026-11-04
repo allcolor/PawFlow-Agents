@@ -165,7 +165,8 @@ def action_read_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     if size > max_size:
         raise ValueError(f"File too large ({size} bytes, max {max_size}). Use read_file_chunked.")
     content = Path(path).read_bytes()
-    return {"content": base64.b64encode(content).decode("ascii"), "size": len(content)}
+    # Raw bytes: the relay link carries them as a binary attachment.
+    return {"content": content, "size": len(content)}
 
 
 def action_read_pdf(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
@@ -293,8 +294,7 @@ def action_edit_notebook(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
 
 
 def action_write_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
-    content = req.get("content", "")
-    raw = base64.b64decode(content) if req.get("base64") else content.encode("utf-8")
+    raw = _content_bytes(req)
     if len(raw) > MAX_FILE_SIZE:
         raise ValueError(f"Content too large ({len(raw)} bytes, max {MAX_FILE_SIZE}). Use write_file_chunked.")
     p = Path(path)
@@ -303,9 +303,16 @@ def action_write_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     return {"written": len(raw), "path": _rel(path, root_dir)}
 
 
-def _write_payload(req: Dict[str, Any]) -> bytes:
+def _content_bytes(req: Dict[str, Any]) -> bytes:
+    """``content`` as bytes: raw bytes as sent, or text encoded as UTF-8."""
     content = req.get("content", "")
-    raw = base64.b64decode(content) if req.get("base64") else content.encode("utf-8")
+    if isinstance(content, (bytes, bytearray)):
+        return bytes(content)
+    return str(content).encode("utf-8")
+
+
+def _write_payload(req: Dict[str, Any]) -> bytes:
+    raw = _content_bytes(req)
     if len(raw) > MAX_FILE_SIZE:
         raise ValueError(f"Content too large ({len(raw)} bytes, max {MAX_FILE_SIZE})")
     return raw
@@ -525,7 +532,7 @@ def action_read_file_chunked(root_dir: str, path: str, req: Dict[str, Any]) -> A
     """Read a file in chunks. Returns first chunk + metadata.
 
     The caller must handle {"type": "chunked", "total_size": N, "chunk_size": M,
-    "total_chunks": K, "chunk_index": 0, "data": base64, "path": relpath}.
+    "total_chunks": K, "chunk_index": 0, "data": <bytes>, "path": relpath}.
     Subsequent chunks are requested with action=read_chunk, index=N.
     """
     chunk_size = req.get("chunk_size", CHUNK_SIZE)
@@ -541,7 +548,7 @@ def action_read_file_chunked(root_dir: str, path: str, req: Dict[str, Any]) -> A
         "chunk_size": chunk_size,
         "total_chunks": total_chunks,
         "chunk_index": 0,
-        "data": base64.b64encode(data).decode("ascii"),
+        "data": data,
         "path": _rel(path, root_dir),
     }
 
@@ -556,7 +563,7 @@ def action_read_chunk(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         data = f.read(chunk_size)
     return {
         "chunk_index": index,
-        "data": base64.b64encode(data).decode("ascii"),
+        "data": data,
         "size": len(data),
         "done": len(data) < chunk_size,
     }
@@ -565,10 +572,12 @@ def action_read_chunk(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
 def action_write_file_chunked(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     """Write a chunk to a file. First chunk creates/truncates, subsequent append.
 
-    req: {"chunk_index": 0, "data": base64, "done": false}
+    req: {"chunk_index": 0, "data": <bytes>, "done": false}
     Last chunk has "done": true.
     """
-    chunk_data = base64.b64decode(req.get("data", ""))
+    chunk_data = req.get("data", b"")
+    if not isinstance(chunk_data, (bytes, bytearray)):
+        raise ValueError("write_file_chunked data must be raw bytes")
     chunk_index = req.get("index", 0)
     done = req.get("done", False)
     p = Path(path)

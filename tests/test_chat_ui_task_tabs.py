@@ -392,7 +392,7 @@ const oldIframe = {
   allow: 'clipboard-read; clipboard-write',
   replaceWith: value => { replaced = value; },
 };
-const panel = { querySelector: selector => selector === 'iframe' ? oldIframe : null };
+const panel = { dataset: {}, querySelector: selector => selector === 'iframe' ? oldIframe : null };
 const context = {
   console,
   document: {

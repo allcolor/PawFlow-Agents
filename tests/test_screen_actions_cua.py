@@ -104,7 +104,7 @@ class TestActions:
         out = screen_actions_cua.handle_screen_action_cua(
             "screen_screenshot", {})
         assert out["width"] == 1 and out["height"] == 1
-        assert base64.b64decode(out["image"]) == _PNG_1X1
+        assert out["image"] == _PNG_1X1  # raw bytes, sent as an attachment
         call = fake_driver()[0]
         assert call["tool"] == "get_desktop_state"
         assert call["args"]["session"] == "test-session"
@@ -180,7 +180,7 @@ class TestAXActions:
             "screen_window_state", {"pid": 42})
         assert out["state"]["elements"][0]["role"] == "button"
         assert out["state"]["markdown"] == "- [0] button OK"
-        assert base64.b64decode(out["image"]) == _PNG_1X1
+        assert out["image"] == _PNG_1X1  # raw bytes, sent as an attachment
         assert (out["width"], out["height"]) == (1, 1)
         call = fake_driver()[0]
         assert call["tool"] == "get_window_state"

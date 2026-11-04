@@ -279,20 +279,16 @@ def test_readonly_rejects_template_archive_extraction():
 def test_atomic_append_and_truncate_enforce_checkpoint_offsets(tmp_path):
     target = tmp_path / "inventory" / "pages.ndjson"
     root = str(tmp_path)
-    encoded = lambda value: __import__("base64").b64encode(value).decode("ascii")
-
-    action_atomic_write_file(root, str(target), {
-        "content": encoded(b"first\n"), "base64": True,
-    })
+    # Contents arrive as raw bytes (binary attachments on the relay link).
+    action_atomic_write_file(root, str(target), {"content": b"first\n"})
     appended = action_append_file(root, str(target), {
-        "content": encoded(b"second\n"), "base64": True, "expected_size": 6,
+        "content": b"second\n", "expected_size": 6,
     })
     assert appended["size"] == 13
     assert target.read_bytes() == b"first\nsecond\n"
     with __import__("pytest").raises(ValueError, match="offset mismatch"):
         action_append_file(root, str(target), {
-            "content": encoded(b"duplicate\n"), "base64": True,
-            "expected_size": 6,
+            "content": b"duplicate\n", "expected_size": 6,
         })
     action_truncate_file(root, str(target), {"size": 6, "expected_size": 13})
     assert target.read_bytes() == b"first\n"

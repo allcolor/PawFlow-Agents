@@ -14,11 +14,12 @@ old instance are unblocked with an error via `cancel_all()`.
 Protocol: see docs/relay_server_fs.md.
 """
 
-import json
 import logging
 import threading
 import uuid
 from typing import Any, Dict, Optional, Tuple
+
+from pawflow_relay.binary_channel import pack_message
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +38,10 @@ class ServerFsClient:
         """Construct.
 
         Args:
-            send_callable: function taking a single `bytes` payload and
-                writing it as a single WS text frame. Typically
-                `lambda b: ws_frame_send(sock, b)`. Wrapping lets us
-                test without a real socket.
+            send_callable: function taking `(payload, opcode)` and writing
+                one WS frame (0x01 JSON text, 0x02 binary attachment).
+                Typically `lambda b, op: ws_frame_send(sock, b, op)`.
+                Wrapping lets us test without a real socket.
             send_lock: optional lock to serialize sends with other
                 writers on the same socket (worker uses one for SSL
                 safety). If None, sends are not externally serialized.
@@ -92,7 +93,8 @@ class ServerFsClient:
             'method': method,
             'args': args or {},
         }
-        payload = json.dumps(envelope).encode('utf-8')
+        # Write data travels as a binary attachment (binary_channel).
+        frames = pack_message(envelope)
         try:
             if self._send_lock is not None:
                 # Bounded wait on the shared send lock — never an
@@ -109,11 +111,13 @@ class ServerFsClient:
                     return {'error': 'EIO', 'errno': 5,
                             'message': f'send_lock contended >{_budget}s for {method}'}
                 try:
-                    self._send(payload)
+                    for payload, opcode in frames:
+                        self._send(payload, opcode)
                 finally:
                     self._send_lock.release()
             else:
-                self._send(payload)
+                for payload, opcode in frames:
+                    self._send(payload, opcode)
         except Exception as e:
             with self._pending_lock:
                 self._pending.pop(request_id, None)

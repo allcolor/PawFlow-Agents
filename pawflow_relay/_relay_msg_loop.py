@@ -18,6 +18,7 @@ The ``spawn_relay`` Docker context is resolved by a worker-supplied callback
 (`ctx.resolve_spawn_docker_env`) so the ``globals()`` reads it depends on
 stay in the worker module's scope, not this module's.
 """
+import base64
 import json
 import queue
 import socket
@@ -29,6 +30,10 @@ from typing import Any, Callable, Optional
 
 from pawflow_relay.proc_registry import kill_inflight_proc
 from pawflow_relay._relay_session import close_frame_info
+from pawflow_relay.binary_channel import (
+    CHANNEL_ATTACHMENT, CHANNEL_CODE_SERVER_WS, CHANNEL_DESKTOP_WS,
+    CHANNEL_HTTP_CHUNK, AttachmentAssembler, decode as _decode_binary,
+    encode as _encode_binary, pack_message)
 from pawflow_relay.command_ledger import LEDGER, RUN, RUNNING
 
 
@@ -138,6 +143,8 @@ class ConnSession:
         self.fence_lock = threading.Lock()
         self.disconnect_reason = "unknown"
         self.close_info = ""
+        # Bytes attachments of the next JSON messages (binary_channel).
+        self._attachments = AttachmentAssembler()
         # Results of commands still running from an earlier connection go
         # out on this one from now on (see command_ledger).
         LEDGER.attach(self.sock, self.ws_frame_send, self.send_lock)
@@ -192,10 +199,18 @@ class ConnSession:
                 with self.send_lock:
                     self.ws_frame_send(self.sock, payload, opcode=0x0A)
                 continue
+            elif opcode == 0x02:
+                self._route_binary(payload)
+                continue
             elif opcode != 0x01:
                 continue
 
             msg = json.loads(payload.decode("utf-8"))
+            try:
+                msg = self._attachments.resolve(msg)
+            except ValueError as exc:
+                sys.stderr.write(f"[FSRelay] dropped message: {exc}\n")
+                continue
             self._route(msg)
         return self.disconnect_reason
 
@@ -231,6 +246,38 @@ class ConnSession:
             self._handle_terminal_resize(msg)
         elif mtype == "command":
             self._handle_command(msg)
+
+    def _route_binary(self, frame: bytes):
+        """Queue one browser frame for its desktop or code-server stream.
+
+        Binary frames carry stream bytes only (``binary_channel``); they get
+        no reply. They join the same per-stream FIFO as the stream's JSON
+        close command, so a close never overtakes the frames sent before it.
+        """
+        try:
+            channel, opcode, stream_id, payload = _decode_binary(frame)
+        except ValueError as exc:
+            sys.stderr.write(f"[FSRelay] dropped binary frame: {exc}\n")
+            return
+        if channel == CHANNEL_ATTACHMENT:
+            try:
+                self._attachments.add(stream_id, payload)
+            except ValueError as exc:
+                sys.stderr.write(f"[FSRelay] dropped attachment: {exc}\n")
+            return
+        if channel == CHANNEL_DESKTOP_WS:
+            msg = {"action": "desktop_ws_send", "session_id": stream_id,
+                   "payload": payload, "opcode": opcode}
+        elif channel == CHANNEL_CODE_SERVER_WS:
+            msg = {"action": "cs_ws_send", "session_id": stream_id,
+                   "frame": payload}
+        else:
+            sys.stderr.write(
+                f"[FSRelay] dropped binary frame: channel {channel} is not "
+                "accepted from the server\n")
+            return
+        self._stream_io_queue(stream_id).put(
+            (msg, None, self.sock, self.ws_frame_send))
 
     # ── Per-message-type handlers ─────────────────────────────────────
 
@@ -539,8 +586,16 @@ class ConnSession:
                 return
             msg, request_id, sock, send_fn = item
             try:
-                # _run_command_sync answers on the wire itself.
-                self._run_command_sync(msg, request_id)
+                if request_id is None:
+                    # A binary stream frame: nobody waits for an answer.
+                    result = self.execute_command(msg)
+                    if isinstance(result, dict) and result.get("ok") is False:
+                        sys.stderr.write(
+                            f"[FSRelay] {msg.get('action')} failed: "
+                            f"{result.get('error')}\n")
+                else:
+                    # _run_command_sync answers on the wire itself.
+                    self._run_command_sync(msg, request_id)
             except Exception as exc:
                 sys.stderr.write(f"[FSRelay] stream io command failed: {exc}\n")
             finally:
@@ -576,16 +631,17 @@ class ConnSession:
         with self.inflight_lock:
             self.inflight_cmds.pop(request_id, None)
 
-    def _finish_and_send(self, frame: bytes, action: str, request_id: str) -> None:
+    def _finish_and_send(self, frames, action: str, request_id: str) -> None:
         """Record a command's result, then send it on the current connection."""
         if request_id:
-            LEDGER.finish(request_id, frame)
-        self._send_result(frame, action, request_id)
+            LEDGER.finish(request_id, frames)
+        self._send_result(frames, action, request_id)
 
-    def _send_result(self, frame: bytes, action: str, request_id: str) -> None:
+    def _send_result(self, frames, action: str, request_id: str) -> None:
+        """Send a result: JSON bytes, or packed frames (pack_message)."""
         try:
             self.socket_diag["last_send"] = f"result:{action}:{request_id[:8]}"
-            LEDGER.send(frame)
+            LEDGER.send_frames(frames)
             self.socket_diag["last_send_error"] = ""
         except Exception as send_err:
             # Recorded: the server's retry of this request_id gets it on the
@@ -603,11 +659,11 @@ class ConnSession:
             result = self.execute_command(msg)
         except Exception as e:
             result = {"ok": False, "error": str(e)}
-        resp = json.dumps({
+        resp = pack_message({
             "type": "result",
             "request_id": request_id,
             "data": result.get("data", result),
-        }).encode("utf-8")
+        })
         self._finish_and_send(resp, msg.get("action", "?"), request_id)
 
     def _run_command(self, _msg, _rid, _sock, _send_fn):
@@ -627,6 +683,14 @@ class ConnSession:
                 LEDGER.send(_frame)
         elif _action in ("http_proxy", "http_fetch"):
             def _on_output(kind, data):
+                if kind == "chunk":
+                    # Body bytes go out raw in a binary frame. The host
+                    # helper's line protocol still hands them over as base64.
+                    raw = (base64.b64decode(data) if isinstance(data, str)
+                           else bytes(data or b""))
+                    LEDGER.send(_encode_binary(
+                        CHANNEL_HTTP_CHUNK, _rid, raw), 0x02)
+                    return
                 _frame = json.dumps({
                     "type": "http_response",
                     "request_id": _rid,
@@ -636,17 +700,19 @@ class ConnSession:
                 LEDGER.send(_frame)
         try:
             _result = self.execute_command(_msg, on_output=_on_output)
-            _resp = json.dumps({
+            # Bytes in the result (file contents, screenshots) travel as
+            # binary attachments, not base64 (binary_channel.pack_message).
+            _resp = pack_message({
                 "type": "result",
                 "request_id": _rid,
                 "data": _result.get("data", _result),
-            }).encode("utf-8")
+            })
         except Exception as _e:
-            _resp = json.dumps({
+            _resp = pack_message({
                 "type": "result",
                 "request_id": _rid,
                 "data": {"ok": False, "error": str(_e)},
-            }).encode("utf-8")
+            })
         try:
             self._finish_and_send(_resp, _action, _rid)
         finally:

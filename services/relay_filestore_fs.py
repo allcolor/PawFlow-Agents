@@ -48,7 +48,6 @@ Methods: ffs.getattr, ffs.readdir, ffs.open, ffs.read, ffs.release,
 ffs.statfs. Anything else (write side) returns EROFS or ENOSYS.
 """
 
-import base64
 import errno
 import logging
 import os
@@ -330,7 +329,7 @@ class RelayFileStoreFs:
         offset = int(args.get("offset", 0))
         size = int(args.get("size", 0))
         if size <= 0:
-            return {"data": {"data_b64": ""}}
+            return {"data": {"data": b""}}
         if size > self.MAX_READ_CHUNK:
             return _errno_response(errno.EINVAL,
                                     f"size {size} exceeds {self.MAX_READ_CHUNK}")
@@ -340,7 +339,8 @@ class RelayFileStoreFs:
                 return _errno_response(errno.EBADF, f"unknown fh {fh}")
             os.lseek(fd, offset, os.SEEK_SET)
             chunk = os.read(fd, size)
-        return {"data": {"data_b64": base64.b64encode(chunk).decode("ascii")}}
+        # Raw bytes: sent to the relay as a binary attachment.
+        return {"data": {"data": chunk}}
 
     def _op_release(self, args: Dict[str, Any]) -> Dict[str, Any]:
         fh = int(args.get("fh", -1))

@@ -16,6 +16,7 @@ import time
 import uuid
 from pathlib import Path
 
+from pawflow_relay.binary_channel import CHANNEL_ATTACHMENT, AttachmentAssembler, decode
 from pawflow_relay.ws_frame import ws_recv, ws_send
 
 DENIED_READ_SCRIPT = """import errno, json, sys
@@ -44,6 +45,8 @@ class WireClient:
 
     def __init__(self, server, name, session):
         self.sock = socket.create_connection(server.address, timeout=5)
+        # File contents arrive as binary attachment frames before their JSON.
+        self.attachments = AttachmentAssembler()
         key = base64.b64encode(os.urandom(16)).decode()
         request = (
             f"GET /ws/relay/{name} HTTP/1.1\r\nHost: localhost\r\n"
@@ -75,8 +78,13 @@ class WireClient:
     def receive(self):
         for _ in range(50):
             opcode, payload = ws_recv(self.sock)
+            if opcode == 2:
+                channel, _inner, stream_id, data = decode(payload)
+                check(channel == CHANNEL_ATTACHMENT, "Unexpected binary channel")
+                self.attachments.add(stream_id, data)
+                continue
             check(opcode == 1, "Expected a server JSON frame")
-            message = json.loads(payload)
+            message = self.attachments.resolve(json.loads(payload))
             kind = message.get("type")
             if kind == "command":
                 # The socket-only worker has an empty synthetic project.
@@ -119,7 +127,7 @@ class WireClient:
         try:
             response = self.request(tag + ".read", fh=handle, offset=0, size=4096)
             check("data" in response, "Owned file read refused")
-            return base64.b64decode(response["data"]["data_b64"])
+            return response["data"]["data"]
         finally:
             check("data" in self.request(tag + ".release", fh=handle),
                   "File handle release refused")

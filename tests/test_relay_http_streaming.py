@@ -1,6 +1,5 @@
 """Relay HTTP responses stay chunked and disk-backed end to end."""
 
-import base64
 import json
 import os
 import threading
@@ -10,6 +9,7 @@ import pytest
 
 from pawflow_relay import _relay_actions
 from pawflow_relay import _relay_msg_loop
+from pawflow_relay.binary_channel import CHANNEL_HTTP_CHUNK, decode as decode_binary
 from pawflow_relay._relay_msg_loop import ConnSession
 from pawflow_relay.command_ledger import CommandLedger
 from services._relay_http_response import RelayHttpResponseStream
@@ -59,7 +59,7 @@ def test_relay_http_proxy_reads_and_emits_bounded_chunks(monkeypatch):
     assert result["ok"] is True
     assert reads == [64 * 1024, 64 * 1024]
     assert emitted[0][0] == "start"
-    assert base64.b64decode(emitted[1][1]) == b"video-part"
+    assert emitted[1] == ("chunk", b"video-part")
     assert emitted[2] == ("end", None)
 
 
@@ -67,7 +67,8 @@ def test_relay_message_loop_emits_http_response_frames(monkeypatch):
     sent = []
     # Frames go out on the relay's current connection (command_ledger).
     ledger = CommandLedger()
-    ledger.attach(SimpleNamespace(), lambda _sock, frame: sent.append(frame),
+    ledger.attach(SimpleNamespace(),
+                  lambda _sock, frame, opcode=0x01: sent.append((frame, opcode)),
                   threading.Lock())
     monkeypatch.setattr(_relay_msg_loop, "LEDGER", ledger)
     session = ConnSession.__new__(ConnSession)
@@ -80,7 +81,7 @@ def test_relay_message_loop_emits_http_response_frames(monkeypatch):
         assert message["action"] == "http_proxy"
         assert on_output is not None
         on_output("start", {"status": 200, "headers": {}})
-        on_output("chunk", base64.b64encode(b"vnc-html").decode("ascii"))
+        on_output("chunk", b"vnc-html")
         on_output("end", None)
         return {"ok": True}
 
@@ -90,13 +91,15 @@ def test_relay_message_loop_emits_http_response_frames(monkeypatch):
         lambda _sock, frame: pytest.fail("frames never go to the socket the "
                                          "command arrived on"))
 
+    # start/end/result are JSON text; the body chunk is a raw binary frame.
+    assert [opcode for _frame, opcode in sent] == [0x01, 0x02, 0x01, 0x01]
+    assert decode_binary(sent[1][0]) == (
+        CHANNEL_HTTP_CHUNK, 0, "req-http", b"vnc-html")
     messages = [json.loads(frame.decode("utf-8"))
-                for frame in sent]
+                for frame, opcode in sent if opcode == 0x01]
     assert [message["type"] for message in messages] == [
-        "http_response", "http_response", "http_response", "result"]
-    assert [message.get("kind") for message in messages[:3]] == [
-        "start", "chunk", "end"]
-    assert messages[1]["data"] == base64.b64encode(b"vnc-html").decode("ascii")
+        "http_response", "http_response", "result"]
+    assert [message.get("kind") for message in messages[:2]] == ["start", "end"]
 
 
 def test_server_stream_spools_chunks_to_disk_and_removes_the_file():
@@ -112,9 +115,7 @@ def test_server_stream_spools_chunks_to_disk_and_removes_the_file():
                 },
             })
             for offset in range(0, len(payload), 97):
-                on_output(
-                    "chunk",
-                    base64.b64encode(payload[offset:offset + 97]).decode("ascii"))
+                on_output("chunk", payload[offset:offset + 97])
             on_output("end", None)
             return {"ok": True}
 
@@ -134,7 +135,7 @@ def test_server_stream_surfaces_failure_after_headers_and_removes_spool():
     class _Relay:
         def http_proxy_stream(self, *, on_output, **_kwargs):
             on_output("start", {"status": 200, "headers": {}})
-            on_output("chunk", base64.b64encode(b"partial").decode("ascii"))
+            on_output("chunk", b"partial")
             return {"ok": False, "error": "upstream connection broke"}
 
     stream = RelayHttpResponseStream.for_local_port(
@@ -154,7 +155,7 @@ def test_stream_failure_removes_spool_before_runner_returns():
     class _Relay:
         def http_proxy_stream(self, *, on_output, **_kwargs):
             on_output("start", {"status": 200, "headers": {}})
-            on_output("chunk", "not-valid-base64")
+            on_output("chunk", "text-is-not-a-body-chunk")
             release_runner.wait(2)
             return {"ok": True}
 
@@ -165,7 +166,7 @@ def test_stream_failure_removes_spool_before_runner_returns():
     spool_path = stream.spool_path
 
     try:
-        with pytest.raises(RuntimeError, match="invalid base64"):
+        with pytest.raises(RuntimeError, match="not raw bytes"):
             list(stream.iter_bytes())
         assert not os.path.exists(spool_path)
         assert not release_runner.is_set()

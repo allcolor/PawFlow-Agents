@@ -9,7 +9,6 @@ module can be loaded for inspection without the libs installed; only
 building the Operations class requires them.
 """
 
-import base64
 import errno
 import logging
 import os
@@ -376,7 +375,7 @@ def _build_combined_operations_class():
                 })
                 if 'error' in r:
                     raise pyfuse3.FUSEError(_to_fuse_error(r))
-                chunk = base64.b64decode(r['data']['data_b64'])
+                chunk = bytes(r['data'].get('data') or b'')
                 if not chunk:
                     break
                 out.extend(chunk)
@@ -393,7 +392,7 @@ def _build_combined_operations_class():
                 chunk = bytes(view[:_MAX_CHUNK])
                 r = await self._req(tag, 'write', {
                     'fh': int(real_fh), 'offset': cur,
-                    'data_b64': base64.b64encode(chunk).decode('ascii'),
+                    'data': chunk,
                 })
                 if 'error' in r:
                     raise pyfuse3.FUSEError(_to_fuse_error(r))

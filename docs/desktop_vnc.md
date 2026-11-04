@@ -41,6 +41,42 @@ desktop and refuses (rather than starts) when none is running. `stop` is the
 only lifecycle-ending command and always goes through an explicit
 confirmation against the exact current session (see below).
 
+## Viewers: voxl by default, noVNC as fallback
+
+Desktops open in [voxl](https://github.com/tembo/voxl) by default: it streams
+the screen as H.264 over one WebSocket and the browser decodes it with
+WebCodecs (about 60 FPS where noVNC stays under 10), with clipboard, desktop
+audio, file upload/download and touch input. The relay starts voxl next to
+the x11vnc + websockify stack, which stays as the fallback viewer:
+
+- **Docker desktop**: voxl runs in the relay container on `127.0.0.1`
+  against the Xvfb display (started with `-shmem` for zero-copy capture)
+  and streams the PulseAudio `virtual_out.monitor` sink. A missing or
+  failing voxl never fails the desktop; noVNC keeps working.
+- **Host screen** (`/desktop local`): voxl streams the real screen on Linux
+  (X11), Windows and macOS. With voxl running, a missing VNC server or
+  websockify is no longer fatal; the noVNC fallback is simply unavailable.
+  Wayland sessions are not supported by voxl.
+- **Binary lookup** (`pawflow_relay/voxl.py`): `PAWFLOW_VOXL_BIN`, then the
+  packaged runtime's `bin/voxl[.exe]` (Relay CLI / Relay Desktop bundles),
+  then `PATH` (`/usr/local/bin/voxl` in the relay image).
+
+Each voxl start gets a random port and a random password. The relay returns
+both to the PawFlow server only; `services/voxl_proxy.py` adds
+`Authorization: Bearer <password>` to every request it forwards and drops the
+browser's cookies, `Origin`, `Referer` and `Authorization`, so the browser
+never sees the password. The viewer is served under the same capability
+route as noVNC: `/vnc/<session>/<token>/voxl/` (page, scripts and APIs; GET,
+HEAD, PUT, POST) and `/vnc/<session>/<token>/voxl/ws` (the stream, tunnelled
+through the relay as raw binary frames).
+
+`open_desktop` and `desktop_attach` answer `voxl_url`, `novnc_url`, `url`
+(the default viewer) and `viewer`. The chat UI opens voxl when it is
+available and the page can use WebCodecs (a secure context with
+`VideoDecoder`; not Firefox for Android), otherwise noVNC. The button next
+to the fullscreen button switches an open desktop between the two viewers and
+remembers the choice in the browser.
+
 The browser opens a noVNC session connected through PawFlow's VNC proxy. For a
 remote relay, the proxy carries VNC WebSocket frames over the relay's existing
 outbound authenticated connection; the PawFlow server never needs direct TCP
@@ -54,6 +90,9 @@ noVNC tree; the host helper only runs the VNC server and WebSocket bridge.
 Windows therefore does not need a separate noVNC installation. Server-managed
 desktops remain on their direct Docker host/port path; the relay tunnel is
 selected only for remote relay sessions.
+On the relay connection, VNC frames, desktop audio packets and browser input
+travel as raw binary WebSocket frames, not as base64 inside JSON; see
+[relay_binary_frames.md](relay_binary_frames.md).
 The HTTP proxy normalizes response-header names case-insensitively so
 websockify's `Content-type` value is preserved as the single canonical
 `Content-Type`; HTML and JavaScript assets therefore render instead of being

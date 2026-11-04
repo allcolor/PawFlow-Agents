@@ -13,7 +13,6 @@ Coverage:
 - Write-side methods return EROFS; unknown methods ENOSYS
 """
 
-import base64
 import errno
 import os
 import stat as _stat
@@ -136,7 +135,7 @@ class TestFileIO(_SkillsCase):
         r2 = self.fs.handle("skfs.read",
                             {"fh": fh, "offset": 0, "size": 4096})
         self.assertEqual(
-            base64.b64decode(r2["data"]["data_b64"]), b"print('hi')\n")
+            r2["data"]["data"], b"print('hi')\n")
         r3 = self.fs.handle("skfs.release", {"fh": fh})
         self.assertIn("data", r3)
 

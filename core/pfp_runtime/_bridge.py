@@ -7,7 +7,6 @@ core.pfp_runtime (invariant 1: import-path stability).
 from __future__ import annotations
 import logging
 import json
-import base64
 import shlex
 import uuid
 import copy
@@ -212,7 +211,7 @@ class RelayPackageRuntimeBridge:
             chunk_size = 1024 * 1024
             total = source.stat().st_size
             if total == 0:
-                requester("write_file", target_path, content="", base64=True)
+                requester("write_file", target_path, content=b"")
                 return
             written = 0
             index = 0
@@ -225,7 +224,7 @@ class RelayPackageRuntimeBridge:
                     requester(
                         "write_file_chunked", target_path,
                         index=index,
-                        data=base64.b64encode(chunk).decode("ascii"),
+                        data=chunk,
                         done=written >= total,
                     )
                     index += 1

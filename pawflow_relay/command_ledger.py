@@ -15,6 +15,10 @@ This ledger outlives connections:
 * ``attach`` names the connection results go out on. A result is always sent
   on the connection that is current when it is ready, not on the one the
   command arrived on.
+
+A result is a list of ``(payload, opcode)`` frames (``binary_channel.
+pack_message``): its bytes attachments, then its JSON. A bare ``bytes`` frame
+is accepted as one JSON frame.
 """
 
 from __future__ import annotations
@@ -31,6 +35,16 @@ RUNNING = "running"
 _RESULT_TTL_SECONDS = 300.0
 _MAX_RESULTS = 256
 _MAX_RESULT_BYTES = 64 * 1024 * 1024
+
+
+def _as_frames(frames):
+    if isinstance(frames, (bytes, bytearray)):
+        return [(bytes(frames), 0x01)]
+    return list(frames)
+
+
+def _size(frames) -> int:
+    return sum(len(payload) for payload, _opcode in frames)
 
 
 class _Link:
@@ -55,19 +69,35 @@ class CommandLedger:
         with self._lock:
             self._link = _Link(sock, send_fn, send_lock)
 
-    def send(self, frame: bytes) -> None:
-        """Send ``frame`` on the current connection; raises when there is none."""
+    def send(self, frame: bytes, opcode: int = 0x01) -> None:
+        """Send ``frame`` on the current connection; raises when there is none.
+
+        ``opcode`` is 0x01 for JSON text frames and 0x02 for the binary
+        stream frames of ``pawflow_relay.binary_channel``.
+        """
         with self._lock:
             link = self._link
         if link is None:
             raise ConnectionError("no relay connection")
         with link.send_lock:
-            link.send_fn(link.sock, frame)
+            link.send_fn(link.sock, frame, opcode)
+
+    def send_frames(self, frames) -> None:
+        """Send one packed message back to back, under one lock hold, so no
+        other frame lands between its attachments and its JSON."""
+        frames = _as_frames(frames)
+        with self._lock:
+            link = self._link
+        if link is None:
+            raise ConnectionError("no relay connection")
+        with link.send_lock:
+            for payload, opcode in frames:
+                link.send_fn(link.sock, payload, opcode)
 
     # ── commands ──────────────────────────────────────────────────────
 
     def begin(self, request_id: str):
-        """``RUN``, ``RUNNING``, or the finished run's result frame (bytes)."""
+        """``RUN``, ``RUNNING``, or the finished run's result frames."""
         with self._lock:
             self._expire_locked(time.monotonic())
             if request_id in self._running:
@@ -78,22 +108,24 @@ class CommandLedger:
             self._running.add(request_id)
             return RUN
 
-    def finish(self, request_id: str, frame: bytes) -> None:
+    def finish(self, request_id: str, frames) -> None:
+        frames = _as_frames(frames)
+        size = _size(frames)
         with self._lock:
             self._running.discard(request_id)
             now = time.monotonic()
             self._expire_locked(now)
-            if len(frame) > _MAX_RESULT_BYTES:
+            if size > _MAX_RESULT_BYTES:
                 return
             previous = self._results.pop(request_id, None)
             if previous is not None:
-                self._result_bytes -= len(previous[1])
-            self._results[request_id] = (now, frame)
-            self._result_bytes += len(frame)
+                self._result_bytes -= _size(previous[1])
+            self._results[request_id] = (now, frames)
+            self._result_bytes += size
             while (len(self._results) > _MAX_RESULTS
                    or self._result_bytes > _MAX_RESULT_BYTES):
                 _rid, (_at, old) = self._results.popitem(last=False)
-                self._result_bytes -= len(old)
+                self._result_bytes -= _size(old)
 
     def abandon(self, request_id: str) -> None:
         """Forget a command that produced no result (it never ran)."""
@@ -102,11 +134,11 @@ class CommandLedger:
 
     def _expire_locked(self, now: float) -> None:
         while self._results:
-            rid, (at, frame) = next(iter(self._results.items()))
+            rid, (at, frames) = next(iter(self._results.items()))
             if now - at < _RESULT_TTL_SECONDS:
                 return
             self._results.popitem(last=False)
-            self._result_bytes -= len(frame)
+            self._result_bytes -= _size(frames)
 
 
 #: The relay process's ledger, shared by every connection.

@@ -21,10 +21,10 @@ def _screen_action_child(action: str) -> int:
     tools_dir = str(_runtime_root() / "tools")
     if tools_dir not in sys.path:
         sys.path.insert(0, tools_dir)
-    from screen_actions import _handle_screen_action_direct
+    from screen_actions import _handle_screen_action_direct, child_output
 
     request = json.loads(sys.stdin.read() or "{}")
-    sys.stdout.write(json.dumps(_handle_screen_action_direct(action, request)))
+    sys.stdout.write(child_output(_handle_screen_action_direct(action, request)))
     return 0
 
 

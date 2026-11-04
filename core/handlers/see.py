@@ -137,22 +137,17 @@ class SeeHandler(BaseFsHandler):
         if isinstance(data, dict) and not data.get("ok", True):
             return f"Error: {data.get('error', 'unknown error')}"
 
-        b64_data = None
+        img_bytes = None
         width = height = None
         if isinstance(data, dict):
-            for key in ("image", "base64", "content"):
-                if isinstance(data.get(key), str):
-                    b64_data = data[key]
-                    break
+            # PNG bytes, sent by the relay as a binary attachment.
+            if isinstance(data.get("image"), (bytes, bytearray)):
+                img_bytes = bytes(data["image"])
             width = data.get("width")
             height = data.get("height")
-        elif isinstance(data, str):
-            b64_data = data
 
-        if b64_data:
+        if img_bytes:
             try:
-                import base64
-                img_bytes = base64.b64decode(b64_data)
                 from core.handlers._screen_guard import (
                     screen_route_key, store_screen_capture,
                 )

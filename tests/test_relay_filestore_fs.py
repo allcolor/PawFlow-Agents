@@ -15,7 +15,6 @@ Coverage:
 - statfs always succeeds with f_files = total visible count
 """
 
-import base64
 import os
 import stat as _stat
 import tempfile
@@ -207,7 +206,7 @@ class TestReadCycle(_FsCase):
         r2 = self.fs.handle("ffs.read",
                             {"fh": fh, "offset": 0, "size": 1024})
         self.assertIn("data", r2)
-        chunk = base64.b64decode(r2["data"]["data_b64"])
+        chunk = r2["data"]["data"]
         self.assertEqual(chunk, b"hello from alice")
         r3 = self.fs.handle("ffs.release", {"fh": fh})
         self.assertIn("data", r3)

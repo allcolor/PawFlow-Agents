@@ -238,7 +238,62 @@ function closeVSCodeTab(tabId) {
 }
 
 /** Add a Desktop tab (one per relay, iframe to noVNC). */
-function addDesktopTab(relayId, iframeSrc) {
+/** True when this browser can run the voxl viewer (WebCodecs needs a secure page). */
+function desktopVoxlSupported() {
+  return !!(window.isSecureContext && window.VideoDecoder);
+}
+
+function desktopViewerPreference() {
+  try { return localStorage.getItem('pawflow.desktopViewer') || 'voxl'; }
+  catch (e) { return 'voxl'; }
+}
+
+/** Viewer URL for an open_desktop/desktop_attach answer: voxl by default,
+ *  noVNC when voxl is missing, unsupported here, or switched off. */
+function desktopViewerUrl(resp) {
+  if (!resp) return '';
+  const voxl = resp.voxl_url || '';
+  const novnc = resp.novnc_url || '';
+  if (voxl && desktopVoxlSupported()
+      && (desktopViewerPreference() !== 'novnc' || !novnc)) return voxl;
+  return novnc || voxl || resp.url || '';
+}
+
+const _DESKTOP_IFRAME_ALLOW = 'clipboard-read; clipboard-write; fullscreen; microphone; autoplay';
+
+/** Switch an open Desktop tab between voxl and noVNC, and remember it. */
+function toggleDesktopViewer(tabId) {
+  const panel = document.getElementById('tabContent_' + tabId);
+  if (!panel || !panel.dataset.voxlUrl || !panel.dataset.novncUrl) return;
+  const iframe = panel.querySelector('iframe');
+  const toNovnc = panel.dataset.viewer === 'voxl';
+  try { localStorage.setItem('pawflow.desktopViewer', toNovnc ? 'novnc' : 'voxl'); }
+  catch (e) { /* preference is a convenience only */ }
+  panel.dataset.viewer = toNovnc ? 'novnc' : 'voxl';
+  if (iframe) iframe.src = toNovnc ? panel.dataset.novncUrl : panel.dataset.voxlUrl;
+  _updateDesktopViewerButton(panel);
+}
+
+function _updateDesktopViewerButton(panel) {
+  const btn = panel.querySelector('.desktop-viewer-btn');
+  if (!btn) return;
+  const both = !!(panel.dataset.voxlUrl && panel.dataset.novncUrl
+                  && desktopVoxlSupported());
+  btn.style.display = both ? '' : 'none';
+  btn.textContent = panel.dataset.viewer === 'voxl' ? 'noVNC' : 'voxl';
+  btn.title = t('desktopViewerSwitch', {
+    viewer: panel.dataset.viewer === 'voxl' ? 'noVNC' : 'voxl' });
+}
+
+function _setDesktopViewers(panel, iframeSrc, viewers) {
+  panel.dataset.voxlUrl = (viewers && viewers.voxl_url) || '';
+  panel.dataset.novncUrl = (viewers && viewers.novnc_url) || '';
+  panel.dataset.viewer = (iframeSrc && iframeSrc === panel.dataset.voxlUrl)
+    ? 'voxl' : 'novnc';
+  _updateDesktopViewerButton(panel);
+}
+
+function addDesktopTab(relayId, iframeSrc, viewers) {
   const tabId = 'desktop-' + relayId;
   const existingPanel = document.getElementById('tabContent_' + tabId);
   if (existingPanel) {
@@ -251,9 +306,10 @@ function addDesktopTab(relayId, iframeSrc) {
       nextIframe.src = iframeSrc;
       nextIframe.style.cssText = iframe.style.cssText
         || 'flex:1;border:none;width:100%;height:100%;';
-      nextIframe.allow = iframe.allow || 'clipboard-read; clipboard-write';
+      nextIframe.allow = _DESKTOP_IFRAME_ALLOW;
       iframe.replaceWith(nextIframe);
     }
+    _setDesktopViewers(existingPanel, iframeSrc, viewers);
     switchTab(tabId);
     return tabId;
   }
@@ -286,11 +342,17 @@ function addDesktopTab(relayId, iframeSrc) {
   fsBtn.onclick = function() { toggleDesktopFullscreen(tabId); };
   panel.appendChild(fsBtn);
 
+  const viewerBtn = document.createElement('button');
+  viewerBtn.className = 'desktop-viewer-btn';
+  viewerBtn.onclick = function() { toggleDesktopViewer(tabId); };
+  panel.appendChild(viewerBtn);
+
   const iframe = document.createElement('iframe');
   iframe.src = iframeSrc;
   iframe.style.cssText = 'flex:1;border:none;width:100%;height:100%;';
-  iframe.allow = 'clipboard-read; clipboard-write';
+  iframe.allow = _DESKTOP_IFRAME_ALLOW;
   panel.appendChild(iframe);
+  _setDesktopViewers(panel, iframeSrc, viewers);
 
   if (typeof workspaceRegisterSurface === 'function') {
     workspaceRegisterSurface(panel, {

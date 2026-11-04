@@ -57,6 +57,35 @@ def _desktop_inventory_record_stopped(relay_id, local_screen, user_id,
         logger.debug("desktop inventory record failed", exc_info=True)
 
 
+def _voxl_session_kwargs(info, svc, *, prefix, local_screen, server_local):
+    """voxl fields for ``register_session`` from a relay start/status answer.
+
+    ``prefix`` is "" for the Docker desktop answer and "local_screen_" for
+    the host-screen fields of ``desktop_status``. The voxl password stays in
+    the server-side session; it never reaches the browser.
+    """
+    info = info if isinstance(info, dict) else {}
+    port = int(info.get(f"{prefix}voxl_port") or 0)
+    if not port:
+        return {}
+    kwargs = {"voxl_port": port,
+              "voxl_password": str(info.get(f"{prefix}voxl_password") or "")}
+    if server_local:
+        kwargs["voxl_host"] = "127.0.0.1"
+    else:
+        kwargs.update(voxl_relay_service=svc, voxl_local=bool(local_screen))
+    return kwargs
+
+
+def _desktop_urls(sid, token, novnc_port, voxl_kwargs):
+    """Viewer URLs: voxl by default, noVNC as the fallback."""
+    novnc = (f"/vnc/{sid}/{token}/vnc.html?autoconnect=true&resize=scale"
+             f"&path=/vnc/{sid}/{token}/websockify") if novnc_port else ""
+    voxl = f"/vnc/{sid}/{token}/voxl/" if voxl_kwargs else ""
+    return {"url": voxl or novnc, "voxl_url": voxl, "novnc_url": novnc,
+            "viewer": "voxl" if voxl else "novnc"}
+
+
 def _desktop_inventory_publish(user_id, flowfile):
     from tasks.ai.actions._sf_desktop import (
         _publish_inventory_changed, _visible_relay_ids)
@@ -159,7 +188,12 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                             except Exception:
                                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                             _novnc_port = 0
-                    if _novnc_port:
+                    _vx = (_voxl_session_kwargs(
+                        status, svc,
+                        prefix="" if _server_local else "local_screen_",
+                        local_screen=True, server_local=_server_local)
+                        if _novnc_port or not _server_local else {})
+                    if _novnc_port or _vx:
                         _sid = f"{_session_prefix}_{relay_id}"
                         from services.vnc_proxy import register_session
                         _session_kwargs = {
@@ -176,7 +210,8 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                                 relay_service=svc, relay_id=relay_id,
                                 local_screen=True)
                         _vtok = register_session(
-                            _sid, _novnc_port, **_session_kwargs)
+                            _sid, _novnc_port or _vx["voxl_port"],
+                            **_session_kwargs, **_vx)
                         _ensure_vnc_routes(flowfile)
                         # Re-register audio for already-running desktop
                         _audio_token = ""  # nosec B105
@@ -193,7 +228,7 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         flowfile.set_content(json.dumps({
                             "ok": True, "already_running": True, "local_screen": True,
                             "relay_id": relay_id,
-                            "url": f"/vnc/{_sid}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=/vnc/{_sid}/{_vtok}/websockify",
+                            **_desktop_urls(_sid, _vtok, _novnc_port, _vx),
                             "audio_session": _sid if _audio_token else "",
                             "audio_token": _audio_token,
                         }).encode())
@@ -221,6 +256,9 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         _backend_port = 0
                     if _backend_port:
                         _sid = f"{_session_prefix}_{relay_id}"
+                        _vx = _voxl_session_kwargs(
+                            status, svc, prefix="", local_screen=False,
+                            server_local=False)
                         from services.vnc_proxy import register_session
                         _session_kwargs = {
                             "owner_user_id": user_id,
@@ -235,7 +273,7 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                             _session_kwargs.update(
                                 relay_service=svc, relay_id=relay_id)
                         _vtok = register_session(
-                            _sid, _backend_port, **_session_kwargs)
+                            _sid, _backend_port, **_session_kwargs, **_vx)
                         _ensure_vnc_routes(flowfile)
                         # Re-register audio for already-running desktop
                         _audio_token = ""  # nosec B105
@@ -254,7 +292,7 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         flowfile.set_content(json.dumps({
                             "ok": True, "already_running": True,
                             "relay_id": relay_id,
-                            "url": f"/vnc/{_sid}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=/vnc/{_sid}/{_vtok}/websockify",
+                            **_desktop_urls(_sid, _vtok, _backend_port, _vx),
                             "audio_session": _sid if _audio_token else "",
                             "audio_token": _audio_token,
                         }).encode())
@@ -277,7 +315,10 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
             logger.debug("[open_desktop] %s result: %s", _action_start, result)
             # _request() unwraps the relay response — result is the inner data dict directly
             novnc_port = result.get("novnc_port") if isinstance(result, dict) else None
-            if not novnc_port:
+            _vx = _voxl_session_kwargs(
+                result, svc, prefix="", local_screen=bool(local_screen),
+                server_local=_server_local)
+            if not novnc_port and not _vx:
                 flowfile.set_content(json.dumps({"error": f"Failed to start {_action_start}", "detail": str(result)}).encode())
                 return [flowfile]
 
@@ -289,7 +330,7 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                 _relay_addr = (
                     "127.0.0.1" if _server_local
                     else getattr(svc, '_relay_addr', None) or '127.0.0.1')
-                host_port = novnc_port
+                host_port = novnc_port or _vx["voxl_port"]
                 # For local relays connecting from the same machine, use the port directly
                 session_id = f"{_session_prefix}_{relay_id}"
                 from services.vnc_proxy import register_session
@@ -307,7 +348,7 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         relay_service=svc, relay_id=relay_id,
                         local_screen=True)
                 _vtok = register_session(
-                    session_id, host_port, **_session_kwargs)
+                    session_id, host_port, **_session_kwargs, **_vx)
             else:
                 # Managed relay containers are reached over Docker networking;
                 # remote host relays expose the returned noVNC port on their
@@ -332,7 +373,7 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                     _session_kwargs.update(
                         relay_service=svc, relay_id=relay_id)
                 _vtok = register_session(
-                    session_id, backend_port, **_session_kwargs)
+                    session_id, backend_port, **_session_kwargs, **_vx)
 
             _ensure_vnc_routes(flowfile)
 
@@ -361,7 +402,7 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
 
             flowfile.set_content(json.dumps({
                 "ok": True, "relay_id": relay_id, "local_screen": local_screen,
-                "url": f"/vnc/{session_id}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=/vnc/{session_id}/{_vtok}/websockify",
+                **_desktop_urls(session_id, _vtok, novnc_port, _vx),
                 "audio_session": session_id if _audio_token else "",
                 "audio_token": _audio_token,
             }).encode())

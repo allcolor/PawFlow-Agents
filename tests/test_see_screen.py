@@ -74,7 +74,8 @@ def _patch_screen_store(monkeypatch):
 
 def test_see_screenshot_accepts_relay_image_dict(monkeypatch):
     _patch_screen_store(monkeypatch)
-    relay = _Relay({"image": _ONE_BY_ONE_PNG, "width": 2560, "height": 1440})
+    relay = _Relay({"image": base64.b64decode(_ONE_BY_ONE_PNG),
+                    "width": 2560, "height": 1440})
     handler = SeeHandler()
     handler.set_fs_service(relay)
     handler.set_user_id("user-1")
@@ -132,7 +133,7 @@ def test_screen_click_resolves_revision_to_private_guard(monkeypatch):
     from core.handlers._screen_guard import screen_route_key
     screenshot_result = handler._handle_result(
         "screenshot",
-        {"image": _valid_png_b64(), "width": 4, "height": 4},
+        {"image": base64.b64decode(_valid_png_b64()), "width": 4, "height": 4},
         route_key=screen_route_key(relay, True),
     )
     revision = re.search(r"Screen revision: (\S+)", screenshot_result).group(1)
@@ -206,7 +207,7 @@ def test_screen_window_state_result_formats_elements(monkeypatch):
         "cua": True, "pid": 42,
         "state": {"elements": [{"index": 0, "role": "button",
                                 "name": "OK"}]},
-        "image": _valid_png_b64(), "width": 4, "height": 4,
+        "image": base64.b64decode(_valid_png_b64()), "width": 4, "height": 4,
     }, route_key="route-1")
 
     assert "Window state captured." in result
@@ -302,7 +303,7 @@ def test_screen_screenshot_filestore_entry_expires_after_five_minutes(monkeypatc
     handler.set_conversation_id("conv-1")
 
     result = handler._handle_result("screenshot", {
-        "image": _ONE_BY_ONE_PNG,
+        "image": base64.b64decode(_ONE_BY_ONE_PNG),
         "width": 1280,
         "height": 800,
     })

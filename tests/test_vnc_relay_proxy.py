@@ -1,6 +1,5 @@
 """Remote VNC sessions must travel through the outbound relay tunnel."""
 
-import base64
 import json
 import shutil
 import subprocess
@@ -82,7 +81,7 @@ class _HttpRelay(_Relay):
         if action == "novnc_asset":
             self.calls.append((action, kwargs))
             return {
-                "body": base64.b64encode(self.body).decode("ascii"),
+                "body": self.body,
                 "content_type": "text/css",
             }
         return super()._request(action, **kwargs)
@@ -92,7 +91,7 @@ class _HttpRelay(_Relay):
             "status": 200,
             "headers": {"Content-type": "text/html"},
         })
-        on_output("chunk", base64.b64encode(self.body).decode("ascii"))
+        on_output("chunk", self.body)
         on_output("end", {})
         return {"ok": True}
 
@@ -117,7 +116,7 @@ def test_remote_vnc_websocket_uses_relay_tunnel(cap_db, monkeypatch):
 
     monkeypatch.setattr(vnc_proxy, "_ws_recv_frame", lambda _sock: (0x08, b""))
     monkeypatch.setattr(
-        vnc_proxy, "_send_command_to_relay",
+        vnc_proxy, "send_command_to_relay",
         lambda _relay, command: commands.append(command))
     monkeypatch.setattr(
         vnc_proxy.socket, "create_connection",
@@ -148,7 +147,7 @@ def test_remote_local_screen_marks_relay_backend(cap_db, monkeypatch):
     browser = _BrowserSocket()
 
     monkeypatch.setattr(vnc_proxy, "_ws_recv_frame", lambda _sock: (0x08, b""))
-    monkeypatch.setattr(vnc_proxy, "_send_command_to_relay", lambda *_args: None)
+    monkeypatch.setattr(vnc_proxy, "send_command_to_relay", lambda *_args: None)
 
     vnc_proxy.vnc_ws_proxy(
         browser,
@@ -312,16 +311,16 @@ def test_reregistering_desktop_keeps_existing_viewer_streams(cap_db, login_sessi
     vnc_proxy._sessions["desktop-host"]["vnc_ws_sessions"]["ws-1"] = {
         "browser_sock": browser,
     }
-    vnc_proxy.dispatch_vnc_ws_data("relay-1", "ws-1", "YWJj")
+    vnc_proxy.dispatch_vnc_ws_data("relay-1", "ws-1", b"abc")
 
     vnc_proxy.register_session("desktop-host", 62966,
                                login_session_id=login_session_id, **registration)
-    vnc_proxy.dispatch_vnc_ws_data("relay-1", "ws-1", "ZGVm")
+    vnc_proxy.dispatch_vnc_ws_data("relay-1", "ws-1", b"def")
 
-    assert browser.sent == [b"\x82\x03abc", b"\x82\x03def"]
+    assert _wait_for(lambda: browser.sent == [b"\x82\x03abc", b"\x82\x03def"])
     assert not browser.closed
     vnc_proxy.dispatch_vnc_ws_close("relay-1", "ws-1")
-    assert browser.closed
+    assert _wait_for(lambda: browser.closed)
 
 
 @pytest.mark.parametrize("changed", [{"owner_user_id": "bob"}, {"port": 62967}])
@@ -335,7 +334,7 @@ def test_replacing_desktop_target_closes_old_viewers(cap_db, monkeypatch, change
         "browser_sock": browser,
     }
     commands = []
-    monkeypatch.setattr(vnc_proxy, "_send_command_to_relay",
+    monkeypatch.setattr(vnc_proxy, "send_command_to_relay",
                         lambda _relay, command: commands.append(command))
 
     vnc_proxy.register_session("desktop-host", **{**registration, **changed})
@@ -358,12 +357,23 @@ def test_relay_vnc_frames_are_forwarded_to_browser(cap_db):
             "browser_sock": browser,
         }
 
-    vnc_proxy.dispatch_vnc_ws_data("relay-1", "ws-1", "YWJj", opcode=2)
-    assert browser.sent == [b"\x82\x03abc"]
+    vnc_proxy.dispatch_vnc_ws_data("relay-1", "ws-1", b"abc", opcode=2)
+    assert _wait_for(lambda: browser.sent == [b"\x82\x03abc"])
 
     vnc_proxy.dispatch_vnc_ws_close("relay-1", "ws-1")
-    assert browser.closed is True
+    assert _wait_for(lambda: browser.closed is True)
     assert browser.sent[-1].startswith(b"\x88")
+
+
+def _wait_for(predicate, timeout=5.0):
+    """Browser writes happen on the viewer's sender thread, not inline."""
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
 
 
 @pytest.mark.parametrize(
@@ -428,18 +438,6 @@ def test_open_remote_desktop_registers_relay_transport(
     assert audio_registered[0][1]["relay_id"] == "relay-1"
     assert bool(audio_registered[0][1]["local_screen"]) is local_screen
     assert json.loads(flowfile.get_content())["ok"] is True
-
-
-def test_server_dispatch_routes_desktop_frames():
-    source = open("services/_relay_conn.py", encoding="utf-8").read()
-    assert "mtype == 'desktop_ws_data'" in source
-    assert "dispatch_vnc_ws_data(service._service_id" in source
-    assert "mtype == 'desktop_ws_close'" in source
-    assert "dispatch_vnc_ws_close(service._service_id" in source
-    assert "mtype == 'desktop_audio_data'" in source
-    assert "dispatch_audio_data(service._service_id" in source
-    assert "mtype == 'desktop_audio_close'" in source
-    assert "dispatch_audio_close(service._service_id" in source
 
 
 def test_server_managed_desktop_keeps_direct_vnc_and_audio_registration(

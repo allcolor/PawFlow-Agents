@@ -10,7 +10,6 @@ The manager functions take a duck-typed state object (the worker passes
 its RelayWorkerState); tests use a SimpleNamespace so they need none of
 worker.py's relay-only imports.
 """
-import base64
 import http.client
 import json
 import socket
@@ -21,6 +20,8 @@ import types
 import pytest
 
 from pawflow_relay import _relay_codeserver as cs
+from pawflow_relay.binary_channel import (
+    CHANNEL_CODE_SERVER_WS, decode as decode_binary)
 
 
 def _state():
@@ -105,9 +106,10 @@ def test_cs_ws_open_streams_backend_frames(backend):
     frames = []
     lock = threading.Lock()
 
-    def send_frame(fb):
+    def send_frame(fb, opcode=0x01):
         with lock:
-            frames.append(json.loads(fb.decode("utf-8")))
+            frames.append(decode_binary(fb) if opcode == 0x02
+                          else json.loads(fb.decode("utf-8")))
 
     res = cs.cs_ws_open(st, {"session_id": "s1", "port": backend.port, "ws_path": "/"}, send_frame)
     assert res == {"ok": True}
@@ -119,29 +121,32 @@ def test_cs_ws_open_streams_backend_frames(backend):
 
     backend.send_text_frame(b"hello-from-backend")
 
+    # The on-wire frame goes up untouched, as a binary relay frame.
+    expected = (CHANNEL_CODE_SERVER_WS, 0, "s1",
+                bytes([0x81, len(b"hello-from-backend")]) + b"hello-from-backend")
+
     def _got():
         with lock:
-            return any(f.get("type") == "cs_ws_data"
-                       and base64.b64decode(f["data"]) == b"hello-from-backend"
-                       for f in frames)
+            return expected in frames
     assert _wait(_got), "backend frame was not forwarded via send_frame"
 
 
-def test_cs_ws_send_writes_masked_frame_to_backend(backend):
+def test_cs_ws_send_passes_browser_frame_to_backend(backend):
     st = _state()
     res = cs.cs_ws_open(st, {"session_id": "s1", "port": backend.port, "ws_path": "/"}, lambda _f: None)
     assert res == {"ok": True}
     backend.wait_connected()
 
-    ok = cs.cs_ws_send(st, {"session_id": "s1", "data": base64.b64encode(b"ping").decode(), "opcode": 1})
+    # A browser frame (masked) is passed through byte for byte.
+    frame = bytes([0x81, 0x80 | 4]) + b"\x00\x00\x00\x00" + b"ping"
+    ok = cs.cs_ws_send(st, {"session_id": "s1", "frame": frame})
     assert ok == {"ok": True}
-    # zero-masked client frame -> payload bytes are unchanged on the wire
-    assert _wait(lambda: b"ping" in bytes(backend.received))
+    assert _wait(lambda: bytes(backend.received) == frame)
 
 
 def test_cs_ws_send_unknown_session_errors():
     st = _state()
-    res = cs.cs_ws_send(st, {"session_id": "nope", "data": ""})
+    res = cs.cs_ws_send(st, {"session_id": "nope", "frame": b""})
     assert res["ok"] is False
     assert "not found" in res["error"]
 

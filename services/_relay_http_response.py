@@ -9,7 +9,6 @@ the file concurrently. Memory use is therefore bounded by one wire chunk.
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 import tempfile
@@ -97,11 +96,12 @@ class RelayHttpResponseStream:
             self._ready.set()
             return
         if kind == "chunk":
-            try:
-                raw = base64.b64decode(data, validate=True)
-            except Exception:
-                self._fail("Relay returned an invalid base64 HTTP chunk")
+            # Body chunks arrive as raw bytes in binary relay frames
+            # (pawflow_relay.binary_channel.CHANNEL_HTTP_CHUNK).
+            if not isinstance(data, (bytes, bytearray)):
+                self._fail("Relay sent an HTTP chunk that is not raw bytes")
                 return
+            raw = bytes(data)
             with self._condition:
                 if self._consumer_done or self.error:
                     return

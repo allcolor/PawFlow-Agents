@@ -294,7 +294,7 @@ async function cmdDesktop(text, parts) {
         if (resp.error) { addMsg('system', '\u26a0 ' + resp.error); return; }
         if (!resp.url) { addMsg('error', t('desktopNoUrl')); return; }
         const label = attachMode === 'host' ? relay + ' (local)' : relay;
-        const tabId = addDesktopTab(label, resp.url);
+        const tabId = addDesktopTab(label, desktopViewerUrl(resp), resp);
         if (typeof desktopDockStampTab === 'function') {
           desktopDockStampTab(tabId, relay, attachMode);
         }
@@ -403,7 +403,7 @@ async function cmdDesktop(text, parts) {
         addMsg('error', t('desktopNoUrl'));
         return;
       }
-      const _dTabId = addDesktopTab(_tabLabel, resp.url);
+      const _dTabId = addDesktopTab(_tabLabel, desktopViewerUrl(resp), resp);
       // Stamp the backend identity so lifecycle operations match by
       // relay/mode instead of the display label.
       if (typeof desktopDockStampTab === 'function') {

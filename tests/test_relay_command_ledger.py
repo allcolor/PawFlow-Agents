@@ -134,7 +134,7 @@ def test_the_record_is_bounded(monkeypatch):
         record.finish(rid, rid.encode())
 
     assert record.begin("a") == RUN, "the oldest record was evicted"
-    assert record.begin("c") == b"c"
+    assert record.begin("c") == [(b"c", 0x01)]
 
 
 def test_records_expire(monkeypatch):

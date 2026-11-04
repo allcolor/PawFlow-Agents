@@ -54,6 +54,7 @@ def _ensure_vnc_routes(flowfile: FlowFile) -> None:
         return
     try:
         from services.vnc_proxy import vnc_ws_proxy, vnc_http_proxy
+        from services.voxl_proxy import voxl_ws_proxy
         from services.audio_proxy import audio_ws_proxy
         from services.http_listener_service import _instances
         _http_svc = _instances.get(int(_req_port))
@@ -65,8 +66,17 @@ def _ensure_vnc_routes(flowfile: FlowFile) -> None:
         _http_svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
                                  _vnc_owner, callback=_ws_upgrade_required,
                                  ws_handler=vnc_ws_proxy, public=True)
+        # voxl viewer: its WebSocket, then every HTTP method its client
+        # uses (file uploads are PUT, recordings POST).
+        _http_svc.register_route("GET", "/vnc/{session_id}/{token}/voxl/ws",
+                                 _vnc_owner, callback=_ws_upgrade_required,
+                                 ws_handler=voxl_ws_proxy, public=True)
         _http_svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                  _vnc_owner, callback=vnc_http_proxy, public=True)
+        for _method in ("HEAD", "PUT", "POST"):
+            _http_svc.register_route(
+                _method, "/vnc/{session_id}/{token}/{path+}",
+                _vnc_owner, callback=vnc_http_proxy, public=True)
         logger.info("[vnc] Registered VNC routes on port %s", _req_port)
         _audio_exists = [r for r in _http_svc.get_routes()
                          if r.get("pattern", "").startswith("/audio/")]

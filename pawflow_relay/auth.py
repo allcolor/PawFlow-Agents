@@ -11,6 +11,7 @@ Exported:
 
 All stdlib-only so the module loads inside the relay container.
 """
+import base64
 import logging
 
 import json
@@ -478,21 +479,31 @@ def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
         _host_token = os.environ.get("PAWFLOW_HOST_HELPER_TOKEN", "")
         if _host_token:
             _fwd_msg["_host_helper_token"] = _host_token
-        req = json.dumps(_fwd_msg) + "\n"
+        from pawflow_relay.binary_channel import json_line_dumps, json_line_loads
+        req = json_line_dumps(_fwd_msg) + "\n"
         sock.sendall(req.encode("utf-8"))
 
-        buf = b""
+        buf = bytearray()
+        scanned = 0  # bytes of buf already searched for a newline
         result = None
         sock.settimeout(300)  # auth can take a while
 
         while True:
-            chunk = sock.recv(4096)
+            chunk = sock.recv(65536)
             if not chunk:
                 break
             buf += chunk
-            while b"\n" in buf:
-                line, buf = buf.split(b"\n", 1)
-                resp = json.loads(line)
+            while True:
+                newline = buf.find(b"\n", scanned)
+                if newline < 0:
+                    # A multi-megabyte result line arrives in many pieces;
+                    # only the new bytes are searched each time.
+                    scanned = len(buf)
+                    break
+                line = bytes(buf[:newline])
+                del buf[:newline + 1]
+                scanned = 0
+                resp = json_line_loads(line)
                 if resp.get("type") == "progress":
                     if ws_sock:
                         progress = json.dumps({
@@ -506,14 +517,25 @@ def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 elif resp.get("type") == "http_response":
                     if ws_sock:
-                        frame = json.dumps({
-                            "type": "http_response",
-                            "request_id": request_id,
-                            "kind": resp.get("kind", ""),
-                            "data": resp.get("data"),
-                        }).encode("utf-8")
+                        opcode = 0x01
+                        if resp.get("kind") == "chunk":
+                            # The helper's line protocol carries base64;
+                            # the relay link carries the raw bytes.
+                            from pawflow_relay.binary_channel import (
+                                CHANNEL_HTTP_CHUNK, encode as _encode_binary)
+                            frame = _encode_binary(
+                                CHANNEL_HTTP_CHUNK, request_id,
+                                base64.b64decode(resp.get("data") or ""))
+                            opcode = 0x02
+                        else:
+                            frame = json.dumps({
+                                "type": "http_response",
+                                "request_id": request_id,
+                                "kind": resp.get("kind", ""),
+                                "data": resp.get("data"),
+                            }).encode("utf-8")
                         try:
-                            ws_send_fn(ws_sock, frame)
+                            ws_send_fn(ws_sock, frame, opcode)
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 elif resp.get("type") == "result":
@@ -523,7 +545,7 @@ def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
                     _is_persistent = isinstance(data, dict) and (
                         data.get("session_id", "").startswith("local_term_"))
                     if _is_persistent:
-                        _remaining = buf
+                        _remaining = bytes(buf)
 
                         def _bg_progress_reader():
                             _buf = _remaining

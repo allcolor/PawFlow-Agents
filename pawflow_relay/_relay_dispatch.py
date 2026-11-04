@@ -99,7 +99,20 @@ def _forward(ctx, msg):
     """Forward a message to the host helper over the live socket."""
     _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
     return ctx.forward_to_host_helper(
-        _host_helper, dict(msg), ctx.ws_sock_ref[0], ctx.ws_frame_send)
+        _host_helper, dict(msg), ctx.ws_sock_ref[0], _locked_send(ctx))
+
+
+def _locked_send(ctx):
+    """Relay socket sender that holds the send lock for each frame.
+
+    The host-helper forward streams progress and HTTP frames while other
+    threads write results on the same socket; unlocked SSL writes interleave
+    mid-record and break the link.
+    """
+    def _send(sock, frame, opcode=0x01):
+        with ctx.send_lock:
+            ctx.ws_frame_send(sock, frame, opcode)
+    return _send
 
 
 def _fwd_local_term(ctx, msg):
@@ -199,9 +212,9 @@ def _h_cs_ws_open(ctx, msg, on_output=None):
     if not ctx.allow_exec:
         return _EXEC_DENIED
 
-    def _cs_send(_frame):
+    def _cs_send(_frame, _opcode=0x01):
         with ctx.send_lock:
-            ctx.ws_frame_send(ctx.ws_sock_ref[0], _frame)
+            ctx.ws_frame_send(ctx.ws_sock_ref[0], _frame, _opcode)
     return _cs_ws_open(ctx.state, msg, _cs_send)
 
 
@@ -270,9 +283,9 @@ def _h_desktop_ws_open(ctx, msg, on_output=None):
     if not ctx.allow_exec:
         return _EXEC_DENIED
 
-    def _dt_send(_frame):
+    def _dt_send(_frame, _opcode=0x01):
         with ctx.send_lock:
-            ctx.ws_frame_send(ctx.ws_sock_ref[0], _frame)
+            ctx.ws_frame_send(ctx.ws_sock_ref[0], _frame, _opcode)
     return _dt_ws_open(ctx.state, msg, _dt_send)
 
 
@@ -288,9 +301,9 @@ def _h_audio_stream_open(ctx, msg, on_output=None):
     if not ctx.allow_exec:
         return _EXEC_DENIED
 
-    def _audio_send(_frame):
+    def _audio_send(_frame, _opcode=0x01):
         with ctx.send_lock:
-            ctx.ws_frame_send(ctx.ws_sock_ref[0], _frame)
+            ctx.ws_frame_send(ctx.ws_sock_ref[0], _frame, _opcode)
     return _dt_audio_open(ctx.state, msg, _audio_send)
 
 
@@ -371,7 +384,7 @@ def _handle_auth_login(ctx, msg, action):
     host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
     if host_helper:
         return ctx.forward_to_host_helper(
-            host_helper, msg, ctx.ws_sock_ref[0], ctx.ws_frame_send)
+            host_helper, msg, ctx.ws_sock_ref[0], _locked_send(ctx))
 
     def _send_progress(data):
         if ctx.ws_sock_ref[0]:

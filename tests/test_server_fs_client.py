@@ -19,7 +19,8 @@ class TestEnvelopeShape(unittest.TestCase):
 
     def setUp(self):
         self.sent = []
-        self.cli = ServerFsClient(send_callable=self.sent.append)
+        self.cli = ServerFsClient(
+            send_callable=lambda payload, opcode=0x01: self.sent.append(payload))
 
     def test_request_payload_shape(self):
         # Fire a request in a thread; resolve it from the main thread
@@ -56,7 +57,7 @@ class TestEnvelopeShape(unittest.TestCase):
         lock = threading.Lock()
         send_order = []
 
-        def _slow_send(payload):
+        def _slow_send(payload, opcode=0x01):
             with lock:
                 pass  # sanity
             # Acquire externally-mediated lock (the client's _send_lock)
@@ -95,14 +96,14 @@ class TestEnvelopeShape(unittest.TestCase):
 class TestErrorPaths(unittest.TestCase):
 
     def test_timeout_returns_eio(self):
-        cli = ServerFsClient(send_callable=lambda _: None)
+        cli = ServerFsClient(send_callable=lambda *_: None)
         r = cli.request('sfs.getattr', {'path': 'x'}, timeout=0.1)
         self.assertEqual(r.get('error'), 'EIO')
         self.assertEqual(r.get('errno'), 5)
         self.assertIn('timeout', r.get('message', ''))
 
     def test_send_failure_returns_eio(self):
-        def _broken_send(_):
+        def _broken_send(*_):
             raise OSError('socket closed')
         cli = ServerFsClient(send_callable=_broken_send)
         r = cli.request('sfs.getattr', {'path': 'x'}, timeout=2.0)
@@ -110,7 +111,7 @@ class TestErrorPaths(unittest.TestCase):
         self.assertIn('send failed', r.get('message', ''))
 
     def test_dispatch_unknown_request_id_returns_false(self):
-        cli = ServerFsClient(send_callable=lambda _: None)
+        cli = ServerFsClient(send_callable=lambda *_: None)
         self.assertFalse(cli.dispatch_response({
             'type': 'relay_response',
             'request_id': 'never-sent',
@@ -118,14 +119,14 @@ class TestErrorPaths(unittest.TestCase):
         }))
 
     def test_request_after_close_returns_eio(self):
-        cli = ServerFsClient(send_callable=lambda _: None)
+        cli = ServerFsClient(send_callable=lambda *_: None)
         cli.cancel_all()
         r = cli.request('sfs.getattr', {'path': 'x'}, timeout=1.0)
         self.assertEqual(r.get('error'), 'EIO')
         self.assertIn('closed', r.get('message', ''))
 
     def test_cancel_all_wakes_pending_waiters(self):
-        cli = ServerFsClient(send_callable=lambda _: None)
+        cli = ServerFsClient(send_callable=lambda *_: None)
         results = {}
 
         def _req():
@@ -146,7 +147,8 @@ class TestErrorPropagation(unittest.TestCase):
 
     def test_server_error_propagates_with_errno(self):
         sent = []
-        cli = ServerFsClient(send_callable=sent.append)
+        cli = ServerFsClient(
+            send_callable=lambda payload, opcode=0x01: sent.append(payload))
         results = {}
 
         def _req():
@@ -188,7 +190,8 @@ class TestSwappableServerFsClient(unittest.TestCase):
 
     def test_set_inner_then_request_forwards(self):
         sent = []
-        cli = ServerFsClient(send_callable=sent.append)
+        cli = ServerFsClient(
+            send_callable=lambda payload, opcode=0x01: sent.append(payload))
         swap = SwappableServerFsClient()
         swap.set_inner(cli)
 
@@ -214,7 +217,7 @@ class TestSwappableServerFsClient(unittest.TestCase):
         self.assertEqual(results['r'], {'data': {'st_size': 7}})
 
     def test_clear_inner_then_request_returns_eio(self):
-        cli = ServerFsClient(send_callable=lambda b: None)
+        cli = ServerFsClient(send_callable=lambda *_: None)
         swap = SwappableServerFsClient()
         swap.set_inner(cli)
         swap.clear_inner()
@@ -224,8 +227,10 @@ class TestSwappableServerFsClient(unittest.TestCase):
     def test_swap_old_to_new_routes_subsequent_requests_to_new(self):
         sent_old = []
         sent_new = []
-        cli_old = ServerFsClient(send_callable=sent_old.append)
-        cli_new = ServerFsClient(send_callable=sent_new.append)
+        cli_old = ServerFsClient(
+            send_callable=lambda payload, opcode=0x01: sent_old.append(payload))
+        cli_new = ServerFsClient(
+            send_callable=lambda payload, opcode=0x01: sent_new.append(payload))
         swap = SwappableServerFsClient()
         swap.set_inner(cli_old)
 
@@ -274,7 +279,7 @@ class TestSwappableServerFsClient(unittest.TestCase):
     def test_get_inner_reflects_current_state(self):
         swap = SwappableServerFsClient()
         self.assertIsNone(swap.get_inner())
-        cli = ServerFsClient(send_callable=lambda b: None)
+        cli = ServerFsClient(send_callable=lambda *_: None)
         swap.set_inner(cli)
         self.assertIs(swap.get_inner(), cli)
         swap.clear_inner()

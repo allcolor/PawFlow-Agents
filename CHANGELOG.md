@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.322] — 2026-11-05
+
 ### Fixed
 
 - The desktop panel shows the Docker relay desktop again (beta.321 stayed on

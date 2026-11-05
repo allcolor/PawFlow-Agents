@@ -298,9 +298,6 @@ async function cmdDesktop(text, parts) {
         if (typeof desktopDockStampTab === 'function') {
           desktopDockStampTab(tabId, relay, attachMode);
         }
-        if (resp.audio_session && resp.audio_token) {
-          audioConnect(resp.audio_session, resp.audio_token);
-        }
       },
       error: (e) => addMsg('system', t('failed', { error: e.message })),
     });
@@ -409,14 +406,6 @@ async function cmdDesktop(text, parts) {
       if (typeof desktopDockStampTab === 'function') {
         desktopDockStampTab(_dTabId, relayId,
                             localScreen ? 'host' : 'docker');
-      }
-      // Connect audio if available. The capability token is separate
-      // from the VNC one (different resource_type) — audioConnect needs
-      // both the session id and the audio token to build the WS URL.
-      if (resp.audio_session && resp.audio_token) {
-        audioConnect(resp.audio_session, resp.audio_token);
-      } else if (resp.audio_session) {
-        console.warn('[audio] desktop returned audio session without capability token; skipping websocket');
       }
       addMsg('system', localScreen ? t('localScreenReady') : t('desktopReady'));
     },

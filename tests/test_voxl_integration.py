@@ -218,8 +218,14 @@ def test_relay_http_sends_voxl_password_and_drops_browser_credentials(monkeypatc
     assert kw["headers"] == {
         "Content-Type": "application/octet-stream", "Range": "bytes=0-9",
         "Host": "127.0.0.1:6901", "Authorization": "Bearer voxl-pw"}
-    assert req.streamed == (200, {"Content-Type": "text/html"},
-                            b"<html>voxl</html>")
+    assert req.streamed == (200, {
+        "Content-Type": "text/html",
+        # The chat page is cross-origin isolated: without these the
+        # browser refuses to show voxl in its iframe.
+        "Cross-Origin-Resource-Policy": "same-origin",
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp",
+    }, b"<html>voxl</html>")
 
     # A host-screen voxl goes through the host helper (local=True).
     calls.clear()
@@ -328,6 +334,8 @@ def test_relay_tunnel_defaults_still_serve_novnc(monkeypatch):
     opened = []
 
     class _Relay:
+        _service_id = "relay-1"
+
         def _request(self, action, **kw):
             opened.append(kw)
             return {"ok": False, "error": "stop here"}

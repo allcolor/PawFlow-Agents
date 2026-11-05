@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The desktop panel shows the Docker relay desktop again (beta.321 stayed on
+  "Connecting…" or showed nothing). A Docker desktop reaches noVNC directly,
+  but voxl is always tunnelled through the relay; viewers had no relay id, so
+  the relay's frames were dropped. Each tunnelled viewer now records the relay
+  that carries it, and frames and closes go only to that relay's viewers.
+- The voxl viewer is no longer blocked inside the chat page: its proxied
+  responses now carry the same cross-origin isolation headers as noVNC.
+- Proxied pages whose backend sends a lowercase `content-type` header are no
+  longer served with a second `application/octet-stream` type, which made
+  browsers download the voxl page instead of showing it.
+- Desktop sound no longer plays twice (an echo, "like in a cave"). The chat
+  opened PawFlow's audio stream next to voxl's own audio. It now plays one
+  source, chosen by the viewer shown: voxl's audio (in sync with its video)
+  with voxl, PawFlow's audio stream with noVNC; switching viewers switches
+  the source.
+
 ## [1.0.0-beta.321] — 2026-11-04
 
 ### Fixed

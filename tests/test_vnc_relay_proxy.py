@@ -3,6 +3,7 @@
 import json
 import shutil
 import subprocess
+import threading
 
 import pytest
 
@@ -38,6 +39,7 @@ class _BrowserSocket:
 class _Relay:
     config = {}
     _relay_addr = "198.51.100.10"
+    _service_id = "relay-1"
 
     def __init__(self):
         self.calls = []
@@ -309,7 +311,7 @@ def test_reregistering_desktop_keeps_existing_viewer_streams(cap_db, login_sessi
                                login_session_id="login-1", **registration)
     browser = _BrowserSocket()
     vnc_proxy._sessions["desktop-host"]["vnc_ws_sessions"]["ws-1"] = {
-        "browser_sock": browser,
+        "browser_sock": browser, "relay_id": "relay-1",
     }
     vnc_proxy.dispatch_vnc_ws_data("relay-1", "ws-1", b"abc")
 
@@ -331,7 +333,7 @@ def test_replacing_desktop_target_closes_old_viewers(cap_db, monkeypatch, change
     vnc_proxy.register_session("desktop-host", **registration)
     browser = _BrowserSocket()
     vnc_proxy._sessions["desktop-host"]["vnc_ws_sessions"]["ws-1"] = {
-        "browser_sock": browser,
+        "browser_sock": browser, "relay_id": "relay-1",
     }
     commands = []
     monkeypatch.setattr(vnc_proxy, "send_command_to_relay",
@@ -354,7 +356,7 @@ def test_relay_vnc_frames_are_forwarded_to_browser(cap_db):
     browser = _BrowserSocket()
     with vnc_proxy._lock:
         vnc_proxy._sessions["desktop-remote"]["vnc_ws_sessions"]["ws-1"] = {
-            "browser_sock": browser,
+            "browser_sock": browser, "relay_id": "relay-1",
         }
 
     vnc_proxy.dispatch_vnc_ws_data("relay-1", "ws-1", b"abc", opcode=2)
@@ -363,6 +365,43 @@ def test_relay_vnc_frames_are_forwarded_to_browser(cap_db):
     vnc_proxy.dispatch_vnc_ws_close("relay-1", "ws-1")
     assert _wait_for(lambda: browser.closed is True)
     assert browser.sent[-1].startswith(b"\x88")
+
+
+def test_voxl_frames_reach_a_docker_desktop_without_session_relay_id(
+        cap_db, monkeypatch):
+    """A Docker desktop reaches noVNC directly (``host``, no ``relay_id``)
+    but tunnels voxl through its relay: that relay's frames must reach the
+    viewer, and no other relay may feed or close it."""
+    relay = _Relay()
+    relay._request = lambda action, **kw: {"ok": True}
+    vnc_proxy.register_session(
+        "desktop-docker", 6080, owner_user_id="alice", host="172.17.0.2",
+        voxl_port=32777, voxl_relay_service=relay, voxl_local=False)
+    browser = _BrowserSocket()
+    # The browser hangs up only once it got a frame (closing aborts its sink).
+    monkeypatch.setattr(vnc_proxy, "_ws_recv_frame",
+                        lambda _sock: _wait_for(lambda: browser.sent)
+                        and (0x08, b""))
+    monkeypatch.setattr(vnc_proxy, "send_command_to_relay", lambda *a: None)
+    opened = threading.Event()
+    real_request = relay._request
+
+    def _request(action, **kw):
+        opened.set()
+        # Deliver while the viewer is registered (before the browser loop ends).
+        vnc_proxy.dispatch_vnc_ws_data("other-relay", kw["session_id"], b"bad")
+        vnc_proxy.dispatch_vnc_ws_close("other-relay", kw["session_id"])
+        vnc_proxy.dispatch_vnc_ws_data("relay-1", kw["session_id"], b"hello", 1)
+        return real_request(action, **kw)
+
+    relay._request = _request
+    vnc_proxy._vnc_ws_relay_proxy(
+        browser, "desktop-docker", vnc_proxy._sessions["desktop-docker"], {},
+        port=32777, ws_path="/ws", headers={}, relay_service=relay)
+
+    assert opened.is_set()
+    assert _wait_for(lambda: browser.sent[:1] == [b"\x81\x05hello"])
+    assert b"bad" not in b"".join(browser.sent)
 
 
 def _wait_for(predicate, timeout=5.0):

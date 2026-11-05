@@ -59,9 +59,23 @@ def _backend_headers(session, browser_headers=None) -> dict:
     return headers
 
 
+#: The chat page is cross-origin isolated (COOP/COEP require-corp, see
+#: serve_chat_ui); an embedded document without matching headers is blocked
+#: by the browser ("refused to connect"), exactly like the noVNC viewer.
+_ISOLATION_HEADERS = {
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
+}
+
+
 def _response_headers(headers) -> dict:
-    return {str(k): str(v) for k, v in dict(headers or {}).items()
-            if str(k).lower() not in _HOP_BY_HOP}
+    isolation = {k.lower() for k in _ISOLATION_HEADERS}
+    out = {str(k): str(v) for k, v in dict(headers or {}).items()
+           if str(k).lower() not in _HOP_BY_HOP
+           and str(k).lower() not in isolation}
+    out.update(_ISOLATION_HEADERS)
+    return out
 
 
 # ── HTTP ──────────────────────────────────────────────────────────────

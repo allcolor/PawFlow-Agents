@@ -173,9 +173,6 @@ function desktopDockAttach(index) {
       const tabId = addDesktopTab(label, desktopViewerUrl(resp), resp);
       desktopDockStampTab(tabId, row.relay_id, row.mode,
                           row.desktop_session_id);
-      if (resp.audio_session && resp.audio_token) {
-        audioConnect(resp.audio_session, resp.audio_token);
-      }
     },
     error: (e) => addMsg('system', t('failed', { error: e.message })),
   });

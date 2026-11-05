@@ -272,6 +272,21 @@ function toggleDesktopViewer(tabId) {
   panel.dataset.viewer = toNovnc ? 'novnc' : 'voxl';
   if (iframe) iframe.src = toNovnc ? panel.dataset.novncUrl : panel.dataset.voxlUrl;
   _updateDesktopViewerButton(panel);
+  _desktopAudioFollowViewer(panel);
+}
+
+/** Desktop sound comes from exactly one place: voxl streams it with the
+ *  video, so with voxl PawFlow's own audio stream stays closed (both would
+ *  play the sound twice, slightly delayed); noVNC has no audio, so with
+ *  noVNC PawFlow's stream plays it. */
+function _desktopAudioFollowViewer(panel) {
+  const session = panel.dataset.audioSession;
+  const token = panel.dataset.audioToken;
+  if (panel.dataset.viewer === 'novnc' && session && token) {
+    if (typeof audioConnect === 'function') audioConnect(session, token);
+  } else if (typeof audioDisconnect === 'function') {
+    audioDisconnect();
+  }
 }
 
 function _updateDesktopViewerButton(panel) {
@@ -290,7 +305,10 @@ function _setDesktopViewers(panel, iframeSrc, viewers) {
   panel.dataset.novncUrl = (viewers && viewers.novnc_url) || '';
   panel.dataset.viewer = (iframeSrc && iframeSrc === panel.dataset.voxlUrl)
     ? 'voxl' : 'novnc';
+  panel.dataset.audioSession = (viewers && viewers.audio_session) || '';
+  panel.dataset.audioToken = (viewers && viewers.audio_token) || '';
   _updateDesktopViewerButton(panel);
+  _desktopAudioFollowViewer(panel);
 }
 
 function addDesktopTab(relayId, iframeSrc, viewers) {

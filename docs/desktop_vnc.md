@@ -68,7 +68,17 @@ browser's cookies, `Origin`, `Referer` and `Authorization`, so the browser
 never sees the password. The viewer is served under the same capability
 route as noVNC: `/vnc/<session>/<token>/voxl/` (page, scripts and APIs; GET,
 HEAD, PUT, POST) and `/vnc/<session>/<token>/voxl/ws` (the stream, tunnelled
-through the relay as raw binary frames).
+through the relay as raw binary frames). Like noVNC, every proxied response
+carries `Cross-Origin-Embedder-Policy: require-corp`,
+`Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Resource-Policy: same-origin`: the chat page is cross-origin
+isolated, and the browser refuses to frame a document without them.
+
+A Docker desktop reaches noVNC directly over the Docker network, but voxl
+listens on `127.0.0.1` inside the relay container and is always tunnelled
+through the relay. Each tunnelled viewer therefore records the id of the relay
+that carries it (`vnc_ws_sessions[...]["relay_id"]`), and relay frames and
+closes are delivered only to viewers of the relay that sent them.
 
 `open_desktop` and `desktop_attach` answer `voxl_url`, `novnc_url`, `url`
 (the default viewer) and `viewer`. The chat UI opens voxl when it is
@@ -76,6 +86,13 @@ available and the page can use WebCodecs (a secure context with
 `VideoDecoder`; not Firefox for Android), otherwise noVNC. The button next
 to the fullscreen button switches an open desktop between the two viewers and
 remembers the choice in the browser.
+
+Desktop sound plays from exactly one source, chosen by the viewer shown
+(`_desktopAudioFollowViewer` in `tabs.js`): with voxl, voxl's own audio,
+which travels with the video in the same stream; with noVNC, which has no
+audio, PawFlow's Opus audio stream (see Audio Notes). Switching viewers
+switches the source, and PawFlow's stream stays closed while voxl is shown.
+Playing both doubled the sound with a slight delay (an echo).
 
 The browser opens a noVNC session connected through PawFlow's VNC proxy. For a
 remote relay, the proxy carries VNC WebSocket frames over the relay's existing
@@ -291,6 +308,11 @@ Related implementation:
 - `tools/screen_actions.py`
 
 ## Audio Notes
+
+With voxl, the desktop sound is part of voxl's own stream (Opus, in the same
+WebSocket as the video) and PawFlow's audio stream stays closed. The rest of
+this section is about PawFlow's audio stream, used with noVNC and by
+`/relay-audio`.
 
 Remote desktop audio is packetized at the relay and forwarded over the
 authenticated relay WebSocket. A server-managed relay instead keeps the direct

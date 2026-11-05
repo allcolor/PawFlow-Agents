@@ -748,6 +748,24 @@ class TestHTTPListenerService:
         finally:
             svc.disconnect()
 
+    def test_lowercase_content_type_is_not_duplicated(self):
+        """A proxied lowercase content-type must not get an octet-stream twin."""
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19918})
+        svc.connect()
+        try:
+            svc.register_route("GET", "/page", "test", lambda r: r.complete_stream(
+                200, {"content-type": "text/html; charset=utf-8"}, iter([b"<p>"])))
+            req = urllib.request.Request(
+                "http://127.0.0.1:19918/page",
+                method="GET",
+                headers={"Cookie": f"pawflow_token={_create_test_session()}"},
+            )
+            resp = urllib.request.urlopen(req, timeout=5)
+            assert resp.headers.get_all("Content-Type") == ["text/html; charset=utf-8"]
+            assert resp.read() == b"<p>"
+        finally:
+            svc.disconnect()
+
     def test_flow_response_wait_has_no_configured_timeout(self):
         svc = HTTPListenerService({"host": "127.0.0.1", "port": 19915})
         svc.connect()

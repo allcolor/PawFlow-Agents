@@ -173,7 +173,10 @@ def _vnc_ws_relay_proxy(client_sock, session_id: str, session: dict,
     own ``port``, ``ws_path`` and a clean ``headers`` set (services.voxl_proxy).
     """
     relay_service = relay_service or session["relay_service"]
-    relay_id = session.get("relay_id", "")
+    # The relay that carries THIS viewer: a Docker desktop reaches noVNC
+    # directly (no session relay_id) but still tunnels voxl through its relay,
+    # and relay frames are only delivered to viewers of the relay that sent them.
+    relay_id = relay_service._service_id
     port = int(port or session.get("port") or 0)
     if local_screen is None:
         local_screen = bool(session.get("local_screen"))
@@ -199,6 +202,7 @@ def _vnc_ws_relay_proxy(client_sock, session_id: str, session: dict,
         current["vnc_ws_sessions"][ws_session_id] = {
             "browser_sock": client_sock,
             "sink": BrowserSink(client_sock, f"vnc-{ws_session_id}"),
+            "relay_id": relay_id,
         }
 
     try:
@@ -414,14 +418,7 @@ def _get_vnc_target(session_id: str) -> tuple:
 def dispatch_vnc_ws_data(relay_id: str, ws_session_id: str,
                          payload: bytes, opcode: int = 2):
     """Forward one desktop WS message received from a relay to its browser."""
-    with _lock:
-        ws_session = None
-        for session in _sessions.values():
-            if session.get("relay_id") != relay_id:
-                continue
-            ws_session = session.get("vnc_ws_sessions", {}).get(ws_session_id)
-            if ws_session:
-                break
+    ws_session = _relay_viewer(relay_id, ws_session_id)
     sink = _viewer_sink(ws_session, ws_session_id)
     if sink is None:
         logger.debug("desktop_ws_data: no browser for relay=%s session=%s",
@@ -429,6 +426,21 @@ def dispatch_vnc_ws_data(relay_id: str, ws_session_id: str,
         return
     # Queued, never written here: this runs on the relay connection's loop.
     sink.send(_ws_build_frame(payload, opcode=opcode or 0x02))
+
+
+def _relay_viewer(relay_id: str, ws_session_id: str, *, pop: bool = False):
+    """Return the viewer entry ``ws_session_id`` tunnelled by ``relay_id``.
+
+    A relay only reaches the viewers it carries, so one relay can never feed
+    or close another relay's desktop viewer.
+    """
+    with _lock:
+        for session in _sessions.values():
+            viewers = session.get("vnc_ws_sessions", {})
+            entry = viewers.get(ws_session_id)
+            if entry is not None and entry.get("relay_id") == relay_id:
+                return viewers.pop(ws_session_id) if pop else entry
+    return None
 
 
 def _viewer_sink(ws_session, ws_session_id: str):
@@ -446,15 +458,7 @@ def _viewer_sink(ws_session, ws_session_id: str):
 
 def dispatch_vnc_ws_close(relay_id: str, ws_session_id: str):
     """Close the browser socket when the relay-side VNC socket closes."""
-    with _lock:
-        ws_session = None
-        for session in _sessions.values():
-            if session.get("relay_id") != relay_id:
-                continue
-            ws_session = session.get("vnc_ws_sessions", {}).pop(
-                ws_session_id, None)
-            if ws_session:
-                break
+    ws_session = _relay_viewer(relay_id, ws_session_id, pop=True)
     sink = _viewer_sink(ws_session, ws_session_id)
     if sink is not None:
         # After the frames already queued for this viewer.

@@ -603,7 +603,10 @@ class _RequestHandler(BaseHTTPRequestHandler):
                         self.send_header(k, cv.strip())
             else:
                 self.send_header(k, v)
-        if "Content-Type" not in req.response_headers:
+        # Header names are case-insensitive: proxied backends (voxl) send
+        # "content-type"; a second default here made browsers download pages.
+        if not any(str(k).lower() == "content-type"
+                   for k in req.response_headers):
             self.send_header("Content-Type", "application/octet-stream")
         # Renew session cookie (sliding window)
         if hasattr(self, '_renew_cookie') and self._renew_cookie:

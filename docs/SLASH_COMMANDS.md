@@ -726,12 +726,14 @@ Open VS Code (code-server) in a tab on a relay.
 /desktop [relay_name] | /desktop local|docker [relay] | /desktop list|status|attach|close|stop [relay]
 ```
 
-Open a noVNC virtual desktop on a relay.
+Open a virtual desktop on a relay. It opens in voxl (H.264 video with the
+desktop sound) when the relay and browser support it, otherwise in noVNC; the
+button next to fullscreen switches viewers. See [desktop_vnc.md](desktop_vnc.md).
 
 ```
 /desktop               -- open on first relay
 /desktop my_relay      -- open on specific relay
-/desktop local         -- open user's local screen via VNC
+/desktop local         -- open user's local screen (voxl, or VNC as fallback)
 /desktop docker        -- open Docker virtual desktop
 /desktop close         -- detach the local tab only; the desktop keeps running
 /desktop list          -- list backend-active desktops (server inventory, not tabs)

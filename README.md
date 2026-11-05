@@ -601,7 +601,7 @@ pytest tests/ -v    # 7000+ tests across 360+ test files
 | [Policy Gating](docs/POLICY_GATING.md) | Optional gate service: allow/deny/ask per tool call against the user's mandate, authorization contexts, policy scripts, audit |
 | [A2A Integration](docs/a2a_integration.md) | Publish agents as A2A 1.0 endpoints, keys, contexts, remote targets |
 | [AG-UI Integration](docs/agui_integration.md) | AG-UI protocol server: streaming runs, frontend tools, shared state, interrupts |
-| [Desktop/VNC](docs/desktop_vnc.md) | noVNC desktop, screen tool, audio notes |
+| [Desktop/VNC](docs/desktop_vnc.md) | voxl desktop viewer (H.264, audio) with noVNC fallback, screen tool, audio notes |
 | [Media Tools](docs/media_tools.md) | Image/video/audio/3D/voice tools, realtime voice conversation |
 | [Tool Catalog](docs/tool_catalog.md) | Agent-facing tools |
 | [Services Catalog](docs/services.md) | Service types and provider integrations |

@@ -302,7 +302,7 @@ Important routes:
 | `/admin` | Admin UI |
 | `/ws/relay` | PawFlow relay WebSocket |
 | `/ws/tools/_tool_relay` | Internal tool relay WebSocket |
-| `/vnc/<session>/<token>/...` | Capability-protected VNC/noVNC proxy |
+| `/vnc/<session>/<token>/...` | Capability-protected desktop proxy: noVNC, and voxl under `.../voxl/` |
 | `/terminal/<session>/<token>/...` | Capability-protected terminal proxy |
 | `/code/<session>/<token>/...` | Capability-protected code-server proxy |
 | `/fwd/<forward>/<token>/...` | Capability-protected port-forward proxy |

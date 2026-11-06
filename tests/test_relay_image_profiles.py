@@ -350,3 +350,54 @@ def test_installer_api_advertises_relay_image_profile_step():
     assert api_content["client_relay_images"]["advanced_features"] is True
     ui_asset = ROOT / "data/repository/flows/global/default/pawflow_installer/versions/assets/install.html"
     assert "Relay image profiles" in ui_asset.read_text(encoding="utf-8")
+
+
+VOXL_RUNTIME_LIBS = {"libx264-164", "libyuv0", "libopus0", "libpulse0", "libxcb1", "libx11-xcb1"}
+
+
+@pytest.mark.parametrize("profile", ["client-desktop", "server-full"])
+def test_desktop_profiles_copy_digest_pinned_voxl_before_setup(profile):
+    generator = _load_generator()
+    catalog = _catalog()
+    desktop = catalog["features"]["desktop.runtime"]
+    assert VOXL_RUNTIME_LIBS <= set(desktop["apt"])
+    (copy,) = desktop["copy_from_image"]
+    assert re.fullmatch(r"ghcr\.io/allcolor/pawflow-voxl@sha256:[0-9a-f]{64}", copy["image"])
+    assert (copy["src"], copy["dest"]) == ("/voxl", "/usr/local/bin/voxl")
+
+    features = generator._resolve_features(catalog, profile, [])
+    lines = generator._render_dockerfile(catalog, features, "relay:test").splitlines()
+    copy_line = f"COPY --from={copy['image']} /voxl /usr/local/bin/voxl"
+    assert lines.count(copy_line) == 1
+    at = lines.index(copy_line)
+    libs_at = max(i for i, line in enumerate(lines) if "libx264-164" in line)
+    verify_at = next(i for i, line in enumerate(lines) if "voxl --version" in line)
+    assert libs_at < at < verify_at
+
+
+@pytest.mark.parametrize("profile", ["server-minimal", "client-minimal"])
+def test_profiles_without_desktop_have_no_image_copies(profile):
+    generator = _load_generator()
+    catalog = _catalog()
+    features = generator._resolve_features(catalog, profile, [])
+    dockerfile = generator._render_dockerfile(catalog, features, "relay:test")
+    assert "COPY --from=" not in dockerfile
+    assert "voxl" not in dockerfile
+
+
+@pytest.mark.parametrize("entry, message", [
+    ({"image": "ghcr.io/allcolor/pawflow-voxl:0.3.3", "src": "/voxl", "dest": "/usr/local/bin/voxl"},
+     "must be pinned"),
+    ({"image": "ghcr.io/x/y@sha256:" + "a" * 63, "src": "/voxl", "dest": "/usr/local/bin/voxl"},
+     "must be pinned"),
+    ({"image": "ghcr.io/x/y@sha256:" + "a" * 64, "src": "voxl", "dest": "/usr/local/bin/voxl"},
+     "src must be an absolute"),
+    ({"image": "ghcr.io/x/y@sha256:" + "a" * 64, "src": "/voxl", "dest": "/usr/bin/a b"},
+     "dest must be an absolute"),
+    ({"src": "/voxl", "dest": "/usr/local/bin/voxl"}, "must be pinned"),
+])
+def test_copy_from_image_rejects_unpinned_or_relative_entries(entry, message):
+    generator = _load_generator()
+    catalog = {"features": {"f": {"copy_from_image": [entry]}}}
+    with pytest.raises(ValueError, match=message):
+        generator._collect_image_copies(catalog, ["f"])

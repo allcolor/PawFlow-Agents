@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 from pathlib import Path
@@ -13,6 +14,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CATALOG = ROOT / "config" / "relay_image_catalog.json"
+# copy_from_image sources must be pinned to an immutable OCI digest.
+_PINNED_IMAGE_RE = re.compile(r"[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}")
 
 
 def _load_catalog(path: Path) -> dict[str, Any]:
@@ -89,6 +92,27 @@ def _collect_env(catalog: dict[str, Any], feature_ids: list[str]) -> dict[str, s
     return env
 
 
+def _collect_image_copies(catalog: dict[str, Any], feature_ids: list[str]) -> list[str]:
+    """Render copy_from_image entries as COPY --from lines, digest-pinned."""
+    lines: list[str] = []
+    for feature_id in feature_ids:
+        for entry in catalog["features"][feature_id].get("copy_from_image", []):
+            image = entry.get("image", "")
+            src = entry.get("src", "")
+            dest = entry.get("dest", "")
+            if not _PINNED_IMAGE_RE.fullmatch(image):
+                raise ValueError(
+                    f"{feature_id}: copy_from_image image must be pinned as "
+                    f"<name>@sha256:<64 hex>, got {image!r}")
+            for label, path in (("src", src), ("dest", dest)):
+                if not path.startswith("/") or any(c.isspace() for c in path):
+                    raise ValueError(
+                        f"{feature_id}: copy_from_image {label} must be an absolute "
+                        f"path without whitespace, got {path!r}")
+            lines.append(f"COPY --from={image} {src} {dest}")
+    return _dedupe(lines)
+
+
 def _render_run(commands: list[str], indent: str = "    ") -> list[str]:
     if not commands:
         return []
@@ -136,6 +160,7 @@ def _render_dockerfile(catalog: dict[str, Any], feature_ids: list[str], image_na
     required_apt = _collect(catalog, required_ids, "apt")
     optional_apt = _collect(catalog, optional_ids, "apt")
     pre_apt = _collect(catalog, feature_ids, "pre_apt")
+    image_copies = _collect_image_copies(catalog, feature_ids)
     setup = _collect(catalog, feature_ids, "setup")
     post_install = _collect(catalog, feature_ids, "post_install")
     user_install = _collect(catalog, feature_ids, "user_install")
@@ -189,6 +214,9 @@ def _render_dockerfile(catalog: dict[str, Any], feature_ids: list[str], image_na
         lines.append("")
     lines.extend(_render_apt(optional_apt))
     if optional_apt:
+        lines.append("")
+    lines.extend(image_copies)
+    if image_copies:
         lines.append("")
     lines.extend(_render_run(setup))
     if setup:

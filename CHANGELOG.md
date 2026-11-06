@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Relay images generated with the `desktop.runtime` feature (custom client
+  images and the `server-full` profile) now include the voxl remote-desktop
+  streamer, so their desktop opens in voxl instead of falling back to noVNC.
+  The binary comes prebuilt from the new `ghcr.io/allcolor/pawflow-voxl:0.3.3`
+  image (linux/amd64 and linux/arm64), pinned by digest through the new
+  `copy_from_image` catalog key; generated images compile no Rust. Existing
+  generated images get voxl when they are rebuilt.
+
 ## [1.0.0-beta.323] — 2026-11-06
 
 ### Fixed

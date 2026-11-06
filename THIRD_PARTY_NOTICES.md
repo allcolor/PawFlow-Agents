@@ -55,7 +55,10 @@ The project source code is licensed separately under the repository license. Thi
   `voxl-server`), MIT. Remote-desktop streamer built from crates.io with
   Cargo's locked dependency graph and shipped as `/usr/local/bin/voxl` in
   `ghcr.io/allcolor/pawflow-relay-dev` and as `bin/voxl` / `bin/voxl.exe` in
-  the Relay CLI and Relay Desktop packages for Linux x64 and Windows x64.
+  the Relay CLI and Relay Desktop packages for Linux x64 and Windows x64. The
+  `ghcr.io/allcolor/pawflow-voxl:0.3.3` carrier image (linux/amd64 and
+  linux/arm64, `/voxl` only) supplies the same build to relay images generated
+  with the `desktop.runtime` feature.
   Distributed voxl binaries link x264 (GPL-2.0-or-later) and are therefore
   distributed under the GPL (GPL-2.0-or-later). Corresponding source:
   crates.io `voxl-server` 0.3.3

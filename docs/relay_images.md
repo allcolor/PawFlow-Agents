@@ -121,6 +121,36 @@ Features may declare `implies`. For example, GUI apps imply
 The wizard should show implied features as locked dependencies rather than
 silently hiding them.
 
+### Prebuilt binaries (`copy_from_image`)
+
+Generated Dockerfiles are single-stage, so a feature that needs a compiled
+binary copies it from a carrier image instead of building a toolchain into
+every generated image:
+
+```json
+"copy_from_image": [
+  {"image": "ghcr.io/allcolor/pawflow-voxl@sha256:<64 hex>",
+   "src": "/voxl", "dest": "/usr/local/bin/voxl"}
+]
+```
+
+The generator renders each entry as `COPY --from=<image> <src> <dest>` after
+the optional APT packages and before `setup`, so the feature's runtime
+libraries are installed first and a `setup` command can verify the binary. The
+image must be pinned by digest (`<name>@sha256:<64 hex>`) and both paths must be
+absolute; anything else is a `ValueError`. A multi-arch index digest lets
+Docker pick the binary for the build host's architecture.
+
+`desktop.runtime` uses this for the voxl remote-desktop streamer.
+`ghcr.io/allcolor/pawflow-voxl:<voxl version>` is a `FROM scratch` image
+(`docker/voxl/Dockerfile`) holding only `/voxl` for linux/amd64 and
+linux/arm64. It is published by the manually dispatched `voxl Image` workflow
+(`.github/workflows/voxl-image.yml`, input `voxl_version`), which skips an
+existing tag unless `force_rebuild` is set and prints the index digest to pin.
+To move to a new voxl version: run the workflow, pin the printed digest in the
+catalog, and bump `relay_image_version`. The voxl binary is distributed under
+the GPL (see `THIRD_PARTY_NOTICES.md`).
+
 ## Presets
 
 The initial catalog ships these presets:

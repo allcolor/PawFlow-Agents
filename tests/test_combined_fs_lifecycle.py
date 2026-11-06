@@ -187,6 +187,34 @@ def test_supervisor_routes_each_subtree_to_its_client():
     assert _ask(child, 4, "bogus.op")["errno"] == errno.EIO
 
 
+def test_read_and_write_bytes_cross_the_responder_link():
+    """FUSE read replies and write requests carry raw bytes (binary relay
+    link); plain JSON could not encode them, so every read of /cc_sessions,
+    /filestore and /skills failed with EIO after the responder's timeout."""
+    class _Bytes(_Client):
+        def request(self, method, args, timeout=None):
+            self.calls.append((method, args, timeout))
+            if method.endswith(".read"):
+                return {"data": {"data": b"\x00\xffcontent"}}
+            return {"data": {"bytes_written": len(args["data"])}}
+
+    sfs = _Bytes("sfs")
+    mount = CombinedServerFsMount("/nonexistent/mnt", sfs, None, None)
+    mount._pool = combined_fs.ThreadPoolExecutor(max_workers=2)
+    relay, child = socket.socketpair()
+    threading.Thread(target=mount._serve, args=(relay, threading.Lock()),
+                     daemon=True).start()
+    link = ParentLink(child)
+    threading.Thread(target=link.serve, daemon=True).start()
+
+    read = link.request("sfs.read", {"fh": 1, "offset": 0, "size": 9}, 5.0)
+    assert read == {"data": {"data": b"\x00\xffcontent"}}
+    write = link.request("sfs.write", {"fh": 1, "offset": 0,
+                                       "data": b"\x01\x02"}, 5.0)
+    assert write == {"data": {"bytes_written": 2}}
+    assert sfs.calls[1][1]["data"] == b"\x01\x02"
+
+
 def test_supervisor_refuses_backend_work_once_stopping():
     mount, clients, child = _served_mount()
     mount._stopping.set()

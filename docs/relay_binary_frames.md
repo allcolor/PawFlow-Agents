@@ -61,8 +61,10 @@ path, `ServerFsClient.request`). The receiver keeps one
 JSON message gets its bytes back before it is routed. Text values stay JSON.
 The command ledger stores and replays a result as its list of frames.
 
-The host helper's local protocol and the screen-action child process are
-JSON lines over a local socket or a pipe: there, bytes travel as
+The host helper's local protocol, the screen-action child process and the
+combined server-fs FUSE responder (`fuse_responder`, length-prefixed frames
+over a socketpair; FUSE read and write data) are JSON over a local socket or a
+pipe: there, bytes travel as
 `{"$pawflow_b64": "..."}` (`json_line_dumps` / `json_line_loads`) and are
 turned back into bytes on the relay before they reach the relay link.
 

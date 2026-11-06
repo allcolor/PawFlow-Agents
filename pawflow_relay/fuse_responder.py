@@ -18,7 +18,9 @@ time, whatever happens to the relay, and its death -- orderly or SIGKILL --
 closes the only ``/dev/fuse`` reference, which aborts every pending request.
 
 The child speaks to the relay over an inherited ``AF_UNIX`` stream socket with
-length-prefixed JSON frames:
+length-prefixed JSON frames. FUSE read and write data are ``bytes``; they
+travel as ``{"$pawflow_b64": ...}`` (``binary_channel.json_line_dumps``),
+since plain JSON cannot carry them:
 
 - child -> relay: ``ready`` / ``failed`` once, then ``req`` and ``pong``;
 - relay -> child: ``rep`` and ``ping``.
@@ -30,13 +32,14 @@ stops the FUSE loop, unmounts and exits.
 import argparse
 import errno
 import itertools
-import json
 import socket
 import struct
 import sys
 import threading
 import time
 from typing import Any, Dict, Optional
+
+from pawflow_relay.binary_channel import json_line_dumps, json_line_loads
 
 _HEADER = struct.Struct("!I")
 #: A write chunk is 1 MiB, i.e. ~1.4 MB once base64 + JSON encoded.
@@ -49,7 +52,7 @@ REPLY_GRACE = 2.0
 
 def send_frame(sock: socket.socket, lock: threading.Lock, obj: Dict[str, Any]) -> None:
     """Write one length-prefixed JSON frame; the lock serializes writers."""
-    data = json.dumps(obj).encode("utf-8")
+    data = json_line_dumps(obj).encode("utf-8")
     if len(data) > MAX_FRAME:
         raise ValueError(f"frame of {len(data)} bytes exceeds {MAX_FRAME}")
     with lock:
@@ -77,7 +80,7 @@ def recv_frame(sock: socket.socket) -> Optional[Dict[str, Any]]:
     body = _recv_exact(sock, size)
     if body is None:
         return None
-    return json.loads(body.decode("utf-8"))
+    return json_line_loads(body.decode("utf-8"))
 
 
 def fuse_connection_id(mountpoint: str, fsname: str,

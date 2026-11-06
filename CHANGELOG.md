@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Reading or writing a file under `/cc_sessions`, `/filestore` or `/skills`
+  in a relay works again (beta.320 to beta.322 failed every read with
+  "Input/output error" after 7 s, while listings still worked). FUSE data
+  became raw bytes in beta.320, but the link to the out-of-process FUSE
+  responder still encoded plain JSON, which cannot carry bytes; it now wraps
+  them like the other local JSON channels. Docker relays pick the fix up
+  when they restart on an updated server; Relay CLI and Relay Desktop need
+  their updated bundle.
+
 ## [1.0.0-beta.322] — 2026-11-05
 
 ### Fixed

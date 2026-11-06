@@ -1,0 +1,162 @@
+name: voxl Image
+
+# Publishes ghcr.io/allcolor/pawflow-voxl:<voxl version> (linux/amd64 +
+# linux/arm64), a FROM-scratch carrier holding only /voxl. Catalog-generated
+# relay images copy the binary from it by digest (config/relay_image_catalog.json,
+# feature desktop.runtime, key copy_from_image). Run manually once per voxl
+# version, then pin the printed index digest in the catalog. Never triggered by
+# tags: the release workflows own the '*.*.*' tag namespace.
+
+on:
+  workflow_dispatch:
+    inputs:
+      voxl_version:
+        description: voxl-server crate version to build, for example 0.3.3
+        required: true
+      force_rebuild:
+        description: Rebuild and push even if the GHCR tag already exists
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/allcolor/pawflow-voxl
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  check:
+    name: Check existing tag
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.existing.outputs.exists }}
+    steps:
+      - name: Validate version
+        env:
+          VOXL_VERSION: ${{ inputs.voxl_version }}
+        run: |
+          [[ "$VOXL_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid voxl version: $VOXL_VERSION"; exit 1; }
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check existing image tag
+        id: existing
+        env:
+          VOXL_VERSION: ${{ inputs.voxl_version }}
+        run: |
+          image="$IMAGE:$VOXL_VERSION"
+          if [[ "${{ inputs.force_rebuild }}" == "true" ]]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          elif docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Image already exists, skipping rebuild: $image"
+            docker buildx imagetools inspect "$image" --format '{{json .Manifest.Digest}}'
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: check
+    if: needs.check.outputs.exists != 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            slug: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            slug: arm64
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/voxl
+          file: docker/voxl/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            VOXL_VERSION=${{ inputs.voxl_version }}
+          labels: |
+            org.opencontainers.image.title=PawFlow voxl carrier
+            org.opencontainers.image.description=voxl-server ${{ inputs.voxl_version }} binary at /voxl for PawFlow relay images
+            org.opencontainers.image.source=https://github.com/allcolor/PawFlow-Agents
+            org.opencontainers.image.version=${{ inputs.voxl_version }}
+            org.opencontainers.image.licenses=GPL-2.0-or-later
+            org.opencontainers.image.documentation=https://github.com/allcolor/PawFlow-Agents/blob/main/THIRD_PARTY_NOTICES.md
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          sbom: false
+          provenance: false
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: voxl-digest-${{ matrix.slug }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Publish multi-arch index
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: voxl-digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push index
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          VOXL_VERSION: ${{ inputs.voxl_version }}
+        run: |
+          test "$(ls | wc -l)" -eq 2
+          docker buildx imagetools create -t "$IMAGE:$VOXL_VERSION" $(printf "$IMAGE@sha256:%s " *)
+
+      - name: Print index digest
+        env:
+          VOXL_VERSION: ${{ inputs.voxl_version }}
+        run: |
+          docker buildx imagetools inspect "$IMAGE:$VOXL_VERSION"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VOXL_VERSION" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "Pin in config/relay_image_catalog.json: $IMAGE@$digest" | tee -a "$GITHUB_STEP_SUMMARY"

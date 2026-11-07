@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.324] — 2026-11-07
+
 ### Added
 
 - Agents now receive non-user work through a durable inbox: delegates,

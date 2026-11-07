@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.325] — 2026-11-07
+
 ### Fixed
 
 - Deferred inbox delivery wakes no longer start an empty live CLI turn after

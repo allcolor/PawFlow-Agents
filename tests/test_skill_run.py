@@ -402,7 +402,7 @@ def test_skill_update_notifies_assigned_agents(monkeypatch):
     assert len(appended) == 1
     assert appended[0][2] == "assistant"
     assert "Skill updated: review-pr" in appended[0][1]["content"]
-    assert [row[1] for row in enqueued] == ["skill_update"]
+    assert [row[1] for row in enqueued] == ["inbox:skill_event"]
 
 
 def test_resource_store_skill_update_is_patch_not_replace(tmp_path, monkeypatch):
@@ -503,7 +503,7 @@ def test_delete_skill_removes_agent_assignments(monkeypatch):
     assert updated == []
     assert conv_store.configs["assistant"]["assigned_skills"] == ["other"]
     assert conv_store.configs["reviewer"]["assigned_skills"] == []
-    assert [row[1] for row in enqueued] == ["skill_delete", "skill_delete"]
+    assert [row[1] for row in enqueued] == ["inbox:skill_event", "inbox:skill_event"]
     assert len(appended) == 2
 
 

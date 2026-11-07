@@ -213,7 +213,7 @@ class LLMManagedMcpMixin:
                 messages, tools, state.workdir, state.container_workdir,
                 user_id, conversation_id,
                 initial_context=not state.initial_context_loaded,
-                agent_name=agent_name, state=state)
+                agent_name=agent_name)
             _, _, event_service = get_or_create_cc_interactive_event_service()
             consumer_epoch = event_service.claim_consumer(state.session_token)
             event_service.drain_session(state.session_token)
@@ -226,16 +226,6 @@ class LLMManagedMcpMixin:
                     f"Failed to paste prompt into {spec.label} tmux session: "
                     f"{detail}")
             state.initial_context_loaded = True
-            submitted = getattr(state, "submitted_msg_ids", None)
-            if submitted is None:
-                submitted = set()
-                state.submitted_msg_ids = submitted
-            submitted.update(
-                mid for mid in (
-                    getattr(m, "msg_id", "")
-                    for m in (messages or [])
-                    if getattr(m, "role", "") == "user")
-                if mid)
             try:
                 coord = self._managed_mcp_coordinator(
                     spec, event_service, state, pool, callback=callback,

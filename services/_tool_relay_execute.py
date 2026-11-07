@@ -646,8 +646,9 @@ class _ToolRelayExecuteMixin:
                 permission_mode=_perm_mode, tool_permission=_tool_perm)
             if _gate:
                 return {"type": "result", "request_id": request_id, "data": _gate}
-            if _gate == "":
-                _tool_perm = "allow"  # gate allowed: the generic prompt is replaced
+            if _gate == "" or tool_name == "read_inbox":
+                # Inbox acknowledgement is mandatory even without a bound gate.
+                _tool_perm = "allow"
             # Per-tool override (only consulted outside read_only).
             if _tool_perm == "deny":
                 return {"type": "result", "request_id": request_id,
@@ -755,8 +756,11 @@ class _ToolRelayExecuteMixin:
         # (otherwise the events fall back to a generic task-block).
         # flash_delegate uses the same caller context by design: flash agents
         # inherit the calling agent identity and llm_service.
+        # read_inbox resolves its caller the same way: its inbox is keyed by
+        # the calling agent, so a CLI agent over the relay/MCP must be
+        # identified as itself.
         if tool_name in {"delegate", "flash_delegate", "delegate_status",
-                         "delegate_result"}:
+                         "delegate_result", "read_inbox"}:
             try:
                 from core.handlers.resource_agent import SpawnAgentsHandler
                 _src_svc = ""

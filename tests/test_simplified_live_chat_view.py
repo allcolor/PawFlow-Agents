@@ -226,7 +226,15 @@ def test_poll_context_persists_boundary_before_reusing_its_id(monkeypatch):
     assert message["source"]["target_agent"] == "assistant"
     assert message["turn_id"] == message["msg_id"]
     assert ctx["request_msg_id"] == message["msg_id"]
-    assert ctx["messages"][-1].msg_id == message["msg_id"]
+    from core import agent_inbox
+    (item,) = agent_inbox.unread_items("conv-1", "assistant")
+    assert item.msg_id == message["msg_id"]
+    assert item.payload["content"] == message["content"]
+    notice = ctx["messages"][-1]
+    assert "Call read_inbox() NOW" in notice.content
+    assert message["content"] not in notice.content
+    assert message["content"] in agent_inbox.read_inbox("conv-1", "assistant")
+    assert agent_inbox.unread_count("conv-1", "assistant") == 0
     event = kwargs["sse_events"][0]
     assert event["type"] == "new_message"
     assert event["data"]["turn_id"] == message["msg_id"]

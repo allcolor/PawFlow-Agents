@@ -52,19 +52,9 @@ def _preempt_rescue_requires_retrigger(
 
 
 def _preempt_handled_verdict(client, message, had_preempts: bool) -> bool:
-    """Whether a message pasted into the live provider was handled.
-
-    A CLI that tracked the paste answers from its own journal: handled only
-    once its model read the message. The turn-wide ``had_preempts`` flag
-    only says a paste was accepted -- trusting it dropped the rescue copy of
-    a message the model never saw. It remains the rule for providers and
-    sessions that did not track the message.
-    """
-    verdict_of = getattr(client, "cli_submission_processed", None)
-    if callable(verdict_of):
-        verdict = verdict_of(getattr(message, "msg_id", "") or "")
-        if verdict is True or verdict is False:
-            return verdict
+    """Whether the user preempt path proved its interrupted input handled."""
+    # Only user preempts have rescue copies. Non-user items are acknowledged
+    # exclusively by read_inbox, independently of CLI journal heuristics.
     return had_preempts
 
 

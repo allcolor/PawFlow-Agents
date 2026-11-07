@@ -42,9 +42,8 @@ def _clear_cancelled(task_id: str):
 
 
 # Live delegate registry: one in-flight delegate per (parent_conv, caller, target).
-# A second delegate call for the same triple should INJECT its message into the
-# running sub-agent's loop instead of spawning a parallel one.
-#   value: {"task_id", "client", "task", "pending"}
+# Follow-ups go to the running sub-agent's durable inbox instead of spawning
+# another worker. The exact conversation id also covers full/ephemeral runs.
 _live_delegates: Dict[tuple, dict] = {}
 _live_delegates_lock = Lock()
 
@@ -55,12 +54,17 @@ def get_live_delegate(parent_conv: str, caller: str, target: str) -> Optional[di
 
 
 def register_live_delegate(parent_conv: str, caller: str, target: str,
-                           task_id: str, client, task) -> None:
+                           task_id: str, client, task,
+                           conversation_id: str = "") -> None:
     import time
+    if not conversation_id:
+        conversation_id = (parent_conv
+                           if getattr(task, "context_mode", "") == "full"
+                           else f"{parent_conv}::task::{task_id}")
     with _live_delegates_lock:
         _live_delegates[(parent_conv, caller, target)] = {
             "task_id": task_id, "client": client, "task": task,
-            "pending": [],
+            "conversation_id": conversation_id,
             "started_at": time.time(),
         }
 
@@ -71,6 +75,7 @@ def list_live_delegates(parent_conv: str, caller: str = "") -> List[dict]:
     Returns serializable dicts (no client/task objects), optionally filtered
     by the calling agent. Used by the delegate_status tool.
     """
+    from core import agent_inbox
     out: List[dict] = []
     with _live_delegates_lock:
         for (conv, c, target), entry in _live_delegates.items():
@@ -81,7 +86,8 @@ def list_live_delegates(parent_conv: str, caller: str = "") -> List[dict]:
                 "target": target,
                 "task_id": entry.get("task_id", ""),
                 "started_at": entry.get("started_at", 0.0),
-                "pending_messages": len(entry.get("pending") or []),
+                "pending_messages": agent_inbox.unread_count(
+                    entry["conversation_id"], target),
             })
     return out
 
@@ -145,31 +151,38 @@ def get_finished_delegate(parent_conv: str, caller: str,
 
 
 def queue_live_delegate_message(parent_conv: str, caller: str, target: str,
-                                message: str) -> bool:
-    """Queue a follow-up for a running isolated delegate.
-
-    Claude Code may consume the message inline through send_user_message().
-    Codex/Gemini intentionally return False after killing the CLI, so the
-    sub-agent loop must pick the follow-up up from this queue on the next
-    provider call.
-    """
+                                message: str, *, kind: str = "delegate_message",
+                                sender: str = "", msg_id: str = "") -> bool:
+    """Store a follow-up and notify its running delegate without interrupting."""
     with _live_delegates_lock:
         entry = _live_delegates.get((parent_conv, caller, target))
         if not entry:
             return False
-        entry.setdefault("pending", []).append(message)
-        return True
+        conversation_id = entry["conversation_id"]
+        user_id = getattr(entry.get("task"), "user_id", "")
+    from core.llm_client import stamp_message
+    from tasks.ai._live_submit import submit_or_queue
+    payload = stamp_message({
+        "role": "user", "content": message, "msg_id": msg_id,
+        "source": {"type": "agent_delegate", "from": sender or caller,
+                   "to": target},
+    }, conversation_id)
+    return submit_or_queue(
+        conversation_id, target, payload, "delegate", kind=kind,
+        sender=sender or caller, user_id=user_id, wake=False)
 
 
 def drain_live_delegate_messages(parent_conv: str, caller: str,
                                  target: str, task_id: str = "") -> List[str]:
+    """Return only a new inbox notice; content remains unread until read_inbox."""
     with _live_delegates_lock:
         entry = _live_delegates.get((parent_conv, caller, target))
         if not entry or (task_id and entry.get("task_id") != task_id):
             return []
-        pending = list(entry.get("pending") or [])
-        entry["pending"] = []
-        return pending
+        conversation_id = entry["conversation_id"]
+    from core.agent_inbox import take_notice
+    notice = take_notice(conversation_id, target, only_new=True)
+    return [notice] if notice else []
 
 
 def unregister_live_delegate(parent_conv: str, caller: str, target: str,

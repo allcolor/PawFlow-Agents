@@ -585,8 +585,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         self._check_native_compaction(state)
         return sent
 
-    def send_queued(self, state: InteractiveContainer, text: str, *,
-                    msg_id: str = "") -> bool:
+    def send_queued(self, state: InteractiveContainer, text: str) -> bool:
         self._check_native_compaction(state)
         with state.send_lock:
             if not self._leave_backtrack_overlay(state):
@@ -594,7 +593,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             try:
                 sent = self._with_expected_paste(
                     state, text, lambda: super(CodexInteractivePool, self)
-                    .send_queued(state, text, msg_id=msg_id))
+                    .send_queued(state, text))
             except Exception:
                 self._check_native_compaction(state)
                 raise

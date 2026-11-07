@@ -54,11 +54,12 @@ def _durable_state(parent_conv_id: str, caller: str,
 
 
 def _queued_task_ids(conv_id: str, agent: str) -> set:
-    """Task ids of the delegate requests still waiting in an agent's queue."""
-    from core.pending_queue import PendingQueue
+    """Task ids of delegate requests still unread in an agent's inbox."""
+    from core import agent_inbox
 
     ids = set()
-    for entry in PendingQueue.for_agent(conv_id, agent).peek():
+    for item in agent_inbox.unread_items(conv_id, agent):
+        entry = item.payload
         source = entry.get("source") if isinstance(entry, dict) else None
         if (isinstance(source, dict) and source.get("task_id")
                 and source.get("kind") != "reply"):
@@ -76,7 +77,7 @@ def _classify_shared(parent_conv_id: str, live: list,
     with a new delegate instead. Matching on task_id alone left those
     requests pending forever: 342 live for one coordinator (2026-10-24),
     each followed by a message from its target, and 7,192 stale.
-    The target's pending queue holds what it has not read: a request still
+    The target's inbox holds what it has not read: a request still
     there stays ``pending``. One it took is ``consumed`` when the target has
     written to the caller since, and ``read`` while it has not.
     """
@@ -191,8 +192,8 @@ class DelegateStatusHandler(SpawnAgentsHandler):
             "Check durable status for your shared, isolated, and flash "
             "delegates, including after context compaction. Lists live work "
             "with task IDs and runtime details (the 50 most recent): a shared "
-            "request is 'pending' while it waits in the target's queue, "
-            "'read' once the target took it without writing back to you, and "
+            "request is 'pending' while it waits in the target's inbox, "
+            "'read' after read_inbox acknowledges it without a reply, and "
             "'running' while the target answers it. A request the target "
             "took and answered since under another task_id or in a new "
             "delegate is only counted, under 'consumed'. Also returns the "

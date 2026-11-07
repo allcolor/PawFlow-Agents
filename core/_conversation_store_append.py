@@ -382,7 +382,7 @@ class _CsAppendMixin:
                             transformed = [
                                 self._transform_for_other_agent(m, other)
                                 for m in shared_candidates]
-                            self._append_ctx_file(cid, other, transformed)
+                            self._queue_catchup_rows(cid, other, transformed)
                             touched_agents.add(other)
                             _broadcast_count += 1
                         _mark_timing("broadcast", _t0)
@@ -581,9 +581,7 @@ class _CsAppendMixin:
                             transformed = [
                                 self._transform_for_other_agent(m, other)
                                 for m in shared_candidates]
-                            for m in transformed:
-                                ctx_rows.setdefault(other, []).append(
-                                    self._stamp_line(cid, m))
+                            self._queue_catchup_rows(cid, other, transformed)
                             touched_agents.add(other)
 
             if transcript_rows:
@@ -623,14 +621,13 @@ class _CsAppendMixin:
 
     def _route_delegate_message(self, cid: str, rows: List[Dict],
                                 agent_name: str) -> set:
-        """Route an agent_delegate message to from's ctx, to's ctx, and
-        (for requests only) to shared + other agents.
+        """Keep the sender's delegate history and broadcast requests as catch-up.
 
         ``rows`` are the message's canonical rows: the anchor first, then
         its ``thinking`` / ``tool_call`` children. The sender keeps all of
         them, exactly like a normal own-context write, so a delegate-mode
-        turn that called tools reloads with its tool calls; everyone else
-        receives the anchor only.
+        turn that called tools reloads with its tool calls. Targeted delivery
+        ingress owns the recipient inbox; broadcasts queue the anchor only.
 
         Called under the conv lock by append_message.
         """
@@ -655,31 +652,8 @@ class _CsAppendMixin:
             self._append_ctx_file(cid, _from, [_for_from] + list(rows[1:]))
             touched_agents.add(self._canon_agent(_from))
 
-        _visibility = src.get("delegate_visibility") or "final_reply"
-        _reply_self_only = (_kind == "reply" and _visibility == "self_only")
-
-        # TO's ctx — role coerced to user with explicit attribution.
-        # Delegate reply internals (tool calls/results and intermediate
-        # assistant blocks) stay in the responder's context only. The caller
-        # receives just the final synthesized reply.
-        if not _reply_self_only and not (
-                _kind == "reply" and _external_transport):
-            _for_to = dict(msg)
-            if _for_to.get("role") == "assistant":
-                _for_to["role"] = "user"
-            if _kind == "reply":
-                _attr = (f"Here is agent '{_from}''s reply to your "
-                         f"delegate:")
-            elif _external_transport:
-                _attr = (
-                    f"Here is a message from "
-                    f"'{src.get('from_label') or _from}':")
-            else:
-                _attr = f"Here is a message from agent '{_from}':"
-            _for_to["content"] = self._prefix_content(
-                _for_to.get("content", ""), _attr)
-            self._append_ctx_file(cid, _to, [_for_to])
-            touched_agents.add(self._canon_agent(_to))
+        # The delivery ingress stores the target's inbox item. Copying its
+        # content here would bring it back inline on cold rebuild/compaction.
 
         # Replies stay private between from/to — don't leak to shared.
         if _kind == "reply":
@@ -690,8 +664,8 @@ class _CsAppendMixin:
         if _external_transport:
             return touched_agents
 
-        # Request broadcasts to shared + other agents (not from/to,
-        # they already got their tailored copy above).
+        # Request broadcasts to shared + other agents. The sender keeps its
+        # own output above; targeted inbox delivery belongs to the ingress.
         _for_shared = dict(msg)
         if _for_shared.get("role") == "assistant":
             _for_shared["role"] = "user"
@@ -708,6 +682,21 @@ class _CsAppendMixin:
                 continue
             transformed = self._transform_for_other_agent(
                 _for_shared, other)
-            self._append_ctx_file(cid, other, [transformed])
+            self._queue_catchup_rows(cid, other, [transformed])
             touched_agents.add(other)
         return touched_agents
+
+    @staticmethod
+    def _queue_catchup_rows(cid: str, agent: str, rows: List[Dict]) -> None:
+        """Broadcast data stays in an inbox until this agent reads it.
+
+        No wake: shared chatter is delivered at the next natural turn.
+        The original msg_id keeps append retries idempotent per recipient.
+        """
+        from core import agent_inbox
+        for row in rows:
+            source = row.get("source") or {}
+            sender = source.get("from") or source.get("name")
+            if not sender:
+                raise ValueError("catch-up message requires a sender")
+            agent_inbox.enqueue_item(cid, agent, row, "catch_up", sender)

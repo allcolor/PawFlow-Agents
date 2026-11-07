@@ -746,130 +746,35 @@ The provider assembles responses from those events:
 
 ## Prompt Input
 
-When PawFlow starts a new interactive Claude Code container, the provider writes
-the serialized PawFlow system/context/history into
-`.pawflow_cci/initial_context.md` inside the session workdir. The first pasted
-prompt references that file with `@/cc_sessions/.../.pawflow_cci/initial_context.md`
-and instructs Claude Code to read it before answering. Existing live sessions do
-not receive the full context or tool instructions again; PawFlow sends only the
-latest turn delta, any current attachment references, and a narrow catch-up block
-containing new messages from other participants since the agent's last response.
+On a cold session the provider writes the serialized PawFlow context to
+`.pawflow_cci/initial_context.md` and pastes one short instruction to read it.
+A live session receives the current user delta and attachment references.
 
-"The agent's last response" covers both ways an agent writes its rows: as
-itself (`source.type == "agent"`, `name`) and inside a delegation
-(`source.type == "agent_delegate"`, `from`). Every agent run clones its LLM
-client, so each run starts the catch-up from that last own row; a delegated
-reply that was not recognised as its own kept the start on an older reply,
-and every prompt re-sent the whole backlog -- the agent's own delegated
-replies included -- until the model rejected the context.
+### Non-user delivery through the inbox
 
-The catch-up keeps only the newest messages within `_CATCHUP_MAX_CHARS`
-(40 000 characters) and says how many older ones it left out, pointing the
-agent at `read_history`. An agent idle for hours otherwise received the whole
-team backlog in one paste (2634 messages, 2.5 M characters), which Codex
-never submitted.
+Delegate requests, replies and results, background results, scheduled wake-ups,
+continuations and participant catch-up are stored in the recipient's durable
+inbox. Their bodies are never pasted into the CLI. The CLI receives only a
+fixed imperative notice to call `read_inbox()` before another tool or answer.
+The same rule applies to API providers, skill events and workflow proposals.
+See [Agent inbox delivery](inbox_delivery.md) for the complete contract.
 
-A delegate that wakes an agent whose CLI session is live does not depend on
-the catch-up. A delegate wake is never re-injected from the FlowFile body
-(the delegator already wrote the row into the agent's context), and a live
-session loads no context, so the row used to reach the CLI only through the
-catch-up. Any reply written between the delegate's arrival and the prompt
--- for instance to another delegate live-submitted meanwhile -- moved the
-catch-up start past it: the prompt came out empty, the turn failed with
-"nothing to submit" and the delegate was lost. `_inject_cli_delegate_row`
-(`tasks/ai/_agentctx_p2.py`) now adds the canonical row, found by `msg_id`,
-to the turn's messages (memory only; it is already persisted), and
-`_cci_prompt` passes the `msg_id`s of its own messages to the catch-up as
-`exclude_msg_ids`, so the row is sent once. The row goes through the
-conversation's async writer, so when it is not in the context yet the writer
-is flushed once and the lookup repeated; only a row still missing after that
-is left to the catch-up.
+`tasks/ai/_live_submit.submit_or_queue` stores the item whether the recipient
+is active or idle. A running tmux session receives a notice with paste + Enter,
+without Escape. Notices coalesce while an unread notice is outstanding.
+An idle agent is woken with a notice; a failed paste leaves its items unread.
 
-The wake itself must leave a row behind. `SpawnAgentsHandler._wake_caller`
-takes `pre_persisted` (default `True`): a caller that already wrote the
-`msg_id` row (`_deliver_to_caller`, the shared delegate) keeps
-`skip_pre_persist`, so ingress does not write it twice. The reply to a
-delegate that wakes an idle caller (`agent_core`) mints its `msg_id` and
-writes nothing, so it passes `pre_persisted=False`: streaming ingress then
-persists the row with its `agent_delegate` source, routed privately like
-the drained row of the preempt path. Before this, every such wake set
-`skip_pre_persist` anyway. The `msg_id` had no row anywhere, so the reply
-never reached the caller's context. A live Claude Code caller whose
-catch-up had nothing new then failed with "nothing to submit"
-(2026-09-28, GameDev2).
+The server-side read, including completion of paged reads, is the delivery
+acknowledgement. Unread items cause a fresh notice at the next turn and an
+end-of-turn retrigger. After three consecutive turns without reading, a visible
+warning stops automatic retriggers until fresh work or human input arrives.
+The append router does not copy the recipient's delegate content back into its
+context. Participant broadcasts are catch-up items and do not wake idle agents.
 
-### Non-user messages are submitted on arrival, one at a time
-
-A delegate, a background result (`background_tool`) or a wake-up that falls
-due while the agent works is not the user: it never interrupts. It is still
-submitted the moment it arrives. `tasks/ai/_live_submit.submit_or_queue`
-finds the agent's running tmux client and calls
-`LLMClient.send_queued_message`, which runs the pool's `send_queued`: paste +
-`Enter`, no `Escape`. The CLI keeps the message until its current step --
-a 15-minute tool included -- lets it read it. Twenty delegates are twenty
-submissions, serialised per agent in arrival order, never one paste. The
-message is then queued as `preempt_rescue`, so the final drain persists it
-without starting another turn, and its `msg_id` joins `submitted_msg_ids`.
-A paste that fails, an idle agent and an API provider keep the PendingQueue +
-wake path; an API loop drains the queue at every iteration.
-
-Before, these messages waited in the PendingQueue until the CLI turn ended:
-a CLI turn is a single PawFlow iteration, so nothing drained the queue in
-between, and delegates arrived up to 20 minutes late. Only a user message
-interrupts (`send_interrupt`: Escape, then paste + Enter).
-
-### Accepted and read: proven from the CLI's own journals
-
-A message pasted behind a running step goes through two states, and the
-hooks report them inconsistently (measured 2026-09-26, a message pasted
-during a blocking `sleep`):
-
-| | Claude Code | Codex |
-|---|---|---|
-| `UserPromptSubmit` hook | on Enter (accepted) | only when the model reads it, minutes later |
-| accepted | `queue-operation` `enqueue` in `projects/<slug>/<session>.jsonl` | a `history.jsonl` line |
-| read by the model | `queued_command` attachment, or a `user` line for a prompt that starts a turn | a `user` `message` `response_item` in `sessions/**/rollout-*.jsonl` |
-
-Both CLIs keep queued messages separate and in order.
-`core/cli_prompt_journal.py` reads those files, which live in the session
-directory PawFlow owns: `mark()` records where each journal ends before a
-paste, `status()` reads only the complete lines appended since and matches
-the normalised full text (a `tool_result` or an assistant message quoting the
-text is never evidence). `normalize()` drops all whitespace and the
-`<pasted_content id="..">` / `</pasted_content id="..">` tags Claude Code
-journals around the part of a long paste it collapsed into a chip: with only
-whitespace folded, such a message never matched, stayed "unread" forever and
-broke the next turn (GameDev2, 2026-09-26 14:12Z).
-
-- Every send (`send_text`, `send_interrupt`, `send_queued`) takes the
-  session's `send_lock`: one paste at a time, a user interrupt included.
-- The journal is proof in both receipt verifiers, next to the hook and the
-  MITM request. A Codex message queued behind a tool is therefore accepted
-  on Enter instead of being declared "not confirmed" 45 s later.
-- `send_queued` returns only once the message is accepted (it used to verify
-  in a background thread whose result nobody read), then records it in
-  `pending_submissions`. `unprocessed_submissions()` drops each one whose
-  journal shows it was read, and `LLMClient.cli_submission_processed(msg_id)`
-  answers True, False or None (untracked).
-- The final drain decides per message (`_preempt_handled_verdict`): the
-  rescue copy of a pasted message is dropped only once the model read it.
-  The turn-wide `_had_preempts_this_turn` flag, which only meant "a paste was
-  accepted", decides only for untracked messages.
-- After the `Stop` hook the coordinator keeps the turn open while an accepted
-  message is unread (`submissions_callback`, checked once a second): the CLI
-  submits it right after the Stop, and this turn owns that continuation
-  instead of an orphan capture. Past
-  `PAWFLOW_CCI_POST_STOP_UNREAD_SUBMISSION_CAP_SECONDS` (default 30) the turn
-  finishes and the unread message is resubmitted by the retrigger.
-- Before a new turn builds its prompt, `reclaim_unread_submissions()` stops
-  tracking every accepted-but-unread message and removes its msg_id from
-  `submitted_msg_ids`, so the turn pastes it again instead of skipping it as
-  already submitted and failing with "nothing to submit".
-- A turn refused with "nothing to submit" pasted nothing, so it keeps the
-  session marker (`claude_session:<agent>`) like a transport kill. So does a
-  failed paste ("Failed to paste prompt ...", reported as "Claude Code prompt
-  not delivered"): nothing was submitted. Only other resume failures forget
-  the session.
+Non-user delivery no longer uses rescue copies, submission ID sets, follow-up
+pastes, journal-based read verdicts, unread-submission holds or backlog
+cancellation. `core/cli_prompt_journal.py` remains part of transport receipt
+verification and the user-preempt path. Only human input interrupts a turn.
 
 ### A dead event stream replaces the session
 
@@ -896,21 +801,11 @@ that turn. `drain_session` then clears `unreliable`, since it discards every
 event the overflow could have cost, so the next turn pastes and observes its
 message on the same session.
 
-### Multi-message drain and msg_id dedup
+### Live delta input
 
-The live-session delta is NOT just the newest user message. A retrigger turn
-can carry several drained user messages (e.g. N delegate results preempted
-while the previous turn was ending). Each of them is its own submission:
-`_cci_live_text` puts the first not-yet-submitted message of the tail in the
-turn's prompt and stashes the others on `_cci_live_followups`, which
-`_cci_submit_followups` submits one paste + `Enter` each, in order, right
-after the prompt went in. Each session tracks the `msg_id`s it has already conveyed
-(`InteractiveContainer.submitted_msg_ids`, updated after every successful
-paste — cold context, catch-up, and live tail all count): a message is never
-pasted twice, and when a spurious retrigger finds the whole tail already
-submitted the prompt build sends nothing instead of re-pasting the latest user
-text (which used to produce double-delivered delegate results). The Codex
-interactive provider shares this contract.
+The live delta contains trailing human input and inbox notices. The provider
+submits it once; non-user bodies remain in the server-side inbox until the
+agent reads them through its tool.
 
 The bootstrap paste is one short physical line and never quotes the current turn
 inline. The turn is already in the file under `## Latest User Request`; copying

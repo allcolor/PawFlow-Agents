@@ -564,6 +564,23 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                 self._scheduled_entry_target(conversation_id, entry)
                 for entry in entries
             ]
+            from core import agent_inbox
+            from core.pending_queue import PendingQueue
+            eligible = []
+            for entry, target in zip(entries, entry_targets):
+                reason = entry.get("reason") or ""
+                nudge = ("::pending::" in (entry.get("key") or "")
+                         and "[continuation]" not in reason
+                         and not reason.startswith(("[scheduled:", "[loop] ")))
+                if target and nudge:
+                    _, turns = agent_inbox._store().notice_state(conversation_id, target)
+                    if (turns >= agent_inbox.MAX_UNREAD_TURNS
+                            and not PendingQueue.for_agent(conversation_id, target).peek_count()):
+                        scheduler.claim_due([entry])
+                        continue
+                eligible.append((entry, target))
+            entries = [entry for entry, _ in eligible]
+            entry_targets = [target for _, target in eligible]
             retries = []
             active_wakes = []
             with self._active_lock:

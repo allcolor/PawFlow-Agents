@@ -76,12 +76,13 @@ def queue_planner_event(
 
     from core.conversation_writer import ConversationWriter
     from core.llm_client import stamp_message
-    from core.pending_queue import PendingQueue
+    from tasks.ai._live_submit import submit_or_queue
     message = stamp_message({
         "role": "user",
         "content": content,
+        "display_only": True,
         "source": {
-            "type": "user", "name": user_id,
+            "type": "system", "name": "workflow_proposal",
             "target_agent": planner,
         },
         "channel": "web",
@@ -89,8 +90,10 @@ def queue_planner_event(
     }, conversation_id)
     ConversationWriter.for_conversation(conversation_id).enqueue_message(
         dict(message), agent_name=planner, user_id=user_id)
-    queued = PendingQueue.for_agent(conversation_id, planner).enqueue(
-        dict(message), source="workflow_proposal")
+    queued = submit_or_queue(
+        conversation_id, planner, message, "workflow_proposal",
+        kind="workflow_proposal", sender="workflow planner", user_id=user_id,
+        wake=False)
     if not queued:
         raise RuntimeError("planner proposal message could not be queued")
     try:

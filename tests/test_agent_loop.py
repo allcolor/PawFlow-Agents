@@ -2437,7 +2437,11 @@ class TestRandomThought(unittest.TestCase):
                 patch.object(AgentLoopTask, "wake_agent"):
             task._poll_once()
 
-        messages = PendingQueue.for_agent(cid, "assistant").drain()
+        # An active agent receives it as an inbox item, read via read_inbox.
+        from core import agent_inbox
+        assert PendingQueue.for_agent(cid, "assistant").drain() == []
+        messages = [item.payload for item in
+                    agent_inbox.unread_items(cid, "assistant")]
         assert len(messages) == 1
         assert "[continuation] finish the fix" in messages[0]["content"]
         assert messages[0]["_already_persisted"] is True

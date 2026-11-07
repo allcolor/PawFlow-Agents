@@ -144,14 +144,13 @@ class LLMCodexAppServerMixin(
 
     @staticmethod
     def _codex_app_extract_images(messages, user_id: str, conversation_id: str) -> list:
-        """Extract images from the last user message for native vision."""
-        image_blocks = []
-        last_user_idx = -1
-        for i, m in enumerate(messages):
-            if m.role == "user":
-                last_user_idx = i
+        """Extract pending user images for native vision."""
+        from core.llm_providers.cli_shared import trailing_user_messages
 
-        for idx, m in enumerate(messages):
+        image_blocks = []
+        current_user_ids = {id(msg) for msg in trailing_user_messages(messages)}
+
+        for m in messages:
             if not isinstance(m.content, list):
                 continue
             new_content = []
@@ -160,12 +159,12 @@ class LLMCodexAppServerMixin(
                     new_content.append(block)
                     continue
                 btype = block.get("type", "")
-                is_last_user = idx == last_user_idx
+                is_current_user = id(m) in current_user_ids
 
                 if btype == "image_url":
                     url = (block.get("image_url") or {}).get("url", "")
                     if url.startswith("data:"):
-                        if is_last_user:
+                        if is_current_user:
                             try:
                                 header, data_b64 = url.split(",", 1)
                                 mime = header.split(":")[1].split(";")[0]
@@ -192,7 +191,7 @@ class LLMCodexAppServerMixin(
                 elif btype == "image":
                     source = block.get("source", {})
                     if source.get("type") == "base64":
-                        if is_last_user:
+                        if is_current_user:
                             image_blocks.append(block)
                             logger.info("Extracted image for vision: %s",
                                         source.get("media_type", "?"))
@@ -201,7 +200,7 @@ class LLMCodexAppServerMixin(
                         continue
 
                 elif btype == "image_ref":
-                    if is_last_user:
+                    if is_current_user:
                         if not user_id:
                             raise ValueError(
                                 "_codex_app_extract_images: user_id is required "

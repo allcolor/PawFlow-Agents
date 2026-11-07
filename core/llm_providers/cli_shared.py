@@ -240,6 +240,28 @@ def textualize_message(
     return None
 
 
+def trailing_user_messages(messages: list[Any]) -> list[Any]:
+    """User rows since the latest assistant, in order, excluding display rows."""
+    tail = []
+    for msg in reversed(messages or []):
+        role = getattr(msg, "role", "")
+        if role == "assistant":
+            break
+        if role == "user" and not getattr(msg, "display_only", False):
+            tail.append(msg)
+    return list(reversed(tail))
+
+
+def cli_delta_text(messages: list[Any]) -> str:
+    """Join pending user text, including human input before an inbox notice."""
+    parts = []
+    for msg in trailing_user_messages(messages):
+        text = textualize_message(msg)
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts)
+
+
 def bootstrap_read_call_ids(messages: List[Any]) -> Set[str]:
     """IDs of the native calls that read our own cold-start bootstrap file.
 

@@ -203,7 +203,6 @@ def test_provider_preempts_native_compaction_during_real_send(
     assert ended == [state]
     assert event_state.active_request_consumer_epoch == 0
     assert state.initial_context_loaded is (arrival == "coordinator" and not interrupt)
-    assert not state.submitted_msg_ids
     assert state.last_error == ""
     expected = [] if arrival in {"preexisting", "not_alive", "coordinator"} else [["Escape"]]
     if arrival == "readiness" and not interrupt:

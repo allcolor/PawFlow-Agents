@@ -44,6 +44,9 @@ class ToolApprovalGate:
         "web_search",
         # History / context
         "read_history", "read_parent_context", "conversation_search",
+        # Inbox: marks the caller's own items read, never gated (the notice
+        # tells the agent to call it before anything else)
+        "read_inbox",
         # User interaction (no data modification)
         "notify_user", "ask_user", "request_confirmation",
         # Meta / internal
@@ -88,6 +91,8 @@ class ToolApprovalGate:
         # Memory / history (read)
         "recall", "semantic_recall",
         "read_history", "read_parent_context", "conversation_search",
+        # Inbox read: only marks the caller's own items read
+        "read_inbox",
         # Help / introspection
         "pawflow_help", "get_tool_schema", "list_secrets",
         # Web search (read-only by definition)

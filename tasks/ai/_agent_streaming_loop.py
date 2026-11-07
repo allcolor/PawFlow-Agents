@@ -105,6 +105,13 @@ class _AgentStreamingLoopMixin:
                 from core.pending_queue import PendingQueue
                 _pending_count2 = PendingQueue.for_agent(
                     conversation_id, _agent_n2).peek_count()
+                if not _pending_count2 and _agent_n2:
+                    # An inbox item that arrived after the final drain and
+                    # was never announced: the woken turn gets its notice.
+                    from core import agent_inbox
+                    _notice2, _ = agent_inbox.peek_notice(
+                        conversation_id, _agent_n2, only_new=True)
+                    _pending_count2 = 1 if _notice2 else 0
                 if _pending_count2:
                     from tasks.ai.agent_loop import AgentLoopTask
                     _wake_reason = (

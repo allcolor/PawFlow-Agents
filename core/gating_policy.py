@@ -21,10 +21,11 @@ LLM_SCOPES = ("mutating", "all", "none")
 #: Restrictiveness order: a more restrictive decision always wins a merge.
 _SEVERITY = {"deny": 3, "ask": 2, "allow": 1, "abstain": 0}
 
-#: Calls the authorization mechanism itself needs (plan section 11.4). Kept
-#: deliberately small; user-visible reads are NOT internal.
+#: Calls needed for authorization or mandatory inbox delivery. Kept
+#: deliberately small; ordinary user-visible reads are NOT internal.
 INTERNAL_UNGATED_TOOLS = frozenset({
     "get_tool_schema", "ask_user", "request_confirmation", "compact_result",
+    "read_inbox",
 })
 #: Calls that widen what an agent can do and therefore always keep a human
 #: confirmation floor even when a gate says allow (plan section 11.3 / A8).

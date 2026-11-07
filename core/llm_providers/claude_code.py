@@ -27,77 +27,6 @@ from core.llm_providers._cc_stream_result import _CCStreamResultMixin
 
 logger = logging.getLogger(__name__)
 
-# Characters of other participants' messages one catch-up block may carry.
-# An agent idle for hours missed thousands of team messages: pasted whole
-# they exceed any context window, and Codex never submits such a paste
-# (2026-09-25: 2634 messages, 2.5 M characters). The newest ones are kept.
-_CATCHUP_MAX_CHARS = 40_000
-
-
-def _catchup_ts(message: dict) -> float:
-    try:
-        return float(message.get("ts") or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _catchup_is_own(source: dict, agent_name: str) -> bool:
-    """Whether ``agent_name`` wrote the context row with this source.
-
-    An agent answering a delegation writes its rows as ``agent_delegate``
-    with ``from`` naming itself and no ``name`` at all. Reading only
-    ``type == "agent"`` missed every one of them: the catch-up baseline
-    stayed on the last non-delegated reply, and each turn re-sent
-    everything since -- the agent's own delegated replies included, as
-    "new messages from other participants" (2026-09-25: a Codex agent
-    working through delegations received ~1M characters per prompt until
-    the model rejected its context).
-    """
-    src_type = source.get("type", "")
-    if src_type == "agent":
-        return source.get("name", "") == agent_name
-    if src_type == "agent_delegate":
-        return bool(agent_name) and source.get("from", "") == agent_name
-    return False
-
-
-def _catchup_resume_index(ctx_data: list, anchor: tuple) -> int:
-    """Index of the first message after the catch-up anchor.
-
-    The anchor is the last message already seen, found by identity, never
-    by position: compaction rewrites the agent context shorter, so a stored
-    index pointed past its end and every later message was skipped
-    (2026-09-24: a delegate woke an idle Codex agent with an empty prompt,
-    twice, and the team stalled for 95 minutes). When compaction removed the
-    anchor itself, its timestamp still separates old messages from new.
-    """
-    anchor_id, anchor_ts = anchor
-    if anchor_id:
-        for i in range(len(ctx_data) - 1, -1, -1):
-            if ctx_data[i].get("msg_id") == anchor_id:
-                return i + 1
-    for i, m in enumerate(ctx_data):
-        if _catchup_ts(m) > anchor_ts:
-            return i
-    return len(ctx_data)
-
-
-def _catchup_newest_within_budget(blocks: list, budget: int = _CATCHUP_MAX_CHARS):
-    """Keep the newest rendered messages whose total fits the budget.
-
-    Returns ``(kept, omitted)``. The newest message is always kept; one
-    larger than the whole budget is cut to it.
-    """
-    kept, used = [], 0
-    for block in reversed(blocks):
-        if used + len(block) > budget:
-            if not kept:
-                kept.append(block[:budget] + "\n[... truncated ...]\n</message>")
-            break
-        kept.append(block)
-        used += len(block)
-    kept.reverse()
-    return kept, len(blocks) - len(kept)
 
 
 class LLMClaudeCodeMixin(
@@ -616,111 +545,12 @@ class LLMClaudeCodeMixin(
             + "\n</system_instructions>\n\n" + user_text
         )
 
-    def _build_catchup_context(self, conv_id: str, agent_name: str,
-                               exclude_msg_ids=()) -> str:
-        """Build catch-up text from messages other agents sent since our last turn.
-
-        Reads the PARENT conversation's context for this agent (sub-agents
-        included — a delegate still sees new activity in the main chat
-        while it works). Finds messages after the last one already seen
-        (tracked in self._cc_catchup_anchor). Returns formatted text block or "".
-        Also moves self._cc_catchup_anchor so the same messages aren't sent
-        twice (shared between initial, preempt, and inter-turn catch-up).
-        ``exclude_msg_ids`` are rows the caller's prompt already carries.
-        """
-        if not conv_id:
+    def _build_catchup_context(self, conv_id: str, agent_name: str) -> str:
+        """Participant activity is already durable; return only its notice."""
+        if not conv_id or conv_id.startswith("_") or not agent_name:
             return ""
-        # Internal sentinel (e.g. "_compact" summarizer session) — no
-        # real conversation to catch up from.
-        if conv_id.startswith("_"):
-            return ""
-        # Sub-conv (delegate / task) → catch up from the parent conv so
-        # the delegate sees messages arriving in the main chat while it
-        # works. The sub-conv itself has no multi-agent dialog of its own.
-        _lookup_cid = conv_id
-        for _sep in ("::task::", "::task_verify::", "::delegate::", "::flash::", "::a2a::"):
-            if _sep in _lookup_cid:
-                _lookup_cid = _lookup_cid.split(_sep, 1)[0]
-                break
-        try:
-            from core.conversation_store import ConversationStore
-            store = ConversationStore.instance()
-            ctx_data = store.load_agent_context(_lookup_cid, agent_name)
-            if not ctx_data:
-                return ""
-
-            anchor = getattr(self, "_cc_catchup_anchor", None)
-            if anchor is None:
-                # Baseline: everything after our last own message
-                last_own = -1
-                for i, m in enumerate(ctx_data):
-                    if _catchup_is_own(m.get("source") or {}, agent_name):
-                        last_own = i
-                start = (last_own + 1) if last_own >= 0 else len(ctx_data)
-            else:
-                start = _catchup_resume_index(ctx_data, anchor)
-
-            # Collect messages since last check
-            new_msgs = ctx_data[start:]
-            last = ctx_data[-1]
-            self._cc_catchup_anchor = (str(last.get("msg_id") or ""),
-                                       _catchup_ts(last))
-
-            if not new_msgs:
-                return ""
-
-            # Filter: only messages from OTHER agents or user→other agent
-            # Messages from this agent or user→this agent are already in CC's session
-            filtered = []
-            for m in new_msgs:
-                if m.get("msg_id") and m.get("msg_id") in exclude_msg_ids:
-                    continue
-                src = m.get("source") or {}
-                src_type = src.get("type", "")
-                # Skip our own agent's messages (CC already has them)
-                if _catchup_is_own(src, agent_name):
-                    continue
-                # Skip user messages directed at this agent (CC already has them)
-                if src_type == "user":
-                    target = src.get("target_agent", "")
-                    if not target or target == agent_name:
-                        continue
-                # Skip tool results and context injections
-                if m.get("role") == "tool" or m.get("tool_calls"):
-                    continue
-                if src_type == "context":
-                    continue
-                filtered.append(m)
-
-            if not filtered:
-                return ""
-
-            # Format as XML block
-            blocks = []
-            for m in filtered:
-                content = m.get("content", "")
-                if not content or not isinstance(content, str):
-                    continue
-                role = m.get("role", "user")
-                blocks.append(f"<message role=\"{role}\">\n{content}\n</message>")
-            if not blocks:
-                return ""
-            kept, omitted = _catchup_newest_within_budget(blocks)
-            lines = ["<catch_up_context>",
-                     "New messages from other participants since your last response:"]
-            if omitted:
-                lines.append(
-                    f"({omitted} earlier messages omitted to keep this prompt "
-                    "small; use read_history to consult them.)")
-            lines.extend(kept)
-            lines.append("</catch_up_context>")
-
-            logger.info("[claude-code] catch-up: %d messages for %s (%d older omitted)",
-                        len(kept), agent_name, omitted)
-            return "\n".join(lines)
-        except Exception as e:
-            logger.warning("[claude-code] catch-up failed: %s", e)
-            return ""
+        from core import agent_inbox
+        return agent_inbox.take_notice(conv_id, agent_name, only_new=True)
 
     def _spawn_cc_stream(self, workdir: str, user_id: str, conv_id: str,
                          agent_name: str, model,

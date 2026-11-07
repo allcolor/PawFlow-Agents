@@ -59,16 +59,6 @@ _POST_STOP_PENDING_RESPONSE_CAP_SECONDS = _env_seconds(
     ("PAWFLOW_CCI_POST_STOP_PENDING_RESPONSE_CAP_MS",),
     default=90.0,
 )
-# How long a Stop may wait for the model to read a message the CLI accepted
-# during the turn but had not delivered yet (queued behind a running step).
-# The CLI submits such a message on its own right after the Stop; waiting
-# lets this turn own that continuation instead of an orphan capture. Past
-# the cap the turn finishes and the unread message is resubmitted.
-_POST_STOP_UNREAD_SUBMISSION_CAP_SECONDS = _env_seconds(
-    ("PAWFLOW_CCI_POST_STOP_UNREAD_SUBMISSION_CAP_SECONDS",),
-    ("PAWFLOW_CCI_POST_STOP_UNREAD_SUBMISSION_CAP_MS",),
-    default=30.0,
-)
 _NO_PROXY_EVENT_TIMEOUT_SECONDS = _env_seconds(
     ("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS", "PAWFLOW_CCI_NOEVENT_TIMEOUT_SECONDS"),
     ("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS", "PAWFLOW_CCI_NOEVENT_TIMEOUT_MS"),
@@ -171,7 +161,6 @@ class _CCITurnCoordinator:
                  emitted_tool_use_ids=None, emitted_tool_result_ids=None,
                  consumer_epoch: int = 0, consumer_kind: str = "request",
                  liveness_callback=None, pane_callback=None,
-                 submissions_callback=None, backlog_callback=None,
                  compact_request_callback=None):
         self.event_service = event_service
         self.session_token = session_token
@@ -278,17 +267,6 @@ class _CCITurnCoordinator:
         self._first_model_content_at = 0.0
         self._last_event_at = 0.0
         self._max_event_gap = 0.0
-        # Returns how many messages the CLI accepted and its model has not
-        # read yet (pool.unprocessed_submissions). None disables the hold.
-        self.submissions_callback = submissions_callback
-        self._unread_checked_at = 0.0
-        self._unread_count = 0
-        self._unread_hold_logged = False
-        # Unblocks a CLI whose accepted-but-unread messages pile up behind a
-        # blocking tool (tasks/ai/_delivery_limits.unblock_backlog). Checked
-        # while the wire is idle, which is exactly while a tool blocks.
-        self.backlog_callback = backlog_callback
-        self._backlog_checked_at = 0.0
         # A delivery can ask this turn to compact before the message it is
         # about to submit lands (tasks/ai/_delivery_limits). The request used
         # to be served only on the turn's next assistant/tool append, so a CLI
@@ -349,55 +327,6 @@ class _CCITurnCoordinator:
         from core.llm_client import CCCompactDetected
         raise CCCompactDetected(
             "delivery requested compaction before submitting a message")
-
-    def _probe_backlog(self) -> None:
-        """At most every 5 s: let the backlog rule cancel a blocking tool."""
-        if self.backlog_callback is None:
-            return
-        now = time.time()
-        if now - self._backlog_checked_at < 5.0:
-            return
-        self._backlog_checked_at = now
-        try:
-            self.backlog_callback()
-        except Exception:
-            logger.warning("[cci-provider] session=%s backlog check failed",
-                           self.session_token[:8], exc_info=True)
-
-    def _submissions_still_owed(self) -> bool:
-        """True while a Stop must wait for the model to read an accepted message.
-
-        Journals are read at most once a second: this runs on every idle
-        poll after a Stop.
-        """
-        if self.submissions_callback is None:
-            return False
-        now = time.time()
-        if now - self._unread_checked_at >= 1.0:
-            self._unread_checked_at = now
-            try:
-                self._unread_count = int(self.submissions_callback() or 0)
-            except Exception:
-                logger.warning(
-                    "[cci-provider] session=%s cannot read unread submissions",
-                    self.session_token[:8], exc_info=True)
-                self._unread_count = 0
-        if not self._unread_count:
-            return False
-        waited = now - (self._stop_seen_at or now)
-        if waited >= _POST_STOP_UNREAD_SUBMISSION_CAP_SECONDS:
-            logger.warning(
-                "[cci-provider] session=%s %d accepted message(s) still unread "
-                "%.0fs after Stop — finishing; they will be resubmitted",
-                self.session_token[:8], self._unread_count, waited)
-            return False
-        if not self._unread_hold_logged:
-            self._unread_hold_logged = True
-            logger.info(
-                "[cci-provider] session=%s Stop seen with %d accepted message(s) "
-                "not read yet — holding the turn open",
-                self.session_token[:8], self._unread_count)
-        return True
 
     def _response_still_owed(self) -> bool:
         """True while a Stop must keep draining instead of finalizing.
@@ -698,7 +627,6 @@ class _CCITurnCoordinator:
             if not event:
                 self._probe_liveness(started_at)
                 self._probe_pane_blocker(started_at)
-                self._probe_backlog()
                 self._probe_compact_request()
                 if not self._saw_proxy_event:
                     waited = time.time() - started_at
@@ -712,8 +640,7 @@ class _CCITurnCoordinator:
                         continue
                     idle_for = time.time() - self._post_stop_last_event_at
                     if idle_for >= _POST_STOP_IDLE_DRAIN_SECONDS:
-                        if (self._response_still_owed()
-                                or self._submissions_still_owed()):
+                        if self._response_still_owed():
                             continue
                         done = self._finish_turn_if_ready()
                 continue

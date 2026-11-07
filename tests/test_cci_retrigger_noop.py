@@ -1,101 +1,72 @@
-"""A retrigger turn with nothing new to paste must not fail the agent.
-
-2026-10-28 10:26:24: GameDev8 failed with
-``no new message for the live CLI session: this turn has nothing to submit``,
-surfaced to the user as "Claude Code session lost" and losing the delegate
-reply.
-
-The log shows how it happened: the loop finished, ``post-loop retrigger-check``
-found ``flag=True`` and re-triggered the loop for queued messages. That turn
-built a prompt whose only tail messages were already in
-``state.submitted_msg_ids`` -- the pending queue had been drained by the live
-submit path -- so ``_cci_live_text`` returned nothing and the guard raised.
-
-Nothing is wrong in that situation: every message reached the CLI during the
-previous turn. Raising turned a normal no-op into a hard failure.
-"""
-
-from types import SimpleNamespace
+"""An inbox retrigger submits its notice even when there is no user tail."""
 
 import pytest
+from types import SimpleNamespace
 
-from core.llm_providers.claude_code_interactive import LLMClaudeCodeInteractiveMixin
-
-
-class _Client(LLMClaudeCodeInteractiveMixin):
-    def __init__(self):
-        self._cci_active_agent_name = "GameDev8"
-        self._cci_live_followups = []
-        self._cci_live_all_submitted = False
-        self._cci_pending_live_msg_ids = []
-
-    def _build_catchup_context(self, *_a, **_k):
-        return ""
-
-    def _cci_catchup_context(self, *_a, **_k):
-        return ""
-
-    def _serialize_messages_for_cli(self, _messages, _tools):
-        return "system", ""
-
-    def _cci_materialize_images(self, *_a, **_k):
-        return []
+from core.llm_client import LLMClient, LLMClientError, LLMMessage
 
 
-def _msg(role, msg_id, content):
-    return SimpleNamespace(role=role, msg_id=msg_id, content=content,
-                           display_only=False)
+NOTICE = ("[PawFlow inbox: ACTION REQUIRED] You have 1 unread item. "
+          "STOP. Call read_inbox() NOW, before any other tool call or answer.")
 
 
-def _state(submitted):
-    return SimpleNamespace(submitted_msg_ids=set(submitted), workdir="/w",
-                           container_workdir="/w", initial_context_loaded=True,
-                           name="c")
+@pytest.fixture(params=["claude-code-interactive", "codex-interactive",
+                        "cc_mcp", "codex_mcp"])
+def client(request):
+    return LLMClient(request.param)
 
 
-def test_an_already_submitted_tail_reports_nothing_to_paste():
-    """The tail existed, everything in it was already pasted."""
-    client = _Client()
-    messages = [_msg("user", "u1", "already sent")]
+def test_an_inbox_retrigger_pastes_the_catchup_notice(client, monkeypatch, tmp_path):
+    calls = []
 
-    text = client._cci_live_text(messages, state=_state(["u1"]))
+    def catchup(conversation_id, agent_name):
+        calls.append((conversation_id, agent_name))
+        return NOTICE
 
-    assert text == ""
-    assert client._cci_live_all_submitted is True
-
-
-def test_an_empty_tail_does_not_claim_everything_was_submitted():
-    """No user message at all is a different state from 'all submitted'."""
-    client = _Client()
-    messages = [_msg("assistant", "a1", "done")]
-
-    text = client._cci_live_text(messages, state=_state([]))
-
-    assert text == ""
-    assert client._cci_live_all_submitted is False
-
-
-def test_the_prompt_becomes_none_when_everything_was_already_pasted():
-    """The caller must be able to tell 'nothing to do' from 'a real bug'."""
-    client = _Client()
-    messages = [_msg("user", "u1", "already sent")]
-
+    monkeypatch.setattr(client, "_build_catchup_context", catchup)
     prompt = client._cci_prompt(
-        messages, None, "/w", "/w", "user", "conv",
-        initial_context=False, agent_name="GameDev8",
-        state=_state(["u1"]))
+        [LLMMessage(role="assistant", content="done", conversation_id="conv")],
+        None, str(tmp_path), "/cc", "u", "conv", agent_name="a")
 
-    assert prompt is None
+    assert prompt == NOTICE + "\n"
+    assert calls == [("conv", "a")]
 
 
-def test_the_prompt_guard_stays_for_a_really_blank_turn():
-    """A blank paste is still refused: that one IS a bug."""
-    client = _Client()
-    messages = [_msg("assistant", "a1", "done")]
+def test_the_notice_precedes_current_user_text(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(client, "_build_catchup_context", lambda cid, agent: NOTICE)
+    prompt = client._cci_prompt(
+        [LLMMessage(role="user", content="continue", conversation_id="conv")],
+        None, str(tmp_path), "/cc", "u", "conv", agent_name="a")
 
-    with pytest.raises(Exception) as exc:
-        client._cci_prompt(messages, None, "/w", "/w", "user", "conv",
-                           initial_context=False, agent_name="GameDev8",
-                           state=_state([]))
+    assert prompt == NOTICE + "\n\ncontinue\n"
 
-    assert "nothing to submit" in str(exc.value)
+
+def test_the_prompt_guard_stays_for_a_really_blank_turn(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(client, "_build_catchup_context", lambda cid, agent: "")
+
+    with pytest.raises(LLMClientError, match="nothing to submit"):
+        client._cci_prompt([], None, str(tmp_path), "/cc", "u", "conv",
+                           agent_name="a")
+
+
+def test_user_image_preempt_keeps_the_catchup_notice(client, monkeypatch, tmp_path):
+    calls = []
+
+    def catchup(cid, agent):
+        calls.append((cid, agent))
+        return NOTICE if len(calls) == 1 else ""
+
+    monkeypatch.setattr(client, "_build_catchup_context", catchup)
+    monkeypatch.setattr(client, "_cci_attachment_block", lambda *args: {
+        "type": "image_ref", "file_id": "image", "filename": "image.png"})
+    monkeypatch.setattr(client, "_cci_materialize_images", lambda *args: [
+        "@/cc/image.png"])
+    state = SimpleNamespace(workdir=str(tmp_path), container_workdir="/cc")
+
+    prompt = client._cci_preempt_prompt(
+        "check this image", [{"file_id": "image"}], state, "u", "conv", "a")
+
+    assert NOTICE in prompt
+    assert "check this image" in prompt
+    assert "@/cc/image.png" in prompt
+    assert calls == [("conv", "a")]

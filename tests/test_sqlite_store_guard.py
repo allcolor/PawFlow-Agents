@@ -158,7 +158,7 @@ def test_agent_inbox_store_fails_closed_and_preserves_evidence(tmp_path, caplog)
     path = tmp_path / "inbox.sqlite3"
     inbox = AgentInboxStore(path)
     inbox.enqueue("c1", "claude", {"role": "user", "content": "hi",
-                                   "msg_id": "m1", "ts": "t"}, "web", now=1)
+                                   "msg_id": "m1", "ts": 1}, "web", now=1)
     del inbox
     for sidecar in ("-wal", "-shm"):
         candidate = path.with_name(path.name + sidecar)
@@ -174,7 +174,7 @@ def test_agent_inbox_store_fails_closed_and_preserves_evidence(tmp_path, caplog)
         inbox.pending_count("c1", "claude")
     with pytest.raises(SqliteStoreUnavailableError):
         inbox.enqueue("c1", "claude", {"role": "user", "content": "x",
-                                       "msg_id": "m2", "ts": "t"}, "web", now=2)
+                                       "msg_id": "m2", "ts": 2}, "web", now=2)
     assert _snapshot(path) == before
     assert sum(1 for r in caplog.records if r.levelno == logging.CRITICAL) == 1
 

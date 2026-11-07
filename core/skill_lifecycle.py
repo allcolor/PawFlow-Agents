@@ -25,16 +25,18 @@ def _append_agent_context(conversation_store, conversation_id: str, user_id: str
         return
     try:
         from core.llm_client import stamp_message
-        from core.pending_queue import PendingQueue
+        from tasks.ai._live_submit import submit_or_queue
         msg = stamp_message({
-            "role": "system",
+            "role": "user",
             "content": content,
-            "source": {"type": "context", "name": "pawflow"},
+            "display_only": True,
+            "source": {"type": "system", "name": "skills",
+                       "target_agent": agent_name},
         }, conversation_id)
         conversation_store.append_message(
             conversation_id, msg, agent_name=agent_name, user_id=user_id)
-        PendingQueue.for_agent(conversation_id, agent_name).enqueue(
-            dict(msg), source=source)
+        submit_or_queue(conversation_id, agent_name, msg, source,
+                        kind="skill_event", sender="skills", user_id=user_id)
     except Exception:
         logger.debug("skill context injection failed", exc_info=True)
 

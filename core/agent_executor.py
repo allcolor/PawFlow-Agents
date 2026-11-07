@@ -13,6 +13,7 @@ Each sub-agent runs its own tool-use loop with:
 import json
 import logging
 import uuid
+from dataclasses import asdict
 from concurrent.futures import ThreadPoolExecutor, Future
 from threading import Lock
 from typing import Any, Callable, Dict, List, Optional
@@ -190,6 +191,26 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
             _cid = ConversationStore.instance().generate_id()
         messages = [LLMMessage(role="system", content=sys_prompt,
                                 conversation_id=_cid)]
+        if task.source_agent and not task.internal:
+            from core import agent_inbox
+            from core.llm_client import stamp_message
+            deliveries = []
+            if task.context_messages:
+                context = [asdict(cm) if isinstance(cm, LLMMessage) else cm
+                           for cm in task.context_messages]
+                deliveries.append(("catch_up", json.dumps(context, ensure_ascii=False)))
+            deliveries.append(("delegate_message", task.message))
+            for kind, content in deliveries:
+                payload = stamp_message({
+                    "role": "user", "content": content, "source": user_source,
+                }, _cid)
+                if not agent_inbox.enqueue_item(
+                        _cid, task.agent_name, payload, kind, task.source_agent):
+                    raise RuntimeError("Delegate inbox rejected the task delivery")
+            notice = agent_inbox.take_notice(_cid, task.agent_name)
+            messages.append(LLMMessage(role="user", content=notice,
+                                       conversation_id=_cid))
+            return messages
         # Inject context messages if provided
         if task.context_messages:
             for cm in task.context_messages:
@@ -245,8 +266,13 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
         """Build tool definitions and handler map, optionally filtered."""
         handlers = {}
         defs = []
-        for h in self._registry.list_tools():
-            if whitelist is not None and h.name not in whitelist:
+        available = list(self._registry.list_tools())
+        if not any(h.name == "read_inbox" for h in available):
+            from core.handlers.inbox import ReadInboxHandler
+            available.append(ReadInboxHandler())
+        for h in available:
+            if (whitelist is not None and h.name not in whitelist
+                    and h.name != "read_inbox"):
                 continue
             handlers[h.name] = h
             defs.append(LLMToolDefinition(
@@ -284,6 +310,16 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
         tool_name, arguments = unwrap_mcp_tool(tc.name, tc.arguments or {})
         if not isinstance(arguments, dict):
             arguments = tc.arguments if isinstance(tc.arguments, dict) else {}
+        if tool_name == "read_inbox":
+            # Registry handlers are shared across concurrent delegates. Bind a
+            # fresh reader to this run, including wrapped use_tool calls.
+            from core.handlers.inbox import ReadInboxHandler
+            reader = ReadInboxHandler()
+            reader.set_conversation_id(conversation_id)
+            reader.set_agent_name(agent_name)
+            reader.set_source_agent(agent_name)
+            reader.set_user_id(user_id)
+            return reader.execute(arguments)
         if read_only:
             from core.tool_approval import ToolApprovalGate
             if not ToolApprovalGate.is_advisor_read_only_allowed(
@@ -333,9 +369,46 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
                 logger.debug("Sub-agent approval check failed: %s", e)
         return self._registry.execute(tc.name, tc.arguments)
 
+    @staticmethod
+    def _call_subagent_llm(client, *, stream=False, cancel_check=None, **kwargs):
+        """Keep CLI context state on this run's clone; rebuild before submission."""
+        from copy import deepcopy
+        from core.llm_client import ColdStartRequired, DeltaContextRequired
+        from core._llm_types import INTERACTIVE_CLI_PROVIDERS
+
+        provider = getattr(client, "provider", "")
+        stateful_cli = isinstance(provider, str) and provider in (
+            INTERACTIVE_CLI_PROVIDERS | {"claude-code", "codex-app-server", "gemini", "opencode"})
+        call = client.complete_stream if stream else client.complete
+        rebuilt = set()
+        while True:
+            if cancel_check is not None and cancel_check():
+                from tasks.ai.agent_exceptions import AgentCancelled
+                raise AgentCancelled()
+            try:
+                # The provider builds its native delta from this archive when
+                # the marker is set; a cold launch receives the full context.
+                call_kwargs = kwargs
+                if stateful_cli:
+                    # Native image extraction mutates messages before the guard.
+                    # Keep the archive intact for a context rebuild or later turn.
+                    call_kwargs = {**kwargs, "messages": deepcopy(kwargs["messages"])}
+                response = call(**call_kwargs)
+                if stateful_cli and not kwargs.get("call_ephemeral_stream", False):
+                    client._pawflow_context_is_delta = True
+                return response
+            except (ColdStartRequired, DeltaContextRequired) as exc:
+                if not stateful_cli or type(exc) in rebuilt:
+                    raise
+                # These guards run before any prompt submission. Ordinary
+                # provider errors must escape without replaying the request.
+                rebuilt.add(type(exc))
+                client._pawflow_context_is_delta = isinstance(exc, DeltaContextRequired)
+
     def _force_synthesis(
         self, messages: List[LLMMessage], model: str,
         call_kwargs: Optional[Dict[str, Any]] = None,
+        *, client=None, cancel_check=None,
     ) -> str:
         """Force a final response when max iterations reached."""
         # Inherit conv_id from the last message (all must share it).
@@ -352,7 +425,8 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
             conversation_id=_cid,
         ))
         try:
-            resp = self._client.complete(
+            resp = self._call_subagent_llm(client if client is not None else self._client,
+                cancel_check=cancel_check,
                 messages=messages,
                 model=model or None,
                 temperature=0.7,
@@ -362,6 +436,8 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
             )
             return resp.content
         except Exception as e:
+            if cancel_check is not None and cancel_check():
+                raise
             logger.error("Sub-agent synthesis failed: %s", e)
             return f"[Synthesis failed: {e}]"
 

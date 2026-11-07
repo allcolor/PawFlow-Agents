@@ -391,13 +391,17 @@ class ToolRegistry:
                     + self._hooks.get("post:*", [])):
                 result = hook(name, args, result)
             max_chars = getattr(handler, "_tool_result_max_chars", 50000)
+            from core.handlers.inbox import ReadInboxHandler
+            from core.handlers.meta_tools import resolve_result_shape_handler
+            result_handler = resolve_result_shape_handler(self, name, args) or handler
+            inbox_page = isinstance(result_handler, ReadInboxHandler)
             has_image = (
                 getattr(handler, "_returns_images", False)
                 and isinstance(result, str)
                 and "__image_data__:" in result
             )
             if (isinstance(result, str) and len(result) > max_chars
-                    and not has_image):
+                    and not has_image and not inbox_page):
                 try:
                     from core.file_store import FileStore
                     file_id = FileStore.instance().store(
@@ -564,10 +568,14 @@ class ToolRegistry:
             from core.handlers.meta_tools import resolve_result_shape_handler
             _result_handler = (
                 resolve_result_shape_handler(self, name, args) or handler)
+            from core.handlers.inbox import ReadInboxHandler
+            # Inbox pages enforce their own budget before acknowledging content.
+            _inbox_page = isinstance(_result_handler, ReadInboxHandler)
             _has_image = (getattr(_result_handler, '_returns_images', False)
                           and isinstance(result, str)
                           and "__image_data__:" in result)
-            if isinstance(result, str) and len(result) > _max and not _has_image:
+            if (isinstance(result, str) and len(result) > _max
+                    and not _has_image and not _inbox_page):
                 try:
                     from core.file_store import FileStore
                     _uid = getattr(handler, '_user_id', '') or ''
@@ -715,6 +723,8 @@ def create_default_registry() -> ToolRegistry:
     registry.register(FlashAgentHandler())
     registry.register(DelegateStatusHandler())
     registry.register(DelegateResultHandler())
+    from core.handlers.inbox import ReadInboxHandler
+    registry.register(ReadInboxHandler())
     registry.register(ShowFileHandler())
     registry.register(ReadParentContextHandler())
 

@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Agents now receive non-user work through a durable inbox: delegates,
+  background results, wake-ups, continuations, catch-up, skill events and
+  workflow proposals produce an imperative `read_inbox()` notice. Content
+  arrives as tool output and is acknowledged server-side only when read,
+  with ordered pagination, force-stop fencing and bounded unread retriggers.
+  Human messages remain inline across provider families.
 - Relay images generated with the `desktop.runtime` feature (custom client
   images and the `server-full` profile) now include the voxl remote-desktop
   streamer, so their desktop opens in voxl instead of falling back to noVNC.
@@ -18,6 +24,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- CLI sub-agents no longer fail with "delta required, context was built as a
+  cold start" when their existing session is reused for an inbox follow-up.
+  Session-state changes are resolved before submission on the sub-agent's
+  own client, without retrying requests that already reached the provider.
 - A Codex interactive agent no longer re-submits its previous prompt instead
   of the new one. On codex-cli 0.167 a second `Escape` on the idle composer
   opens the backtrack overlay, the paste is dropped there, the first `Enter`

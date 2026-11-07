@@ -39,6 +39,7 @@ class _AgentPollCheckinMixin:
         message = stamp_message({
             "role": "user",
             "content": content,
+            "display_only": True,
             "source": source,
             "msg_id": wake_id,
             "turn_id": wake_id,
@@ -104,8 +105,10 @@ class _AgentPollCheckinMixin:
             conversation_id, agent_name, content, user_id, timestamp=created_at)
         message["_already_persisted"] = True
         from tasks.ai._live_submit import submit_or_queue
+        kind = "continuation" if "[continuation]" in content else "scheduled_wakeup"
         if not submit_or_queue(conversation_id, agent_name, message,
-                               "scheduled_wakeup", user_id=user_id, wake=False):
+                               "scheduled_wakeup", kind=kind,
+                               sender="scheduler", user_id=user_id, wake=False):
             # A force stop may have fenced the message while it was being
             # persisted. Cancellation is terminal, not a delivery error.
             cutoff = max(
@@ -186,19 +189,42 @@ class _AgentPollCheckinMixin:
             _is_plan_step, _is_plan_verify,
             user_id=_poll_uid,
         )
+        # A delivery wake merely asks us to consume existing work. Creating a
+        # fresh check-in here would reset the unread-turn limit by itself.
+        import re
+        reasons = scheduled_reasons or []
+        delivery_prefixes = ("[pending]", "[delegate_reply]", "[bg-tool]",
+                             "[skill_", "[workflow_proposal]")
+        delivery_only = bool(reasons) and all(
+            re.sub(r"^\[scheduled:[^\]]+\]\s*", "", reason).startswith(
+                delivery_prefixes) for reason in reasons)
+        if delivery_only:
+            checkin_content = ""
+        target_agent = _active_agent or ctx.get("active_agent_name", "")
         if checkin_content:
-            target_agent = _active_agent or ctx.get("active_agent_name", "")
             wake = self._persist_scheduled_wakeup(
                 conversation_id, target_agent, checkin_content, _poll_uid)
             ctx["request_msg_id"] = wake["msg_id"]
-            ctx["messages"].append(LLMMessage(
-                role="user",
-                content=checkin_content,
-                source=wake.get("source"),
-                msg_id=wake["msg_id"],
-                timestamp=wake.get("ts"),
-                conversation_id=conversation_id,
-            ))
+            from core import agent_inbox
+            kind = ("task_checkin" if any((
+                _is_task, _is_task_verify, _is_plan_step, _is_plan_verify))
+                else "continuation" if "[continuation]" in checkin_content
+                else "scheduled_wakeup")
+            agent_inbox.enqueue_item(conversation_id, target_agent, wake,
+                                     kind, "scheduler")
+        if target_agent:
+            from core import agent_inbox
+            items = agent_inbox.unread_items(conversation_id, target_agent)
+            if items and delivery_only:
+                ctx["request_msg_id"] = items[-1].msg_id
+            notice = agent_inbox.take_notice(conversation_id, target_agent)
+            if notice:
+                ctx["messages"].append(LLMMessage(
+                    role="user", content=notice,
+                    source={"type": "system", "name": "inbox",
+                            "target_agent": target_agent,
+                            "visibility": "target_only"},
+                    conversation_id=conversation_id))
         ctx["_base_message_count"] = len(ctx["messages"])
 
         return ctx

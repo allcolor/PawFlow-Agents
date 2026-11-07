@@ -573,7 +573,7 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
             catchup = self._agi_catchup_context(conversation_id, agent_name)
             if catchup:
                 parts.append(catchup)
-            current = self._agi_live_text(messages) or user_text
+            current = self._agi_live_text(messages)
             if current:
                 parts.append(current)
         rendered = "\n\n".join(parts).strip()
@@ -601,30 +601,23 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
             return 0
 
     def _agi_live_text(self, messages) -> str:
-        from core.llm_providers.cli_shared import textualize_message
+        from core.llm_providers.cli_shared import cli_delta_text
 
-        for msg in reversed(messages or []):
-            if getattr(msg, "role", "") != "user":
-                continue
-            rendered = textualize_message(msg)
-            return rendered.strip() if isinstance(rendered, str) else ""
-        return ""
+        return cli_delta_text(messages)
 
     def _agi_materialize_images(self, messages, workdir: str, container_workdir: str,
                                 user_id: str, conversation_id: str) -> list[str]:
-        if not messages:
-            return []
-        last = None
-        for msg in reversed(messages):
-            if getattr(msg, "role", "") == "user":
-                last = msg
-                break
-        if last is None or not isinstance(getattr(last, "content", None), list):
+        from core.llm_providers.cli_shared import trailing_user_messages
+
+        content = [block for msg in trailing_user_messages(messages)
+                   if isinstance(getattr(msg, "content", None), list)
+                   for block in msg.content]
+        if not content:
             return []
         out_dir = Path(workdir) / ".pawflow_vision"
         out_dir.mkdir(parents=True, exist_ok=True)
         lines: list[str] = []
-        for block in last.content:
+        for block in content:
             if not isinstance(block, dict):
                 continue
             btype = block.get("type", "")

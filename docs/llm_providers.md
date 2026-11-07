@@ -392,6 +392,18 @@ The managed variants reuse the canonical OAuth pools: `cc_mcp` uses
 available on their matching managed provider. See the
 [managed provider how-to](https://pawflow.allcolor.org/howtos.html#managed-mcp-providers).
 
+## Non-user message delivery
+
+All provider families receive non-user work through the same durable agent
+inbox. The prompt contains an imperative notice to call `read_inbox()`, and
+the item body arrives as tool output. This covers delegates, background
+notifications, wake-ups, continuations, participant catch-up, skill events
+and workflow proposals. Human messages remain inline. Reads acknowledge
+complete items; unread work is retriggered with a notice, with a visible
+warning after three consecutive turns without reading. Workflow runtime
+agents retain their existing leases in this phase. See
+[Agent inbox delivery](inbox_delivery.md).
+
 ## Which Provider To Use
 
 Use the backend and credential source to choose the provider surface:

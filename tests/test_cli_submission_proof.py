@@ -1,12 +1,4 @@
-"""A message pasted into a live CLI is proven by the CLI's own journals.
-
-Incident 2026-09-26 (GameDev7, Codex): a message queued behind a blocking
-tool produces no hook until the model reads it, two minutes later. The pool
-waited 45 s for a receipt, logged "not confirmed" and -- on the live-submit
-path -- still reported success, so the turn's final drain dropped the rescue
-copy of a message it never proved was read. After an event queue overflow the
-session rejected every later event, and every later turn failed.
-"""
+"""User interrupts keep journal proof; inbox notices only use transport."""
 import json
 import threading
 import types
@@ -70,47 +62,80 @@ def _codex_pool(monkeypatch, state, on_enter):
     return pool, pastes
 
 
-def test_codex_message_queued_behind_a_tool_is_accepted_from_its_journal(
-        tmp_path, monkeypatch, caplog):
+def test_inbox_notice_does_not_wait_for_journal_or_model_proof(tmp_path, monkeypatch):
+    state = _state(tmp_path, "codex-interactive")
+    pool, pastes = _codex_pool(monkeypatch, state, lambda text: None)
+    notice = "[PawFlow inbox: ACTION REQUIRED] Call read_inbox() NOW."
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("inbox notices must not wait for submission proof")
+
+    monkeypatch.setattr(pool, "_journal_mark", unexpected)
+    monkeypatch.setattr(pool, "_verify_submitted", unexpected)
+
+    assert pool.send_queued(state, notice) is True
+    assert pastes == [notice]
+
+
+@pytest.mark.parametrize("failed_step", ["paste", "enter"])
+def test_notice_transport_failure_is_returned(tmp_path, monkeypatch, failed_step):
+    state = _state(tmp_path, "codex-interactive")
+    pool, _ = _codex_pool(monkeypatch, state, lambda text: None)
+    if failed_step == "paste":
+        monkeypatch.setattr(pool, "_paste_text", lambda *args: False)
+    else:
+        monkeypatch.setattr(pool, "send_keys", lambda *args: False)
+
+    assert pool.send_queued(state, "Call read_inbox() NOW.") is False
+
+
+def test_user_interrupt_is_proven_by_its_journal(tmp_path, monkeypatch):
     state = _state(tmp_path, "codex-interactive")
     history = tmp_path / ".codex" / "history.jsonl"
     pool, pastes = _codex_pool(monkeypatch, state, lambda text: _append(
         history, {"session_id": "s", "ts": 1, "text": text}))
+    monkeypatch.setattr(pool, "_prepare_prompt_input", lambda state: True)
+    monkeypatch.setattr(pool, "_wait_for_prompt_ready", lambda name: True)
+    monkeypatch.setattr(pool, "_submit_delay_seconds", lambda: 0)
 
-    assert pool.send_queued(state, "PROBE-Y marker", msg_id="m1") is True
-
-    assert pastes == ["PROBE-Y marker"]
-    assert "not confirmed" not in caplog.text
-    assert [s.msg_id for s in state.pending_submissions] == ["m1"]
-    assert pool.submission_processed(state, "m1") is False
-
-
-def test_the_rollout_proves_the_model_read_the_message(tmp_path, monkeypatch):
-    state = _state(tmp_path, "codex-interactive")
-    home = tmp_path / ".codex"
-    rollout = home / "sessions" / "2026" / "09" / "26" / "rollout-a.jsonl"
-    _append(rollout, {"type": "session_meta"})
-    pool, _ = _codex_pool(monkeypatch, state, lambda text: _append(
-        home / "history.jsonl", {"ts": 1, "text": text}))
-    pool.send_queued(state, "PROBE-Y marker", msg_id="m1")
-
-    _append(rollout, {"type": "response_item", "payload": {
-        "type": "message", "role": "user",
-        "content": [{"type": "input_text", "text": "PROBE-Y marker"}]}})
-
-    assert pool.unprocessed_submissions(state) == []
-    assert pool.submission_processed(state, "m1") is True
-    assert pool.submission_processed(state, "never-pasted") is None
+    assert pool.send_interrupt(state, "change the task") is True
+    assert pastes == ["change the task"]
 
 
-def test_a_message_the_cli_never_accepted_is_refused_and_not_tracked(
-        tmp_path, monkeypatch):
+def test_an_unproven_user_interrupt_is_refused(tmp_path, monkeypatch):
     state = _state(tmp_path, "codex-interactive")
     pool, _ = _codex_pool(monkeypatch, state, lambda text: None)
-    monkeypatch.setattr(pool, "_verify_submitted", lambda *a, **kw: False)
+    monkeypatch.setattr(pool, "_prepare_prompt_input", lambda state: True)
+    monkeypatch.setattr(pool, "_wait_for_prompt_ready", lambda name: True)
+    monkeypatch.setattr(pool, "_submit_delay_seconds", lambda: 0)
+    monkeypatch.setattr(pool, "_verify_submitted", lambda *args, **kwargs: False)
 
-    assert pool.send_queued(state, "lost", msg_id="m1") is False
-    assert state.pending_submissions == []
+    assert pool.send_interrupt(state, "change the task") is False
+
+
+@pytest.mark.parametrize("provider,pool_class,lookup", [
+    ("claude-code-interactive", InteractiveClaudeCodePool, "_cci_session_state"),
+    ("codex-interactive", CodexInteractivePool, "_codex_interactive_session_state"),
+])
+@pytest.mark.parametrize("had_preempts", [False, True])
+@pytest.mark.parametrize("send_ok", [False, True])
+def test_inbox_notice_preserves_user_preempt_state(
+        monkeypatch, provider, pool_class, lookup, had_preempts, send_ok):
+    from core.llm_client import LLMClient
+
+    client = LLMClient(provider)
+    state = object()
+    sent = []
+    pool = types.SimpleNamespace(
+        send_queued=lambda item, text: sent.append((item, text)) or send_ok)
+    monkeypatch.setattr(pool_class, "instance", lambda: pool)
+    monkeypatch.setattr(client, lookup, lambda **kwargs: state)
+    client._had_preempts_this_turn = had_preempts
+    notice = "[PawFlow inbox: ACTION REQUIRED] Call read_inbox() NOW."
+
+    assert client.send_queued_message(notice) is send_ok
+    assert sent == [(state, notice)]
+    assert client._had_preempts_this_turn is had_preempts
 
 
 @pytest.mark.parametrize("method", ["send_queued", "send_interrupt"])
@@ -159,7 +184,7 @@ def test_a_session_whose_event_stream_died_is_replaced_not_reused(
     assert state.key not in pool._sessions
 
 
-# -- the turn stays open while an accepted message is unread -----------------
+# -- turn completion follows the wire, not inbox read status -----------------
 
 class _Events:
     def __init__(self, events):
@@ -203,130 +228,25 @@ def _run(coord):
     return result
 
 
-def test_stop_waits_until_the_accepted_message_is_read(monkeypatch):
+def test_stop_finishes_after_the_wire_response(monkeypatch):
     monkeypatch.setattr(
         "core.llm_providers._cci_turn._POST_STOP_IDLE_DRAIN_SECONDS", 0.05)
-    unread = iter([1, 1, 0])
-    calls = []
-
-    def still_unread():
-        calls.append(1)
-        return next(unread, 0)
-    coord = _CCITurnCoordinator(_Events(_finished_turn_events()), "sess",
-                                submissions_callback=still_unread)
-    coord._unread_checked_at = 0.0
-    monkeypatch.setattr(coord, "_submissions_still_owed",
-                        _fast_owed(coord))
-
-    result = _run(coord)
-
-    assert "error" not in result, result.get("error")
-    assert result["response"].content == "Done."
-    assert len(calls) == 3
-
-
-def test_an_unread_message_holds_the_turn_only_until_the_cap(monkeypatch):
-    monkeypatch.setattr(
-        "core.llm_providers._cci_turn._POST_STOP_IDLE_DRAIN_SECONDS", 0.05)
-    monkeypatch.setattr(
-        "core.llm_providers._cci_turn._POST_STOP_UNREAD_SUBMISSION_CAP_SECONDS",
-        0.3)
-    coord = _CCITurnCoordinator(_Events(_finished_turn_events()), "sess",
-                                submissions_callback=lambda: 1)
+    coord = _CCITurnCoordinator(_Events(_finished_turn_events()), "sess")
 
     result = _run(coord)
 
     assert "error" not in result, result.get("error")
     assert result["response"].content == "Done."
 
-
-def _fast_owed(coord):
-    """Re-read the callback on every poll instead of once a second."""
-    original = type(coord)._submissions_still_owed
-
-    def owed():
-        coord._unread_checked_at = 0.0
-        return original(coord)
-    return owed
-
-
-# -- the final drain decides per message ---------------------------------------
 
 def _msg(msg_id):
     return types.SimpleNamespace(msg_id=msg_id)
-
-
-def test_the_journal_verdict_overrides_the_turn_wide_preempt_flag():
-    client = types.SimpleNamespace(
-        cli_submission_processed=lambda mid: {"read": True, "unread": False}.get(mid))
-
-    assert _preempt_handled_verdict(client, _msg("unread"), True) is False
-    assert _preempt_handled_verdict(client, _msg("read"), False) is True
-    # Untracked message: the provider's own flag still decides.
-    assert _preempt_handled_verdict(client, _msg("other"), True) is True
 
 
 def test_providers_without_journals_keep_the_preempt_flag():
     client = types.SimpleNamespace()
     assert _preempt_handled_verdict(client, _msg("m"), True) is True
     assert _preempt_handled_verdict(client, _msg("m"), False) is False
-
-
-# -- an unread message is submitted again by the next turn ---------------------
-
-def test_the_next_turn_resubmits_an_accepted_message_the_model_never_read(
-        tmp_path):
-    """GameDev2 2026-09-26 14:12Z: the final drain re-triggered with the
-    unread messages, but they were still recorded as pasted, so the prompt
-    skipped them and the turn failed with "nothing to submit"."""
-    from core import cli_prompt_journal
-    from core.llm_client import LLMMessage
-    from core.llm_providers.claude_code_interactive import (
-        LLMClaudeCodeInteractiveMixin)
-
-    state = _state(tmp_path, "claude-code-interactive")
-    transcript = tmp_path / "projects" / "-cc" / "s.jsonl"
-    _append(transcript, {"type": "user", "message": {"content": "earlier"}})
-    pool = InteractiveClaudeCodePool.__new__(InteractiveClaudeCodePool)
-    since = cli_prompt_journal.mark(state.provider, state.workdir)
-    pool.track_submission(state, "read one", since, "m-read")
-    pool.track_submission(state, "never read", since, "m-unread")
-    state.submitted_msg_ids = {"m-read", "m-unread", "m-older"}
-    _append(transcript, {"type": "attachment", "attachment": {
-        "type": "queued_command", "prompt": "read one"}})
-    assert pool.submission_processed(state, "m-unread") is False
-
-    assert pool.reclaim_unread_submissions(state) == {"m-unread"}
-
-    assert state.pending_submissions == []
-    assert state.submitted_msg_ids == {"m-read", "m-older"}
-    provider = LLMClaudeCodeInteractiveMixin.__new__(
-        LLMClaudeCodeInteractiveMixin)
-    text = provider._cci_live_text(
-        [LLMMessage(role="user", content="read one", msg_id="m-read",
-                    conversation_id="c"),
-         LLMMessage(role="user", content="never read", msg_id="m-unread",
-                    conversation_id="c")],
-        state=state)
-    assert text == "never read"
-
-
-def test_nothing_is_reclaimed_when_every_message_was_read(tmp_path):
-    from core import cli_prompt_journal
-
-    state = _state(tmp_path, "claude-code-interactive")
-    transcript = tmp_path / "projects" / "-cc" / "s.jsonl"
-    _append(transcript, {"type": "user", "message": {"content": "earlier"}})
-    pool = InteractiveClaudeCodePool.__new__(InteractiveClaudeCodePool)
-    since = cli_prompt_journal.mark(state.provider, state.workdir)
-    pool.track_submission(state, "read one", since, "m-read")
-    state.submitted_msg_ids = {"m-read"}
-    _append(transcript, {"type": "user", "message": {"content": (
-        '<pasted_content id="cc5d">\nread one\n</pasted_content id="cc5d">')}})
-
-    assert pool.reclaim_unread_submissions(state) == set()
-    assert state.submitted_msg_ids == {"m-read"}
-    assert pool.submission_processed(state, "m-read") is True
 
 
 def test_an_empty_delta_does_not_forget_the_live_session():

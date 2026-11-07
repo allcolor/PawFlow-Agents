@@ -24,6 +24,7 @@ from core.llm_providers.gemini_session import (
 from core.llm_providers._gemini_acp import (  # noqa: F401 -- re-exported
     _GeminiAcpCapacityError, _GeminiAcpProtocolError, _GeminiAcpProtocolMixin)
 from core.llm_providers._gemini_stream import _GeminiStreamMixin
+from core.llm_providers.cli_shared import cli_delta_text, trailing_user_messages
 
 logger = logging.getLogger(__name__)
 
@@ -428,7 +429,7 @@ class LLMGeminiMixin(_GeminiStreamMixin, _GeminiAcpProtocolMixin, GeminiSessionM
     @staticmethod
     def _gemini_acp_extract_images(messages, user_id: str,
                                    conversation_id: str) -> list:
-        """Extract images from the last user message for ACP native vision."""
+        """Extract pending user images for ACP native vision."""
         if not user_id:
             raise ValueError(
                 "_gemini_acp_extract_images: user_id is required to resolve image_ref attachments")
@@ -436,12 +437,9 @@ class LLMGeminiMixin(_GeminiStreamMixin, _GeminiAcpProtocolMixin, GeminiSessionM
             raise ValueError(
                 "_gemini_acp_extract_images: conversation_id is required to resolve image_ref attachments")
         image_blocks = []
-        last_user_idx = -1
-        for i, msg in enumerate(messages):
-            if getattr(msg, "role", "") == "user":
-                last_user_idx = i
+        current_user_ids = {id(msg) for msg in trailing_user_messages(messages)}
 
-        for idx, msg in enumerate(messages):
+        for msg in messages:
             content = getattr(msg, "content", None)
             if not isinstance(content, list):
                 continue
@@ -451,12 +449,12 @@ class LLMGeminiMixin(_GeminiStreamMixin, _GeminiAcpProtocolMixin, GeminiSessionM
                     new_content.append(block)
                     continue
                 btype = block.get("type", "")
-                is_last_user = idx == last_user_idx
+                is_current_user = id(msg) in current_user_ids
 
                 if btype == "image_url":
                     url = (block.get("image_url") or {}).get("url", "")
                     if url.startswith("data:"):
-                        if is_last_user:
+                        if is_current_user:
                             try:
                                 header, data_b64 = url.split(",", 1)
                                 mime = header.split(":")[1].split(";")[0]
@@ -478,7 +476,7 @@ class LLMGeminiMixin(_GeminiStreamMixin, _GeminiAcpProtocolMixin, GeminiSessionM
                 if btype == "image":
                     source = block.get("source", {})
                     if source.get("type") == "base64":
-                        if is_last_user:
+                        if is_current_user:
                             image_blocks.append(block)
                             logger.info("Extracted image for Gemini ACP vision: %s",
                                         source.get("media_type", "?"))
@@ -487,7 +485,7 @@ class LLMGeminiMixin(_GeminiStreamMixin, _GeminiAcpProtocolMixin, GeminiSessionM
                         continue
 
                 if btype == "image_ref":
-                    if is_last_user:
+                    if is_current_user:
                         from core.file_store import FileStore
                         fid = block.get("file_id", "")
                         if not fid:
@@ -560,13 +558,7 @@ class LLMGeminiMixin(_GeminiStreamMixin, _GeminiAcpProtocolMixin, GeminiSessionM
 
     @staticmethod
     def _gemini_acp_last_user_text(messages) -> str:
-        for msg in reversed(messages):
-            if getattr(msg, "role", "") == "user":
-                content = getattr(msg, "content", "")
-                if isinstance(content, list):
-                    return getattr(msg, "text_content", "") or ""
-                return content or ""
-        return ""
+        return cli_delta_text(messages)
 
     def _gemini_pool_popen(self, workdir: str, cmd: list,
                            container_name: str = "", user_id: str = "",

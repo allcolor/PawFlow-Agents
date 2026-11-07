@@ -10,6 +10,7 @@ Verifies that:
 """
 import json
 import threading
+import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
 from core.handlers.resource_agent import FlashAgentHandler, SpawnAgentsHandler
@@ -22,6 +23,17 @@ from core.agent_executor import (
     register_live_delegate,
     unregister_live_delegate,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_inbox(tmp_path, monkeypatch):
+    from core.agent_inbox_store import AgentInboxStore
+    from core.pending_queue import PendingQueue
+    monkeypatch.setattr(AgentInboxStore, "_instance",
+                        AgentInboxStore(tmp_path / "inbox.sqlite3"))
+    PendingQueue.drop_cache()
+    yield
+    PendingQueue.drop_cache()
 
 
 def _make_handler(conversation_id="conv1", user_id="user1",
@@ -51,21 +63,27 @@ def _make_flash_handler(conversation_id="conv1", user_id="user1",
 
 
 class TestRunningDelegateInjection:
-    def test_failed_live_preempt_is_queued_for_sub_agent_loop(self):
+    def test_live_followup_stays_unread_until_inbox_tool_ack(self):
+        from core import agent_inbox
         task = AgentTask(id="tid1", agent_name="B", message="initial")
         client = MagicMock()
         register_live_delegate("conv1", "agentA", "B", "tid1", client, task)
         try:
             assert queue_live_delegate_message(
                 "conv1", "agentA", "B", "follow-up") is True
-            assert drain_live_delegate_messages(
-                "conv1", "agentA", "B", "tid1") == ["follow-up"]
+            notices = drain_live_delegate_messages(
+                "conv1", "agentA", "B", "tid1")
+            assert len(notices) == 1
+            assert "Call read_inbox() NOW" in notices[0]
+            assert "follow-up" not in notices[0]
             assert drain_live_delegate_messages(
                 "conv1", "agentA", "B", "tid1") == []
+            assert agent_inbox.unread_count("conv1::task::tid1", "B") == 1
+            assert "follow-up" in agent_inbox.read_inbox("conv1::task::tid1", "B")
         finally:
             unregister_live_delegate("conv1", "agentA", "B", "tid1")
 
-    def test_execute_queues_when_live_client_cannot_preempt_inline(self):
+    def test_execute_queues_without_interrupting_live_client(self):
         h = _make_handler(conversation_id="conv1")
         live_client = MagicMock()
         live_client.send_user_message.return_value = False
@@ -76,6 +94,7 @@ class TestRunningDelegateInjection:
             result = h.execute({"tasks": [{"agent": "B", "message": "follow-up"}]})
         mock_queue.assert_called_once_with(
             "conv1", "agentA", "B", "follow-up")
+        live_client.send_user_message.assert_not_called()
         assert "injected_queued" in result
 
     def test_agent_core_rehydrates_delegate_turn_mode_after_pending_drain(self):
@@ -145,7 +164,8 @@ class TestWorkflowDelegateContextCoercion:
 
 
 class TestFlashDelegate:
-    def test_flash_delegate_builds_ephemeral_agent_task(self):
+    @pytest.mark.parametrize("tools", [["read"], []])
+    def test_flash_delegate_builds_ephemeral_agent_task(self, tools):
         h = _make_flash_handler()
         h.set_delegate_tc_id("tc_001")
         with patch("core.agent_executor.get_live_delegate", return_value=None), \
@@ -161,7 +181,7 @@ class TestFlashDelegate:
                 "name": "critic",
                 "prompt": "You critique plans.",
                 "message": "Review this",
-                "tools": ["read"],
+                "tools": tools,
                 "skills": ["reviewer"],
             }]})
         task = mock_exec.return_value.spawn.call_args.args[0][0]
@@ -172,7 +192,7 @@ class TestFlashDelegate:
         assert task.context_mode == "isolated"
         assert task.context_messages is None
         assert task.persist is False
-        assert task.tools == ["read"]
+        assert task.tools == tools
         assert "temporary flash agent \"critic\"" in task.system_prompt
         assert "You critique plans." in task.system_prompt
         assert "SKILL" in task.system_prompt
@@ -248,6 +268,7 @@ class TestFlashDelegate:
             }]})
         mock_queue.assert_called_once_with(
             "conv1", "agentA", "agentA::flash::critic", "Follow up")
+        live_client.send_user_message.assert_not_called()
         assert "injected_queued" in result
 
 

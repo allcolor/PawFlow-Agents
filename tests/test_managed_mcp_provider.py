@@ -36,7 +36,7 @@ class _Client(LLMManagedMcpMixin):
 
     def _cci_prompt(self, messages, tools, workdir, container_workdir,
                     user_id, conversation_id, initial_context=False,
-                    agent_name="", state=None):
+                    agent_name=""):
         return ("COLD " if initial_context else "DELTA ") + "prompt"
 
 
@@ -48,7 +48,6 @@ class _State:
         self.initial_context_loaded = False
         self.emitted_tool_use_ids = set()
         self.emitted_tool_result_ids = set()
-        self.submitted_msg_ids = set()
         self.name = "ctr"
         self.last_error = ""
         self.service_id = "svc"
@@ -172,7 +171,6 @@ class TestStream:
         assert harness.pool.sent == ["COLD prompt"]
         assert client.cold_checks == ["cc_mcp"] and client.delta_checks == []
         assert harness.state.initial_context_loaded is True
-        assert harness.state.submitted_msg_ids == {"m1"}
         assert harness.events.claims == 1 and harness.events.drained == 1
         assert harness.events.releases == [7]
         assert harness.pool.turns == ["begin", "end"]

@@ -16,6 +16,7 @@ from core.llm_providers.claude_code_session import (
     _get_sessions_base, recover_tokens_from_workdir)
 from core.llm_providers._cc_base import (
     _CC_READER_EOF, _CC401Retry, _CCStreamState)  # noqa: F401
+from core.llm_providers.cli_shared import cli_delta_text
 
 logger = logging.getLogger(__name__)
 
@@ -366,16 +367,7 @@ class _CCStreamMixin:
                     system_prompt = _m.text_content if isinstance(_c, list) else (_c or "")
                     break
             system_prompt = append_cli_mcp_system_prompt(system_prompt)
-            last_user = ""
-            for _m in reversed(messages):
-                if _m.role == "user":
-                    _c = _m.content
-                    if isinstance(_c, list):
-                        last_user = _m.text_content
-                    else:
-                        last_user = _c or ""
-                    break
-            user_text = last_user
+            user_text = cli_delta_text(messages)
             initial_text = self._build_stdin_with_system(system_prompt, user_text)
         else:
             system_prompt, user_text = self._serialize_messages_for_cli(messages, None)

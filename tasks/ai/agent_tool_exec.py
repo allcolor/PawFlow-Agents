@@ -252,8 +252,9 @@ class AgentToolExecMixin:
                             return (f"Error: Tool '{_eff_name}' was {approval} by the "
                                     "user (policy gate asked for confirmation).")
                         return ""
-                if _always_allow_plumbing:
-                    _tool_perm = "allow"  # get_tool_schema: introspection only
+                if _always_allow_plumbing or _eff_name == "read_inbox":
+                    # Schema discovery and mandatory inbox reads need no approval.
+                    _tool_perm = "allow"
                 if _tool_perm == "deny":
                     return f"Error: Tool '{_eff_name}' is denied by permission settings."
                 elif _tool_perm == "allow":

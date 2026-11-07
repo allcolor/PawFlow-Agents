@@ -21,6 +21,7 @@ import pytest
 from unittest.mock import patch
 
 from core.conversation_store import ConversationStore
+from core import agent_inbox
 
 
 def test_seed_persisted_seq_zero_initializes_cache(monkeypatch):
@@ -1423,7 +1424,7 @@ class TestAppendMessage:
             "resumed" in str(msg.get("content", ""))
             for msg in bot_ctx)
 
-    def test_delegate_request_routes_to_from_to_and_shared(self, conv):
+    def test_delegate_request_keeps_sender_shared_and_no_recipient_inline_copy(self, conv):
         store, cid, uid = conv
         store.set_extra(cid, "conv_agents", {
             "alice": {"definition": "alice", "llm_service": "llm"},
@@ -1444,11 +1445,8 @@ class TestAppendMessage:
         assert alice_ctx and any(
             "[delegate alice" in str(msg.get("content", ""))
             for msg in alice_ctx)
-        # bob receives with explicit attribution
-        assert bob_ctx and any(
-            "Here is a message from agent 'alice'" in
-            str(msg.get("content", ""))
-            for msg in bob_ctx)
+        # The delivery ingress owns Bob's inbox; append must not copy it inline.
+        assert not bob_ctx
         # shared visible with [alice to agent bob]: prefix
         assert shared and any(
             "[alice to agent bob]" in str(msg.get("content", ""))
@@ -1472,10 +1470,8 @@ class TestAppendMessage:
         alice_ctx = store.load_agent_context(cid, "alice")
         bob_ctx = store.load_agent_context(cid, "bob")
         shared = store.load_agent_context(cid, "")
-        # Both parties receive their tailored copy
-        assert alice_ctx and any(
-            "reply to your delegate" in str(msg.get("content", ""))
-            for msg in alice_ctx)
+        # The sender keeps its own output; the caller receives it via inbox ingress.
+        assert not alice_ctx
         assert bob_ctx and any(
             "[delegate bob" in str(msg.get("content", ""))
             for msg in bob_ctx)
@@ -1550,10 +1546,8 @@ class TestAppendMessage:
         assert [m.role for m in replayed] == ["assistant", "tool"]
         assert [tc.id for tc in replayed[0].tool_calls] == ["call_1"]
         assert replayed[0].thinking == "I should look"
-        # The caller gets the attributed text only: no reasoning, no calls.
-        assert [r["role"] for r in alice_rows] == ["user"]
-        assert "thinking" not in alice_rows[0]
-        assert "tool_calls" not in alice_rows[0]
+        # The caller has no inline copy. Its transcript view still hides internals.
+        assert not alice_rows
 
         tail = store.load_transcript_tail_for_agent(cid, "bob", limit=10)
         assert [r["role"] for r in tail] == [
@@ -1634,10 +1628,9 @@ class TestAppendMessage:
         published_ctx = store.load_agent_context(cid, "published")
         shared = store.load_agent_context(cid, "")
         external_ctx = store.load_agent_context(cid, external_id)
-        assert target_ctx and any(
-            "Claude Code" in str(msg.get("content", ""))
-            and "external request" in str(msg.get("content", ""))
-            for msg in target_ctx)
+        assert not target_ctx  # target delivery is owned by the inbox ingress
+        assert any(row.get("msg_id") == request["msg_id"]
+                   for row in store.load(cid, user_id=uid))
         assert not published_ctx or not any(
             "external request" in str(msg.get("content", ""))
             for msg in published_ctx)
@@ -1671,9 +1664,11 @@ class TestAppendMessage:
                  source={"type": "agent", "name": "alice"})
         store.append_message(cid, m, agent_name="alice", user_id=uid)
         bob_ctx = store.load_agent_context(cid, "bob")
-        assert bob_ctx and any(
-            "[Agent alice]" in str(msg.get("content", ""))
-            for msg in bob_ctx)
+        assert not bob_ctx
+        assert agent_inbox.unread_count(cid, "bob") == 1
+        result = agent_inbox.read_inbox(cid, "bob")
+        assert "[Agent alice]" in result and "hello world" in result
+        assert agent_inbox.unread_count(cid, "bob") == 0
 
     def test_user_target_agent_is_not_written_twice_to_same_context(self, conv):
         store, cid, uid = conv
@@ -1703,9 +1698,9 @@ class TestAppendMessage:
                  source={"type": "agent", "name": "alice"})
         store.append_message(cid, m, agent_name="alice", user_id=uid)
         bob_ctx = store.load_agent_context(cid, "bob")
-        assert bob_ctx and any(
-            "[Agent alice]" in str(msg.get("content", ""))
-            for msg in bob_ctx)
+        assert not bob_ctx
+        result = agent_inbox.read_inbox(cid, "bob")
+        assert "[Agent alice]" in result and "hello world" in result
 
     def test_append_legacy_agent_dirs_fanout_without_conv_agents(
             self, conv, monkeypatch):
@@ -1724,9 +1719,9 @@ class TestAppendMessage:
         store.append_message(cid, m, agent_name="alice", user_id=uid)
 
         bob_ctx = store.load_agent_context(cid, "bob")
-        assert bob_ctx and any(
-            "[Agent alice]" in str(msg.get("content", ""))
-            for msg in bob_ctx)
+        assert not bob_ctx
+        result = agent_inbox.read_inbox(cid, "bob")
+        assert "[Agent alice]" in result and "hello legacy" in result
 
     def test_save_agent_context_updates_agent_cache_without_reload(self, conv, monkeypatch):
         store, cid, uid = conv

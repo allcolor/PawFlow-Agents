@@ -176,24 +176,14 @@ class FlashAgentHandler(SpawnAgentsHandler):
             if parent_conv_id:
                 live = get_live_delegate(parent_conv_id, src_agent, runtime_name)
                 if live:
-                    live_client = live.get("client")
                     live_tid = live.get("task_id", "")
-                    delivered = False
-                    if live_client and hasattr(live_client, "send_user_message"):
-                        try:
-                            delivered = bool(live_client.send_user_message(message))
-                        except Exception as exc:
-                            logger.warning(
-                                "[flash-delegate] preempt to %s failed: %s",
-                                live_tid, exc)
-                    if not delivered:
-                        queue_live_delegate_message(
-                            parent_conv_id, src_agent, runtime_name, message)
+                    stored = queue_live_delegate_message(
+                        parent_conv_id, src_agent, runtime_name, message)
                     injected_results.append({
                         "task_id": live_tid,
                         "name": flash_name,
                         "agent": runtime_name,
-                        "status": "injected" if delivered else "injected_queued",
+                        "status": "injected_queued" if stored else "error",
                     })
                     continue
 
@@ -210,7 +200,8 @@ class FlashAgentHandler(SpawnAgentsHandler):
                 system_prompt = inject_available_skills_into_prompt(
                     system_prompt, skills, user_id,
                     conversation_id=self._conversation_id)
-            tools = normalize_string_list(spec.get("tools")) or None
+            tools = (normalize_string_list(spec["tools"])
+                     if "tools" in spec else None)
             task = AgentTask(
                 id=task_id,
                 agent_name=runtime_name,

@@ -236,7 +236,7 @@ def test_primary_runtime_wires_engine_and_ingress_in_order():
         exec_src = handle.read()
     i_prepare = exec_src.index("_prepare(_eff_name, _eff_args)")
     i_policy = exec_src.index("authorize_tool_call(")
-    i_legacy = exec_src.index("if _always_allow_plumbing:\n                    _tool_perm = \"allow\"")
+    i_legacy = exec_src.index('if _always_allow_plumbing or _eff_name == "read_inbox":')
     i_exec = exec_src.index("registry.execute_prepared(_prepared)")
     # The gate sees the prepared call, decides before the legacy rules, and
     # nothing rewrites the call between the decision and execution.

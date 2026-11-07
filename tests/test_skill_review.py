@@ -356,7 +356,9 @@ def test_manage_resource_assign_skill_notifies_agent(monkeypatch):
     assert conv_store.configs["assistant"]["assigned_skills"] == ["review-pr"]
     assert appended[0][2] == "assistant"
     assert "Skill available: review-pr" in appended[0][1]["content"]
-    assert enqueued[0][1] == "skill_assign"
+    assert enqueued[0][1] == "inbox:skill_event"
+    assert enqueued[0][0]["content"] == appended[0][1]["content"]
+    assert enqueued[0][0]["_inbox_sender"] == "skills"
 
 
 def test_manage_resource_unassign_skill_notifies_agent(monkeypatch):
@@ -432,7 +434,9 @@ def test_manage_resource_unassign_skill_notifies_agent(monkeypatch):
     assert conv_store.configs["assistant"]["assigned_skills"] == ["other"]
     assert appended[0][2] == "assistant"
     assert "Skill removed: review-pr" in appended[0][1]["content"]
-    assert enqueued[0][1] == "skill_unassign"
+    assert enqueued[0][1] == "inbox:skill_event"
+    assert enqueued[0][0]["content"] == appended[0][1]["content"]
+    assert enqueued[0][0]["_inbox_sender"] == "skills"
 
 
 def test_review_fails_closed_without_summarizer_llm(monkeypatch):

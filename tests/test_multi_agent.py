@@ -239,7 +239,8 @@ class TestSingleAgentExecution:
         executor.shutdown()
 
     def test_normal_completion_writes_one_anchor_and_terminal(self):
-        client = make_client_mock([simple_response("done")])
+        client = make_client_mock([
+            tool_call_response("read_inbox", {}), simple_response("done")])
         executor = SubAgentExecutor(
             client, make_registry(),
             client_resolver=lambda *_args: (client, None),
@@ -508,11 +509,10 @@ class TestToolWhitelist:
         result = executor.execute_agent(task)
         assert result.status == "completed"
 
-        # Verify that only 1 tool def was passed to LLM
+        # Inbox acknowledgement remains available outside the whitelist.
         call_args = client.complete_stream.call_args
         tools_passed = call_args.kwargs.get("tools") or call_args[1].get("tools", [])
-        assert len(tools_passed) == 1
-        assert tools_passed[0].name == "echo"
+        assert {tool.name for tool in tools_passed} == {"echo", "read_inbox"}
         executor.shutdown()
 
 

@@ -61,10 +61,19 @@ class _ALCSetupMixin:
         st.registry = st.ctx["registry"]
         st.tool_defs = st.ctx["tool_defs"]
         st.messages: List[LLMMessage] = st.ctx["messages"]
+        if st.ctx.get("active_agent_name"):
+            from core.agent_inbox import prepare_context_messages
+            st.messages[:] = prepare_context_messages(
+                st.messages, st.conversation_id, st.ctx["active_agent_name"])
         st.model = st.ctx["model"]
         st.conversation_id = st.ctx.get("conversation_id", "")
         st.use_conv_store = st.ctx.get("use_conv_store", False)
         st.user_id = st.ctx.get("user_id", "")
+        if st.ctx.get("active_agent_name"):
+            from core.agent_inbox import reset_unread_for_human_input
+            reset_unread_for_human_input(
+                st.conversation_id, st.ctx["active_agent_name"], st.messages,
+                st.ctx.setdefault("_inbox_reset_user_ids", set()))
 
         # Each main agent loop runs on its OWN cloned LLMClient — fully
         # isolated from the resolver's singleton. Concurrent main agents

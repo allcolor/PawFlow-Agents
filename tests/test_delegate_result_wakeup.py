@@ -13,6 +13,7 @@ def test_preempt_enqueue_always_schedules_a_race_safe_wake(monkeypatch):
     class Queue:
         def enqueue(self, message, source=""):
             queued.append((message, source))
+            return True
 
     def wake(cls, conversation_id, agent_name, **kwargs):
         wakes.append((conversation_id, agent_name, kwargs))
@@ -27,7 +28,7 @@ def test_preempt_enqueue_always_schedules_a_race_safe_wake(monkeypatch):
 
     assert queued[0][0]["content"] == "delegate finished"
     assert queued[0][0]["msg_id"] == "msg1"
-    assert queued[0][1] == "delegate_reply"
+    assert queued[0][1] == "inbox:delegate_message"
     assert wakes == [("conv1", "assistant", {
         "reason": "[delegate_reply] queued result for assistant",
         "user_id": "alice",

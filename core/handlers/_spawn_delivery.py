@@ -46,7 +46,18 @@ def _delegate_result_preview(response: str):
 _FLASH_MARKER = "::flash::"
 
 
-def route_flash_caller(conv_id: str, caller_agent: str, text: str):
+def _inbox_kind_and_sender(source) -> tuple:
+    """Inbox kind and sender of a message delivered through _preempt_caller."""
+    src = source if isinstance(source, dict) else {}
+    if src.get("type") == "agent_delegate":
+        kind = "delegate_reply" if src.get("kind") == "reply" else "delegate_message"
+        return kind, src.get("from_label") or src.get("from") or "agent"
+    delegate = src.get("delegate") if isinstance(src.get("delegate"), dict) else {}
+    return "delegate_result", delegate.get("agent") or src.get("name") or "agent"
+
+
+def route_flash_caller(conv_id: str, caller_agent: str, text: str, *,
+                       sender: str = "", msg_id: str = ""):
     """Where a result addressed to ``caller_agent`` must go.
 
     A flash agent is a sub-agent run, not a conversation agent. Waking it by
@@ -73,7 +84,9 @@ def route_flash_caller(conv_id: str, caller_agent: str, text: str):
         if entry.get("target") == caller_agent:
             creator = entry.get("caller") or creator
             if queue_live_delegate_message(
-                    parent_conv, creator, caller_agent, text):
+                    parent_conv, creator, caller_agent, text,
+                    kind="delegate_result", sender=sender or creator,
+                    msg_id=msg_id):
                 logger.info("[delegate] result queued to running flash "
                             "agent '%s'", caller_agent)
                 return None
@@ -218,6 +231,10 @@ class _SpawnDeliveryMixin:
         try:
             from tasks.ai.agent_loop import AgentLoopTask
             inst = AgentLoopTask._live_instance
+            if inst is None:
+                self._wake_caller(None, conv_id, to_agent, user_id,
+                                  message, _msg_id, source=_src, message=_delegate_msg)
+                return {"state": "queued in inbox"}
             if inst:
                 key = f"{conv_id}:{to_agent}" if to_agent else conv_id
                 # _route_conv_id is the conv the target agent actually
@@ -244,13 +261,13 @@ class _SpawnDeliveryMixin:
                         to_agent, key)
                     self._preempt_caller(inst, _route_conv_id, to_agent,
                                          message, _msg_id, _src,
-                                         user_id=user_id)
+                                         user_id=user_id, message=_delegate_msg)
                     return {"state": "running (preempted)"}
                 else:
                     logger.info(
                         "[delegate-shared] target '%s' idle — wake", to_agent)
                     self._wake_caller(inst, conv_id, to_agent, user_id,
-                                      message, _msg_id, source=_src)
+                                      message, _msg_id, source=_src, message=_delegate_msg)
                     return {"state": "idle (waking)"}
         except Exception as e:
             logger.error("[delegate-shared] trigger failed: %s", e)
@@ -436,10 +453,15 @@ class _SpawnDeliveryMixin:
         caller_agent's context (not shared, not other agents). The user
         sees it via the transcript (display_only publish).
         """
-        routed = route_flash_caller(conv_id, caller_agent, text)
+        original_caller = caller_agent
+        routed = route_flash_caller(conv_id, caller_agent, text,
+                                    sender=delegate_agent, msg_id=msg_id)
         if routed is None:
             return
         caller_agent, text = routed
+        if caller_agent != original_caller:
+            from core.service_registry import _parent_conversation_id
+            conv_id = _parent_conversation_id(conv_id) or conv_id
         _source = {
             "type": "user",
             "name": "system",
@@ -488,15 +510,11 @@ class _SpawnDeliveryMixin:
         # Check caller state via AgentLoopTask._active_contexts.
         from tasks.ai.agent_loop import AgentLoopTask
         inst = AgentLoopTask._live_instance
-        if not inst:
-            logger.warning(
-                "[bg-delegate] no AgentLoopTask instance — cannot deliver "
-                "result for task %s to caller %s", task_id, caller_agent)
-            return
-
         _key = f"{conv_id}:{caller_agent}" if caller_agent else conv_id
-        with inst._active_contexts_lock:
-            _is_running = _key in inst._active_contexts
+        _is_running = False
+        if inst is not None:
+            with inst._active_contexts_lock:
+                _is_running = _key in inst._active_contexts
 
         if _is_running:
             # Preempt path: append to the caller's pending queue so the
@@ -506,14 +524,15 @@ class _SpawnDeliveryMixin:
                 "result for task %s", caller_agent, task_id)
             self._preempt_caller(
                 inst, conv_id, caller_agent, text, msg_id, _source,
-                user_id=user_id)
+                user_id=user_id, message=_nudge_msg)
         else:
             # Wake path: no active loop → spawn a fresh stream so the
             # caller reads + reacts to the result.
             logger.info(
                 "[bg-delegate] caller '%s' is idle — waking with result "
                 "for task %s", caller_agent, task_id)
-            self._wake_caller(inst, conv_id, caller_agent, user_id, text, msg_id)
+            self._wake_caller(inst, conv_id, caller_agent, user_id, text, msg_id,
+                              source=_source, message=_nudge_msg)
 
     def _deliver_cross_conversation_delegate(
             self, from_agent, to_agent, message, user_id, source_conv_id,
@@ -593,11 +612,23 @@ class _SpawnDeliveryMixin:
 
     @staticmethod
     def _preempt_caller(inst, conv_id, caller_agent, text, msg_id, source,
-                        user_id=""):
+                        user_id="", message=None):
         """Submit a delegate to its running target, or queue it and wake."""
         try:
+            original_caller = caller_agent
+            routed = route_flash_caller(
+                conv_id, caller_agent, text,
+                sender=(source or {}).get("from") or (source or {}).get("name") or "",
+                msg_id=msg_id)
+            if routed is None:
+                return
+            caller_agent, text = routed
+            if caller_agent != original_caller:
+                from core.service_registry import _parent_conversation_id
+                conv_id = _parent_conversation_id(conv_id) or conv_id
             from core.llm_client import stamp_message
             msg = stamp_message({
+                **(message or {}),
                 "role": "user",
                 "content": text,
                 "source": source or {"type": "agent_delegate"},
@@ -610,9 +641,10 @@ class _SpawnDeliveryMixin:
             # the poller defers the key while still active and consumes it
             # once idle, so the durable result cannot be stranded.
             from tasks.ai._live_submit import submit_or_queue
+            _kind, _sender = _inbox_kind_and_sender(msg.get("source"))
             submit_or_queue(
                 conv_id, caller_agent or "", msg, "delegate_reply",
-                user_id=user_id,
+                kind=_kind, sender=_sender, user_id=user_id,
                 wake_reason=(f"[delegate_reply] queued result for "
                              f"{caller_agent or 'default'}"))
         except Exception as e:
@@ -620,44 +652,35 @@ class _SpawnDeliveryMixin:
 
     @staticmethod
     def _wake_caller(inst, conv_id, caller_agent, user_id, text, msg_id,
-                     source=None, pre_persisted=True):
-        """Wake an idle caller by running a fresh agent loop with the
-        result as the user input. `source` (if given) identifies the
-        trigger so the agent loop can set ctx._turn_mode accordingly
-        (e.g. agent_delegate → delegate_reply mode auto-tags the flush).
-
-        ``pre_persisted`` says the caller already wrote the ``msg_id`` row.
-        When False, streaming ingress persists it (private agent_delegate
-        routing) like any other ingress message."""
+                     source=None, pre_persisted=True, message=None):
+        """Store an idle caller's delivery and wake it with an inbox notice."""
         try:
-            from core import FlowFile
-            body = json.dumps({
-                "message": text,
-                "conversation_id": conv_id,
-                "msg_id": msg_id,
-                "target_agent": caller_agent,
-            })
-            ff = FlowFile(body.encode("utf-8"))
-            ff.set_attribute("http.auth.principal", user_id)
-            ff.set_attribute("target_agent", caller_agent)
-            # A caller that pre-persisted the nudge via writer (see
-            # _deliver_to_caller / _deliver_shared_delegate) tells
-            # agent_streaming.py to skip its own pre-persist so the same
-            # msg_id is not written twice. A caller that did not must let
-            # ingress write it: skipping it left the msg_id with no row at
-            # all, and a live CLI caller woke with nothing to submit.
-            if pre_persisted:
-                ff.set_attribute("skip_pre_persist", "1")
-            if source:
-                ff.set_attribute("message_source", json.dumps(source))
-            # Run in a thread so we don't block the completion callback
-            # (which is running on the SubAgentExecutor's pool).
-            import threading as _th
-            _th.Thread(
-                target=inst._execute_streaming,
-                args=(ff,),
-                daemon=True,
-                name=f"wake-{caller_agent}",
-            ).start()
+            original_caller = caller_agent
+            routed = route_flash_caller(
+                conv_id, caller_agent, text,
+                sender=(source or {}).get("from") or (source or {}).get("name") or "",
+                msg_id=msg_id)
+            if routed is None:
+                return
+            caller_agent, text = routed
+            if caller_agent != original_caller:
+                from core.service_registry import _parent_conversation_id
+                conv_id = _parent_conversation_id(conv_id) or conv_id
+            from core.llm_client import stamp_message
+            from tasks.ai._live_submit import submit_or_queue
+            msg = stamp_message({
+                **(message or {}),
+                "role": "user", "content": text, "msg_id": msg_id,
+                "source": source or {},
+            }, conv_id)
+            if not pre_persisted:
+                from core.conversation_writer import ConversationWriter
+                ConversationWriter.for_conversation(conv_id).enqueue_message(
+                    dict(msg, display_only=True), agent_name=caller_agent,
+                    user_id=user_id)
+            kind, sender = _inbox_kind_and_sender(source)
+            submit_or_queue(conv_id, caller_agent, msg, "delegate_reply",
+                            kind=kind, sender=sender, user_id=user_id,
+                            wake_reason=f"[delegate_reply] queued result for {caller_agent}")
         except Exception as e:
             logger.error("[bg-delegate] wake failed: %s", e)

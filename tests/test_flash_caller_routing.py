@@ -12,13 +12,19 @@ from types import SimpleNamespace
 import pytest
 
 from core import _agent_executor_base as live
+from core import agent_inbox
 from core.handlers._spawn_delivery import _SpawnDeliveryMixin, route_flash_caller
 
 FLASH = "GameDev4::flash::bench-review"
 
 
 @pytest.fixture
-def live_slots():
+def live_slots(tmp_path, monkeypatch):
+    from core.agent_inbox_store import AgentInboxStore
+    from core.pending_queue import PendingQueue
+    monkeypatch.setattr(AgentInboxStore, "_instance",
+                        AgentInboxStore(tmp_path / "inbox.sqlite3"))
+    PendingQueue.drop_cache()
     registered = []
 
     def register(conv, caller, target):
@@ -28,6 +34,7 @@ def live_slots():
     yield register
     for conv, caller, target in registered:
         live.unregister_live_delegate(conv, caller, target)
+    PendingQueue.drop_cache()
 
 
 def test_conversation_agent_caller_is_unchanged():
@@ -39,9 +46,16 @@ def test_conversation_agent_caller_is_unchanged():
 def test_running_flash_agent_gets_the_result_in_its_live_queue(live_slots):
     live_slots("conv1", "GameDev4", FLASH)
 
-    assert route_flash_caller("conv1::task::abc", FLASH, "reply") is None
-    assert live.drain_live_delegate_messages(
-        "conv1", "GameDev4", FLASH) == ["reply"]
+    assert route_flash_caller("conv1::task::abc", FLASH, "reply",
+                              sender="Responder") is None
+    item, = agent_inbox.unread_items("conv1::task::t1", FLASH)
+    assert item.payload["_inbox_kind"] == "delegate_result"
+    assert item.payload["_inbox_sender"] == "Responder"
+    notices = live.drain_live_delegate_messages("conv1", "GameDev4", FLASH)
+    assert len(notices) == 1
+    assert "Call read_inbox() NOW" in notices[0]
+    assert "reply" not in notices[0]
+    assert "reply" in agent_inbox.read_inbox("conv1::task::t1", FLASH)
 
 
 def test_live_slot_names_the_exact_creator(live_slots):
@@ -50,8 +64,10 @@ def test_live_slot_names_the_exact_creator(live_slots):
     live_slots("conv1", "Game Dev", flash)
 
     assert route_flash_caller("conv1", flash, "reply") is None
-    assert live.drain_live_delegate_messages(
-        "conv1", "Game Dev", flash) == ["reply"]
+    notices = live.drain_live_delegate_messages("conv1", "Game Dev", flash)
+    assert len(notices) == 1
+    assert "from Game Dev" in notices[0]
+    assert "reply" in agent_inbox.read_inbox("conv1::task::t1", flash)
 
 
 def test_finished_flash_agent_forwards_the_result_to_its_creator():
@@ -116,5 +132,7 @@ def test_delivery_to_a_running_flash_agent_starts_no_turn(monkeypatch, live_slot
         text="result", msg_id="m1", task_id="t9", delegate_agent="GameDev",
         file_id="")
 
-    assert live.drain_live_delegate_messages(
-        "conv1", "GameDev4", FLASH) == ["result"]
+    notices = live.drain_live_delegate_messages("conv1", "GameDev4", FLASH)
+    assert len(notices) == 1
+    assert "Call read_inbox() NOW" in notices[0]
+    assert "result" in agent_inbox.read_inbox("conv1::task::t1", FLASH)

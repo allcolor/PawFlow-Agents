@@ -25,6 +25,7 @@ SKIP_TOOLS = {
     "flash_delegate",  # agent-internal temporary sub-agents
     "delegate_status",  # agent-internal delegate status
     "delegate_result",  # agent-internal delegate result fetch
+    "read_inbox",  # agent-internal inbox read (keyed by the calling agent)
     "manage_resource",  # resource CRUD
     "create_tool",  # dynamic tool creation
     "pawflow_help",  # help text

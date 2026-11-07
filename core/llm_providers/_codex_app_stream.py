@@ -43,7 +43,7 @@ class _CodexAppStreamMixin:
         call_ephemeral_stream: Optional[bool] = None,
     ):
         """Stream one Codex app-server turn into PawFlow callbacks."""
-        from core.llm_client import LLMClientError, LLMResponse
+        from core.llm_client import DeltaContextRequired, LLMClientError, LLMResponse
         from tasks.ai.agent_exceptions import AgentCancelled
 
         if getattr(self, "_abort", None) and self._abort.is_set():
@@ -180,6 +180,8 @@ class _CodexAppStreamMixin:
                             "restarting app-server in container=%s conv=%s agent=%s session=%s",
                             reuse_container, conv_id[:8] or "?", agent_name,
                             thread_id[:12] or "new")
+            except DeltaContextRequired:
+                raise  # The guard returned the turn lock; rebuild before submission.
             except Exception:
                 logger.debug("[codex-app-live] lookup failed", exc_info=True)
                 live_reg = None

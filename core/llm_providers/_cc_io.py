@@ -69,10 +69,10 @@ class _CCIoMixin:
 
     @staticmethod
     def _extract_images(messages, user_id: str, conversation_id: str) -> list:
-        """Extract images from the LAST user message only.
+        """Extract images from pending user messages since the latest assistant.
 
         Removes image blocks from ALL messages (so they don't bloat the text
-        prompt). Only returns image blocks from the LAST user message as
+        prompt). Only returns image blocks from pending user messages as
         content blocks for the stream-json message (native vision).
 
         Older images are replaced with a placeholder text.
@@ -93,14 +93,12 @@ class _CCIoMixin:
         import base64 as _b64
         image_blocks = []
 
-        # Find the current user message index. Only that message may feed
-        # native vision; older image refs stay as FileStore links in text.
-        _last_user_idx = -1
-        for i, m in enumerate(messages):
-            if m.role == "user":
-                _last_user_idx = i
+        from core.llm_providers.cli_shared import trailing_user_messages
 
-        for idx, m in enumerate(messages):
+        # A trailing inbox notice must not hide the human's native images.
+        current_user_ids = {id(msg) for msg in trailing_user_messages(messages)}
+
+        for m in messages:
             if not isinstance(m.content, list):
                 continue
             new_content = []
@@ -110,10 +108,10 @@ class _CCIoMixin:
                     continue
                 btype = block.get("type", "")
 
-                _is_last_user = (idx == _last_user_idx)
+                _is_current_user = id(m) in current_user_ids
 
-                # Placeholder policy: when we extract an image from the LAST
-                # user message into image_blocks, that image is sent to the
+                # Placeholder policy: when we extract a pending user image
+                # into image_blocks, that image is sent to the
                 # model natively via vision — emitting a text placeholder on
                 # top of it is actively harmful: the agent reads
                 # "[image: foo.png]" and calls see() / read() on it, duplicating
@@ -125,7 +123,7 @@ class _CCIoMixin:
                 if btype == "image_url":
                     url = (block.get("image_url") or {}).get("url", "")
                     if url.startswith("data:"):
-                        if _is_last_user:
+                        if _is_current_user:
                             try:
                                 header, data_b64 = url.split(",", 1)
                                 mime = header.split(":")[1].split(";")[0]
@@ -149,7 +147,7 @@ class _CCIoMixin:
                 elif btype == "image":
                     source = block.get("source", {})
                     if source.get("type") == "base64":
-                        if _is_last_user:
+                        if _is_current_user:
                             image_blocks.append(block)
                             logger.info("Extracted image for vision: %s",
                                         source.get("media_type", "?"))
@@ -159,11 +157,11 @@ class _CCIoMixin:
                         continue
 
                 elif btype == "image_ref":
-                    # Image stored in FileStore — load for vision on last user message only.
+                    # Image stored in FileStore — load pending user images for vision.
                     # Older image_ref blocks (from prior turns already seen by
                     # the model via session resume) are intentionally dropped
                     # to text to keep the prompt compact.
-                    if _is_last_user:
+                    if _is_current_user:
                         from core.file_store import FileStore
                         import base64 as _b64
                         _fid = block.get("file_id", "")

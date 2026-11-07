@@ -13,6 +13,7 @@ import threading
 import uuid
 from typing import Any, Dict, Optional
 
+from core.llm_providers.cli_shared import cli_delta_text
 
 logger = logging.getLogger(__name__)
 
@@ -196,13 +197,7 @@ class _CodexAppRpcMixin:
 
     @staticmethod
     def _codex_app_last_user_text(messages) -> str:
-        for msg in reversed(messages):
-            if getattr(msg, "role", "") == "user":
-                content = getattr(msg, "content", "")
-                if isinstance(content, list):
-                    return getattr(msg, "text_content", "") or ""
-                return content or ""
-        return ""
+        return cli_delta_text(messages)
 
     def _codex_app_input_items(self, text: str, image_blocks: list,
                                workdir: str, container_dir: str) -> list:

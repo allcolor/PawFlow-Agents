@@ -107,6 +107,35 @@ def _schedule(cid, key, reason):
         cid, time.time() - 1, key=key, reason=reason, user_id="testuser")
 
 
+@pytest.mark.parametrize("fresh", ["none", "human", "reminder"])
+def test_deferred_inbox_nudge_respects_unread_stop_limit(poller_env, fresh):
+    from core import agent_inbox
+    from core.pending_queue import PendingQueue
+    cid = "unread_stop_" + fresh
+    task = _active_task(cid, ["assistant"])
+    key = f"{cid}::pending::assistant"
+    _schedule(cid, key, "[delegate_reply] queued result for assistant")
+    assert _poll(task, cid) == []
+    agent_inbox._store().set_notice_state(cid, "assistant", unread_turns=3)
+    if fresh == "human":
+        PendingQueue.for_agent(cid, "assistant").enqueue({
+            "role": "user", "content": "Fresh user input", "msg_id": "human",
+            "ts": time.time(), "source": {"type": "user", "name": "testuser"}}, "http")
+    elif fresh == "reminder":
+        _schedule(cid, f"{cid}::continuation::fresh",
+                  "[scheduled:assistant] [continuation] new actual reminder")
+    task._active_turns.clear()
+    task._active_conversations.clear()
+    # Make the deferred wake due again without changing its identity.
+    from core.poll_scheduler import PollScheduler
+    scheduler = PollScheduler.instance()
+    with scheduler._lock:
+        for entry in scheduler._schedules.values():
+            entry["recheck_at"] = time.time() - 1
+    threads = _poll(task, cid)
+    assert len(threads) == (0 if fresh == "none" else 1)
+
+
 def _poll(task, cid):
     """Run one poll pass; return the poll worker threads it would start."""
     real_thread = threading.Thread
@@ -275,26 +304,28 @@ def test_untargeted_wake_still_defers_while_conversation_active(poller_env):
 
 
 def test_continuation_for_active_target_is_delivered_once(poller_env):
+    from core import agent_inbox
     from core.pending_queue import PendingQueue
 
     cid = "continuation_ack"
     task = _active_task(cid, ["assistant"])
-    queue = PendingQueue.for_agent(cid, "assistant")
     _schedule(cid, f"{cid}::continuation::deadbeef",
               "[scheduled:assistant] [continuation] finish the fix")
 
     assert _poll(task, cid) == []
     assert _remaining(cid) == []
-    assert queue.peek_count() == 1
+    assert len(agent_inbox.unread_items(cid, "assistant")) == 1
     assert _poll(task, cid) == []
-    messages = queue.drain()
-    assert len(messages) == 1
-    message = messages[0]
+    items = agent_inbox.unread_items(cid, "assistant")
+    assert len(items) == 1
+    message = items[0].payload
     assert "[continuation] finish the fix" in message["content"]
     assert message["source"] == {
         "type": "scheduled_wakeup", "target_agent": "assistant"}
     assert message["msg_id"] and message["ts"]
     assert message["_already_persisted"] is True
+    assert message["_inbox_kind"] == "continuation"
+    assert PendingQueue.for_agent(cid, "assistant").peek_count() == 0
     assert PendingQueue.for_agent(cid, "claude").peek_count() == 0
     from core.conversation_store import ConversationStore
     persisted = [m for m in ConversationStore.instance().load(cid)
@@ -317,10 +348,15 @@ def test_due_reminder_reaches_active_context_without_duplicate_persistence(polle
     messages = []
     append = MagicMock()
     emitter.drain_pending(messages, append, 1)
-    assert len(messages) == 1
-    assert "inspect the finished job" in messages[0].content
-    assert "deadline has already passed" in messages[0].content
-    append.assert_not_called()
+    # The running turn gets the notice, never the reminder itself.
+    from core import agent_inbox
+    assert messages == []
+    (notice,), _ = append.call_args
+    assert notice.content.startswith("[PawFlow inbox: ACTION REQUIRED]")
+    assert "inspect the finished job" not in notice.content
+    read = agent_inbox.read_inbox(cid, "assistant")
+    assert "inspect the finished job" in read
+    assert "deadline has already passed" in read
     assert PendingQueue.for_agent(cid, "assistant").peek_count() == 0
 
 
@@ -333,9 +369,10 @@ def test_active_wake_survives_pending_queue_cache_reset(poller_env):
               "[scheduled:assistant] [continuation] inspect durable output")
     assert _poll(task, cid) == []
     PendingQueue.drop_cache()
-    messages = PendingQueue.for_agent(cid, "assistant").drain()
-    assert len(messages) == 1
-    assert "inspect durable output" in messages[0]["content"]
+    from core import agent_inbox
+    items = agent_inbox.unread_items(cid, "assistant")
+    assert len(items) == 1
+    assert "inspect durable output" in items[0].payload["content"]
 
 
 def test_active_wake_delivery_failure_keeps_original_schedule(poller_env, monkeypatch):
@@ -442,7 +479,9 @@ def test_active_wake_arriving_after_worker_exit_starts_a_rescue(poller_env, monk
 
     monkeypatch.setattr(task, "_queue_active_scheduled_wakeup", exit_then_deliver)
     assert _poll(task, cid) == []
-    assert PendingQueue.for_agent(cid, "assistant").peek_count() == 1
+    from core import agent_inbox
+    assert PendingQueue.for_agent(cid, "assistant").drain() == []
+    assert len(agent_inbox.unread_items(cid, "assistant")) == 1
     assert [e["key"] for e in _remaining(cid)] == [f"{cid}::pending::assistant"]
     assert len(_poll(task, cid)) == 1
 
@@ -472,6 +511,7 @@ def test_force_stop_during_wake_persistence_is_not_an_error(poller_env, monkeypa
 
 
 def test_active_wake_arriving_after_final_drain_is_rescued_on_idle(poller_env):
+    from core import agent_inbox
     from core.pending_queue import PendingQueue
 
     cid = "wake_final_drain_race"
@@ -488,7 +528,10 @@ def test_active_wake_arriving_after_final_drain_is_rescued_on_idle(poller_env):
         "active_agent_name": "assistant", "user_id": "testuser",
         "_gen_key": f"{cid}:assistant", "_generation": 0,
     }, cid, MagicMock())
-    assert PendingQueue.for_agent(cid, "assistant").peek_count() == 1
+    # Stored in the inbox, never announced: the idle wake carries its notice.
+    assert PendingQueue.for_agent(cid, "assistant").peek_count() == 0
+    assert len(agent_inbox.unread_items(cid, "assistant")) == 1
+    assert agent_inbox.peek_notice(cid, "assistant", only_new=True)[0]
     assert [e["key"] for e in _remaining(cid)] == [f"{cid}::pending::assistant"]
 
 
@@ -496,6 +539,7 @@ def test_continuation_during_final_response_runs_again_with_its_plan(poller_env,
     import json
 
     from core import FlowFile
+    from core import agent_inbox
     from core.llm_client import LLMClient, LLMResponse
     from core.pending_queue import PendingQueue
 
@@ -520,6 +564,7 @@ def test_continuation_during_final_response_runs_again_with_its_plan(poller_env,
     ctx = task._prepare_agent_context(ff, preloaded_messages=[])
     ctx.update(active_agent_name="assistant", _gen_key=f"{cid}:assistant", _generation=0)
     seen = []
+    read = []
 
     def complete(_client, messages, *args, **kwargs):
         seen.append([m.content for m in messages if m.role == "user"])
@@ -529,6 +574,10 @@ def test_continuation_during_final_response_runs_again_with_its_plan(poller_env,
             assert _poll(task, cid) == []
             return LLMResponse(content="Continuation scheduled; stopping now.",
                                finish_reason="stop", model="test-model")
+        # The agent obeys the notice: what its read_inbox call would return.
+        if any(str(text).startswith("[PawFlow inbox: ACTION REQUIRED]")
+               for text in seen[-1]):
+            read.append(agent_inbox.read_inbox(cid, "assistant"))
         # No assert in here: the loop reports a raising provider as an LLM
         # error, so a failed check only surfaced when its text happened to
         # look transient and triggered a third call.
@@ -540,8 +589,10 @@ def test_continuation_during_final_response_runs_again_with_its_plan(poller_env,
     with patch("threading.Timer"):
         task._streaming_agent_loop_inner(ctx, cid, MagicMock())
     assert len(seen) == 2
-    assert any("inspect REDkit output" in str(text) for text in seen[1])
+    assert not any("inspect REDkit output" in str(text) for text in seen[1])
     assert any("Work until the check is due" in str(text) for text in seen[1])
+    assert len(read) == 1 and "inspect REDkit output" in read[0]
+    assert agent_inbox.unread_items(cid, "assistant") == []
     assert PendingQueue.for_agent(cid, "assistant").peek_count() == 0
     assert not ctx.get("_retrigger_after_done")
 
@@ -753,7 +804,9 @@ def test_cancel_does_not_report_success_after_reminder_delivery_starts(
     if external:
         route.assert_called_once()
     elif active:
-        assert PendingQueue.for_agent(cid, "assistant").peek_count() == 1
+        from core import agent_inbox
+        assert PendingQueue.for_agent(cid, "assistant").peek_count() == 0
+        assert len(agent_inbox.unread_items(cid, "assistant")) == 1
 
 
 def test_cancel_at_active_queue_handoff_cannot_report_success(poller_env, monkeypatch):
@@ -775,7 +828,9 @@ def test_cancel_at_active_queue_handoff_cannot_report_success(poller_env, monkey
     monkeypatch.setattr(queue, "enqueue", cancel_then_enqueue)
     assert _poll(task, cid) == []
     assert cancellations == [False]
-    assert queue.peek_count() == 1
+    # The active wake is an inbox item, stored through the same queue.
+    from core import agent_inbox
+    assert len(agent_inbox.unread_items(cid, "assistant")) == 1
 
 
 def test_scheduled_entry_target_uses_roster_canonical_name(poller_env):
@@ -891,7 +946,10 @@ def test_loop_for_busy_agent_is_queued_once_with_full_prompt(poller_env, monkeyp
 
     assert _poll(task, cid) == []
 
-    assert PendingQueue.for_agent(cid, "GameDev2").peek_count() == 1
+    from core import agent_inbox
+    (item,) = agent_inbox.unread_items(cid, "GameDev2")
+    assert _LOOP_PROMPT in item.payload["content"]
+    assert PendingQueue.for_agent(cid, "GameDev2").peek_count() == 0
     assert len(contents) == 1 and _LOOP_PROMPT in contents[0]
     remaining = _remaining(cid)
     assert [e["key"] for e in remaining] == [key]

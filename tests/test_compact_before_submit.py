@@ -5,7 +5,7 @@ import pytest
 
 from core.llm_client import CCCompactDetected, LLMMessage
 from tasks.ai._alc_closures1 import _ALCClosures1Mixin
-from tasks.ai._delivery_limits import COMPACT_REQUEST_KEY, backlog_exceeded
+from tasks.ai._delivery_limits import COMPACT_REQUEST_KEY
 
 
 def _state(ctx):
@@ -50,58 +50,37 @@ def test_without_a_request_an_unmeasured_gauge_never_compacts():
     assert barriers == []
 
 
-def test_the_turn_checks_the_backlog_at_most_every_five_seconds(monkeypatch):
-    from core.llm_providers._cci_turn import _CCITurnCoordinator
-
-    class _Service:
-        def wait_event(self, token, timeout=None):
-            return {}
-    calls = []
-    coord = _CCITurnCoordinator(_Service(), "sess",
-                                backlog_callback=lambda: calls.append(1))
-    clock = [1000.0]
-    monkeypatch.setattr("core.llm_providers._cci_turn.time.time",
-                        lambda: clock[0])
-
-    coord._probe_backlog()
-    coord._probe_backlog()
-    clock[0] += 5.0
-    coord._probe_backlog()
-
-    assert len(calls) == 2
-
-
-def test_an_exceeded_backlog_cancels_the_blocking_tool(monkeypatch):
+def test_user_submission_requests_compaction_before_crossing_the_limit(monkeypatch):
     from tasks.ai import _delivery_limits as limits
 
-    pending = [SimpleNamespace(text="x" * 4000, accepted_at=0.0)]
-    pool = SimpleNamespace(unprocessed_submissions=lambda state: pending)
-    cancelled = []
-    monkeypatch.setattr(
-        "services.tool_relay_service.ToolRelayService.cancel_agent",
-        lambda cid, agent, **kw: cancelled.append(agent))
-    monkeypatch.setattr(limits.time, "time", lambda: 100.0)
-    monkeypatch.setattr(limits, "running_turn_context", lambda c, a: {
-        "max_context_size": 5000, "chars_per_token": 4})
+    ctx = {
+        "max_context_size": 1000, "_compact_trigger_fraction": 0.9,
+        "_context_usage_cache": {"used": 850}, "chars_per_token": 4,
+    }
+    monkeypatch.setattr(limits, "running_turn_context", lambda cid, agent: ctx)
 
-    assert limits.unblock_backlog(pool, object(), "conv", "GameDev7") is True
-    assert cancelled == ["GameDev7"]
-
-    monkeypatch.setattr(limits, "running_turn_context", lambda c, a: {
-        "max_context_size": 500000, "chars_per_token": 4})
-    assert limits.unblock_backlog(pool, object(), "conv", "GameDev7") is False
-    assert cancelled == ["GameDev7"]
+    assert not limits.submission_needs_compaction("conv", "a", "small request")
+    assert COMPACT_REQUEST_KEY not in ctx
+    assert limits.submission_needs_compaction("conv", "a", "x" * 200)
+    assert ctx[COMPACT_REQUEST_KEY] is True
+    assert limits.take_compact_request("conv", "a") is True
+    assert limits.take_compact_request("conv", "a") is False
 
 
-def _pending(text, accepted_at):
-    return SimpleNamespace(text=text, accepted_at=accepted_at)
+def test_unknown_limits_do_not_block_a_user_submission(monkeypatch):
+    from tasks.ai import _delivery_limits as limits
+
+    monkeypatch.setattr(limits, "running_turn_context", lambda cid, agent: {})
+
+    assert not limits.submission_needs_compaction("conv", "a", "request")
 
 
-def test_backlog_needs_both_the_size_and_the_wait():
-    big = [_pending("x" * 4000, 0.0)]          # 1000 tokens
-    small = [_pending("x" * 40, 0.0)]
-    assert backlog_exceeded(big, max_ctx=5000, chars_per_token=4, now=61.0)
-    assert not backlog_exceeded(big, max_ctx=5000, chars_per_token=4, now=59.0)
-    assert not backlog_exceeded(small, max_ctx=5000, chars_per_token=4,
-                                now=600.0)
-    assert not backlog_exceeded([], max_ctx=5000, chars_per_token=4, now=600.0)
+def test_idle_coordinator_serves_a_user_compaction_request(monkeypatch):
+    from core.llm_providers._cci_turn import _CCITurnCoordinator
+
+    coord = _CCITurnCoordinator(
+        object(), "sess", compact_request_callback=lambda: True)
+    monkeypatch.setattr("core.llm_providers._cci_turn.time.time", lambda: 1000)
+
+    with pytest.raises(CCCompactDetected, match="delivery requested compaction"):
+        coord._probe_compact_request()

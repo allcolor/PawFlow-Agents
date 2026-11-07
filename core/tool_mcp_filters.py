@@ -118,7 +118,7 @@ def disabled_names(conversation_id: str, agent_name: str = "",
     scoped = cfg.get("tools")
     if isinstance(scoped, dict) and scoped.get("mode") == "custom":
         return set()
-    return set(filters.get("disabled_tools") or [])
+    return set(filters.get("disabled_tools") or []) - {"read_inbox"}
 
 
 def is_tool_enabled(conversation_id: str, name: str, agent_name: str = "",
@@ -153,6 +153,11 @@ def is_tool_enabled_from_filters(filters: Dict[str, Any], name: str,
         # This entry point has no active conversation id, so it cannot verify
         # the request scope. Default deny; use is_tool_enabled above.
         return False
+    # Inbox delivery is mandatory, even for an empty custom tool selection.
+    # Only the built-in reader gets this exemption; scoped handlers keep
+    # their own availability and authorization boundaries.
+    if origin == "builtin" and name == "read_inbox":
+        return True
     filters = filters if isinstance(filters, dict) else _default_filters()
     if agent_name:
         scoped = _agent_cfg(filters, agent_name).get("tools")

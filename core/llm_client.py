@@ -820,13 +820,7 @@ class LLMClient(
         return fn(text, attachments)
 
     def send_queued_message(self, text: str, **kwargs) -> bool:
-        """Submit a non-user message into a live CLI turn without interrupting.
-
-        Delegates, background results and due wake-ups are submitted at once,
-        one message per paste (paste + Enter, no Escape). Only the tmux
-        interactive providers can do this; every other provider returns False
-        and its message waits in the PendingQueue for the next iteration.
-        """
+        """Paste a server-side inbox notice into a running interactive CLI."""
         if self.provider == "claude-code-interactive":
             fn = getattr(self, "_cci_send_queued_message", None)
         elif self.provider == "codex-interactive":
@@ -836,24 +830,6 @@ class LLMClient(
         if fn is None:
             return False
         return bool(fn(text, **kwargs))
-
-    def cli_submission_processed(self, msg_id: str):
-        """Whether the live CLI's model has read a message pasted into it.
-
-        True or False when the session tracked ``msg_id`` (its paste was
-        accepted, see ``send_queued_message``) and its journal settles it;
-        None when this provider or session has no record of it, in which
-        case the caller keeps its own rule.
-        """
-        if self.provider == "claude-code-interactive":
-            fn = getattr(self, "_cci_submission_processed", None)
-        elif self.provider == "codex-interactive":
-            fn = getattr(self, "_codex_interactive_submission_processed", None)
-        else:
-            return None
-        if fn is None:
-            return None
-        return fn(msg_id)
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "LLMClient":

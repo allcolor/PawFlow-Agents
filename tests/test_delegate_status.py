@@ -419,15 +419,21 @@ class TestSharedDelegateLifecycle:
 
         with patch("core.conversation_store.ConversationStore.instance",
                    return_value=store):
-            fresh_queues.for_agent(conv, "reviewer").enqueue(
+            from core import agent_inbox
+            agent_inbox.enqueue_item(conv, "reviewer",
                 dict(queued, msg_id="m-queued", ts=_NOW - 30),
-                source="delegate_reply")
+                "delegate_message", "agentA")
             out = json.loads(
+                _make_handler(DelegateStatusHandler, conv).execute({}))
+            agent_inbox.read_inbox(conv, "reviewer")
+            after_read = json.loads(
                 _make_handler(DelegateStatusHandler, conv).execute({}))
 
         assert {e["task_id"]: e["status"] for e in out["live"]} == {
             "tid-taken": "read", "tid-queued": "pending"}
         assert out["counts"]["consumed"] == 0
+        assert {e["task_id"]: e["status"] for e in after_read["live"]} == {
+            "tid-taken": "read", "tid-queued": "read"}
 
     def test_request_answered_under_another_task_is_consumed(
             self, tmp_path, fresh_queues):

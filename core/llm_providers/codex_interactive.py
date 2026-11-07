@@ -11,7 +11,7 @@ from core.codex_interactive_pool import CodexInteractivePool
 from core.llm_providers._codex_interactive_turn import (
     _CodexInteractiveTurnCoordinator)
 from core.llm_providers.claude_code_interactive import (
-    LLMClaudeCodeInteractiveMixin, unblock_backlog)
+    LLMClaudeCodeInteractiveMixin)
 from core.llm_providers.cli_shared import LLMCliSharedMixin
 
 logger = logging.getLogger(__name__)
@@ -233,13 +233,12 @@ class LLMCodexInteractiveMixin:
             self._codex_interactive_active_service_id = (
                 getattr(self, "_agent_service", "") or "")
             self._had_preempts_this_turn = False
-            pool.reclaim_unread_submissions(state)
 
             prompt = self._cci_prompt(
                 messages, tools, state.workdir, state.container_workdir,
                 user_id, conversation_id,
                 initial_context=not state.initial_context_loaded,
-                agent_name=agent_name, state=state)
+                agent_name=agent_name)
             _, _, event_service = get_or_create_cc_interactive_event_service()
             consumer_epoch = event_service.claim_consumer(state.session_token)
             try:
@@ -251,19 +250,6 @@ class LLMCodexInteractiveMixin:
                         "Failed to paste prompt into Codex interactive tmux session: "
                         f"{detail}")
                 state.initial_context_loaded = True
-                # Same dedup contract as the CCI provider: everything in
-                # `messages` has been conveyed, never re-paste it.
-                _submitted = getattr(state, "submitted_msg_ids", None)
-                if _submitted is None:
-                    _submitted = set()
-                    state.submitted_msg_ids = _submitted
-                _submitted.update(
-                    mid for mid in (
-                        getattr(m, "msg_id", "")
-                        for m in (messages or [])
-                        if getattr(m, "role", "") == "user")
-                    if mid)
-                self._cci_submit_followups(pool, state)
                 coord = _CodexInteractiveTurnCoordinator(
                     event_service, state.session_token, callback=callback,
                     thinking_callback=thinking_callback,
@@ -274,10 +260,6 @@ class LLMCodexInteractiveMixin:
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name),
                     pane_callback=lambda: pool._pane_text(state.name),
-                    submissions_callback=lambda: len(
-                        pool.unprocessed_submissions(state)),
-                    backlog_callback=lambda: unblock_backlog(
-                        pool, state, conversation_id, agent_name),
                     context_tokens_callback=lambda tokens: (
                         self.record_codex_live_context(
                             state, conversation_id, agent_name, tokens,
@@ -342,10 +324,6 @@ class LLMCodexInteractiveMixin:
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name),
                     pane_callback=lambda: pool._pane_text(state.name),
-                    submissions_callback=lambda: len(
-                        pool.unprocessed_submissions(state)),
-                    backlog_callback=lambda: unblock_backlog(
-                        pool, state, conversation_id, agent_name),
                     context_tokens_callback=lambda tokens: (
                         self.record_codex_live_context(
                             state, conversation_id, agent_name, tokens,
@@ -423,19 +401,11 @@ class LLMCodexInteractiveMixin:
 
         try:
             return self._cli_submit_queued(
-                CodexInteractivePool.instance(), state, text,
-                kwargs.get("msg_id") or "")
+                CodexInteractivePool.instance(), state, text)
         except CCCompactDetected:
             # The streaming coordinator owns native compaction; the message
             # stays queued for the compacted restart.
             return False
-
-    def _codex_interactive_submission_processed(self, msg_id: str):
-        state = self._codex_interactive_session_state()
-        if not state:
-            return None
-        return CodexInteractivePool.instance().submission_processed(
-            state, msg_id)
 
     def cancel_codex_interactive(self, force: bool = False):
         if not force:

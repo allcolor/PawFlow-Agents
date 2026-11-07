@@ -17,7 +17,6 @@ from core._agent_executor_base import (
     AgentTask,
     _clear_cancelled,
     _is_cancelled,
-    drain_live_delegate_messages,
     register_live_delegate,
     unregister_live_delegate,
 )
@@ -177,6 +176,12 @@ class _SubAgentExecutorLoopMixin:
         _delegate_conv_id = sub_conv_id or task.parent_conversation_id or ""
         if hasattr(client, 'clone_for_call'):
             client = client.clone_for_call()
+        # The initial sub-agent prompt is built in full below. Never inherit
+        # a different turn's delta marker from the resolver client.
+        client._pawflow_context_is_delta = False
+        client._conversation_id = _delegate_conv_id
+        client._agent_name = task.agent_name
+        client._user_id = task.user_id
         _saved_client_state = {}  # nothing to restore — clone is private
         # Suppress raw provider SSE events to the parent bus — the
         # SubAgentExecutor already emits sub_agent_* events that the UI
@@ -249,12 +254,9 @@ class _SubAgentExecutorLoopMixin:
                 existing = store.load(sub_conv_id)
                 if existing and len(existing) > 1:
                     messages = self._deserialize_sub_messages(existing, sub_conv_id)
-                    # Append the new message as parent's response (resume)
-                    messages.append(LLMMessage(
-                        role="user", content=task.message,
-                        source=user_source,
-                        conversation_id=sub_conv_id,
-                    ))
+                    # New parent input is inbox data, including on resume.
+                    messages.extend(self._build_initial_context(
+                        task, sys_prompt, user_source, sub_conv_id)[1:])
                     _resumed = True
                     logger.info("Resuming sub-conv %s with %d messages (+1 new)",
                                 sub_conv_id, len(messages) - 1)
@@ -268,31 +270,37 @@ class _SubAgentExecutorLoopMixin:
             messages = self._build_initial_context(
                 task, sys_prompt, user_source, sub_conv_id)
 
-        # Register in the live-delegate registry so a second delegate
-        # call from the same caller to the same agent PREEMPTS this
-        # running sub-agent (via client.send_user_message) instead of
-        # spawning a parallel one.
+        # Follow-ups use this exact inbox identity; full and ephemeral tasks
+        # must not be mistaken for parent::task::<id> runs.
         if (not task.internal and task.parent_conversation_id
                 and task.source_agent and task.agent_name):
             register_live_delegate(
                 task.parent_conversation_id,
                 task.source_agent, task.agent_name,
-                task.id, client, task)
+                task.id, client, task, conversation_id=_delegate_conv_id)
 
-        def _append_live_delegate_pending() -> int:
-            pending = drain_live_delegate_messages(
-                task.parent_conversation_id, task.source_agent,
-                task.agent_name, task.id)
-            for _msg in pending:
+        _uses_inbox = bool(task.source_agent and not task.internal)
+
+        def _append_inbox_notice(*, only_new=True):
+            if not _uses_inbox:
+                return
+            from core.agent_inbox import take_notice
+            notice = take_notice(_delegate_conv_id, task.agent_name,
+                                 only_new=only_new)
+            if notice:
                 messages.append(LLMMessage(
-                    role="user", content=_msg, source=user_source,
-                    conversation_id=sub_conv_id or task.parent_conversation_id,
-                ))
-            if pending:
-                logger.info(
-                    "[sub-agent:%s] drained %d queued delegate follow-up(s)",
-                    task.agent_name, len(pending))
-            return len(pending)
+                    role="user", content=notice,
+                    conversation_id=_delegate_conv_id))
+
+        def _unread_error(message):
+            result.status = "error"
+            result.response = ""
+            result.error = message
+            self._emit("sub_agent_warning", {
+                "agent_name": task.agent_name, "task_id": task.id,
+                "error": message, "delegate_tc_id": task.delegate_tc_id,
+                "source_task_id": task.source_task_id,
+            })
 
         # Register in AgentLoopTask._active_contexts so the chat UI
         # active-agents panel surfaces this sub-agent. The key uses the
@@ -468,7 +476,9 @@ class _SubAgentExecutorLoopMixin:
                 _compact_attempts = 0
                 while True:
                     try:
-                        response = client.complete_stream(
+                        _append_inbox_notice()
+                        response = self._call_subagent_llm(client, stream=True,
+                            cancel_check=lambda: _is_cancelled(task.id),
                             messages=messages,
                             model=task.model or None,
                             temperature=0.7,
@@ -544,6 +554,7 @@ class _SubAgentExecutorLoopMixin:
                                     conversation_id=_delegate_conv_id)
                             except Exception:
                                 logger.debug("exception suppressed", exc_info=True)
+                        client._pawflow_context_is_delta = False
 
                 result.tokens_in += response.tokens_in
                 result.tokens_out += response.tokens_out
@@ -562,24 +573,24 @@ class _SubAgentExecutorLoopMixin:
                         "source_task_id": task.source_task_id,
                     })
 
-                # If a duplicate delegate arrived while a CLI provider was
-                # running, Codex/Gemini killed the process and returned to
-                # this loop. Preserve any partial assistant text, append the
-                # queued follow-up, and continue instead of treating the
-                # interrupted response as final.
+                # No tool calls → final response
                 if not response.tool_calls:
-                    _queued_followups = _append_live_delegate_pending()
-                    if _queued_followups:
-                        if response.content:
+                    if _uses_inbox:
+                        from core.agent_inbox import end_of_turn, MAX_UNREAD_TURNS
+                        unread_turns = end_of_turn(_delegate_conv_id, task.agent_name)
+                        if unread_turns:
                             messages.append(LLMMessage(
                                 role="assistant", content=response.content,
                                 source={"type": "agent", "name": task.agent_name},
-                                conversation_id=sub_conv_id or task.parent_conversation_id,
-                            ))
-                        continue
-
-                # No tool calls → final response
-                if not response.tool_calls:
+                                conversation_id=_delegate_conv_id))
+                            if unread_turns >= MAX_UNREAD_TURNS:
+                                _unread_error(
+                                    f"Delegate stopped after {unread_turns} turns "
+                                    "with unread inbox items. Call read_inbox() "
+                                    "to acknowledge the task before answering.")
+                                break
+                            _append_inbox_notice(only_new=False)
+                            continue
                     result.response = response.content
                     result.status = "completed"
                     break
@@ -649,7 +660,7 @@ class _SubAgentExecutorLoopMixin:
                             logger.debug("exception suppressed", exc_info=True)
                     tool_result = self._execute_tool(
                         tc, tool_handlers, task.agent_name,
-                        conversation_id=task.parent_conversation_id,
+                        conversation_id=_delegate_conv_id,
                         user_id=task.user_id, read_only=task.read_only)
                     # Emit tool result for delegate block display
                     _result_preview = (tool_result[:500] if isinstance(tool_result, str)
@@ -663,9 +674,10 @@ class _SubAgentExecutorLoopMixin:
                         "delegate_tc_id": task.delegate_tc_id,
                         "source_task_id": task.source_task_id,
                     })
+                    from tasks.ai.agent_core import AgentCoreMixin
                     messages.append(LLMMessage(
                         role="tool",
-                        content=tool_result,
+                        content=AgentCoreMixin._wrap_tool_output(_disp_name, tool_result),
                         tool_call_id=tc.id,
                         conversation_id=sub_conv_id or task.parent_conversation_id,
                     ))
@@ -674,25 +686,34 @@ class _SubAgentExecutorLoopMixin:
                 # off the critical path — see _schedule_sub_persist above).
                 _schedule_sub_persist()
 
-                if _append_live_delegate_pending():
-                    continue
-
                 if result.status in ("timeout", "cancelled", "needs_input"):
                     break
             else:
                 # Max iterations reached — force synthesis
-                result.response = self._force_synthesis(
-                    messages, task.model, _delegate_call_kwargs,
-                )
-                result.status = "completed"
+                from core.agent_inbox import unread_count
+                if _uses_inbox and unread_count(_delegate_conv_id, task.agent_name):
+                    _unread_error("Delegate reached its iteration limit with unread inbox items.")
+                else:
+                    result.response = self._force_synthesis(
+                        messages, task.model, _delegate_call_kwargs, client=client,
+                        cancel_check=lambda: _is_cancelled(task.id),
+                    )
+                    if _uses_inbox and unread_count(_delegate_conv_id, task.agent_name):
+                        _unread_error("Delegate finished synthesis with unread inbox items.")
+                    else:
+                        result.status = "completed"
 
         except Exception as e:
             # Always log the traceback so we can diagnose silent failures
             # instead of qwen looping forever on an empty "status: error".
-            logger.exception("Sub-agent '%s' error: %s", task.agent_name, e)
-            _err = str(e) or f"{type(e).__name__} (no message)"
-            result.error = _err
-            result.status = "error"
+            if _is_cancelled(task.id):
+                result.error = "Cancelled by user"
+                result.status = "cancelled"
+            else:
+                logger.exception("Sub-agent '%s' error: %s", task.agent_name, e)
+                _err = str(e) or f"{type(e).__name__} (no message)"
+                result.error = _err
+                result.status = "error"
         finally:
             # Final synchronous flush — the background persister may not
             # have written the last iteration's state yet.

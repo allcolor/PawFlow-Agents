@@ -238,6 +238,82 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
             timestamp=getattr(tc, "timestamp", 0.0) or 0.0,
         )
 
+    def _alc_inbox_end_of_turn(self, st) -> None:
+        """Re-trigger an agent whose turn ended with unread inbox items.
+
+        The next turn carries a fresh imperative notice (plus any user
+        message the final drain queued) and takes its mode from the unread
+        items too, so an unread delegate request still makes it a
+        delegate_reply turn. After ``MAX_UNREAD_TURNS`` turns that read
+        nothing, the agent is no longer re-triggered until a new item
+        arrives, and the conversation shows why once.
+        """
+        from core import agent_inbox
+        agent = st.ctx.get("active_agent_name") or ""
+        if not agent:
+            return
+        try:
+            agent_inbox.reset_unread_for_human_input(
+                st.conversation_id, agent, st.ctx.get("messages", []),
+                st.ctx.setdefault("_inbox_reset_user_ids", set()))
+            turns = agent_inbox.end_of_turn(st.conversation_id, agent)
+        except Exception:
+            logger.warning("[inbox] end-of-turn check failed for %s/%s",
+                           st.conversation_id[:8], agent, exc_info=True)
+            return
+        if not turns:
+            return
+        if turns >= agent_inbox.MAX_UNREAD_TURNS:
+            if turns == agent_inbox.MAX_UNREAD_TURNS:
+                self._alc_inbox_unread_warning(st, agent)
+            return
+        notice = agent_inbox.take_notice(st.conversation_id, agent)
+        if not notice:
+            return
+        notice_msg = LLMMessage(
+            role="user", content=notice,
+            source={"type": "system", "name": "inbox",
+                    "target_agent": agent, "visibility": "target_only"},
+            conversation_id=st.conversation_id)
+        st._append(notice_msg)
+        queued = (list(getattr(st, "_retrigger_msgs", None) or [])
+                  if st.ctx.get("_retrigger_after_done") else [])
+        st._retrigger_msgs = queued + [notice_msg]
+        st._apply_queued_delegate_turn_mode(
+            list(st._new_user_msgs)
+            + agent_inbox.turn_mode_messages(st.conversation_id, agent))
+        st.ctx["_retrigger_messages"] = self._serialize_messages(
+            st._retrigger_msgs)
+        st.ctx["_retrigger_after_done"] = True
+        logger.info("[inbox] %s/%s ended a turn with unread items (%d/%d) — "
+                    "re-triggering with a notice", st.conversation_id[:8],
+                    agent, turns, agent_inbox.MAX_UNREAD_TURNS)
+
+    @staticmethod
+    def _alc_inbox_unread_warning(st, agent: str) -> None:
+        from core import agent_inbox
+        from core.conversation_writer import ConversationWriter
+        from core.llm_client import stamp_message
+        count = agent_inbox.unread_count(st.conversation_id, agent)
+        text = (f"[PawFlow inbox] {agent} ended {agent_inbox.MAX_UNREAD_TURNS} "
+                f"turns without calling read_inbox ({count} unread item(s)). "
+                "It is not re-triggered until a new item arrives.")
+        logger.warning("[inbox] %s/%s: %s", st.conversation_id[:8], agent, text)
+        source = {"type": "system", "name": "inbox", "target_agent": agent}
+        message = stamp_message({"role": "user", "content": text,
+                                 "display_only": True, "source": source},
+                                st.conversation_id)
+        event = {"type": "new_message", "data": {
+            "role": "user", "content": text, "display_only": True,
+            "source": source, "msg_id": message["msg_id"],
+            "ts": message.get("ts")}}
+        try:
+            ConversationWriter.for_conversation(st.conversation_id).enqueue_message(
+                message, agent_name=agent, user_id=st.user_id,
+                sse_events=[event])
+        except Exception:
+            logger.warning("[inbox] unread warning not persisted", exc_info=True)
+
     def _run_agent_loop(self, ctx: Dict, emitter: AgentEmitter) -> AgentResult:
         """The ONE agent execution loop — used by both sync and streaming."""
         conversation_id = ctx.get("conversation_id", "")
@@ -423,7 +499,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
             st._had_preempts = getattr(st.client, '_had_preempts_this_turn', False)
             st._existing_ids = {m.msg_id for m in st.messages if m.msg_id}
             st._pre_drain = len(st.messages)
-            st.emitter.drain_pending(st.messages, st._append, st.iteration)
+            st.emitter.drain_pending(st.messages, st._append, st.iteration,
+                                     final=True)
             # Only count messages that are TRULY new (not already in this loop's context)
             st._new_user_msgs = [m for m in st.messages[st._pre_drain:]
                               if m.role == "user" and m.msg_id not in st._existing_ids]
@@ -458,6 +535,9 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                 if st._dupes > 0:
                     logger.info("[agent:%s] drained %d message(s), %d were duplicates — NOT re-triggering",
                                 st.conversation_id[:8], len(st.messages[st._pre_drain:]), st._dupes)
+
+            # Inbox: unread items keep the agent going with a fresh notice.
+            self._alc_inbox_end_of_turn(st)
 
             # Unregister claude-code client BEFORE done (prevents stale
             # preempt) — but ONLY the entry this run owns: a zombie's
@@ -592,7 +672,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                 from core.handlers._spawn_delivery import route_flash_caller
                                 st._routed = route_flash_caller(
                                     st.conversation_id, st._src_agent,
-                                    st._reply_text)
+                                    st._reply_text,
+                                    sender=st.ctx.get("active_agent_name") or "")
                             if st._external_delivered:
                                 logger.info(
                                     "[delegate-reply] task %s returned to "
@@ -614,6 +695,11 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                     "task_id": st._tm_end.get("task_id", ""),
                                 }
                                 st._reply_mid = _uuid_dr.uuid4().hex[:12]
+                                from core.llm_client import stamp_message
+                                st._reply_message = stamp_message({
+                                    "role": "user", "content": st._reply_text,
+                                    "source": st._reply_src,
+                                    "msg_id": st._reply_mid}, st.conversation_id)
                                 st._caller_key = (
                                     f"{st.conversation_id}:{st._src_agent}"
                                     if st._src_agent else st.conversation_id)
@@ -630,8 +716,9 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                     SpawnAgentsHandler._preempt_caller(
                                         st._inst, st.conversation_id,
                                         st._src_agent, st._reply_text,
-                                        st._reply_mid, st._reply_src)
-                                elif st._inst:
+                                        st._reply_mid, st._reply_src,
+                                        user_id=st.user_id, message=st._reply_message)
+                                else:
                                     logger.info(
                                         "[delegate-reply] caller '%s' idle "
                                         "— wake", st._src_agent)
@@ -640,7 +727,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                         st._src_agent, st.user_id,
                                         st._reply_text, st._reply_mid,
                                         source=st._reply_src,
-                                        pre_persisted=False)
+                                        pre_persisted=False, message=st._reply_message)
                         except Exception as _dre:
                             logger.error(
                                 "[delegate-reply] wake/preempt failed: %s", _dre,

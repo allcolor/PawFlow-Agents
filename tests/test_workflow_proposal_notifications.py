@@ -62,5 +62,7 @@ def test_planner_event_is_stamped_persisted_queued_and_wakes_exact_agent(
     assert message["source"]["target_agent"] == "Planner"
     assert message["workflow_proposal"]["draft_revision"] == 3
     assert written[0][1] == {"agent_name": "Planner", "user_id": "alice"}
-    assert queued[0][1] == "workflow_proposal"
+    assert queued[0][1] == "inbox:workflow_proposal"
+    assert queued[0][0]["_inbox_kind"] == "workflow_proposal"
+    assert message["display_only"] is True
     assert woken[0][0:2] == ("conv", "Planner")

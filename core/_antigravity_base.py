@@ -56,7 +56,6 @@ class AntigravityObserverSession:
     observation_mode: str = "mitm"
     launch_revision: str = ""
     in_flight: int = 0
-    submitted_msg_ids: set = field(default_factory=set)
 
     @property
     def agent_name(self) -> str:

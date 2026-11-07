@@ -29,12 +29,6 @@ from core.llm_providers._cci_turn import (  # noqa: E402,F401 -- re-exported for
 )
 
 
-def unblock_backlog(pool, state, conversation_id: str, agent_name: str) -> bool:
-    """The backlog rule for a live CLI turn (tasks/ai/_delivery_limits.py)."""
-    from tasks.ai._delivery_limits import unblock_backlog as _unblock
-    return _unblock(pool, state, conversation_id, agent_name)
-
-
 def take_compact_request(conversation_id: str, agent_name: str) -> bool:
     """A delivery's pending compaction request for this live turn."""
     from tasks.ai._delivery_limits import take_compact_request as _take
@@ -88,23 +82,11 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             self._cci_active_service_id = (
                 getattr(self, "_agent_service", "") or "")
             self._had_preempts_this_turn = False
-            pool.reclaim_unread_submissions(state)
             prompt = self._cci_prompt(
                 messages, tools, state.workdir, state.container_workdir,
                 user_id, conversation_id,
                 initial_context=not state.initial_context_loaded,
-                agent_name=agent_name, state=state)
-            if prompt is None:
-                # Nothing to paste and nothing owed: every message of this
-                # turn's tail already reached the CLI during a previous turn
-                # (a retrigger after the live-submit path drained the queue).
-                # Failing here surfaced "Claude Code session lost" and lost
-                # the delegate reply (2026-10-28 10:26:24, GameDev8).
-                logger.info(
-                    "[cci] %s/%s: retrigger turn has nothing new to paste — "
-                    "finishing without a provider call",
-                    conversation_id[:8], agent_name)
-                return LLMResponse(content="", tool_calls=[])
+                agent_name=agent_name)
             from services.cc_interactive_event_service import (
                 get_or_create_cc_interactive_event_service)
             _, _, event_service = get_or_create_cc_interactive_event_service()
@@ -119,22 +101,6 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     "Failed to paste prompt into Claude Code interactive "
                     f"tmux session: {detail}")
             state.initial_context_loaded = True
-            # Everything in `messages` has now been conveyed to the CLI
-            # (cold paste, catchup context, or the live tail). Record the
-            # user msg_ids on the session so no later prompt build ever
-            # re-pastes one of them (double-delivery bug).
-            _submitted = getattr(state, "submitted_msg_ids", None)
-            if _submitted is None:
-                _submitted = set()
-                state.submitted_msg_ids = _submitted
-            _submitted.update(
-                mid for mid in (
-                    getattr(m, "msg_id", "")
-                    for m in (messages or [])
-                    if getattr(m, "role", "") == "user")
-                if mid)
-            self._cci_submit_followups(pool, state)
-
             try:
                 coord = _CCITurnCoordinator(
                     event_service, state.session_token, callback=callback,
@@ -149,10 +115,6 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name),
                     pane_callback=lambda: pool._pane_text(state.name),
-                    submissions_callback=lambda: len(
-                        pool.unprocessed_submissions(state)),
-                    backlog_callback=lambda: unblock_backlog(
-                        pool, state, conversation_id, agent_name),
                     compact_request_callback=lambda: take_compact_request(
                         conversation_id, agent_name))
                 response = coord.run(getattr(self, "_abort", None))
@@ -226,10 +188,6 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     consumer_epoch=consumer_epoch,
                     liveness_callback=lambda: pool.session_is_live(state.name),
                     pane_callback=lambda: pool._pane_text(state.name),
-                    submissions_callback=lambda: len(
-                        pool.unprocessed_submissions(state)),
-                    backlog_callback=lambda: unblock_backlog(
-                        pool, state, conversation_id, agent_name),
                     compact_request_callback=lambda: take_compact_request(
                         conversation_id, agent_name))
                 response = coord.run(getattr(self, "_abort", None))
@@ -280,9 +238,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
 
     def _cci_prompt(self, messages, tools, workdir: str, container_workdir: str,
                     user_id: str, conversation_id: str,
-                    initial_context: bool = False, agent_name: str = "",
-                    state=None) -> str:
-        self._cci_live_followups = []
+                    initial_context: bool = False, agent_name: str = "") -> str:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         if tools:
             system_prompt = append_cli_mcp_system_prompt(system_prompt)
@@ -311,30 +267,14 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             else:
                 parts.append("Attachments:\n" + "\n".join(image_lines))
         if not initial_context:
-            # Rows the prompt carries and rows already pasted into this
-            # session (a delegate submitted live) are not catch-up: showing
-            # them again delivered every live-submitted message twice.
-            catchup = self._cci_catchup_context(
-                conversation_id, agent_name,
-                exclude_msg_ids=({getattr(m, "msg_id", "")
-                                  for m in (messages or [])}
-                                 | set(getattr(state, "submitted_msg_ids",
-                                               None) or ())) - {""})
+            catchup = self._cci_catchup_context(conversation_id, agent_name)
             if catchup:
                 parts.append(catchup)
-            current = self._cci_live_text(messages, state=state)
-            if not current and not getattr(self, "_cci_live_all_submitted", False):
-                current = user_text
+            current = self._cci_live_text(messages)
             if current:
                 parts.append(current)
         rendered = "\n\n".join(parts).strip()
         if not initial_context and not rendered:
-            if getattr(self, "_cci_live_all_submitted", False):
-                # The tail existed and every message in it was already pasted
-                # into this live session: there is nothing new to submit, and
-                # nothing is wrong. Returning None lets the caller finish the
-                # turn quietly instead of failing it as a lost session.
-                return None
             # A blank paste is never submitted: the TUI ignores it, no hook or
             # request follows, and the turn used to fail a minute later as a
             # paste failure that hid the missing message.
@@ -349,43 +289,19 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 rendered, messages, conversation_id, agent_name)
         return rendered
 
-    def _cci_catchup_context(self, conversation_id: str, agent_name: str = "",
-                             exclude_msg_ids=()) -> str:
+    def _cci_catchup_context(self, conversation_id: str, agent_name: str = "") -> str:
         agent = agent_name or getattr(self, "_cci_active_agent_name", "") or getattr(self, "_agent_name", "") or ""
         if not conversation_id or not agent:
             return ""
         builder = getattr(self, "_build_catchup_context", None)
         if builder is None:
             return ""
-        return builder(conversation_id, agent,
-                       exclude_msg_ids=exclude_msg_ids) or ""
+        return builder(conversation_id, agent) or ""
 
-    def _cci_live_text(self, messages, state=None) -> str:
-        """Return every not-yet-submitted trailing user text for a live session.
-
-        A retrigger turn can carry SEVERAL drained user messages (e.g. N
-        delegate results preempted during the previous turn). The old code
-        pasted only the newest one — the other N-1 were persisted in the
-        PawFlow context and visible in the webchat but never reached the
-        CLI, so they were silently never answered. Render the whole tail of
-        consecutive user messages after the last assistant reply, and skip
-        any msg_id the session has already pasted (dedup — the same drained
-        message must never be submitted twice).
-
-        Only the FIRST not-yet-submitted message is returned: each message is
-        its own submission. The others are stashed on
-        ``self._cci_live_followups`` as ``(msg_id, text)`` and submitted one
-        by one right after the prompt went in (``_cci_submit_followups``).
-
-        Side effects: stashes the rendered msg_ids on
-        ``self._cci_pending_live_msg_ids`` (recorded on the session by the
-        caller AFTER the paste succeeds) and sets
-        ``self._cci_live_all_submitted`` when the tail existed but every
-        message in it was already submitted.
-        """
+    def _cci_live_text(self, messages) -> str:
+        """Join all trailing user messages into one live-session prompt."""
         from core.llm_providers.cli_shared import textualize_message
 
-        submitted = getattr(state, "submitted_msg_ids", None) or set()
         tail = []
         for msg in reversed(messages or []):
             role = getattr(msg, "role", "")
@@ -393,50 +309,11 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 break
             if role != "user" or getattr(msg, "display_only", False):
                 continue
-            tail.append(msg)
-        tail.reverse()
-        self._cci_live_all_submitted = bool(tail) and all(
-            getattr(m, "msg_id", "") in submitted for m in tail)
-        rendered_ids = []
-        parts = []
-        followups = []
-        for msg in tail:
-            mid = getattr(msg, "msg_id", "")
-            if mid and mid in submitted:
-                continue
             rendered = textualize_message(msg)
             text = rendered.strip() if isinstance(rendered, str) else ""
-            if not text:
-                continue
-            if parts:
-                followups.append((mid, text))
-                continue
-            parts.append(text)
-            if mid:
-                rendered_ids.append(mid)
-        self._cci_pending_live_msg_ids = rendered_ids
-        self._cci_live_followups = followups
-        return "\n\n".join(parts)
-
-    def _cci_submit_followups(self, pool, state) -> None:
-        """Submit the tail messages after the first, one paste + Enter each.
-
-        Called once the turn's prompt went in. A follow-up that cannot be
-        pasted is left out of ``submitted_msg_ids`` so it is never counted
-        as conveyed.
-        """
-        followups = getattr(self, "_cci_live_followups", None) or []
-        self._cci_live_followups = []
-        failed = []
-        for mid, text in followups:
-            if not self._cli_submit_queued(pool, state, text, mid):
-                failed.append(mid)
-        if failed:
-            submitted = getattr(state, "submitted_msg_ids", None) or set()
-            submitted.difference_update(failed)
-            logger.error(
-                "[cci] %d follow-up message(s) not submitted to %s: %s",
-                len(failed), getattr(state, "name", "?"), failed)
+            if text:
+                tail.append(text)
+        return "\n\n".join(reversed(tail))
 
     def _cci_materialize_images(self, messages, workdir: str, container_workdir: str,
                                 user_id: str, conversation_id: str) -> list[str]:
@@ -527,45 +404,15 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         if not state:
             return False
         return self._cli_submit_queued(
-            InteractiveClaudeCodePool.instance(), state, text,
-            kwargs.get("msg_id") or "")
+            InteractiveClaudeCodePool.instance(), state, text)
 
-    def _cli_submit_queued(self, pool, state, text: str, msg_id: str) -> bool:
-        """Submit one non-user message into the live session, uninterrupted.
-
-        The message is recorded as conveyed only once the CLI accepted it, so
-        no later prompt build pastes it again. Whether the final drain may
-        drop its rescue copy is decided per message, from the session
-        journal (``cli_submission_processed``), not from this acceptance.
-        """
-        if (not (text or "").strip()
-                or not pool.send_queued(state, text, msg_id=msg_id)):
-            return False
-        self._had_preempts_this_turn = True
-        if msg_id:
-            submitted = getattr(state, "submitted_msg_ids", None)
-            if submitted is None:
-                submitted = set()
-                state.submitted_msg_ids = submitted
-            submitted.add(msg_id)
-        return True
-
-    def _cci_submission_processed(self, msg_id: str):
-        state = self._cci_session_state()
-        if not state:
-            return None
-        return InteractiveClaudeCodePool.instance().submission_processed(
-            state, msg_id)
+    def _cli_submit_queued(self, pool, state, text: str) -> bool:
+        """Send the fixed inbox notice without changing user preempt state."""
+        return bool((text or "").strip() and pool.send_queued(state, text))
 
     def _cci_preempt_prompt(self, text: str, attachments: list,
                             state, user_id: str, conversation_id: str,
                             agent_name: str = "") -> str:
-        catchup = self._cci_catchup_context(
-            conversation_id, agent_name,
-            exclude_msg_ids=set(getattr(state, "submitted_msg_ids", None)
-                                or ()) - {""})
-        if not attachments:
-            return "\n\n".join(part for part in (catchup, text) if part).strip()
         from core.llm_client import LLMMessage
 
         parts = []
@@ -578,7 +425,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             if block:
                 parts.append(block)
         if not any(part.get("type") != "text" for part in parts):
-            return text
+            catchup = self._cci_catchup_context(conversation_id, agent_name)
+            return "\n\n".join(part for part in (catchup, text) if part).strip()
         msg = LLMMessage(role="user", content=parts,
                          conversation_id=conversation_id)
         return self._cci_prompt(

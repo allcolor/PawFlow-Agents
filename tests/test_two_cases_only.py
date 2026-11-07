@@ -19,10 +19,98 @@ pointers cleared and rewritten on every message.
 """
 
 import unittest
+import threading
+from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
 
 from core._llm_types import ColdStartRequired, DeltaContextRequired
 from core.llm_providers.cli_shared import LLMCliSharedMixin
+
+
+class _ReachedAfterLiveGuard(BaseException):
+    pass
+
+
+@pytest.mark.parametrize("provider", ["codex-app-server", "gemini"])
+@pytest.mark.parametrize("is_delta", [False, True])
+@pytest.mark.parametrize("recover", [False, True])
+def test_real_provider_live_lookup_preserves_context_signal_and_lock(
+        monkeypatch, tmp_path, provider, is_delta, recover):
+    from core.llm_client import LLMClient, LLMMessage
+
+    client = LLMClient(provider, config={"api_key": "test"})
+    client._pawflow_context_is_delta = is_delta
+    content = [{"type": "text", "text": "pending input"},
+               {"type": "image_url", "image_url": {"url": "data:image/png;base64,UE5H"}}]
+    messages = [LLMMessage(role="user", content=deepcopy(content), conversation_id="conv")]
+    lock = threading.Lock()
+    live = SimpleNamespace(
+        proc=MagicMock(), container_name="healthy-container", session_id="live-session",
+        mcp_internal_token="", event_q=None, reuse_count=1,
+        turn_lock=MagicMock(wraps=lock),
+        is_container_alive=lambda: True, is_process_alive=lambda: True)
+    registry = MagicMock()
+    registry.get.return_value = live
+    store = MagicMock()
+    store.get_extra.return_value = ""
+    monkeypatch.setattr("core.conversation_store.ConversationStore.instance", lambda: store)
+    reached = MagicMock(side_effect=_ReachedAfterLiveGuard)
+    if provider == "codex-app-server":
+        import core.llm_providers._codex_app_stream as module
+        monkeypatch.setattr("core.codex_live_registry.CodexLiveRegistry.instance", lambda: registry)
+        monkeypatch.setattr(client, "_codex_get_session_workdir", lambda *args: str(tmp_path))
+        monkeypatch.setattr(client, "_codex_app_container_dir", lambda path: path)
+        monkeypatch.setattr(client, "_codex_app_estimate_prompt_tokens", lambda text: 0)
+        method = client._stream_codex_app_server
+        extractor = "_codex_app_extract_images"
+    else:
+        import core.llm_providers._gemini_stream as module
+        monkeypatch.setattr("core.gemini_live_registry.GeminiLiveRegistry.instance", lambda: registry)
+        monkeypatch.setattr(client, "_gemini_get_session_workdir", lambda *args: str(tmp_path))
+        monkeypatch.setattr(client, "_gemini_acp_container_dir", lambda path: path)
+        monkeypatch.setattr(client, "_gemini_acp_full_initial_text", lambda *args: "cold context")
+        method = client._stream_gemini
+        extractor = "_gemini_acp_extract_images"
+    extracted = []
+    extract_images = getattr(client, extractor)
+
+    def capture_images(*args, **kwargs):
+        images = extract_images(*args, **kwargs)
+        extracted.append(images)
+        return images
+
+    monkeypatch.setattr(client, extractor, capture_images)
+    # This point follows live lookup and precedes submission and its cleanup.
+    monkeypatch.setattr(module, "uuid", SimpleNamespace(uuid4=reached))
+    try:
+        with pytest.raises(_ReachedAfterLiveGuard if is_delta or recover else DeltaContextRequired):
+            kwargs = {"messages": messages, "model": "model", "call_user_id": "u",
+                      "call_conversation_id": "conv", "call_agent_name": "worker"}
+            if recover:
+                from core.agent_executor import SubAgentExecutor
+                monkeypatch.setattr(client, "complete_stream", method)
+                SubAgentExecutor._call_subagent_llm(client, stream=True, **kwargs)
+            else:
+                method(**kwargs)
+        assert client._pawflow_context_is_delta is True
+        assert lock.locked() is (is_delta or recover)
+        attempts = 2 if recover and not is_delta else 1
+        assert live.turn_lock.acquire.call_count == attempts
+        assert live.turn_lock.release.call_count == (0 if is_delta else 1)
+        assert reached.call_count == (1 if is_delta or recover else 0)
+        if recover:
+            assert [len(images) for images in extracted] == [1] * attempts
+            assert messages[0].content == content
+        registry.evict.assert_not_called()
+        live.proc.terminate.assert_not_called()
+        live.proc.kill.assert_not_called()
+    finally:
+        if lock.locked():
+            lock.release()
 
 
 class _Provider(LLMCliSharedMixin):

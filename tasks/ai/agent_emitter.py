@@ -60,7 +60,7 @@ class AgentEmitter:
     def on_tool_result(self, tc, result_text, preview): pass
     def check_cancelled(self): pass
     def check_interrupt(self) -> bool: return False
-    def drain_pending(self, messages, append_fn, iteration): pass
+    def drain_pending(self, messages, append_fn, iteration, final=False): pass
     def on_no_pending_work(self, content, ctx): return content
     def on_fatal_error(self, error_msg): pass
     def on_overflow_retry(self, iteration): pass
@@ -677,7 +677,12 @@ class StreamEmitter(AgentEmitter):
     def check_interrupt(self) -> bool:
         return self.agent._check_interrupt(self.gen_key)
 
-    def drain_pending(self, messages, append_fn, iteration):
+    def drain_pending(self, messages, append_fn, iteration, final=False):
+        """Append queued user-visible messages, then the inbox notice.
+
+        ``final`` is the end-of-turn drain: agent_core decides there whether
+        unread inbox items re-trigger the agent, so no notice is added here.
+        """
         def _already_in_context(msg_id):
             """True when a message with this msg_id is already part of the
             context being built (it was pre-persisted by the streaming ingress
@@ -840,6 +845,27 @@ class StreamEmitter(AgentEmitter):
                 messages.append(_msg)
             else:
                 append_fn(_msg)
+
+        # Inbox: non-user items are never inline (core/agent_inbox.py). The
+        # turn gets one imperative notice: at its start whenever anything is
+        # unread, later only when an item arrived after the last notice (a
+        # running CLI already got that one pasted by _live_submit).
+        if not final and self._agent_name:
+            try:
+                from core import agent_inbox
+                _notice = agent_inbox.take_notice(
+                    self.conversation_id, self._agent_name,
+                    only_new=bool(iteration))
+            except Exception:
+                logger.warning("[drain] inbox notice failed", exc_info=True)
+                _notice = ""
+            if _notice and (not messages or messages[-1].content != _notice):
+                append_fn(LLMMessage(
+                    role="user", content=_notice,
+                    source={"type": "system", "name": "inbox",
+                            "target_agent": self._agent_name,
+                            "visibility": "target_only"},
+                    conversation_id=self.conversation_id))
 
         # Source 3 (transcript scan) removed. Cross-channel and cross-agent
         # messages are routed through PendingQueue at their ingress — see

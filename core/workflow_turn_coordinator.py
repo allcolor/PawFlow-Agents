@@ -264,22 +264,23 @@ class WorkflowTurnCoordinator:
         from core.handlers.resource_agent import SpawnAgentsHandler
         from tasks.ai.agent_loop import AgentLoopTask
         runtime = AgentLoopTask._live_instance
-        if runtime is None:
-            return
         conversation_id = run["conversation_id"]
         key = f"{conversation_id}:{caller}"
-        with runtime._active_contexts_lock:
-            running = key in runtime._active_contexts
+        running = False
+        if runtime is not None:
+            with runtime._active_contexts_lock:
+                running = key in runtime._active_contexts
         response = str((run.get("terminal_event") or {}).get("response") or "")
         message_id = str(run.get("assistant_msg_id") or "")
         if running:
             SpawnAgentsHandler._preempt_caller(
                 runtime, conversation_id, caller, response,
-                message_id, reply_source)
+                message_id, reply_source, user_id=run["user_id"],
+                message=run.get("assistant_payload"))
         else:
             SpawnAgentsHandler._wake_caller(
                 runtime, conversation_id, caller, run["user_id"], response,
-                message_id, source=reply_source)
+                message_id, source=reply_source, message=run.get("assistant_payload"))
 
     def recover_committing(self) -> dict[str, int]:
         completed = 0

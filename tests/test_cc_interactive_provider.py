@@ -69,7 +69,6 @@ def test_ephemeral_interactive_stream_is_isolated_and_destroyed_on_send_error(
     pool = SimpleNamespace(
         ensure_started=ensure_started, touch=lambda _state: None,
         begin_turn=lambda _state: None, end_turn=lambda _state: None,
-        reclaim_unread_submissions=lambda _state: set(),
         send_text=lambda _state, _prompt: False,
         destroy_ephemeral=lambda item: destroyed.append(item))
     monkeypatch.setattr(
@@ -108,7 +107,6 @@ def test_claude_provider_releases_request_lease_when_coordinator_raises(
         ensure_started=lambda *_args, **_kwargs: state,
         touch=lambda _state: None,
         begin_turn=lambda _state: None, end_turn=lambda _state: None,
-        reclaim_unread_submissions=lambda _state: set(),
         send_text=lambda _state, _prompt: True,
         send_interrupt=lambda _state, _text: True,
         destroy_ephemeral=lambda _state: None)
@@ -165,7 +163,6 @@ def test_claude_provider_kills_native_session_when_compaction_hook_fires(
         ensure_started=lambda *_args, **_kwargs: state,
         touch=lambda _state: None,
         begin_turn=lambda _state: None, end_turn=lambda _state: None,
-        reclaim_unread_submissions=lambda _state: set(),
         send_text=lambda _state, _prompt: True,
         send_interrupt=lambda _state, _text: True,
         destroy_ephemeral=lambda _state: None,
@@ -1347,12 +1344,11 @@ def test_live_interactive_prompt_includes_multi_agent_catchup(tmp_path):
     from core.llm_client import LLMMessage
 
     client = LLMClient("claude-code-interactive")
-    client._build_catchup_context = lambda cid, agent, **_kw: (
-        "<catch_up_context>\n"
-        "New messages from other participants since your last response:\n"
-        "<message role=\"user\">\n[Agent reviewer]: done\n</message>\n"
-        "</catch_up_context>"
-    )
+    notice = (
+        "[PawFlow inbox: ACTION REQUIRED] You have 1 unread item:\n"
+        "  1. catch-up of other participants from reviewer (26 chars)\n"
+        "STOP. Call read_inbox() NOW, before any other tool call or answer.")
+    client._build_catchup_context = lambda cid, agent: notice
     prompt = client._cci_prompt(
         [LLMMessage(role="user", content="new request", conversation_id="conv")],
         None,
@@ -1364,9 +1360,8 @@ def test_live_interactive_prompt_includes_multi_agent_catchup(tmp_path):
         agent_name="assistant",
     )
 
-    assert prompt.startswith("<catch_up_context>")
-    assert "[Agent reviewer]: done" in prompt
-    assert prompt.endswith("new request\n")
+    assert prompt == notice + "\n\nnew request\n"
+    assert "[Agent reviewer]: done" not in prompt
 
 
 def test_live_interactive_prompt_refuses_an_empty_paste(tmp_path):

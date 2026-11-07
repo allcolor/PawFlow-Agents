@@ -81,6 +81,10 @@ TOOL_FAMILIES = {
             ("remote agent task", ("a2a",),
              "call a configured agent outside this conversation or runtime",
              "an agent already present in this conversation"),
+            ("inbox read", ("read_inbox",),
+             "read delegate, background, and wake-up messages when a "
+             "[PawFlow inbox: ACTION REQUIRED] notice appears",
+             "fetching one finished delegate's output by task_id"),
         ),
     },
     "work": {

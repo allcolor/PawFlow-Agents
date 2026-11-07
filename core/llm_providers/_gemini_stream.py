@@ -43,7 +43,7 @@ class _GeminiStreamMixin:
         call_ephemeral_stream: Optional[bool] = None,
     ):
         """Stream one Gemini ACP prompt into PawFlow callbacks."""
-        from core.llm_client import LLMClientError, LLMResponse
+        from core.llm_client import DeltaContextRequired, LLMClientError, LLMResponse
 
         user_id = call_user_id or getattr(self, "_user_id", "") or ""
         conv_id = call_conversation_id or getattr(self, "_conversation_id", "") or ""
@@ -200,6 +200,8 @@ class _GeminiStreamMixin:
                         logger.warning(
                             "[gemini-acp-live] process dead but container alive; restarting ACP in container=%s",
                             reuse_container)
+            except DeltaContextRequired:
+                raise  # The guard returned the turn lock; rebuild before submission.
             except Exception:
                 logger.debug("[gemini-acp-live] lookup failed", exc_info=True)
                 live_reg = None

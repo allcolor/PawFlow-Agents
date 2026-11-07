@@ -514,7 +514,9 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
             msg = stamp_message({
                 "role": "user",
                 "content": content,
-                "source": {"type": "system", "name": "background"},
+                "display_only": True,
+                "source": {"type": "system", "name": "background",
+                           "target_agent": agent_name},
             }, conv_id)
             # 1. Transcript + shared + other agents' contexts (all routes
             #    covered by append_message based on role+source).
@@ -527,6 +529,7 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
                 from tasks.ai._live_submit import submit_or_queue
                 submit_or_queue(
                     conv_id, agent_name or "", msg, f"bg_tool:{tool_name}",
+                    kind="background_result", sender=f"tool {tool_name}",
                     user_id=task.get("user_id", "") or "", wake=False)
             except Exception as _qe:
                 logger.warning("[bg-tool] PendingQueue.enqueue failed: %s", _qe)

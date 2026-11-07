@@ -334,21 +334,29 @@ class _ALCIterationMixin:
 
         st._apply_queued_delegate_turn_mode = lambda _new_user_msgs: self._alc_apply_queued_delegate_turn_mode(st, _new_user_msgs)
 
+        from core import agent_inbox
+        _inbox_sources = agent_inbox.turn_mode_messages(
+            st.conversation_id, st.ctx["active_agent_name"]) if st.ctx.get("active_agent_name") else []
+        if _inbox_sources:
+            _human = [m for m in st.messages
+                      if getattr(m, "_pawflow_current_user_message", False)]
+            st._apply_queued_delegate_turn_mode(_human + _inbox_sources)
+
         st._cli_block_callback = lambda event_type, payload: self._alc_cli_block_callback(st, event_type, payload)
 
         st._llm_call = lambda msgs, ps=st.poll_silent: _record_response_usage(
             st, self._alc_llm_call(st, msgs, ps))
 
-        # Claude-code with existing session: send only the latest
-        # user message (session has full context via --resume)
+        # Warm CLI sessions already hold history and system instructions.
+        # Keep every pending human message before a trailing inbox notice.
         st._call_context = st.llm_context
         if st._is_claude_code and st.ctx.get("_cli_has_session"):
+            from core.llm_providers.cli_shared import trailing_user_messages
+
             st._is_real_user_msg = lambda m: self._alc_is_real_user_msg(st, m)
-            st._new_msgs = [m for m in st.llm_context if st._is_real_user_msg(m)]
-            if st._new_msgs:
-                # Only the latest user message — no system prompt
-                # (session already has it from initial context)
-                st._call_context = [st._new_msgs[-1]]
+            st._new_msgs = [m for m in trailing_user_messages(st.llm_context)
+                            if st._is_real_user_msg(m)]
+            st._call_context = st._new_msgs
 
         st._provider_response_completed_at = 0.0
         _sig = self._alc_llm_turn(st)

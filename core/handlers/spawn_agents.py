@@ -417,44 +417,31 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                 }))
                 continue
 
-            # Preempt path: a delegate for (_src_agent, agent_name) is
-            # already running in this conversation — inject the message
-            # into its loop instead of spawning a second one.
+            # A running isolated delegate receives inbox data and a notice;
+            # never interrupt its provider or start another worker.
             if (_parent_conv_id and _src_agent and agent_name):
                 _live = get_live_delegate(
                     _parent_conv_id, _src_agent, agent_name)
                 if _live:
-                    _live_client = _live.get("client")
                     _live_tid = _live.get("task_id", "")
-                    _delivered = False
-                    if _live_client and hasattr(_live_client, "send_user_message"):
-                        try:
-                            _delivered = bool(
-                                _live_client.send_user_message(message))
-                        except Exception as _pe:
-                            logger.warning(
-                                "[delegate] preempt to live delegate %s failed: %s",
-                                _live_tid, _pe)
-                    if not _delivered:
-                        queue_live_delegate_message(
-                            _parent_conv_id, _src_agent, agent_name, message)
+                    _stored = queue_live_delegate_message(
+                        _parent_conv_id, _src_agent, agent_name, message)
                     _injected_results.append(_add_context_coercion({
                         "task_id": _live_tid,
                         "agent": agent_name,
-                        "status": "injected" if _delivered else "injected_queued",
+                        "status": "injected_queued" if _stored else "error",
                         "mode": context_mode,
                         "message": (
                             f"A delegate for '{agent_name}' was already "
                             f"running (task_id={_live_tid}) — your new "
-                            f"message was {'sent as preempt' if _delivered else 'queued'}. "
+                            f"message was {'stored in its inbox' if _stored else 'rejected'}. "
                             f"You will receive a single follow-up result "
                             f"when that delegate finishes."
                         ),
                     }))
                     logger.info(
-                        "[delegate] preempt: (%s→%s) live task %s, "
-                        "new message injected (delivered=%s)",
-                        _src_agent, agent_name, _live_tid, _delivered)
+                        "[delegate] inbox: (%s→%s) live task %s, stored=%s",
+                        _src_agent, agent_name, _live_tid, _stored)
                     continue
 
             # A delegate agent can only use "shared" when it calls
@@ -529,7 +516,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                 return f"Error: {e}"
 
         if not agent_tasks:
-            # Every spec was a preempt into an already-running delegate.
+            # Every spec targeted an already-running delegate's inbox.
             if _injected_results:
                 return json.dumps(_injected_results, ensure_ascii=False, indent=2)
             return "Error: no valid tasks to spawn."

@@ -390,13 +390,11 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                             "after tmux prompt submit")
                 elif (self._stop_seen and
                       time.time() - self._post_stop_last_event_at >=
-                      _POST_STOP_IDLE_DRAIN_SECONDS
-                      and not self._submissions_still_owed()):
+                      _POST_STOP_IDLE_DRAIN_SECONDS):
                     self._finish_turn_if_ready()
                     break
                 self._probe_liveness(started_at)
                 self._probe_pane_blocker(started_at)
-                self._probe_backlog()
                 self._raise_if_failed_exchange_overdue()
                 continue
 

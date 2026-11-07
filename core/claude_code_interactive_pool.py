@@ -27,7 +27,7 @@ import uuid
 from core.docker_utils import docker_cmd
 from core import cli_prompt_journal
 from core._cci_pool_spawn import (
-    InteractiveContainer, PendingSubmission, _InteractiveContainerSpawnMixin)
+    InteractiveContainer, _InteractiveContainerSpawnMixin)
 # _paths kept as a module attribute: tests patch pool_mod._paths.CLAUDE_SESSIONS_DIR
 # (the spawn methods now live in _cci_pool_spawn but read the same core.paths).
 import core.paths as _paths  # noqa: F401
@@ -1533,71 +1533,6 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                            exc_info=True)
             return ""
 
-    def track_submission(self, state: InteractiveContainer, text: str,
-                         since, msg_id: str = "") -> None:
-        """Remember an accepted paste until its journal shows it was read."""
-        if since is None:
-            return
-        with state.send_lock:
-            state.pending_submissions.append(PendingSubmission(
-                text=text, since=since, msg_id=msg_id or ""))
-
-    def unprocessed_submissions(self, state: InteractiveContainer) -> list:
-        """Accepted submissions the model has not read yet, oldest first."""
-        with state.send_lock:
-            pending = list(state.pending_submissions)
-        read = [
-            submission for submission in pending
-            if (self._journal_status(state, submission.text, submission.since)
-                == cli_prompt_journal.PROCESSED)]
-        with state.send_lock:
-            state.pending_submissions[:] = [
-                submission for submission in state.pending_submissions
-                if not any(submission is done for done in read)]
-            state.processed_msg_ids.update(
-                submission.msg_id for submission in read if submission.msg_id)
-            return list(state.pending_submissions)
-
-    def submission_processed(self, state: InteractiveContainer,
-                             msg_id: str):
-        """True/False when this session tracked ``msg_id``; None otherwise."""
-        if not msg_id:
-            return None
-        pending = self.unprocessed_submissions(state)
-        if msg_id in state.processed_msg_ids:
-            return True
-        if any(submission.msg_id == msg_id for submission in pending):
-            return False
-        return None
-
-    def reclaim_unread_submissions(self, state: InteractiveContainer) -> set:
-        """Stop tracking accepted-but-unread messages; return their msg_ids.
-
-        Called before a new turn's prompt is built. The final drain kept the
-        rescue copy of every such message (``submission_processed`` False)
-        and re-triggered with it, but the msg_id was still in
-        ``submitted_msg_ids``, so the prompt skipped it as already pasted:
-        the turn had nothing to submit and failed, and the message was never
-        delivered (GameDev2, 2026-09-26 14:12Z and 14:15Z). Forgetting them
-        here makes the new turn paste them again.
-        """
-        unread = self.unprocessed_submissions(state)
-        ids = {submission.msg_id for submission in unread
-               if submission.msg_id}
-        with state.send_lock:
-            state.pending_submissions[:] = [
-                submission for submission in state.pending_submissions
-                if not any(submission is gone for gone in unread)]
-            submitted = getattr(state, "submitted_msg_ids", None)
-            if submitted:
-                submitted.difference_update(ids)
-        if unread:
-            logging.getLogger(__name__).warning(
-                "[cci] %s: %d accepted message(s) never read by the model "
-                "-- submitting again: %s", state.name, len(unread),
-                sorted(ids))
-        return ids
-
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
         with state.send_lock:
             return self._send_interrupt_locked(state, text)
@@ -1692,29 +1627,17 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         ).start()
         return True
 
-    def send_queued(self, state: InteractiveContainer, text: str, *,
-                    msg_id: str = "") -> bool:
-        """Submit one message into a running turn WITHOUT interrupting it.
+    def send_queued(self, state: InteractiveContainer, text: str) -> bool:
+        """Paste an inbox notice into a running turn without interrupting it.
 
-        A delegate, a background result or a due wake-up is submitted the
-        moment it arrives: paste + Enter, never Escape, so the CLI takes it
-        into its running turn (or right behind it) like text typed while the
-        model works. Only a user message interrupts (send_interrupt). Each
-        message is submitted on its own, so nothing piles up until the turn
-        ends.
-
-        Returns True once the CLI ACCEPTED the message -- its journal holds
-        it, or the receipt proves it -- so the next message is never pasted
-        on top of this one. Acceptance is immediate even behind a blocking
-        tool. Whether the model READ it is proven later, from the same
-        journal (``unprocessed_submissions``): Codex reports nothing until
-        then, which used to fail these sends 45 s after a correct paste.
+        Acceptance only confirms the transport. The server-side inbox records
+        whether the agent read the items when it calls read_inbox.
         """
         with state.send_lock:
-            return self._send_queued_locked(state, text, msg_id)
+            return self._send_queued_locked(state, text)
 
-    def _send_queued_locked(self, state: InteractiveContainer, text: str,
-                            msg_id: str) -> bool:
+    def _send_queued_locked(self, state: InteractiveContainer,
+                            text: str) -> bool:
         text = self._composer_safe_text(text)
         state.last_error = ""
         if not self._is_alive(state.name):
@@ -1726,34 +1649,13 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         self._cancel_copy_mode(state)
         self._clear_unconfirmed_paste(state)
         self._remember_injected_prompt(state, text)
-        event_service = self._remember_injected_prompt_for_event_service(
-            state, text)
-        submit_marker = (0, 0)
-        if event_service is not None:
-            try:
-                submit_marker = event_service.submission_marker(
-                    state.session_token)
-            except Exception:
-                logging.getLogger(__name__).debug(
-                    "Could not mark CCI queued submission", exc_info=True)
-                event_service = None
-        journal_since = self._journal_mark(state)
+        self._remember_injected_prompt_for_event_service(state, text)
         if not self._paste_text(state, text):
             return False
         settle = self._paste_settle_seconds()
         if settle > 0:
             time.sleep(settle)
-        if not self.send_keys(state, ["Enter"]):
-            return False
-        accepted = self._verify_submitted(
-            state, text, event_service=event_service,
-            submit_marker=submit_marker, journal_since=journal_since)
-        if accepted is False:
-            if not state.last_error:
-                state.last_error = "queued message was not accepted"
-            return False
-        self.track_submission(state, text, journal_since, msg_id)
-        return True
+        return self.send_keys(state, ["Enter"])
 
     def force_stop(self, state: InteractiveContainer) -> bool:
         return self.send_keys(state, list(self._CLEAR_INPUT_KEYS))

@@ -147,8 +147,11 @@ class PatchReadsOnlyTheTailTest(unittest.TestCase):
 def _segmented_log(path: Path, segments: int) -> SegmentedJsonl:
     """A flushed log of ``segments`` segments, with no msg_id sidecar yet."""
     log = SegmentedJsonl(path, max_rows=SEGMENT_ROWS)
-    log.append_dicts([_row(n, f"{path.stem}{n:03d}")
-                      for n in range(segments * SEGMENT_ROWS)])
+    # This fixture needs missing sidecars; a seal worker could recreate them
+    # after the cleanup below and race the validity and warmer assertions.
+    with mock_patch.object(log, "_schedule_msg_id_sidecar"):
+        log.append_dicts([_row(n, f"{path.stem}{n:03d}")
+                          for n in range(segments * SEGMENT_ROWS)])
     log.flush_append_handles(log.flat_path)
     log._flush_own_append_handles()
     shutil.rmtree(log.segment_dir / "msg_ids", ignore_errors=True)

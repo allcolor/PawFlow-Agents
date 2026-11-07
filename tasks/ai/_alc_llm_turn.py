@@ -42,6 +42,18 @@ def is_context_overflow_error(err: BaseException) -> bool:
     return any(marker in text for marker in _CONTEXT_OVERFLOW_MARKERS)
 
 
+def _cli_label(provider: str) -> str:
+    """The CLI a session error belongs to, as the user knows it."""
+    provider = (provider or "").lower()
+    if provider.startswith("codex"):
+        return "Codex"
+    if provider.startswith(("antigravity", "agy")):
+        return "Antigravity"
+    if provider.startswith("gemini"):
+        return "Gemini CLI"
+    return "Claude Code"
+
+
 class _ALCLlmTurnMixin:
     @staticmethod
     def _alc_route_context_messages(messages, conversation_id, handoff):
@@ -592,12 +604,13 @@ class _ALCLlmTurnMixin:
                     except Exception:
                         logger.debug("exception suppressed", exc_info=True)
                     st.ctx["_claude_has_session"] = False
+                _cli = _cli_label(getattr(st.client, "provider", ""))
                 if st._is_delivery_failure:
-                    st._cc_fatal = f"Claude Code prompt not delivered: {st.err_str}"
+                    st._cc_fatal = f"{_cli} prompt not delivered: {st.err_str}"
                 elif st._is_transport_kill:
-                    st._cc_fatal = f"Claude Code stream interrupted: {st.err_str}"
+                    st._cc_fatal = f"{_cli} stream interrupted: {st.err_str}"
                 else:
-                    st._cc_fatal = f"Claude Code session lost: {st.err_str}"
+                    st._cc_fatal = f"{_cli} session lost: {st.err_str}"
                 st.emitter.on_fatal_error(st._cc_fatal)
                 st._fatal_error = True
                 st._fatal_error_msg = st._fatal_error_msg or st._cc_fatal

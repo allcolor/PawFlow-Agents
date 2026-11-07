@@ -470,8 +470,9 @@ def test_codex_cold_send_recovers_when_startup_strands_the_prompt(monkeypatch):
     monkeypatch.setattr(ccip.time, "sleep", lambda _seconds: None)
 
     assert pool.send_text(state, PROMPT) is True
+    # No Escape: the pane shows an idle composer, where Esc only primes
+    # backtrack (see test_codex_backtrack_guard).
     assert keys == [
-        ["Escape"],
         ["Enter"],
         ["Enter"],
         ["Enter"],

@@ -94,6 +94,9 @@ class InteractiveContainer:
     # timeout still runs in the container, so that paste may land later;
     # the next send empties the input box of it first.
     unconfirmed_paste: str = ""
+    # Text of the paste being submitted right now (Codex): an Enter is pressed
+    # only while the composer holds it, never on whatever else is there.
+    expected_paste: str = ""
     # Session-scoped dedup of observed tool_use/tool_result ids. A live
     # Claude Code session replays its full context (every prior tool_use
     # and tool_result block) on each API request, so the proxy re-emits

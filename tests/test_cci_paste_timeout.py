@@ -156,4 +156,5 @@ def test_a_failed_paste_keeps_the_live_session():
 
     assert '"Failed to paste prompt" in st.err_str' in body
     assert "or st._is_delivery_failure" in body
-    assert "Claude Code prompt not delivered" in body
+    assert '{_cli} prompt not delivered' in body
+    assert '_cli_label(getattr(st.client, "provider", ""))' in body

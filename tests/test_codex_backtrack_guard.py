@@ -7,6 +7,12 @@ on a disposable Codex: two Esc keys reaching the TUI as two reads open
 Enter rewinds the conversation ("Conversation reverted to this point"). And
 the composer is drawn `›`, which the old `>` prefix never located. The panes
 below are transcribed from that reproduction.
+
+Incident 2026-11-07 08:15Z (codex-cli 0.167.0, GameDev3): Codex ran a turn on
+the PREVIOUS prompt, re-submitted byte for byte, and the new prompt was never
+delivered. Reproduced on a disposable 0.167: Esc, Esc on the idle composer,
+paste dropped, Enter (rewind) then Enter (re-submit). An idle composer now
+gets no Esc, and an Enter goes only onto the send's own paste.
 """
 
 import core.claude_code_interactive_pool as ccip
@@ -26,6 +32,12 @@ IDLE = """\
 
 CHIP = IDLE.replace("› Ask Codex to do anything",
                     "› [Pasted Content 2400 chars]")
+
+# The first Enter rewound inside the overlay: the composer now holds the
+# previous prompt as text, and a second Enter would submit it again.
+RECALLED = IDLE.replace("› Ask Codex to do anything",
+                        "› GD7 -> GD3 (copie Root GD2) : -03 SCELLEE pour "
+                        "relecture d'UNE ligne.")
 
 PRIMED = IDLE.replace("  GPT-6-Astra xhigh · /tmp/w",
                       "  esc again to edit previous message")
@@ -94,7 +106,7 @@ def test_claude_code_composer_is_untouched():
     assert pool._composer_text(BACKTRACK) == BACKTRACK
 
 
-# ── preparation: one Esc, never two ─────────────────────────────────────
+# ── preparation: no Esc on an idle composer, one Esc otherwise ──────────
 
 def _prepare(monkeypatch, panes):
     pool = CodexInteractivePool()
@@ -111,8 +123,27 @@ def _prepare(monkeypatch, panes):
     return pool._prepare_prompt_input(state), keys, state
 
 
-def test_prepare_sends_a_single_escape(monkeypatch):
+def test_prepare_sends_no_escape_to_an_idle_composer(monkeypatch):
+    ok, keys, _state = _prepare(monkeypatch, [IDLE])
+    assert ok is True
+    assert keys == []
+
+
+def test_prepare_never_completes_a_primed_backtrack(monkeypatch):
+    """One Esc already primed backtrack: a second one opens the overlay."""
     ok, keys, _state = _prepare(monkeypatch, [PRIMED])
+    assert ok is True
+    assert keys == []
+
+
+def test_prepare_stops_a_running_turn_with_a_single_escape(monkeypatch):
+    ok, keys, _state = _prepare(monkeypatch, [RUNNING, IDLE])
+    assert ok is True
+    assert keys == [["Escape"]]
+
+
+def test_prepare_keeps_its_escape_when_the_pane_is_unreadable(monkeypatch):
+    ok, keys, _state = _prepare(monkeypatch, [""])
     assert ok is True
     assert keys == [["Escape"]]
 
@@ -120,7 +151,7 @@ def test_prepare_sends_a_single_escape(monkeypatch):
 def test_prepare_closes_an_open_backtrack_overlay(monkeypatch):
     ok, keys, _state = _prepare(monkeypatch, [BACKTRACK, IDLE])
     assert ok is True
-    assert keys == [["Escape"], ["Escape"]]
+    assert keys == [["Escape"]]
 
 
 def test_prepare_refuses_to_paste_into_a_stuck_overlay(monkeypatch):
@@ -132,28 +163,79 @@ def test_prepare_refuses_to_paste_into_a_stuck_overlay(monkeypatch):
 
 # ── Enter is a rewind inside the overlay ────────────────────────────────
 
-def _enter(monkeypatch, pane):
+def _enter(monkeypatch, pane, expected=""):
     pool = CodexInteractivePool()
     state = _State()
     state.last_error = ""
+    state.expected_paste = expected
     sent = []
-    monkeypatch.setattr(pool, "_pane_text", lambda _n: pane)
+    panes = list(pane) if isinstance(pane, list) else [pane]
+    monkeypatch.setattr(pool, "_pane_text",
+                        lambda _n: panes.pop(0) if len(panes) > 1 else panes[0])
     monkeypatch.setattr(InteractiveClaudeCodePool, "send_keys",
                         lambda _self, _state, batch: sent.append(list(batch)) or True)
-    return pool.send_keys(state, ["Enter"]), sent, state
+    return pool, state, sent
 
 
 def test_enter_is_refused_while_the_backtrack_overlay_is_open(monkeypatch):
-    ok, sent, state = _enter(monkeypatch, BACKTRACK)
+    pool, state, sent = _enter(monkeypatch, BACKTRACK, PROMPT)
+    ok = pool.send_keys(state, ["Enter"])
     assert ok is False
     assert sent == []
     assert "rewind" in state.last_error
 
 
 def test_enter_goes_through_on_the_composer(monkeypatch):
-    ok, sent, _state = _enter(monkeypatch, CHIP)
+    pool, state, sent = _enter(monkeypatch, CHIP, PROMPT)
+    ok = pool.send_keys(state, ["Enter"])
     assert ok is True
     assert sent == [["Enter"]]
+
+
+def test_enter_is_skipped_when_the_composer_holds_another_prompt(monkeypatch):
+    """The incident: never submit a recalled previous prompt."""
+    pool, state, sent = _enter(monkeypatch, RECALLED, PROMPT)
+    ok = pool.send_keys(state, ["Enter"])
+    assert ok is True
+    assert sent == []
+
+
+def test_second_enter_does_not_resubmit_a_recalled_prompt(monkeypatch):
+    """Enter, 200ms, Enter: the second one sees the recalled prompt."""
+    pool, state, sent = _enter(monkeypatch, [CHIP, RECALLED], PROMPT)
+    assert pool.send_keys(state, ["Enter"]) is True
+    assert pool.send_keys(state, ["Enter"]) is True
+    assert sent == [["Enter"]]
+
+
+def test_second_enter_is_skipped_once_the_first_submitted(monkeypatch):
+    pool, state, sent = _enter(monkeypatch, [CHIP, IDLE], PROMPT)
+    assert pool.send_keys(state, ["Enter"]) is True
+    assert pool.send_keys(state, ["Enter"]) is True
+    assert sent == [["Enter"]]
+
+
+def test_enter_goes_through_when_the_composer_is_not_located(monkeypatch):
+    """Unknown chrome cannot veto: the submission verifier still decides."""
+    pool, state, sent = _enter(monkeypatch, "some unknown chrome", PROMPT)
+    assert pool.send_keys(state, ["Enter"]) is True
+    assert sent == [["Enter"]]
+
+
+def test_send_text_records_its_paste_only_while_it_runs(monkeypatch):
+    import threading
+
+    pool = CodexInteractivePool()
+    state = _State()
+    state.send_lock = threading.RLock()
+    state.expected_paste = ""
+    seen = []
+    monkeypatch.setattr(pool, "_check_native_compaction", lambda _s: None)
+    monkeypatch.setattr(InteractiveClaudeCodePool, "send_text",
+                        lambda _self, st, _text: seen.append(st.expected_paste) or True)
+    assert pool.send_text(state, PROMPT) is True
+    assert seen == [PROMPT]
+    assert state.expected_paste == ""
 
 
 # ── what proves that the paste landed ───────────────────────────────────

@@ -537,20 +537,36 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     def _prepare_prompt_input(self, state: InteractiveContainer) -> bool:
         """Put Codex in its canonical input state before the paste.
 
-        ONE Esc stops a running turn or dismisses an active TUI mode. Never
-        two: a second Esc on an empty composer opens Codex's backtrack
-        overlay, which drops the paste and turns Enter into a rewind (see
+        ONE Esc stops a running turn or dismisses an active TUI mode. An idle
+        composer gets none: there Esc only primes backtrack ("esc again to
+        edit previous message"), and any second Esc opens the overlay, which
+        drops the paste and turns Enter into a rewind that re-submits the
+        previous prompt (codex-cli 0.167, GameDev3 2026-11-07 08:15Z; see
         core/_codex_composer_guard.py). If the overlay is open anyway, close it.
         """
         self._check_native_compaction(state)
+        if self._composer_is_idle(self._pane_text(state.name)):
+            return True
         if not self.send_keys(state, ["Escape"]):
             return False
         return self._leave_backtrack_overlay(state)
 
+    def _with_expected_paste(self, state: InteractiveContainer, text: str,
+                             send) -> bool:
+        """Run one send with its paste recorded for the Enter guard."""
+        with state.send_lock:
+            state.expected_paste = self._composer_safe_text(text)
+            try:
+                return send()
+            finally:
+                state.expected_paste = ""
+
     def send_text(self, state: InteractiveContainer, text: str) -> bool:
         self._check_native_compaction(state)
         try:
-            sent = super().send_text(state, text)
+            sent = self._with_expected_paste(
+                state, text, lambda: super(CodexInteractivePool, self)
+                .send_text(state, text))
         except Exception:
             self._check_native_compaction(state)
             raise
@@ -560,7 +576,9 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
         self._check_native_compaction(state)
         try:
-            sent = super().send_interrupt(state, text)
+            sent = self._with_expected_paste(
+                state, text, lambda: super(CodexInteractivePool, self)
+                .send_interrupt(state, text))
         except Exception:
             self._check_native_compaction(state)
             raise
@@ -574,7 +592,9 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             if not self._leave_backtrack_overlay(state):
                 return False
             try:
-                sent = super().send_queued(state, text, msg_id=msg_id)
+                sent = self._with_expected_paste(
+                    state, text, lambda: super(CodexInteractivePool, self)
+                    .send_queued(state, text, msg_id=msg_id))
             except Exception:
                 self._check_native_compaction(state)
                 raise

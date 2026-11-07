@@ -571,12 +571,22 @@ Timing controls are read once when the provider modules are imported:
   seconds. A live Codex preempt waits for the structural editable-composer
   signal after a single `Escape`; if it never returns, the paste is refused
   and the pending rescue remains queued. Codex then submits both normal prompts
-  and live preempts with the fixed sequence `Escape`, paste, 200ms,
-  `Enter`, 200ms, `Enter`.
-- Codex is prepared with ONE `Escape`, never two (codex-cli 0.156.1). A
-  second `Escape` on an empty composer opens Codex's backtrack overlay
-  ("Browsing transcript · ↵ rewind · esc back"): a paste is dropped there and
-  `Enter` means *rewind*, reverting the conversation to an earlier prompt.
+  and live preempts with the fixed sequence `Escape` (only when a turn runs
+  or a mode is open, see below), paste, 200ms, `Enter`, 200ms, `Enter`.
+- Codex is prepared with at most ONE `Escape`, never two (codex-cli 0.156.1),
+  and with none when the pane shows an idle composer (no running turn, no
+  overlay), including one where backtrack is already primed ("esc again to
+  edit previous message"). A second `Escape` on an empty composer opens
+  Codex's backtrack overlay ("Browsing transcript · ↵ rewind · esc back"): a
+  paste is dropped there and `Enter` means *rewind*. In codex-cli 0.167 the
+  rewind puts the previous prompt back in the composer, and the second
+  `Enter` of the submit sequence re-submitted it byte for byte while the new
+  prompt was never delivered (GameDev3, 2026-11-07 08:15Z). Every `Enter` of a
+  send is therefore pressed only while the located composer holds that send's
+  own paste (`InteractiveContainer.expected_paste`: its chip or its text);
+  on a composer holding anything else, including the placeholder once the
+  first `Enter` submitted, the `Enter` is skipped and the submission verifier
+  decides. A composer that cannot be located never vetoes an `Enter`.
   `core/_codex_composer_guard.py` closes the overlay with `Escape` if it is
   open anyway (and refuses the paste if it stays open), refuses any `Enter`
   while it is on screen, and never accepts a changed pane with an overlay on

@@ -16,6 +16,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `copy_from_image` catalog key; generated images compile no Rust. Existing
   generated images get voxl when they are rebuilt.
 
+### Fixed
+
+- A Codex interactive agent no longer re-submits its previous prompt instead
+  of the new one. On codex-cli 0.167 a second `Escape` on the idle composer
+  opens the backtrack overlay, the paste is dropped there, the first `Enter`
+  rewinds and the second submitted the previous prompt again: the agent
+  answered an already handled message, the new one (a delegate message) was
+  never delivered and the turn failed with "prompt not delivered". PawFlow no
+  longer sends `Escape` to an idle Codex composer, and presses `Enter` only
+  while the composer holds the prompt it just pasted.
+- A CLI delivery failure names the CLI it came from ("Codex prompt not
+  delivered") instead of always saying "Claude Code".
+
 ## [1.0.0-beta.323] — 2026-11-06
 
 ### Fixed

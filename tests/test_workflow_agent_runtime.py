@@ -663,6 +663,60 @@ def test_pending_cache_overflow_rejects_non_durable_bound_submission(
             invocation_mode="silent_maintenance")
 
 
+@pytest.mark.parametrize("phase", ["boot", "final"])
+@pytest.mark.parametrize("notified", [False, True])
+@pytest.mark.parametrize("work_source", [
+    None, "http", "inbox:delegate_message", "inbox:background_result",
+    "inbox:continuation",
+])
+def test_workflow_work_selection_skips_passive_catch_up(
+        monkeypatch, tmp_path, phase, notified, work_source):
+    from core import agent_inbox
+    from core.agent_inbox_store import AgentInboxStore
+    from core.conversation_store import ConversationStore
+
+    inbox = AgentInboxStore(tmp_path / "inbox.sqlite3")
+    monkeypatch.setattr(AgentInboxStore, "_instance", inbox)
+    monkeypatch.setattr(WorkflowAgentRuntime, "_recover_durable_inbox",
+                        staticmethod(lambda: None))
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_agent_config",
+        lambda *_: {"runtime_kind": "workflow"})
+    monkeypatch.setattr(ConversationStore, "instance", classmethod(
+        lambda cls: SimpleNamespace(resolve_owner=lambda _: "alice")))
+    for number in range(25):
+        inbox.enqueue("conv-1", "Demo", {
+            "role": "user", "msg_id": f"chatter-{number}", "ts": 1.0,
+            "content": "passive participant output",
+        }, source="inbox:catch_up")
+    if notified:
+        inbox.mark_notified("conv-1", "Demo", inbox.latest_sequence("conv-1", "Demo"))
+    if work_source:
+        inbox.enqueue("conv-1", "Demo", {
+            "role": "user", "msg_id": "real-work", "ts": 2.0,
+            "content": "explicit task",
+        }, source=work_source)
+
+    runtime = WorkflowAgentRuntime()
+    started = []
+    monkeypatch.setattr(runtime, "_prepared_from_inbox",
+                        lambda item, **_: _turn(1, item.msg_id))
+    monkeypatch.setattr(runtime, "submit", lambda request: started.append(request))
+    monkeypatch.setattr(runtime, "_start_worker",
+                        lambda key, active: started.append(active.request))
+
+    if phase == "boot":
+        runtime._resume_durable_pending()
+    else:
+        runtime._launch_next_locked(runtime._key("conv-1", "Demo"), user_id="alice")
+
+    assert [request.request_message_ids for request in started] == (
+        [("real-work",)] if work_source else [])
+    assert len([item for item in agent_inbox.unread_items("conv-1", "Demo")
+                if item.source == "inbox:catch_up"]) == 25
+    assert "passive participant output" in agent_inbox.read_inbox("conv-1", "Demo")
+
+
 def test_bound_silent_submission_pins_binding_and_invocation_mode(monkeypatch):
     runtime = WorkflowAgentRuntime()
     binding = WorkflowInstanceConfig.from_dict({

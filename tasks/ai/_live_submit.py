@@ -13,7 +13,8 @@ A burst of messages pastes one notice while an unread notice is outstanding.
 Items the turn did
 not read keep the agent going at its end (agent_core final drain).
 
-An idle agent is woken to read the same durable inbox.
+An idle agent is woken for actionable work. Passive catch-up stays unread
+until its next real turn, including for workflow recipients.
 """
 
 import logging
@@ -71,7 +72,8 @@ def submit_or_queue(conversation_id: str, agent_name: str, message: dict,
     """
     from tasks.ai.agent_loop import AgentLoopTask
     from core.conv_agent_config import get_agent_config
-    if get_agent_config(conversation_id, agent_name).get("runtime_kind") == "workflow":
+    if (kind != "catch_up"
+            and get_agent_config(conversation_id, agent_name).get("runtime_kind") == "workflow"):
         return _submit_workflow_delivery(conversation_id, agent_name, message,
                                          source, user_id)
     from core import agent_inbox
@@ -88,7 +90,7 @@ def submit_or_queue(conversation_id: str, agent_name: str, message: dict,
             args=(client, conversation_id, agent_name, user_id),
             name=f"inbox-notice-{agent_name}", daemon=True,
         ).start()
-    if wake:
+    if wake and kind != "catch_up":
         AgentLoopTask.wake_agent(
             conversation_id, agent_name,
             reason=wake_reason or f"[{source}] queued for {agent_name}",

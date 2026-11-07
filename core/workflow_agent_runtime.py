@@ -184,7 +184,7 @@ class WorkflowAgentRuntime:
             from core.conversation_store import ConversationStore
             inbox = AgentInboxStore.instance()
             conversation_store = ConversationStore.instance()
-            for conversation_id, agent_name in inbox.list_ready_keys():
+            for conversation_id, agent_name, _count in inbox.list_recovery_queues():
                 key = self._key(conversation_id, agent_name)
                 with self._lock:
                     if key in self._active:
@@ -193,7 +193,8 @@ class WorkflowAgentRuntime:
                 if str(config.get("runtime_kind") or "llm") != "workflow":
                     continue
                 items = inbox.list_items(
-                    conversation_id, agent_name, states=("pending",), limit=1)
+                    conversation_id, agent_name, states=("pending",), limit=1,
+                    exclude_source="inbox:catch_up")
                 if not items:
                     continue
                 user_id = str(
@@ -746,7 +747,8 @@ class WorkflowAgentRuntime:
                 excluded = {str(value) for value in exclude_msg_ids}
                 items = AgentInboxStore.instance().list_items(
                     key.conversation_id, key.agent_name,
-                    states=("pending",), limit=20)
+                    states=("pending",), limit=20,
+                    exclude_source="inbox:catch_up")
                 item = next(
                     (value for value in items
                      if value.msg_id not in excluded), None)

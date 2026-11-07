@@ -251,6 +251,47 @@ def test_all_nonempty_scan(fake_store):
                      ("c2", "claude", 1)}
 
 
+@pytest.mark.parametrize("notified", [False, True])
+def test_boot_recovery_does_not_wake_catch_up_only_agents(
+        fake_store, inbox, monkeypatch, notified):
+    from core import agent_inbox
+
+    for agent in ("wiki", "assistant", "probecodex"):
+        q = PendingQueue.for_agent("c1", agent)
+        q.enqueue(_msg("other participant output", agent, 1),
+                  source="inbox:catch_up")
+        if notified:
+            assert agent_inbox.take_notice("c1", agent)
+
+    # Reopen the database as after an actual process restart.
+    PendingQueue.drop_cache()
+    reopened = AgentInboxStore(inbox.database_path)
+    monkeypatch.setattr(AgentInboxStore, "_instance", reopened)
+    assert PendingQueue.all_nonempty() == []
+    for agent in ("wiki", "assistant", "probecodex"):
+        assert agent_inbox.unread_count("c1", agent) == 1
+        assert "other participant output" in agent_inbox.read_inbox("c1", agent)
+
+
+@pytest.mark.parametrize("source", [
+    "http", "preempt_rescue", "inbox:delegate_message",
+    "inbox:delegate_reply", "inbox:delegate_result",
+    "inbox:background_result", "inbox:scheduled_wakeup",
+    "inbox:continuation", "inbox:task_checkin", "inbox:skill_event",
+    "inbox:workflow_proposal",
+])
+def test_boot_recovery_keeps_actionable_work_beside_catch_up(
+        fake_store, inbox, source):
+    q = PendingQueue.for_agent("c1", "claude")
+    q.enqueue(_msg("passive", "passive", 1), source="inbox:catch_up")
+    q.enqueue(_msg("work", "work", 2), source=source)
+    inbox.mark_notified("c1", "claude", inbox.latest_sequence("c1", "claude"))
+    PendingQueue.drop_cache()
+
+    assert PendingQueue.all_nonempty() == [("c1", "claude", 1)]
+    assert inbox.pending_count("c1", "claude") == 2
+
+
 def test_singleton_per_key(fake_store):
     a = PendingQueue.for_agent("c1", "claude")
     b = PendingQueue.for_agent("c1", "claude")
@@ -370,7 +411,7 @@ def test_boot_scan_invokes_thirty_day_retention_and_counts_notified(fake_store, 
     inbox.discard_msg_ids("c1", "claude", ["discard"], now=2)
 
     with patch("core.agent_inbox_store.time.time", return_value=now):
-        assert PendingQueue.all_nonempty() == [("c1", "claude", 2)]
+        assert PendingQueue.all_nonempty() == [("c1", "claude", 1)]
     assert {item.msg_id for item in inbox.list_items("c1", "claude")} == {
         "recent-read", "boundary", "notified", "user"}
     assert inbox.read_offset("c1", "claude", "notified") == 5

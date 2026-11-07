@@ -97,6 +97,20 @@ def test_a_rate_limit_banner_in_the_pane_fails_the_turn(monkeypatch):
     assert "usage limit" in str(info.value)
 
 
+@pytest.mark.parametrize("coordinator", [
+    _CCITurnCoordinator, _CodexInteractiveTurnCoordinator,
+    _ManagedMcpTurnCoordinator,
+])
+def test_output_limit_narration_does_not_fail_the_pane_probe(monkeypatch, coordinator):
+    _probe_now(monkeypatch)
+    pane = ("• The previous read still exceeded the output limit. "
+            "I’ll read the missing middle sections separately.")
+    kwargs = {"provider": "managed-mcp"} if coordinator is _ManagedMcpTurnCoordinator else {}
+    coord = coordinator(_EmptyService(), "sess", pane_callback=lambda: pane, **kwargs)
+    coord._probe_pane_blocker(time.time())
+    assert coord._rate_limit_responses == 0
+
+
 def test_a_question_in_the_pane_fails_the_turn(monkeypatch):
     _probe_now(monkeypatch)
     pane = "1. Switch to another model\n2. Keep this model\nEsc to cancel\n"

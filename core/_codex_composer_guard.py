@@ -53,6 +53,10 @@ class CodexComposerGuardMixin:
     _BACKTRACK_OVERLAY_MARKERS = ("↵ rewind", "browsing transcript")
     # Footer of the Ctrl+T transcript pager, which also hides the composer.
     _TRANSCRIPT_OVERLAY_MARKERS = ("esc browse prompts",)
+    # Rate-limit model picker (GameDev4/6, 2026-11-07): its selected option
+    # starts with `›` too, but pastes are dropped and Enter changes the model.
+    _RATE_LIMIT_OVERLAY_MARKERS = (
+        "approaching rate limits", "keep current model", "enter select", "esc back")
     # Transcript chrome that can only be drawn ABOVE the composer.
     _TRANSCRIPT_LINE_PREFIXES = ("•", "■", "└")
     # Hint shown once a first Esc has primed backtrack.
@@ -62,12 +66,20 @@ class CodexComposerGuardMixin:
 
     def _pane_shows_backtrack(self, pane: str) -> bool:
         low = (pane or "").lower()
-        return any(marker in low for marker in self._BACKTRACK_OVERLAY_MARKERS)
+        lines = low.strip().splitlines()
+        return (bool(lines) and "esc back" in lines[-1]
+                and any(marker in "\n".join(lines[-3:])
+                        for marker in self._BACKTRACK_OVERLAY_MARKERS))
 
     def _pane_shows_overlay(self, pane: str) -> bool:
         low = (pane or "").lower()
-        return self._pane_shows_backtrack(pane) or any(
-            marker in low for marker in self._TRANSCRIPT_OVERLAY_MARKERS)
+        lines = low.strip().splitlines()
+        rate_limit_menu = (bool(lines) and lines[-1].lstrip().startswith("enter select")
+                           and all(marker in low
+                                   for marker in self._RATE_LIMIT_OVERLAY_MARKERS))
+        transcript_menu = bool(lines) and any(
+            marker in lines[-1] for marker in self._TRANSCRIPT_OVERLAY_MARKERS)
+        return self._pane_shows_backtrack(pane) or transcript_menu or rate_limit_menu
 
     def _composer_text(self, pane: str) -> str:
         """The bottom `›` region, or '' when it is a transcript user turn."""
@@ -110,25 +122,26 @@ class CodexComposerGuardMixin:
         low = pane.lower()
         return (f"composer={held} "
                 f"backtrack_overlay={self._pane_shows_backtrack(pane)} "
+                f"input_overlay={self._pane_shows_overlay(pane)} "
                 f"backtrack_primed={self._BACKTRACK_PRIMED_MARKER in low} "
                 f"running={self._pane_shows_running(pane)}")
 
-    def _leave_backtrack_overlay(self, state) -> bool:
-        """Close the transcript overlay if an Esc opened it. False if stuck."""
+    def _leave_input_overlay(self, state) -> bool:
+        """Dismiss input overlays with Escape, preserving the selected model."""
         for _attempt in range(self._OVERLAY_EXIT_ATTEMPTS):
             time.sleep(self._ESC_SETTLE_SECONDS)
             pane = self._pane_text(state.name)
-            if not pane or not self._pane_shows_backtrack(pane):
+            if not pane or not self._pane_shows_overlay(pane):
                 return True
             logger.warning(
-                "[codex-interactive] backtrack overlay open in %s before the "
+                "[codex-interactive] input overlay open in %s before the "
                 "paste; closing it with Esc", state.name)
             if not super().send_keys(state, ["Escape"]):
                 return False
         pane = self._pane_text(state.name)
-        if pane and self._pane_shows_backtrack(pane):
+        if pane and self._pane_shows_overlay(pane):
             state.last_error = (
-                "Codex backtrack overlay stayed open; refusing to paste into it")
+                "Codex input overlay stayed open; refusing to paste into it")
             return False
         return True
 
@@ -141,16 +154,34 @@ class CodexComposerGuardMixin:
         verifier then reports what really happened.
         """
         if "Enter" in keys:
-            pane = self._pane_text(state.name)
-            if pane and self._pane_shows_backtrack(pane):
-                state.last_error = (
-                    "Codex backtrack overlay is open; refusing Enter, which "
-                    "would rewind the conversation")
-                logger.error("[codex-interactive] %s (%s)", state.last_error,
-                             self._pane_state_summary(pane))
-                return False
             expected = getattr(state, "expected_paste", "")
-            composer = self._composer_text(pane) if (pane and expected) else ""
+            queued = getattr(state, "queued_paste_pending", False)
+            deadline = time.monotonic() + max(0.0, self._PASTE_LANDED_SECONDS)
+            while True:
+                pane = self._pane_text(state.name)
+                if pane and self._pane_shows_overlay(pane):
+                    state.last_error = (
+                        "Codex backtrack overlay is open; refusing Enter, which "
+                        "would rewind the conversation" if self._pane_shows_backtrack(pane)
+                        else "Codex input overlay is open; refusing Enter, which "
+                        "would select a menu item")
+                    logger.error("[codex-interactive] %s (%s)", state.last_error,
+                                 self._pane_state_summary(pane))
+                    return False
+                composer = self._composer_text(pane) if (pane and expected) else ""
+                if not queued or (composer and self._composer_holds_paste(
+                        composer, pane, expected, "")):
+                    break
+                # A running turn is not proof that its queued notice landed.
+                # Unlike normal sends, this path has no later receipt verifier.
+                if time.monotonic() >= deadline:
+                    state.unconfirmed_paste = expected
+                    state.last_error = (
+                        "queued notice paste was not confirmed in the composer")
+                    logger.warning("[codex-interactive] %s (%s)", state.last_error,
+                                   self._pane_state_summary(pane))
+                    return False
+                time.sleep(0.3)
             if composer and not self._composer_holds_paste(
                     composer, pane, expected, ""):
                 # INFO, not WARNING: the second Enter of every successful

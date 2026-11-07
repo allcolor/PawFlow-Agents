@@ -49,7 +49,7 @@ def _codex_pool(monkeypatch, state, on_enter):
                         lambda s, t: pastes.append(t) or True)
     monkeypatch.setattr(pool, "_paste_settle_seconds", lambda: 0)
     monkeypatch.setattr(pool, "_check_native_compaction", lambda s: None)
-    monkeypatch.setattr(pool, "_leave_backtrack_overlay", lambda s: True)
+    monkeypatch.setattr(pool, "_leave_input_overlay", lambda s: True)
     monkeypatch.setattr(pool, "_event_session", lambda s: None)
     monkeypatch.setattr(pool, "_pane_text", lambda name: RUNNING_PANE)
 

@@ -565,7 +565,6 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                 for entry in entries
             ]
             from core import agent_inbox
-            from core.pending_queue import PendingQueue
             eligible = []
             for entry, target in zip(entries, entry_targets):
                 reason = entry.get("reason") or ""
@@ -573,9 +572,9 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                          and "[continuation]" not in reason
                          and not reason.startswith(("[scheduled:", "[loop] ")))
                 if target and nudge:
-                    _, turns = agent_inbox._store().notice_state(conversation_id, target)
-                    if (turns >= agent_inbox.MAX_UNREAD_TURNS
-                            and not PendingQueue.for_agent(conversation_id, target).peek_count()):
+                    if not agent_inbox.has_wakeable_work(conversation_id, target):
+                        # A notice can be read while its wake waits for the
+                        # active turn. Claim only this stale entry's identity.
                         scheduler.claim_due([entry])
                         continue
                 eligible.append((entry, target))

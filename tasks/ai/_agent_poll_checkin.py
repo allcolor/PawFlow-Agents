@@ -218,6 +218,14 @@ class _AgentPollCheckinMixin:
             if items and delivery_only:
                 ctx["request_msg_id"] = items[-1].msg_id
             notice = agent_inbox.take_notice(conversation_id, target_agent)
+            if delivery_only:
+                from core.pending_queue import PendingQueue
+                if (not PendingQueue.for_agent(conversation_id, target_agent).peek_count()
+                        and (not notice or not agent_inbox.has_wakeable_work(
+                            conversation_id, target_agent))):
+                    # Work may have been read during context preparation.
+                    # Loaded history is not a new live-session request.
+                    return None
             if notice:
                 ctx["messages"].append(LLMMessage(
                     role="user", content=notice,

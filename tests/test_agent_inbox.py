@@ -186,6 +186,57 @@ def test_a_new_item_ends_a_streak_of_unread_turns(inbox):
     assert agent_inbox.end_of_turn(CID, AGENT) == 1
 
 
+def test_catch_up_does_not_reset_the_unread_work_retry_limit(inbox):
+    _put("work", "ignored delegate request")
+    for turn in range(1, agent_inbox.MAX_UNREAD_TURNS + 1):
+        _put(f"chatter-{turn}", "other agent output", kind="catch_up")
+        assert agent_inbox.end_of_turn(CID, AGENT) == turn
+
+
+def test_catch_up_stays_readable_without_retriggering_a_real_turn(inbox):
+    _put("chatter", "other agent output", kind="catch_up")
+    assert "catch-up" in agent_inbox.peek_notice(CID, AGENT, only_new=True)[0]
+    assert "catch-up" in agent_inbox.take_notice(CID, AGENT)
+    assert agent_inbox.end_of_turn(CID, AGENT) == 0
+    assert agent_inbox.unread_count(CID, AGENT) == 1
+
+
+def test_catch_up_delivery_never_wakes_an_idle_agent_even_with_wake_enabled(
+        inbox, monkeypatch):
+    from tasks.ai import _live_submit
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("passive catch-up must not wake an idle agent")
+
+    monkeypatch.setattr(_live_submit, "_active_cli_client", lambda *_: None)
+    monkeypatch.setattr(AgentLoopTask, "wake_agent", unexpected)
+    assert _live_submit.submit_or_queue(
+        CID, AGENT, _msg("chatter", "context only"), "catch_up",
+        kind="catch_up", sender="GameDev2", wake=True)
+    assert "context only" in agent_inbox.read_inbox(CID, AGENT)
+
+
+@pytest.mark.parametrize("wake", [False, True])
+def test_workflow_catch_up_is_stored_without_resolving_or_submitting_runtime(
+        inbox, monkeypatch, wake):
+    from tasks.ai import _live_submit
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("passive catch-up must not submit or wake a workflow")
+
+    monkeypatch.setattr("core.conv_agent_config.get_agent_config",
+                        lambda *_: {"runtime_kind": "workflow"})
+    monkeypatch.setattr(_live_submit, "_submit_workflow_delivery", unexpected)
+    monkeypatch.setattr(_live_submit, "_active_cli_client", lambda *_: None)
+    monkeypatch.setattr(AgentLoopTask, "wake_agent", unexpected)
+    assert _live_submit.submit_or_queue(
+        CID, AGENT, _msg("chatter", "workflow context only"), "catch_up",
+        kind="catch_up", sender="GameDev2", wake=wake)
+    assert "workflow context only" in agent_inbox.read_inbox(CID, AGENT)
+
+
 def test_turn_mode_messages_expose_the_item_sources(inbox):
     source = {"type": "agent_delegate", "from": "GameDev2", "to": AGENT}
     _put("m1", "a", source=source)
@@ -304,6 +355,25 @@ def test_nothing_unread_means_no_retrigger(inbox):
     st = _St()
     _core()._alc_inbox_end_of_turn(st)
     assert "_retrigger_after_done" not in st.ctx
+
+
+def test_repeated_catch_up_never_retriggers_or_warns_at_end_of_turn(
+        inbox, monkeypatch):
+    core = _core()
+    monkeypatch.setattr(type(core), "_alc_inbox_unread_warning",
+                        staticmethod(lambda *_: pytest.fail("passive catch-up warning")))
+    for turn in range(agent_inbox.MAX_UNREAD_TURNS + 2):
+        _put(f"chatter-{turn}", "other participant output", kind="catch_up")
+        st = _St()
+        core._alc_inbox_end_of_turn(st)
+        assert "_retrigger_after_done" not in st.ctx
+        assert inbox.notice_state(CID, AGENT)[1] == 0
+    assert agent_inbox.unread_count(CID, AGENT) == agent_inbox.MAX_UNREAD_TURNS + 2
+    _put("real-work", "explicit delegate request")
+    st = _St()
+    core._alc_inbox_end_of_turn(st)
+    assert st.ctx["_retrigger_after_done"] is True
+    assert "other participant output" in agent_inbox.read_inbox(CID, AGENT)
 
 
 def test_after_max_unread_turns_the_agent_stops_and_warns_once(inbox, monkeypatch):

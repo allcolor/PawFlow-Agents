@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Deferred inbox delivery wakes no longer start an empty live CLI turn after
+  the agent has already read their messages. Work consumed during context
+  preparation is rechecked without suppressing explicit continuations or
+  fresh human input.
+- Completed CLI turns no longer wait for background tasks and then continue
+  with an empty prompt. Their results use inbox delivery; API tool loops retain
+  their background wait and continuation behavior.
+- Interactive CLI capture no longer treats prose about tool output, file size,
+  memory or context limits as a provider quota error; actual usage-limit
+  banners and HTTP 429 errors remain detected.
+- Passive participant catch-up no longer wakes idle agents during startup
+  or retriggers completed turns, including workflow recovery and final drains.
+  Unread catch-up remains
+  available on the next real turn and cannot reset the no-read retry limit.
+- Codex interactive sends dismiss the rate-limit model picker before pasting,
+  preserving the selected model and refusing Enter while an input menu is open.
+- Queued inbox notices wait for their paste to reach the composer before Enter;
+  a skipped Enter no longer counts as successful delivery. Timed-out pastes are
+  tracked for cleanup before the next send.
+- Wrapped paste-chip labels remain recognizable, and quoted backtrack or
+  transcript menu text above the composer no longer blocks prompt delivery.
+
 ## [1.0.0-beta.324] — 2026-11-07
 
 ### Added

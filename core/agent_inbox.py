@@ -100,8 +100,9 @@ def enqueue_item(conversation_id: str, agent_name: str, message: dict,
     from core.pending_queue import PendingQueue
     stored = PendingQueue.for_agent(conversation_id, agent_name).enqueue(
         entry, source=INBOX_SOURCE_PREFIX + kind)
-    if stored:
-        # A new item ends a streak of turns that read nothing.
+    if stored and kind != "catch_up":
+        # New work ends a no-read streak; passive chatter cannot keep an
+        # unresponsive agent running forever.
         _store().set_notice_state(conversation_id, agent_name, unread_turns=0)
     return stored
 
@@ -117,6 +118,18 @@ def unread_items(conversation_id: str, agent_name: str) -> list:
 
 def unread_count(conversation_id: str, agent_name: str) -> int:
     return len(unread_items(conversation_id, agent_name))
+
+
+def has_wakeable_work(conversation_id: str, agent_name: str) -> bool:
+    """Whether a delivery nudge still has actionable, retryable unread work."""
+    from core.pending_queue import PendingQueue
+    if PendingQueue.for_agent(conversation_id, agent_name).peek_count():
+        return True
+    store = _store()
+    return (store.notice_state(conversation_id, agent_name)[1] < MAX_UNREAD_TURNS
+            and bool(store.list_items(
+                conversation_id, agent_name, states=("pending", "notified"),
+                limit=1, exclude_source=INBOX_SOURCE_PREFIX + "catch_up")))
 
 
 class _SourceOnly:
@@ -209,8 +222,7 @@ def prepare_context_messages(messages: list, conversation_id: str,
             "source": {"type": "system", "name": "catch_up"}}, conversation_id)
         payload[KIND_KEY] = "catch_up"
         payload[SENDER_KEY] = "conversation participants"
-        if _store().enqueue_context_history(conversation_id, agent_name, payload):
-            _store().set_notice_state(conversation_id, agent_name, unread_turns=0)
+        _store().enqueue_context_history(conversation_id, agent_name, payload)
     return kept
 
 
@@ -313,13 +325,14 @@ def reset_unread_for_human_input(conversation_id: str, agent_name: str,
 
 
 def end_of_turn(conversation_id: str, agent_name: str) -> int:
-    """Count a turn that ended with unread items; 0 when none remain.
+    """Count a turn that ended with unread work; 0 for passive catch-up only.
 
     The caller re-triggers below ``MAX_UNREAD_TURNS`` and warns at the limit.
     """
     store = _store()
     notified, turns = store.notice_state(conversation_id, agent_name)
-    if not unread_items(conversation_id, agent_name):
+    if not any(item.source != INBOX_SOURCE_PREFIX + "catch_up"
+               for item in unread_items(conversation_id, agent_name)):
         if turns:
             store.set_notice_state(conversation_id, agent_name,
                                    unread_turns=0)

@@ -549,7 +549,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             return True
         if not self.send_keys(state, ["Escape"]):
             return False
-        return self._leave_backtrack_overlay(state)
+        return self._leave_input_overlay(state)
 
     def _with_expected_paste(self, state: InteractiveContainer, text: str,
                              send) -> bool:
@@ -588,8 +588,9 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     def send_queued(self, state: InteractiveContainer, text: str) -> bool:
         self._check_native_compaction(state)
         with state.send_lock:
-            if not self._leave_backtrack_overlay(state):
+            if not self._leave_input_overlay(state):
                 return False
+            state.queued_paste_pending = True
             try:
                 sent = self._with_expected_paste(
                     state, text, lambda: super(CodexInteractivePool, self)
@@ -597,6 +598,8 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             except Exception:
                 self._check_native_compaction(state)
                 raise
+            finally:
+                state.queued_paste_pending = False
         self._check_native_compaction(state)
         return sent
 

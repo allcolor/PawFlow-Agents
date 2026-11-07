@@ -324,18 +324,13 @@ class PendingQueue:
 
     @classmethod
     def all_nonempty(cls) -> List[Tuple[str, str, int]]:
-        """Every (conv_id, agent_name, count) with pending entries.
+        """Every (conv_id, agent_name, count) with pending actionable work.
 
-        Counts inbox items and regular messages alike. Used at startup to
-        wake agents that had pending messages when the server died; legacy
-        JSONL queues still on disk are migrated first.
+        Used at startup to recover regular messages and actionable inbox
+        items. Passive participant catch-up never wakes an idle agent.
+        Legacy JSONL queues still on disk are migrated first.
         """
         cls._migrate_legacy_files()
         store = _inbox_store()
         store.purge_acknowledged(30 * 24 * 60 * 60)
-        return [
-            (cid, agent, count)
-            for cid, agent in store.list_ready_keys()
-            for count in (store.pending_count(cid, agent),)
-            if count > 0
-        ]
+        return list(store.list_recovery_queues())

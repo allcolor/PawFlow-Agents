@@ -405,10 +405,11 @@ class _ALCIterationMixin:
             st.ctx["chars_per_token"] = self._get_cpt(
                 st._svc_id, st.ctx.get("chars_per_token", 0))
 
-        # No tools → final response (but wait for bg tasks first)
+        # No tools → final response; CLI background results use the inbox.
+        # Only API tool loops wait and continue with background tool results.
         if not st.response.tool_calls:
             _bg_agent = st.ctx.get("active_agent_name", "") or ""
-            if _bg_mod.has_pending(st.conversation_id, _bg_agent):
+            if not st._is_claude_code and _bg_mod.has_pending(st.conversation_id, _bg_agent):
                 logger.info("[agent:%s] waiting for background tasks before exit",
                             st.conversation_id[:8])
                 st.emitter.on_status("Waiting for background tasks...")

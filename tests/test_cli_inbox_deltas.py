@@ -231,3 +231,62 @@ def test_outer_warm_cli_loop_passes_every_queued_human_and_image_before_notice(
 def test_outer_loop_keeps_full_context_for_cold_cli_and_api(provider, warm, monkeypatch):
     actual, messages = _main_loop_provider_messages(provider, warm, 1, monkeypatch)
     assert [msg.msg_id for msg in actual] == [msg.msg_id for msg in messages]
+
+
+@pytest.mark.parametrize("provider", [
+    "claude-code", "claude-code-interactive", "antigravity-interactive",
+    "codex-app-server", "codex-interactive", "gemini", "cc_mcp", "codex_mcp", "agy_mcp",
+    "openai",
+])
+def test_cli_completion_does_not_continue_with_an_empty_delta_for_background_work(
+        provider, monkeypatch):
+    from core.llm_client import LLMResponse
+    from tasks.ai._alc_base import _ALC_BREAK, _ALC_CONTINUE
+    from tasks.ai.agent_core import AgentCoreMixin
+
+    loop = AgentCoreMixin()
+    messages = [_msg("user", "Original request")]
+    emitter = MagicMock(is_streaming=True)
+    emitter.check_interrupt.return_value = False
+    st = SimpleNamespace(
+        messages=messages, emitter=emitter,
+        client=SimpleNamespace(config={}, _last_turn_visible_msg_id="answer"),
+        ctx={"active_agent_name": "a", "_cli_has_session": True,
+             "_claude_has_session": True, "max_iterations": 10},
+        conversation_id="conv", user_id="u", iteration=0, current_round=1,
+        max_rounds=1, tools_called=[], _append=messages.append,
+        _compact_threshold_fraction=lambda _: 0, _client_provider=provider,
+        _budget_precheck_done=True, total_tokens_in=0, total_tokens_out=0,
+        total_cache_read=0, total_cache_write=0, model="model", tool_defs=[],
+        _schedule_cc_turn_gauge_patch=MagicMock(), all_assistant_msg_ids=["answer"],
+    )
+    for name in ("_alc_should_proactive_compact", "_microcompact_time_based",
+                 "_deflate_image_messages", "_alc_release_active_after_terminal_visible_answer"):
+        monkeypatch.setattr(loop, name, lambda *args, **kwargs: False, raising=False)
+    monkeypatch.setattr(loop, "_alc_build_provider_context", lambda _st, msgs: (list(msgs), 0))
+    monkeypatch.setattr(loop, "_alc_inject_dynamic_metadata", lambda _st, msgs: msgs)
+    monkeypatch.setattr(loop, "_inject_identity", lambda msgs, _: msgs, raising=False)
+    monkeypatch.setattr(loop, "_apply_identity_suffix", lambda msgs, _: msgs, raising=False)
+    monkeypatch.setattr(loop, "_estimate_tokens", lambda *args, **kwargs: 0, raising=False)
+    monkeypatch.setattr("core.agent_inbox.turn_mode_messages", lambda *args: [])
+    monkeypatch.setattr("tasks.ai._alc_iteration._apply_bg_results", lambda *args: None)
+    monkeypatch.setattr("core.background_tool.has_pending", lambda *args: True)
+    wait = MagicMock(return_value=1)
+    monkeypatch.setattr("core.background_tool.wait_pending", wait)
+    deltas = []
+
+    def complete(state):
+        deltas.append([msg.content for msg in state._call_context])
+        state.response = LLMResponse()
+        state.messages.append(_msg("assistant", "Completed visible answer"))
+
+    monkeypatch.setattr(loop, "_alc_llm_turn", complete)
+    signal = loop._alc_iteration(st)
+
+    assert deltas == [["Original request"]]
+    if provider == "openai":
+        assert signal is _ALC_CONTINUE
+        wait.assert_called_once_with("conv", "a", cancel_check=emitter.check_cancelled)
+    else:
+        assert signal is _ALC_BREAK
+        wait.assert_not_called()

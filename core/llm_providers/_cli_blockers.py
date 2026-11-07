@@ -63,7 +63,12 @@ _RATE_LIMIT_PATTERNS = (
     # "Usage limit reached for 5 hour". The healthy status footer
     # ("Approaching usage limit - resets at 5pm") carries no reached/exceeded,
     # so the bare words are not a pattern of their own.
-    r"(?:reached|exceeded)[^\n]{0,40}limit",
+    # Tool output, file size, memory and context limits are not provider
+    # quotas. Require usage/rate wording or a named provider time window.
+    r"\b(?:reached|exceeded) (?:your |the )?"
+    r"(?:(?:session|weekly|daily|hourly) )?(?:usage|rate) limit\b",
+    r"\b(?:reached|exceeded) (?:your |the )?"
+    r"(?:session|weekly|daily|hourly) limit\b",
     r"(?:session|weekly|daily|hourly) limit (?:reached|exceeded)",
     r"limit will reset",
     # Codex: "You've hit your usage limit. ... try again at 3:05 PM."

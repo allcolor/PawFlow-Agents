@@ -920,8 +920,9 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         composer = self._composer_text(pane)
         if not composer:
             return None
-        low = composer.lower()
-        return any(marker in low for marker in self._PASTE_CHIP_MARKERS)
+        low = self._pane_squeeze(composer.lower())
+        return any(self._pane_squeeze(marker) in low
+                   for marker in self._PASTE_CHIP_MARKERS)
 
     @staticmethod
     def _submit_probe_fragment(text: str) -> str:

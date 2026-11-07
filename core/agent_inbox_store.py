@@ -764,7 +764,9 @@ class AgentInboxStore:
 
     def list_items(self, conversation_id: str, agent_key: str,
                    states: Iterable[str] | None = None,
-                   limit: int = 1000) -> tuple[AgentInboxItem, ...]:
+                   limit: int = 1000, *,
+                   exclude_source: str | None = None) -> tuple[AgentInboxItem, ...]:
+        """Ordered items, with an optional exact source exclusion before the limit."""
         clauses = ["conversation_id=?", "agent_key=?"]
         params: list[Any] = [
             _required(conversation_id, "conversation_id"), _agent(agent_key)]
@@ -773,6 +775,9 @@ class AgentInboxStore:
         if values:
             clauses.append("state IN (" + ",".join("?" for _ in values) + ")")
             params.extend(values)
+        if exclude_source:
+            clauses.append("source!=?")
+            params.append(exclude_source)
         params.append(max(1, int(limit)))
         with self._lock, self._connect() as connection:
             rows = connection.execute(
@@ -986,6 +991,23 @@ class AgentInboxStore:
         return tuple(
             (str(row["conversation_id"]), str(row["agent_key"]))
             for row in rows)
+
+    def list_recovery_queues(self) -> tuple[tuple[str, str, int], ...]:
+        """Queues with unread work that can wake an agent after restart.
+
+        Participant catch-up stays unread for the next real turn; it must
+        never launch an idle agent, including when already notified.
+        """
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """SELECT conversation_id, agent_key, count(*) AS item_count
+                   FROM agent_inbox_items
+                   WHERE state IN ('pending','notified')
+                     AND source != 'inbox:catch_up'
+                   GROUP BY conversation_id, agent_key
+                   ORDER BY conversation_id, agent_key""").fetchall()
+        return tuple((str(row["conversation_id"]), str(row["agent_key"]),
+                      int(row["item_count"])) for row in rows)
 
     def reconcile_receipts(
         self, transcript_contains: Callable[[str, str], bool],

@@ -15,6 +15,8 @@ paste dropped, Enter (rewind) then Enter (re-submit). An idle composer now
 gets no Esc, and an Enter goes only onto the send's own paste.
 """
 
+import pytest
+
 import core.claude_code_interactive_pool as ccip
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.codex_interactive_pool import CodexInteractivePool
@@ -61,6 +63,19 @@ TRANSCRIPT_PAGER = """\
 Ctrl+Space select
  ↑/↓ to scroll · pgup/pgdn to page · home/end to jump
  q close · f3 find · esc browse prompts
+"""
+
+RATE_LIMIT_MENU = """\
+  Worked for 1m 46s • 1:46 PM
+
+  Approaching rate limits
+  Switch to gpt-6-luna for lower credit usage?
+
+› 1. Switch to gpt-6-luna                   Fast and affordable model for easier tasks.
+  2. Keep current model
+  3. Keep current model (never show again)  Hide future rate limit reminders about switching models
+
+  enter select · esc back
 """
 
 
@@ -274,3 +289,203 @@ def test_state_summary_is_structural_only():
     assert "backtrack_overlay=True" in pool._pane_state_summary(BACKTRACK)
     assert "backtrack_primed=True" in pool._pane_state_summary(PRIMED)
     assert pool._pane_state_summary("") == "pane=unreadable"
+
+
+def test_rate_limit_model_menu_is_not_a_composer():
+    """GameDev4/6, 2026-11-07 13:46Z: the selected option also starts with ›."""
+    pool = CodexInteractivePool()
+    assert pool._pane_shows_overlay(RATE_LIMIT_MENU) is True
+    assert pool._composer_text(RATE_LIMIT_MENU) == ""
+    assert pool._composer_is_idle(RATE_LIMIT_MENU) is False
+    assert pool._pane_holds_unsent_paste(RATE_LIMIT_MENU) is None
+
+
+def test_quoted_rate_limit_menu_above_a_composer_does_not_block_it():
+    pool = CodexInteractivePool()
+    pane = RATE_LIMIT_MENU + CHIP
+    assert pool._pane_shows_overlay(pane) is False
+    assert pool._pane_holds_unsent_paste(pane) is True
+
+
+def test_prepare_dismisses_rate_limit_menu_once_without_changing_model(monkeypatch):
+    ok, keys, _state = _prepare(monkeypatch, [RATE_LIMIT_MENU, IDLE])
+    assert ok is True
+    assert keys == [["Escape"]]
+
+
+def test_prepare_refuses_to_paste_into_a_stuck_rate_limit_menu(monkeypatch):
+    ok, keys, state = _prepare(monkeypatch, [RATE_LIMIT_MENU])
+    assert ok is False
+    assert keys == [["Escape"]] * 4
+    assert "overlay" in state.last_error
+
+
+def test_enter_never_selects_a_rate_limit_model_option(monkeypatch):
+    pool, state, sent = _enter(monkeypatch, RATE_LIMIT_MENU, PROMPT)
+    assert pool.send_keys(state, ["Enter"]) is False
+    assert sent == []
+    assert "overlay" in state.last_error
+
+
+def test_rate_limit_menu_opening_is_not_proof_of_a_paste(monkeypatch):
+    assert _landed(monkeypatch, IDLE, RATE_LIMIT_MENU) is False
+
+
+def test_rate_limit_menu_hides_stale_transcript_chips(monkeypatch):
+    pane = CHIP + RATE_LIMIT_MENU
+    pool, state, sent = _enter(monkeypatch, pane, PROMPT)
+    assert pool._pane_holds_unsent_paste(pane) is None
+    assert pool.send_keys(state, ["Enter"]) is False
+    assert sent == []
+    assert _landed(monkeypatch, IDLE, pane) is False
+
+
+def test_queued_notice_dismisses_rate_limit_menu_before_transport(monkeypatch):
+    import threading
+
+    pool = CodexInteractivePool()
+    state = _State()
+    state.send_lock = threading.RLock()
+    state.expected_paste = ""
+    pane = [RATE_LIMIT_MENU]
+    keys, pastes = [], []
+    notice = "[PawFlow inbox: ACTION REQUIRED] Call read_inbox() NOW."
+    monkeypatch.setattr(pool, "_check_native_compaction", lambda _s: None)
+    monkeypatch.setattr(pool, "_pane_text", lambda _n: pane[0])
+
+    def send_keys(_self, _state, batch):
+        keys.append(batch)
+        pane[0] = IDLE
+        return True
+
+    monkeypatch.setattr(InteractiveClaudeCodePool, "send_keys", send_keys)
+    monkeypatch.setattr(InteractiveClaudeCodePool, "send_queued",
+                        lambda _self, _state, text: pastes.append(text) or True)
+    _no_sleep(monkeypatch)
+    assert pool.send_queued(state, notice) is True
+    assert keys == [["Escape"]]
+    assert pastes == [notice]
+    assert state.expected_paste == ""
+
+
+def test_wrapped_chip_is_recognized_by_transport_and_enter_guard(monkeypatch):
+    for label in ("[Pasted\n Content 2400 chars]", "[Paste\nd Content 2400 chars]"):
+        pane = IDLE.replace("Ask Codex to do anything", label)
+        assert _landed(monkeypatch, IDLE, pane) is True
+        pool, state, sent = _enter(monkeypatch, pane, PROMPT)
+        assert pool.send_keys(state, ["Enter"]) is True
+        assert sent == [["Enter"]]
+
+
+def test_quoted_overlay_above_composer_does_not_block_paste(monkeypatch):
+    for quoted in (BACKTRACK, TRANSCRIPT_PAGER):
+        pane = quoted + CHIP
+        pool = CodexInteractivePool()
+        assert pool._pane_shows_overlay(pane) is False
+        assert pool._composer_is_idle(pane) is True
+        assert _landed(monkeypatch, IDLE, pane) is True
+        ok, keys, _state = _prepare(monkeypatch, [pane])
+        assert ok is True
+        assert keys == []
+
+
+def _queued_with_real_enter_guard(monkeypatch, after_paste=IDLE):
+    import threading
+
+    pool = CodexInteractivePool()
+    state = _State()
+    state.send_lock = threading.RLock()
+    state.expected_paste = ""
+    state.unconfirmed_paste = ""
+    state.last_error = ""
+    pane = [IDLE]
+    keys, pastes = [], []
+    monkeypatch.setattr(pool, "_check_native_compaction", lambda _s: None)
+    monkeypatch.setattr(pool, "_is_alive", lambda _n: True)
+    monkeypatch.setattr(pool, "_refuse_dead_stream", lambda _s: False)
+    monkeypatch.setattr(pool, "_sync_slot_credentials", lambda _s: None)
+    monkeypatch.setattr(pool, "_cancel_copy_mode", lambda _s: None)
+    monkeypatch.setattr(pool, "_clear_unconfirmed_paste", lambda _s: None)
+    monkeypatch.setattr(pool, "_remember_injected_prompt", lambda *_a: None)
+    monkeypatch.setattr(pool, "_remember_injected_prompt_for_event_service", lambda *_a: None)
+    monkeypatch.setattr(pool, "_pane_text", lambda _n: pane[0])
+    monkeypatch.setattr(pool, "_paste_settle_seconds", lambda: 0.0)
+    monkeypatch.setattr(pool, "_prepare_prompt_input", lambda _s: (_ for _ in ()).throw(
+        AssertionError("a queued notice must not interrupt the running turn")))
+
+    def paste(_state, text):
+        pastes.append(text)
+        pane[0] = after_paste
+        return True
+
+    monkeypatch.setattr(pool, "_paste_text", paste)
+    monkeypatch.setattr(InteractiveClaudeCodePool, "send_keys",
+                        lambda _self, _state, batch: keys.append(list(batch)) or True)
+    _no_sleep(monkeypatch)
+    return pool, state, pane, keys, pastes
+
+
+def test_queued_notice_waits_for_ingestion_before_enter(monkeypatch):
+    pool, state, pane, keys, pastes = _queued_with_real_enter_guard(
+        monkeypatch, after_paste=RUNNING)
+    notice = "[PawFlow inbox: ACTION REQUIRED] Call read_inbox() NOW."
+
+    def ingest_after_wait(_seconds):
+        if pastes:
+            pane[0] = CHIP
+
+    monkeypatch.setattr(ccip.time, "sleep", ingest_after_wait)
+    assert pool.send_queued(state, notice) is True
+    assert pastes == [notice]
+    assert keys == [["Enter"]]
+    assert state.expected_paste == ""
+    assert state.queued_paste_pending is False
+
+
+def test_queued_notice_never_reports_success_without_enter(monkeypatch):
+    pool, state, _pane, keys, pastes = _queued_with_real_enter_guard(
+        monkeypatch, after_paste=RUNNING)
+    monkeypatch.setattr(pool, "_PASTE_LANDED_SECONDS", 0.0)
+    notice = "[PawFlow inbox: ACTION REQUIRED] Call read_inbox() NOW."
+    assert pool.send_queued(state, notice) is False
+    assert pastes == [notice]
+    assert keys == []
+    assert state.unconfirmed_paste == notice
+    assert "queued" in state.last_error
+    assert state.expected_paste == ""
+    assert state.queued_paste_pending is False
+
+
+def test_queued_notice_unreadable_composer_keeps_notice_pending(monkeypatch):
+    pool, state, _pane, keys, pastes = _queued_with_real_enter_guard(
+        monkeypatch, after_paste="")
+    monkeypatch.setattr(pool, "_PASTE_LANDED_SECONDS", 0.0)
+    assert pool.send_queued(state, PROMPT) is False
+    assert pastes == [PROMPT]
+    assert keys == []
+
+
+def test_queued_notice_refuses_menu_that_appears_after_paste(monkeypatch):
+    pool, state, _pane, keys, pastes = _queued_with_real_enter_guard(
+        monkeypatch, after_paste=RATE_LIMIT_MENU)
+    assert pool.send_queued(state, PROMPT) is False
+    assert pastes == [PROMPT]
+    assert keys == []
+    assert "overlay" in state.last_error
+
+
+def test_failed_queued_transport_does_not_poison_next_send(monkeypatch):
+    pool, state, _pane, keys, _pastes = _queued_with_real_enter_guard(monkeypatch)
+
+    def broken_paste(_state, _text):
+        raise RuntimeError("transport failed")
+
+    monkeypatch.setattr(pool, "_paste_text", broken_paste)
+    with pytest.raises(RuntimeError, match="transport failed"):
+        pool.send_queued(state, PROMPT)
+    assert state.expected_paste == ""
+    assert state.queued_paste_pending is False
+    # A later canonical send still uses its ordinary receipt-verifier path.
+    state.expected_paste = PROMPT
+    assert pool.send_keys(state, ["Enter"]) is True
+    assert keys == []

@@ -101,8 +101,18 @@ def _active_task(cid, active_agents):
     return task
 
 
-def _schedule(cid, key, reason):
+def _schedule(cid, key, reason, *, queued_work=True):
     from core.poll_scheduler import PollScheduler
+    if queued_work and "::pending::" in key:
+        from core.agent_inbox_store import AgentInboxStore
+        target = AgentPollerMixin()._scheduled_entry_target(
+            cid, {"key": key, "reason": reason})
+        if target:
+            # Routing tests model a delivery nudge with actual queued work.
+            AgentInboxStore.instance().enqueue(cid, target, {
+                "role": "user", "content": "queued work",
+                "msg_id": "queued-" + target, "ts": 1.0,
+            }, "inbox:delegate_message")
     PollScheduler.instance().schedule(
         cid, time.time() - 1, key=key, reason=reason, user_id="testuser")
 
@@ -134,6 +144,89 @@ def test_deferred_inbox_nudge_respects_unread_stop_limit(poller_env, fresh):
             entry["recheck_at"] = time.time() - 1
     threads = _poll(task, cid)
     assert len(threads) == (0 if fresh == "none" else 1)
+
+
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("work", [
+    "absent", "read", "catch_up", "notified_catch_up", "pending", "notified", "human",
+])
+def test_delivery_nudge_requires_work_that_is_still_unread(poller_env, active, work):
+    from core import agent_inbox
+    from core.pending_queue import PendingQueue
+
+    cid = f"nudge_{active}_{work}"
+    task = _active_task(cid, ["claude"] if active else [])
+    _schedule(cid, f"{cid}::pending::claude", "[delegate_reply] queued result for claude",
+              queued_work=False)
+    message = {"role": "user", "msg_id": "work", "ts": time.time(),
+               "content": "actual work", "source": {"type": "user", "name": "testuser"}}
+    if work == "human":
+        PendingQueue.for_agent(cid, "claude").enqueue(message, "http")
+    elif work != "absent":
+        kind = "catch_up" if "catch_up" in work else "delegate_message"
+        assert agent_inbox.enqueue_item(cid, "claude", message, kind, "assistant")
+        if work == "read":
+            assert "actual work" in agent_inbox.read_inbox(cid, "claude")
+        elif work.startswith("notified"):
+            assert agent_inbox.take_notice(cid, "claude")
+
+    threads = _poll(task, cid)
+    actionable = work in {"pending", "notified", "human"}
+    assert len(threads) == int(actionable and not active)
+    assert len(_remaining(cid)) == int(actionable and active)
+    if not actionable:
+        task._build_poll_context.assert_not_called()
+    if "catch_up" in work:
+        assert "actual work" in agent_inbox.read_inbox(cid, "claude")
+
+
+def test_completed_delivery_nudge_does_not_discard_an_explicit_continuation(poller_env):
+    cid = "stale_nudge_with_plan"
+    task = _active_task(cid, [])
+    _schedule(cid, f"{cid}::pending::claude", "[delegate_reply] queued result for claude",
+              queued_work=False)
+    _schedule(cid, f"{cid}::continuation::plan", "[scheduled:claude] [continuation] finish the fix")
+
+    assert len(_poll(task, cid)) == 1
+    assert task._build_poll_context.call_args.kwargs["scheduled_reasons"] == [
+        "[scheduled:claude] [continuation] finish the fix"]
+    assert _remaining(cid) == []
+
+
+@pytest.mark.parametrize("work", ["absent", "read_during_prepare", "catch_up", "pending", "human"])
+def test_delivery_poll_context_rechecks_work_after_preparation(poller_env, work):
+    from core import agent_inbox
+    from core.pending_queue import PendingQueue
+
+    cid = "prepare_race_" + work
+    task = _active_task(cid, [])
+    message = {"role": "user", "msg_id": "work", "ts": time.time(),
+               "content": "actual work", "source": {"type": "user", "name": "testuser"}}
+    if work == "human":
+        PendingQueue.for_agent(cid, "claude").enqueue(message, "http")
+    elif work != "absent":
+        kind = "catch_up" if work == "catch_up" else "delegate_message"
+        assert agent_inbox.enqueue_item(cid, "claude", message, kind, "assistant")
+
+    def prepare(*args, **kwargs):
+        if work == "read_during_prepare":
+            agent_inbox.read_inbox(cid, "claude")
+        return {"messages": [], "active_agent_name": "claude"}
+
+    task._prepare_agent_context = prepare
+    task._build_poll_checkin = MagicMock(return_value="delivery nudge")
+    task._persist_scheduled_wakeup = MagicMock(side_effect=AssertionError(
+        "a delivery nudge must not manufacture new work"))
+    ctx = AgentPollerMixin._build_poll_context(
+        task, cid, [], scheduled_reasons=[
+            "[scheduled:claude] [delegate_reply] queued result for claude"])
+
+    if work in {"pending", "human"}:
+        assert ctx is not None
+        if work == "pending":
+            assert "Call read_inbox() NOW" in ctx["messages"][-1].content
+    else:
+        assert ctx is None
 
 
 def _poll(task, cid):

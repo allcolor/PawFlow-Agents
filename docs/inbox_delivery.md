@@ -31,7 +31,12 @@ agent enter that agent's inbox.
 only human input; `inbox:*` entries can only be consumed by `read_inbox`.
 Startup imports legacy per-agent `pending.jsonl` files once and renames them
 to `pending.jsonl.migrated`. Non-user legacy sources become inbox items.
-Recovery includes pending and notified items. Read/discarded rows are retained
+Recovery includes pending and notified actionable items. Catch-up-only queues
+never wake an agent after a restart; their items remain unread for the next
+real turn. Workflow recovery and final drains exclude catch-up before selecting
+their next pending message, so older catch-up cannot hide actionable work
+behind the query limit. Catch-up delivery never submits a workflow turn.
+Read/discarded rows are retained
 for 30 days; the normal transcript retains the visible history.
 
 ## Notices and delivery
@@ -54,13 +59,23 @@ through `send_queued_message`: paste and Enter, without interruption. A burst
 coalesces while an unread notice is outstanding. A failed notice paste does
 not acknowledge delivery; iteration and final-turn checks can retry it.
 Other providers receive the same notice at the next provider iteration.
-An idle agent is woken to read the same inbox.
+An idle agent is woken for actionable inbox work. Participant catch-up is
+passive: it never schedules a wake or retriggers a completed turn on its own.
+Deferred delivery wakes are discarded once their work has been read, including
+when it is read during context preparation. A stale wake cannot start an empty
+live CLI turn; explicit continuations and new human messages remain runnable.
+CLI completion also finalizes its turn when a background task is still running;
+its result arrives through the inbox. The API tool-loop wait/continue path is
+not used to submit an empty delta to a CLI that has already finished.
+An already active agent can read its catch-up through the same notices, and
+a real turn's initial notice includes unread catch-up alongside other items.
 
-Each turn with unread items receives a fresh notice. If items remain unread
+Each turn with unread work receives a fresh notice. If actionable items remain unread
 when the turn ends, PawFlow starts another turn with a notice. After three
 consecutive turns without reading, it emits a visible warning and stops
 automatic retriggers. A new item, progress reading a page, or new human input
-resets the no-read streak. Notice delivery itself never marks content read.
+resets the no-read streak. Catch-up arrivals do not reset that streak.
+Notice delivery itself never marks content read.
 
 Human-message resets are applied once per UUID, both at setup and after
 messages drained during the turn. Retained human markers cannot reset every

@@ -5,7 +5,32 @@ rate-limit banner, a question, a model menu) never ends on its own: nothing on
 the wire says why. These tests pin the conservative reading of the pane.
 """
 
+import pytest
+
 from core.llm_providers._cli_blockers import detect_cli_blocker, tail_lines
+
+
+@pytest.mark.parametrize("pane", [
+    "• The previous read still exceeded the output limit. I’ll read the missing middle sections separately.",
+    "The tool output exceeded the maximum output limit.",
+    "The file exceeded the size limit; reading a smaller slice.",
+    "The process reached its memory limit.",
+    "The response exceeded the context limit.",
+])
+def test_tool_output_limit_prose_is_not_a_provider_quota(pane):
+    assert detect_cli_blocker(pane) is None
+
+
+@pytest.mark.parametrize("pane", [
+    "You have reached your session usage limit.",
+    "You have exceeded your usage limit.",
+    "You have reached the daily limit.",
+    "Weekly limit reached.",
+    "API Error: 429 Too Many Requests",
+    "You've hit your usage limit. Try again at 3:05 PM.",
+])
+def test_actual_provider_quota_banners_remain_detected(pane):
+    assert detect_cli_blocker(pane).kind == "rate_limited"
 
 
 def test_rate_limit_banner_in_the_tail_is_detected():

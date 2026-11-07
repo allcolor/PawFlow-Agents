@@ -31,7 +31,7 @@ def _bare_pool(cls, keys, pastes):
     pool._prepare_prompt_input = lambda state: pytest.fail(
         "a queued submission must not prepare (Escape) the composer")
     pool._check_native_compaction = lambda state: None
-    pool._leave_backtrack_overlay = lambda state: True
+    pool._leave_input_overlay = lambda state: True
     return pool
 
 

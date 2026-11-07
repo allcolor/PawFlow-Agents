@@ -467,7 +467,7 @@ Timing controls are read once when the provider modules are imported:
   reported one keeps the old behavior).
 - A TUI that is blocked waiting for input is surfaced instead of waited on.
   The pane is the only place that says a turn cannot progress: a rate-limit
-  banner (`429`, `reached ... limit`, `limit will reset`, Codex's `hit your
+  banner (`429`, `reached your session usage limit`, `limit will reset`, Codex's `hit your
   usage limit`) or an authentication failure (`API Error: 401`,
   `authentication_error`, expired or already-used OAuth token, `Please run
   /login`, `401 Unauthorized`) stops the CLI from issuing requests, and a
@@ -485,7 +485,9 @@ Timing controls are read once when the provider modules are imported:
   blocked one: a long local tool emits no event for minutes, so the probe reads
   exactly the pane of a healthy turn, where rate-limit wording is the model's
   prose, a path it is editing, or the status footer (`Approaching usage limit`
-  is not a banner either -- a reached limit names `reached`/`exceeded`). Wired
+  is not a banner either -- a reached limit names provider usage or a time
+  window with `reached`/`exceeded`). Prose about tool output, file size,
+  memory or context limits is not a provider quota banner. Wired
   on the interactive paths of Claude Code and Codex and on the managed MCP
   coordinator, and on manual captures (`_capture_pane_callback`, resolved
   from the proxy-reported `container_id` like the capture liveness probe) --
@@ -595,8 +597,25 @@ Timing controls are read once when the provider modules are imported:
   (codex-cli 0.156) or `>` (earlier releases); a `›` line followed by
   transcript chrome (`•`, `■`, `└`) or a running turn is a transcript user
   turn, not the composer. Failure logs carry a structural pane summary
-  (`composer=chip|empty|nonempty|absent`, `backtrack_overlay`,
+  (`composer=chip|empty|nonempty|absent`, `backtrack_overlay`, `input_overlay`,
   `backtrack_primed`, `running`), never prompt text.
+  The rate-limit model picker ("Approaching rate limits", "Keep current model",
+  "enter select · esc back") is also an input overlay: its selected option
+  starts with `›`, but it drops pasted text and `Enter` selects a model instead
+  of submitting a prompt (GameDev4/6, 2026-11-07 13:46Z). Before a normal send
+  or a queued inbox notice, dismiss it with `Escape`, keeping the current model.
+  Overlay dismissal is bounded and each additional `Escape` requires the menu
+  to remain visible; an idle composer receives none. If the overlay stays open,
+  refuse the paste. If it opens during a send, it never proves a landed paste
+  and `Enter` is refused, even when an older transcript still shows a paste chip.
+  Backtrack and transcript overlays require their active footer at the bottom;
+  quoting their menu text above an editable composer does not hide that composer.
+  Paste-chip recognition tolerates terminal wrapping within the chip label.
+  Queued inbox notices have no later submission verifier, so their Enter waits
+  up to the paste-ingestion budget for that notice's chip or text in the composer.
+  A running old turn alone is not proof. On timeout or an unreadable composer,
+  return failure and retain the unconfirmed paste for cleanup before the next
+  send; never report a skipped Enter as a successful notice delivery.
   In production only the exact `UserPromptSubmit` digest or matching MITM
   request confirms submission. If the structurally recognised composer still
   holds the pasted chip, verification may send up to three evidence-gated

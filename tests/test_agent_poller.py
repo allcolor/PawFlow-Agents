@@ -164,11 +164,16 @@ def test_delivery_nudge_requires_work_that_is_still_unread(poller_env, active, w
         PendingQueue.for_agent(cid, "claude").enqueue(message, "http")
     elif work != "absent":
         kind = "catch_up" if "catch_up" in work else "delegate_message"
-        assert agent_inbox.enqueue_item(cid, "claude", message, kind, "assistant")
+        if kind == "catch_up":
+            agent_inbox._store().enqueue(cid, "claude", message, "inbox:catch_up")
+        else:
+            assert agent_inbox.enqueue_item(cid, "claude", message, kind, "assistant")
         if work == "read":
             assert "actual work" in agent_inbox.read_inbox(cid, "claude")
-        elif work.startswith("notified"):
+        elif work == "notified":
             assert agent_inbox.take_notice(cid, "claude")
+        elif work == "notified_catch_up":
+            agent_inbox._store().mark_notified(cid, "claude", 999999)
 
     threads = _poll(task, cid)
     actionable = work in {"pending", "notified", "human"}
@@ -177,7 +182,7 @@ def test_delivery_nudge_requires_work_that_is_still_unread(poller_env, active, w
     if not actionable:
         task._build_poll_context.assert_not_called()
     if "catch_up" in work:
-        assert "actual work" in agent_inbox.read_inbox(cid, "claude")
+        assert agent_inbox.read_inbox(cid, "claude") == "No unread items."
 
 
 def test_completed_delivery_nudge_does_not_discard_an_explicit_continuation(poller_env):
@@ -206,7 +211,10 @@ def test_delivery_poll_context_rechecks_work_after_preparation(poller_env, work)
         PendingQueue.for_agent(cid, "claude").enqueue(message, "http")
     elif work != "absent":
         kind = "catch_up" if work == "catch_up" else "delegate_message"
-        assert agent_inbox.enqueue_item(cid, "claude", message, kind, "assistant")
+        if kind == "catch_up":
+            agent_inbox._store().enqueue(cid, "claude", message, "inbox:catch_up")
+        else:
+            assert agent_inbox.enqueue_item(cid, "claude", message, kind, "assistant")
 
     def prepare(*args, **kwargs):
         if work == "read_during_prepare":

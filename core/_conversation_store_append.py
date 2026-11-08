@@ -241,7 +241,7 @@ class _CsAppendMixin:
           - transcript.jsonl: everything except source.type=='context'.
           - {agent}/context.jsonl (own): everything except source.type!=
             'context' and agent_name=='' (broadcast-less orphan).
-          - shared.jsonl + other agents' contexts: user/assistant
+          - shared.jsonl: user/assistant
             without tool_calls, not display_only, not context, not
             delegate-reply; assistant+tool_calls contributes a
             stripped-of-tool_calls copy (filter_for_shared).
@@ -347,7 +347,7 @@ class _CsAppendMixin:
                     touched_agents.add(route_agent)
                     _mark_timing("own_ctx", _t0)
 
-                # 3. Shared + broadcast to other agents — only for
+                # 3. Shared conversation history — only for
                 #    conversation messages (filter_for_shared drops
                 #    tool results and context injections; strips
                 #    tool_calls but keeps text).
@@ -362,31 +362,6 @@ class _CsAppendMixin:
                                        for m in shared_candidates]
                         self._append_shared_ctx(cid, shared_msgs, _timings)
                         _mark_timing("shared_append", _t0)
-                        _t0 = time.monotonic()
-                        with self._cache_lock:
-                            fanout_cache_warm = (
-                                cid in self._append_agents_cache
-                                or cid in self._cache)
-                        if role == "user" and route_agent and not fanout_cache_warm:
-                            known_agents = {route_agent}
-                        else:
-                            known_agents = self._cache_agents_for_append(cid)
-                        if route_agent:
-                            known_agents.add(route_agent)
-                        _mark_timing("known_agents", _t0)
-                        _broadcast_count = 0
-                        _t0 = time.monotonic()
-                        for other in known_agents:
-                            if not other or other == (route_agent or agent_name):
-                                continue
-                            transformed = [
-                                self._transform_for_other_agent(m, other)
-                                for m in shared_candidates]
-                            self._queue_catchup_rows(cid, other, transformed)
-                            touched_agents.add(other)
-                            _broadcast_count += 1
-                        _mark_timing("broadcast", _t0)
-                        _timings["broadcast_count"] = float(_broadcast_count)
 
         # Feed bg_bucket_builder outside the conversation write lock. The
         # trigger is best-effort cache maintenance; it must not serialize disk
@@ -565,24 +540,6 @@ class _CsAppendMixin:
                                 for m in shared_candidates):
                             shared_rows.append(
                                 self._stamp_line(cid, shared_msg))
-                        with self._cache_lock:
-                            fanout_cache_warm = (
-                                cid in self._append_agents_cache
-                                or cid in self._cache)
-                        if role == "user" and route_agent and not fanout_cache_warm:
-                            known_agents = {route_agent}
-                        else:
-                            known_agents = self._cache_agents_for_append(cid)
-                        if route_agent:
-                            known_agents.add(route_agent)
-                        for other in known_agents:
-                            if not other or other == (route_agent or entry["agent_name"]):
-                                continue
-                            transformed = [
-                                self._transform_for_other_agent(m, other)
-                                for m in shared_candidates]
-                            self._queue_catchup_rows(cid, other, transformed)
-                            touched_agents.add(other)
 
             if transcript_rows:
                 self._transcript_log(cid).append_dicts(transcript_rows)
@@ -621,13 +578,13 @@ class _CsAppendMixin:
 
     def _route_delegate_message(self, cid: str, rows: List[Dict],
                                 agent_name: str) -> set:
-        """Keep the sender's delegate history and broadcast requests as catch-up.
+        """Keep the sender's delegate history and shared request projection.
 
         ``rows`` are the message's canonical rows: the anchor first, then
         its ``thinking`` / ``tool_call`` children. The sender keeps all of
         them, exactly like a normal own-context write, so a delegate-mode
         turn that called tools reloads with its tool calls. Targeted delivery
-        ingress owns the recipient inbox; broadcasts queue the anchor only.
+        ingress owns the recipient inbox; no other agent receives a copy.
 
         Called under the conv lock by append_message.
         """
@@ -664,7 +621,7 @@ class _CsAppendMixin:
         if _external_transport:
             return touched_agents
 
-        # Request broadcasts to shared + other agents. The sender keeps its
+        # Requests project to shared history. The sender keeps its
         # own output above; targeted inbox delivery belongs to the ingress.
         _for_shared = dict(msg)
         if _for_shared.get("role") == "assistant":
@@ -674,29 +631,4 @@ class _CsAppendMixin:
             f"[{_from} to agent {_to}]:")
         self._append_shared_ctx(cid, [_for_shared])
 
-        known_agents = self._cache_agents_for_append(cid)
-        known_agents.update(touched_agents)
-        _delegate_parties = {self._canon_agent(_from), self._canon_agent(_to)}
-        for other in known_agents:
-            if not other or other in _delegate_parties:
-                continue
-            transformed = self._transform_for_other_agent(
-                _for_shared, other)
-            self._queue_catchup_rows(cid, other, [transformed])
-            touched_agents.add(other)
         return touched_agents
-
-    @staticmethod
-    def _queue_catchup_rows(cid: str, agent: str, rows: List[Dict]) -> None:
-        """Broadcast data stays in an inbox until this agent reads it.
-
-        No wake: shared chatter is delivered at the next natural turn.
-        The original msg_id keeps append retries idempotent per recipient.
-        """
-        from core import agent_inbox
-        for row in rows:
-            source = row.get("source") or {}
-            sender = source.get("from") or source.get("name")
-            if not sender:
-                raise ValueError("catch-up message requires a sender")
-            agent_inbox.enqueue_item(cid, agent, row, "catch_up", sender)

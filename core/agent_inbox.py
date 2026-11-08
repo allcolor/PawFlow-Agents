@@ -2,7 +2,7 @@
 
 Only the user's own messages are put inline into an agent's prompt. Every
 other message (delegate messages and results, background tool results,
-scheduled wake-ups, catch-up context, skill events, ...) is stored here as an
+scheduled wake-ups, skill events, ...) is stored here as an
 inbox item. The agent receives only an imperative notice (``build_notice``)
 and must call the ``read_inbox`` tool, which returns the unread items in
 order and marks them read: the read is the server-side acknowledgement.
@@ -16,7 +16,6 @@ them; only ``read_inbox`` consumes them.
 from __future__ import annotations
 
 import logging
-import json
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -36,7 +35,6 @@ KINDS = (
     "scheduled_wakeup",
     "continuation",
     "task_checkin",
-    "catch_up",
     "skill_event",
     "workflow_proposal",
 )
@@ -49,7 +47,6 @@ _KIND_LABELS = {
     "scheduled_wakeup": "scheduled wake-up",
     "continuation": "continuation",
     "task_checkin": "task check-in",
-    "catch_up": "catch-up of other participants",
     "skill_event": "skill event",
     "workflow_proposal": "workflow proposal",
 }
@@ -100,9 +97,8 @@ def enqueue_item(conversation_id: str, agent_name: str, message: dict,
     from core.pending_queue import PendingQueue
     stored = PendingQueue.for_agent(conversation_id, agent_name).enqueue(
         entry, source=INBOX_SOURCE_PREFIX + kind)
-    if stored and kind != "catch_up":
-        # New work ends a no-read streak; passive chatter cannot keep an
-        # unresponsive agent running forever.
+    if stored:
+        # New explicit work ends a no-read streak.
         _store().set_notice_state(conversation_id, agent_name, unread_turns=0)
     return stored
 
@@ -111,9 +107,9 @@ def unread_items(conversation_id: str, agent_name: str) -> list:
     """Unread inbox items, oldest first (AgentInboxItem)."""
     store = _store()
     count = store.pending_count(conversation_id, agent_name)
-    return list(store.list_pending(
+    return [item for item in store.list_pending(
         conversation_id, agent_name, source_prefix=INBOX_SOURCE_PREFIX,
-        limit=max(1, count)))
+        limit=max(1, count)) if item.source != INBOX_SOURCE_PREFIX + "catch_up"]
 
 
 def unread_count(conversation_id: str, agent_name: str) -> int:
@@ -158,7 +154,7 @@ def inline_context_messages(messages: list, agent_name: str) -> list:
     """Exclude recipient copies left in contexts written before migration.
 
     The author's own output and human messages to this agent stay inline.
-    Future participant activity is routed to catch-up inbox items at append.
+    Other participants remain available through optional catchUp/read_history.
     """
     agent = agent_name.lower()
     kept = []
@@ -187,43 +183,8 @@ def inline_context_messages(messages: list, agent_name: str) -> list:
 
 def prepare_context_messages(messages: list, conversation_id: str,
                              agent_name: str) -> list:
-    """Move historical participant copies into an idempotent catch-up item.
-
-    Targeted deliveries are already represented by the migrated inbox. Shared
-    history supplied to a new/cold agent must remain readable as tool data.
-    """
-    kept = inline_context_messages(messages, agent_name)
-    kept_ids = {id(message) for message in kept}
-    history = []
-    agent = agent_name.lower()
-    for message in messages:
-        if id(message) in kept_ids:
-            continue
-        source = getattr(message, "source", None) or {}
-        if source.get("type") == "agent_delegate" and str(
-                source.get("to") or "").lower() == agent:
-            continue
-        if source.get("type") not in {"agent", "agent_delegate", "user"}:
-            continue
-        if source.get("delegate"):
-            continue
-        history.append({"role": message.role, "content": message.content,
-                        "source": source, "msg_id": message.msg_id,
-                        "ts": message.timestamp})
-    if history:
-        identity = json.dumps([row["msg_id"] for row in history])
-        message_id = uuid.uuid5(uuid.NAMESPACE_URL,
-                               f"pawflow-inbox:{conversation_id}:{agent}:{identity}").hex
-        from core.llm_client import stamp_message
-        payload = stamp_message({
-            "role": "user", "msg_id": message_id,
-            "ts": max(row["ts"] for row in history),
-            "content": json.dumps(history, ensure_ascii=False, sort_keys=True),
-            "source": {"type": "system", "name": "catch_up"}}, conversation_id)
-        payload[KIND_KEY] = "catch_up"
-        payload[SENDER_KEY] = "conversation participants"
-        _store().enqueue_context_history(conversation_id, agent_name, payload)
-    return kept
+    """Filter stored recipient copies without creating automatic catchup work."""
+    return inline_context_messages(messages, agent_name)
 
 
 def _content_text(payload: dict) -> str:

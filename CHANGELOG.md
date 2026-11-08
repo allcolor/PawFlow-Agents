@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Participant catch-up is now voluntary: public conversation activity no longer
+  creates cross-agent inbox items, notices or wakes. Existing queued copies are
+  retired; explicit delegates and other addressed work retain inbox delivery.
+  Shared conversation history and compaction remain unchanged.
+
+### Added
+
+- `catchUp(agent)` reads one agent's public replies on demand, with independent
+  durable reader/source cursors and bounded pagination that resumes oversized
+  replies without skipping text. `read_history` remains available for searches.
+
+### Fixed
+
+- Browser test fixtures now stop Playwright after Chromium launch or close
+  failures, preventing an active event loop from breaking later async tests.
+
 ## [1.0.0-beta.325] — 2026-11-07
 
 ### Fixed

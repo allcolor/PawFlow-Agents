@@ -161,6 +161,9 @@ TOOL_FAMILIES = {
             ("conversation history", ("conversation_search", "read_history"),
              "find what was said in past or compacted conversation history",
              "facts already available in memory"),
+            ("optional agent catchup", ("catchUp",),
+             "choose to read one agent's new public replies since your last read",
+             "mandatory inbox delivery or automatic participant notifications"),
         ),
     },
     "resources": {

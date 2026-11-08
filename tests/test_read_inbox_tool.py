@@ -118,10 +118,16 @@ class TestWiring:
         assert isinstance(handler, ReadInboxHandler)
 
     def test_relay_sets_source_identity_for_read_inbox(self):
+        import ast
         import services._tool_relay_execute as tre
         src = inspect.getsource(tre)
-        assert ('"delegate_status",\n                         '
-                '"delegate_result", "read_inbox"}' in src)
+        guards = [node for node in ast.walk(ast.parse(src))
+                  if isinstance(node, ast.Compare)
+                  and isinstance(node.left, ast.Name) and node.left.id == "tool_name"]
+        assert any({"read_inbox", "catchUp"} <= {
+            item.value for item in candidate.elts if isinstance(item, ast.Constant)}
+            for guard in guards for candidate in guard.comparators
+            if isinstance(candidate, ast.Set))
 
     def test_handler_receives_relay_source_agent(self):
         # The relay sets the identity on every SpawnAgentsHandler instance.

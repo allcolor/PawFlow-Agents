@@ -198,7 +198,7 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
             if task.context_messages:
                 context = [asdict(cm) if isinstance(cm, LLMMessage) else cm
                            for cm in task.context_messages]
-                deliveries.append(("catch_up", json.dumps(context, ensure_ascii=False)))
+                deliveries.append(("delegate_message", json.dumps(context, ensure_ascii=False)))
             deliveries.append(("delegate_message", task.message))
             for kind, content in deliveries:
                 payload = stamp_message({
@@ -310,6 +310,23 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
         tool_name, arguments = unwrap_mcp_tool(tc.name, tc.arguments or {})
         if not isinstance(arguments, dict):
             arguments = tc.arguments if isinstance(tc.arguments, dict) else {}
+        if tool_name == "catchUp":
+            from core.handlers.catchup import CatchUpHandler
+            from core.tool_authorization import gate_for_runtime
+            from core.tool_approval import ToolApprovalGate
+            if read_only and not ToolApprovalGate.is_advisor_read_only_allowed(
+                    tool_name, arguments):
+                return "Error: catchUp is blocked for this read-only advisor."
+            gate = gate_for_runtime(
+                tool_name=tool_name, arguments=arguments, user_id=user_id,
+                conversation_id=conversation_id, agent_name=agent_name, runtime="sub-agent")
+            if gate:
+                return gate
+            reader = CatchUpHandler()
+            reader.set_conversation_id(conversation_id)
+            reader.set_source_agent(agent_name)
+            reader.set_user_id(user_id)
+            return reader.execute(arguments)
         if tool_name == "read_inbox":
             # Registry handlers are shared across concurrent delegates. Bind a
             # fresh reader to this run, including wrapped use_tool calls.

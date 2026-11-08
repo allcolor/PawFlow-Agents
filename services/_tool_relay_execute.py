@@ -760,7 +760,7 @@ class _ToolRelayExecuteMixin:
         # the calling agent, so a CLI agent over the relay/MCP must be
         # identified as itself.
         if tool_name in {"delegate", "flash_delegate", "delegate_status",
-                         "delegate_result", "read_inbox"}:
+                         "delegate_result", "read_inbox", "catchUp"}:
             try:
                 from core.handlers.resource_agent import SpawnAgentsHandler
                 _src_svc = ""

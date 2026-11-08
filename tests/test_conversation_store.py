@@ -1651,7 +1651,7 @@ class TestAppendMessage:
             for msg in published_ctx)
         assert not external_ctx
 
-    def test_broadcast_to_other_agents(self, conv):
+    def test_public_output_stays_shared_without_broadcast(self, conv):
         store, cid, uid = conv
         store.set_extra(cid, "conv_agents", {
             "alice": {"definition": "alice", "llm_service": "llm"},
@@ -1665,9 +1665,10 @@ class TestAppendMessage:
         store.append_message(cid, m, agent_name="alice", user_id=uid)
         bob_ctx = store.load_agent_context(cid, "bob")
         assert not bob_ctx
-        assert agent_inbox.unread_count(cid, "bob") == 1
+        assert agent_inbox.unread_count(cid, "bob") == 0
         result = agent_inbox.read_inbox(cid, "bob")
-        assert "[Agent alice]" in result and "hello world" in result
+        assert result == "No unread items."
+        assert "hello world" in str(store.load_agent_context(cid, ""))
         assert agent_inbox.unread_count(cid, "bob") == 0
 
     def test_user_target_agent_is_not_written_twice_to_same_context(self, conv):
@@ -1700,9 +1701,10 @@ class TestAppendMessage:
         bob_ctx = store.load_agent_context(cid, "bob")
         assert not bob_ctx
         result = agent_inbox.read_inbox(cid, "bob")
-        assert "[Agent alice]" in result and "hello world" in result
+        assert result == "No unread items."
+        assert "hello world" in str(store.load_agent_context(cid, ""))
 
-    def test_append_legacy_agent_dirs_fanout_without_conv_agents(
+    def test_append_legacy_agent_dirs_do_not_trigger_fanout(
             self, conv, monkeypatch):
         store, cid, uid = conv
         store.save_agent_context(cid, "alice", [])
@@ -1721,7 +1723,8 @@ class TestAppendMessage:
         bob_ctx = store.load_agent_context(cid, "bob")
         assert not bob_ctx
         result = agent_inbox.read_inbox(cid, "bob")
-        assert "[Agent alice]" in result and "hello legacy" in result
+        assert result == "No unread items."
+        assert "hello legacy" in str(store.load_agent_context(cid, ""))
 
     def test_save_agent_context_updates_agent_cache_without_reload(self, conv, monkeypatch):
         store, cid, uid = conv

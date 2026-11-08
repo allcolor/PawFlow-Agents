@@ -392,9 +392,10 @@ class ToolRegistry:
                 result = hook(name, args, result)
             max_chars = getattr(handler, "_tool_result_max_chars", 50000)
             from core.handlers.inbox import ReadInboxHandler
+            from core.handlers.catchup import CatchUpHandler
             from core.handlers.meta_tools import resolve_result_shape_handler
             result_handler = resolve_result_shape_handler(self, name, args) or handler
-            inbox_page = isinstance(result_handler, ReadInboxHandler)
+            inbox_page = isinstance(result_handler, (ReadInboxHandler, CatchUpHandler))
             has_image = (
                 getattr(handler, "_returns_images", False)
                 and isinstance(result, str)
@@ -569,8 +570,9 @@ class ToolRegistry:
             _result_handler = (
                 resolve_result_shape_handler(self, name, args) or handler)
             from core.handlers.inbox import ReadInboxHandler
-            # Inbox pages enforce their own budget before acknowledging content.
-            _inbox_page = isinstance(_result_handler, ReadInboxHandler)
+            from core.handlers.catchup import CatchUpHandler
+            # Cursor-based readers budget their result before acknowledging it.
+            _inbox_page = isinstance(_result_handler, (ReadInboxHandler, CatchUpHandler))
             _has_image = (getattr(_result_handler, '_returns_images', False)
                           and isinstance(result, str)
                           and "__image_data__:" in result)
@@ -725,6 +727,8 @@ def create_default_registry() -> ToolRegistry:
     registry.register(DelegateResultHandler())
     from core.handlers.inbox import ReadInboxHandler
     registry.register(ReadInboxHandler())
+    from core.handlers.catchup import CatchUpHandler
+    registry.register(CatchUpHandler())
     registry.register(ShowFileHandler())
     registry.register(ReadParentContextHandler())
 

@@ -2,7 +2,7 @@
 
 Every message an agent receives that is not from the user (delegate
 messages and results, background tool results, scheduled wake-ups,
-catch-up of other participants, skill events) is stored as an inbox item
+skill events) is stored as an inbox item
 (core/agent_inbox.py). The agent only gets an imperative notice and reads
 the content through this tool; the read marks the items read and is the
 server-side acknowledgement. See docs/inbox_delivery.md.
@@ -36,7 +36,7 @@ class ReadInboxHandler(SpawnAgentsHandler):
         return (
             "Read your PawFlow inbox: every message for you that is not from "
             "the user (delegate messages and results, background tool "
-            "results, scheduled wake-ups, catch-up of other participants, "
+            "results, scheduled wake-ups, "
             "skill events). Call it IMMEDIATELY whenever a [PawFlow inbox: "
             "ACTION REQUIRED] notice appears, before any other tool call or "
             "answer. Returns unread items oldest first and marks them read. "

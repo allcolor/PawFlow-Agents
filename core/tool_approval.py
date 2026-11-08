@@ -43,7 +43,7 @@ class ToolApprovalGate:
         # Web / search
         "web_search",
         # History / context
-        "read_history", "read_parent_context", "conversation_search",
+        "read_history", "read_parent_context", "conversation_search", "catchup",
         # Inbox: marks the caller's own items read, never gated (the notice
         # tells the agent to call it before anything else)
         "read_inbox",
@@ -90,7 +90,7 @@ class ToolApprovalGate:
         "show_file",
         # Memory / history (read)
         "recall", "semantic_recall",
-        "read_history", "read_parent_context", "conversation_search",
+        "read_history", "read_parent_context", "conversation_search", "catchup",
         # Inbox read: only marks the caller's own items read
         "read_inbox",
         # Help / introspection

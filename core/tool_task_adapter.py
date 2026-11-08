@@ -26,6 +26,7 @@ SKIP_TOOLS = {
     "delegate_status",  # agent-internal delegate status
     "delegate_result",  # agent-internal delegate result fetch
     "read_inbox",  # agent-internal inbox read (keyed by the calling agent)
+    "catchUp",  # agent-internal public history read (cursor belongs to caller)
     "manage_resource",  # resource CRUD
     "create_tool",  # dynamic tool creation
     "pawflow_help",  # help text

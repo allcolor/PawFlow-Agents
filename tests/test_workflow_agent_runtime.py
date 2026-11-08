@@ -712,9 +712,9 @@ def test_workflow_work_selection_skips_passive_catch_up(
 
     assert [request.request_message_ids for request in started] == (
         [("real-work",)] if work_source else [])
-    assert len([item for item in agent_inbox.unread_items("conv-1", "Demo")
-                if item.source == "inbox:catch_up"]) == 25
-    assert "passive participant output" in agent_inbox.read_inbox("conv-1", "Demo")
+    assert not any(item.source == "inbox:catch_up"
+                   for item in agent_inbox.unread_items("conv-1", "Demo"))
+    assert "passive participant output" not in agent_inbox.read_inbox("conv-1", "Demo")
 
 
 def test_bound_silent_submission_pins_binding_and_invocation_mode(monkeypatch):

@@ -218,12 +218,13 @@ class AgentInboxStore:
                 """
             )
             self._upgrade_items(connection)
-            connection.execute("""CREATE TABLE IF NOT EXISTS agent_inbox_context_receipts (
-                conversation_id TEXT NOT NULL,
-                agent_key TEXT NOT NULL,
-                msg_id TEXT NOT NULL,
-                PRIMARY KEY(conversation_id, agent_key, msg_id)
-            )""")
+            # Automatic participant catchup is retired. Discard its pending
+            # copies once on startup; transcript/shared history is untouched.
+            connection.execute("""UPDATE agent_inbox_items
+                SET state='discarded', updated_at=?
+                WHERE source='inbox:catch_up' AND state IN ('pending','notified')""",
+                (time.time(),))
+            connection.execute("DROP TABLE IF EXISTS agent_inbox_context_receipts")
 
     @staticmethod
     def _upgrade_items(connection: sqlite3.Connection) -> None:
@@ -377,26 +378,6 @@ class AgentInboxStore:
                 != self._meaningful(encoded)):
             raise ValueError("msg_id already has a different inbox payload")
         return row
-
-    def enqueue_context_history(self, conversation_id: str, agent_key: str,
-                                payload: dict[str, Any]) -> bool:
-        """Transfer a legacy context once, even after read-row retention expires."""
-        conversation_id = _required(conversation_id, "conversation_id")
-        agent_key = _agent(agent_key)
-        msg_id = _required(payload.get("msg_id"), "msg_id")
-        with self._lock, self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            if connection.execute(
-                    "SELECT 1 FROM agent_inbox_context_receipts "
-                    "WHERE conversation_id=? AND agent_key=? AND msg_id=?",
-                    (conversation_id, agent_key, msg_id)).fetchone():
-                return False
-            row = self._enqueue_item(connection, conversation_id, agent_key,
-                                     payload, "inbox:catch_up", time.time())
-            connection.execute(
-                "INSERT INTO agent_inbox_context_receipts VALUES (?, ?, ?)",
-                (conversation_id, agent_key, msg_id))
-            return row["state"] in ("pending", "notified")
 
     def prepare_receipt(self, conversation_id: str, agent_key: str,
                         payload: dict[str, Any], source: str,
@@ -1148,7 +1129,7 @@ class AgentInboxStore:
                 "agent_inbox_claims", "agent_inbox_items",
                 "agent_ingress_receipts", "agent_inbox_migrations",
                 "agent_inbox_notices", "agent_inbox_read_offsets",
-                "agent_inbox_fences", "agent_inbox_context_receipts",
+                "agent_inbox_fences",
             ):
                 deleted += connection.execute(
                     f"DELETE FROM {table} WHERE conversation_id=?",  # nosec B608 - table whitelist

@@ -594,7 +594,8 @@ class _ALCClosures2Mixin:
                 # string that carries an inline image payload would cut the
                 # base64 mid-stream and destroy the image.
                 if (isinstance(tr_content, str) and len(tr_content) > _tool_max
-                        and "__image_data__:" not in tr_content):
+                        and "__image_data__:" not in tr_content
+                        and _display_name != "catchUp"):
                     tr_content = (tr_content[:_tool_max]
                                   + f"\n\n[... truncated — {len(tr_content):,} chars total]")
                 tr_content = self._materialize_tool_result_images(
@@ -786,6 +787,8 @@ class _ALCClosures2Mixin:
                 tool_origin=_tool_origin,
             )
             _tool_src = _src
+            if _tool_name == "catchUp" and tc_obj.id:
+                st.ctx.setdefault("_catchup_read_call_ids", set()).add(str(tc_obj.id))
             try:
                 from tasks.ai.context_usage_cache import (
                     _is_cli_bootstrap_read)
@@ -830,7 +833,9 @@ class _ALCClosures2Mixin:
             # string that carries an inline image payload would cut the
             # base64 mid-stream and destroy the image.
             if (isinstance(_result, str) and len(_result) > _tool_max
-                    and "__image_data__:" not in _result):
+                    and "__image_data__:" not in _result
+                    and _tool_name != "catchUp"
+                    and str(payload.get("tc_id", "")) not in st.ctx.get("_catchup_read_call_ids", set())):
                 _result = (_result[:_tool_max]
                            + f"\n\n[... truncated — {len(_result):,} chars total]")
             _result = self._materialize_tool_result_images(

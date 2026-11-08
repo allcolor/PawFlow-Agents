@@ -189,16 +189,17 @@ def test_a_new_item_ends_a_streak_of_unread_turns(inbox):
 def test_catch_up_does_not_reset_the_unread_work_retry_limit(inbox):
     _put("work", "ignored delegate request")
     for turn in range(1, agent_inbox.MAX_UNREAD_TURNS + 1):
-        _put(f"chatter-{turn}", "other agent output", kind="catch_up")
+        inbox.enqueue(CID, AGENT, _msg(f"chatter-{turn}", "other agent output"),
+                      "inbox:catch_up")
         assert agent_inbox.end_of_turn(CID, AGENT) == turn
 
 
-def test_catch_up_stays_readable_without_retriggering_a_real_turn(inbox):
-    _put("chatter", "other agent output", kind="catch_up")
-    assert "catch-up" in agent_inbox.peek_notice(CID, AGENT, only_new=True)[0]
-    assert "catch-up" in agent_inbox.take_notice(CID, AGENT)
+def test_legacy_catch_up_is_invisible_without_retriggering_a_real_turn(inbox):
+    inbox.enqueue(CID, AGENT, _msg("chatter", "other agent output"), "inbox:catch_up")
+    assert agent_inbox.peek_notice(CID, AGENT, only_new=True)[0] == ""
+    assert agent_inbox.take_notice(CID, AGENT) == ""
     assert agent_inbox.end_of_turn(CID, AGENT) == 0
-    assert agent_inbox.unread_count(CID, AGENT) == 1
+    assert agent_inbox.unread_count(CID, AGENT) == 0
 
 
 def test_catch_up_delivery_never_wakes_an_idle_agent_even_with_wake_enabled(
@@ -211,14 +212,15 @@ def test_catch_up_delivery_never_wakes_an_idle_agent_even_with_wake_enabled(
 
     monkeypatch.setattr(_live_submit, "_active_cli_client", lambda *_: None)
     monkeypatch.setattr(AgentLoopTask, "wake_agent", unexpected)
-    assert _live_submit.submit_or_queue(
-        CID, AGENT, _msg("chatter", "context only"), "catch_up",
-        kind="catch_up", sender="GameDev2", wake=True)
-    assert "context only" in agent_inbox.read_inbox(CID, AGENT)
+    with pytest.raises(ValueError, match="unknown inbox kind"):
+        _live_submit.submit_or_queue(
+            CID, AGENT, _msg("chatter", "context only"), "catch_up",
+            kind="catch_up", sender="GameDev2", wake=True)
+    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
 
 
 @pytest.mark.parametrize("wake", [False, True])
-def test_workflow_catch_up_is_stored_without_resolving_or_submitting_runtime(
+def test_workflow_catch_up_is_rejected_without_resolving_or_submitting_runtime(
         inbox, monkeypatch, wake):
     from tasks.ai import _live_submit
     from tasks.ai.agent_loop import AgentLoopTask
@@ -231,10 +233,11 @@ def test_workflow_catch_up_is_stored_without_resolving_or_submitting_runtime(
     monkeypatch.setattr(_live_submit, "_submit_workflow_delivery", unexpected)
     monkeypatch.setattr(_live_submit, "_active_cli_client", lambda *_: None)
     monkeypatch.setattr(AgentLoopTask, "wake_agent", unexpected)
-    assert _live_submit.submit_or_queue(
-        CID, AGENT, _msg("chatter", "workflow context only"), "catch_up",
-        kind="catch_up", sender="GameDev2", wake=wake)
-    assert "workflow context only" in agent_inbox.read_inbox(CID, AGENT)
+    with pytest.raises(ValueError, match="unknown inbox kind"):
+        _live_submit.submit_or_queue(
+            CID, AGENT, _msg("chatter", "workflow context only"), "catch_up",
+            kind="catch_up", sender="GameDev2", wake=wake)
+    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
 
 
 def test_turn_mode_messages_expose_the_item_sources(inbox):
@@ -363,17 +366,20 @@ def test_repeated_catch_up_never_retriggers_or_warns_at_end_of_turn(
     monkeypatch.setattr(type(core), "_alc_inbox_unread_warning",
                         staticmethod(lambda *_: pytest.fail("passive catch-up warning")))
     for turn in range(agent_inbox.MAX_UNREAD_TURNS + 2):
-        _put(f"chatter-{turn}", "other participant output", kind="catch_up")
+        inbox.enqueue(CID, AGENT, _msg(f"chatter-{turn}", "other participant output"),
+                      "inbox:catch_up")
         st = _St()
         core._alc_inbox_end_of_turn(st)
         assert "_retrigger_after_done" not in st.ctx
         assert inbox.notice_state(CID, AGENT)[1] == 0
-    assert agent_inbox.unread_count(CID, AGENT) == agent_inbox.MAX_UNREAD_TURNS + 2
+    assert agent_inbox.unread_count(CID, AGENT) == 0
     _put("real-work", "explicit delegate request")
     st = _St()
     core._alc_inbox_end_of_turn(st)
     assert st.ctx["_retrigger_after_done"] is True
-    assert "other participant output" in agent_inbox.read_inbox(CID, AGENT)
+    output = agent_inbox.read_inbox(CID, AGENT)
+    assert "other participant output" not in output
+    assert "explicit delegate request" in output
 
 
 def test_after_max_unread_turns_the_agent_stops_and_warns_once(inbox, monkeypatch):
@@ -467,8 +473,8 @@ def test_read_is_scoped_to_the_exact_agent_and_subconversation(inbox):
 
 
 def test_catch_up_does_not_select_a_private_delegate_reply_mode(inbox):
-    _put("m1", "A delegates to B", kind="catch_up",
-         source={"type": "agent_delegate", "from": "A", "to": "B"})
+    inbox.enqueue(CID, AGENT, _msg("m1", "A delegates to B",
+                  {"type": "agent_delegate", "from": "A", "to": "B"}), "inbox:catch_up")
     assert agent_inbox.turn_mode_messages(CID, AGENT) == []
 
 
@@ -491,10 +497,10 @@ def test_cold_rebuild_keeps_own_output_and_user_input_inline(inbox):
         "my work", "human input"]
 
 
-def test_cli_catch_up_returns_a_notice_and_data_only_on_read(inbox):
+def test_cli_inbox_notice_keeps_explicit_deliveries(inbox):
     from core.llm_client import LLMClient
     client = LLMClient("claude-code", config={"api_key": "test"})
-    _put("history", "PARTICIPANT CONTENT", kind="catch_up")
+    _put("history", "PARTICIPANT CONTENT", kind="delegate_message")
     notice = client._build_catchup_context(CID, AGENT)
     assert "STOP. Call read_inbox() NOW" in notice
     assert "PARTICIPANT CONTENT" not in notice
@@ -502,7 +508,7 @@ def test_cli_catch_up_returns_a_notice_and_data_only_on_read(inbox):
     assert client._build_catchup_context(CID, AGENT) == ""
 
 
-def test_broadcast_goes_to_inbox_and_never_to_recipient_context(inbox, tmp_path, monkeypatch):
+def test_broadcast_stays_in_shared_without_inbox_or_recipient_copy(inbox, tmp_path, monkeypatch):
     from core.conversation_store import ConversationStore
     from core.llm_client import stamp_message
     store = ConversationStore(store_dir=str(tmp_path / "routing"))
@@ -518,7 +524,8 @@ def test_broadcast_goes_to_inbox_and_never_to_recipient_context(inbox, tmp_path,
     store.append_message(CID, message, agent_name="A", user_id="u")
     assert not any("TEAM DATA" in str(row.get("content"))
                    for row in store.load_agent_context(CID, AGENT))
-    assert "TEAM DATA" in agent_inbox.read_inbox(CID, AGENT)
+    assert "TEAM DATA" in str(store.load_shared_for_agent(CID, AGENT))
+    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
     notice = stamp_message({
         "role": "user", "content": "[PawFlow inbox: ACTION REQUIRED]",
         "source": {"type": "system", "name": "inbox", "target_agent": "A",
@@ -553,15 +560,15 @@ def test_notice_length_is_bounded_when_many_items_are_unread(inbox):
     assert agent_inbox.read_inbox(CID, AGENT).count("BODY MUST STAY") == 30
 
 
-def test_shared_history_is_read_once_across_cold_rebuilds_and_retention(inbox):
+def test_shared_history_creates_no_inbox_items_across_cold_rebuilds(inbox):
     from core.llm_client import LLMMessage
     history = [LLMMessage(role="assistant", content="PAST TEAM WORK",
                           source={"type": "agent", "name": "A"},
                           conversation_id=CID)]
     assert agent_inbox.prepare_context_messages(history, CID, AGENT) == []
     assert agent_inbox.prepare_context_messages(history, CID, AGENT) == []
-    assert len(agent_inbox.unread_items(CID, AGENT)) == 1
-    assert "PAST TEAM WORK" in agent_inbox.read_inbox(CID, AGENT)
+    assert agent_inbox.unread_items(CID, AGENT) == []
+    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
     inbox.purge_acknowledged(0, now=time.time() + 1)
     assert agent_inbox.prepare_context_messages(history, CID, AGENT) == []
     assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."

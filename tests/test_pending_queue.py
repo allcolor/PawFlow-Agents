@@ -261,7 +261,7 @@ def test_boot_recovery_does_not_wake_catch_up_only_agents(
         q.enqueue(_msg("other participant output", agent, 1),
                   source="inbox:catch_up")
         if notified:
-            assert agent_inbox.take_notice("c1", agent)
+            inbox.mark_notified("c1", agent, inbox.latest_sequence("c1", agent))
 
     # Reopen the database as after an actual process restart.
     PendingQueue.drop_cache()
@@ -269,8 +269,9 @@ def test_boot_recovery_does_not_wake_catch_up_only_agents(
     monkeypatch.setattr(AgentInboxStore, "_instance", reopened)
     assert PendingQueue.all_nonempty() == []
     for agent in ("wiki", "assistant", "probecodex"):
-        assert agent_inbox.unread_count("c1", agent) == 1
-        assert "other participant output" in agent_inbox.read_inbox("c1", agent)
+        assert agent_inbox.unread_count("c1", agent) == 0
+        assert agent_inbox.read_inbox("c1", agent) == "No unread items."
+        assert all(item.state == "discarded" for item in reopened.list_items("c1", agent))
 
 
 @pytest.mark.parametrize("source", [

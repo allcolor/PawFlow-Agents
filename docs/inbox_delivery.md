@@ -2,7 +2,7 @@
 
 Only human input is delivered inline. Delegate requests, replies and results,
 background tool notifications, wake-ups, continuations, task check-ins,
-participant catch-up, skill events and workflow proposal events are durable
+skill events and workflow proposal events are durable
 items in the recipient's server-side inbox. Their content reaches the model
 through the `read_inbox` tool result, with the same data boundary as other
 tool output.
@@ -31,11 +31,11 @@ agent enter that agent's inbox.
 only human input; `inbox:*` entries can only be consumed by `read_inbox`.
 Startup imports legacy per-agent `pending.jsonl` files once and renames them
 to `pending.jsonl.migrated`. Non-user legacy sources become inbox items.
-Recovery includes pending and notified actionable items. Catch-up-only queues
-never wake an agent after a restart; their items remain unread for the next
-real turn. Workflow recovery and final drains exclude catch-up before selecting
-their next pending message, so older catch-up cannot hide actionable work
-behind the query limit. Catch-up delivery never submits a workflow turn.
+Recovery includes pending and notified actionable items. Automatic participant
+catch-up is no longer produced. Existing pending/notified catch-up copies are
+discarded at startup and excluded from inbox reads, notices and work selection,
+including copies recovered from a legacy queue. Their original conversation
+history remains available. Explicit delegate context is a delegate message.
 Read/discarded rows are retained
 for 30 days; the normal transcript retains the visible history.
 
@@ -59,22 +59,20 @@ through `send_queued_message`: paste and Enter, without interruption. A burst
 coalesces while an unread notice is outstanding. A failed notice paste does
 not acknowledge delivery; iteration and final-turn checks can retry it.
 Other providers receive the same notice at the next provider iteration.
-An idle agent is woken for actionable inbox work. Participant catch-up is
-passive: it never schedules a wake or retriggers a completed turn on its own.
+An idle agent is woken for actionable inbox work. Public conversation activity
+never creates an inbox item, notice or wake for other participants.
 Deferred delivery wakes are discarded once their work has been read, including
 when it is read during context preparation. A stale wake cannot start an empty
 live CLI turn; explicit continuations and new human messages remain runnable.
 CLI completion also finalizes its turn when a background task is still running;
 its result arrives through the inbox. The API tool-loop wait/continue path is
 not used to submit an empty delta to a CLI that has already finished.
-An already active agent can read its catch-up through the same notices, and
-a real turn's initial notice includes unread catch-up alongside other items.
 
 Each turn with unread work receives a fresh notice. If actionable items remain unread
 when the turn ends, PawFlow starts another turn with a notice. After three
 consecutive turns without reading, it emits a visible warning and stops
 automatic retriggers. A new item, progress reading a page, or new human input
-resets the no-read streak. Catch-up arrivals do not reset that streak.
+resets the no-read streak. Legacy catch-up copies do not reset that streak.
 Notice delivery itself never marks content read.
 
 Human-message resets are applied once per UUID, both at setup and after
@@ -91,11 +89,38 @@ Each CLI attempt receives a copy of the message archive, preserving native
 image inputs when a context guard requests rebuilding before submission.
 
 Delegate routing preserves private response metadata independently of the
-notice text. Reading a catch-up about other agents does not make the reader
-answer their private delegation. The append router keeps the sender's own
-output in its context and sends participant broadcasts to catch-up inbox
-items; broadcast chatter does not itself wake idle agents. Recipient copies
-from older stored contexts are excluded from inline cold rebuilds.
+notice text. The append router keeps the sender's own output in its context
+and public conversation history in shared storage, without broadcasting to
+other inboxes. Recipient copies from older stored contexts are excluded from
+inline cold rebuilds without creating catch-up items.
+
+## Optional participant catchup
+
+Use `catchUp(agent="GameDev2", max_chars=12000)` only when another agent's
+public replies are useful. No notification asks the reader to do this.
+`core/agent_catchup.py` reads assistant text authored by that agent from the
+canonical transcript. Private delegates, task/btw side channels, target-only
+messages, thinking and tool output are excluded. Use `read_history` for broader
+history searches and `delegate` for explicit communication.
+
+The result is JSON containing `agent`, `messages` and `has_more`. Each message
+contains its original `msg_id`, creation `ts`, `start` text offset,
+`total_chars` and returned `text`. An empty `messages` array means there is no
+new public output. The complete JSON fits `max_chars` (2000..40000, default
+12000), including escaping and metadata. If `has_more` is true, the reader may
+choose to call the same tool again; there is no mandatory follow-up.
+
+An independent cursor for each conversation, reader and source agent lives in
+conversation extras. The first read starts at the beginning. Fully returned
+messages advance the sequence; oversized replies advance only their returned
+text offset. Concurrent reads are serialized, process restarts preserve
+progress, and transcript rewrites invalidate the affected cursors. Cursor-based
+pages bypass generic result clipping so acknowledged text remains available.
+The source agent argument never selects the reader identity.
+
+Shared conversation storage, initial shared context and conversation compaction
+from shared summaries are unchanged. This optional tool replaces automatic
+participant inbox fanout, not conversation-level compaction.
 
 ## Reading and pagination
 

@@ -48,20 +48,19 @@ def _chromium_executable(playwright) -> str | None:
 @pytest.fixture(scope="module")
 def chromium_browser():
     playwright_module = pytest.importorskip("playwright.sync_api")
-    manager = playwright_module.sync_playwright()
-    playwright = manager.start()
-    executable = _chromium_executable(playwright)
-    if executable is None:
-        playwright.stop()
-        pytest.skip("Chromium executable is not installed")
-    browser = playwright.chromium.launch(
-        headless=True,
-        executable_path=executable,
-        args=["--no-sandbox"],
-    )
-    yield browser
-    browser.close()
-    playwright.stop()
+    with playwright_module.sync_playwright() as playwright:
+        executable = _chromium_executable(playwright)
+        if executable is None:
+            pytest.skip("Chromium executable is not installed")
+        browser = playwright.chromium.launch(
+            headless=True,
+            executable_path=executable,
+            args=["--no-sandbox"],
+        )
+        try:
+            yield browser
+        finally:
+            browser.close()
 
 
 def _shell_html() -> str:

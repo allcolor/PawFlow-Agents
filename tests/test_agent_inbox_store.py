@@ -493,11 +493,11 @@ def test_sqlite_upgrade_preserves_workflow_states_order_and_sequence_watermark(t
     items = store.list_items("c1", "agent")
     assert [item.sequence for item in items] == [3, 5, 7, 9, 11, 13]
     assert [item.state for item in items] == [
-        "pending", "claimed", "acknowledged", "read", "pending", "discarded"]
+        "pending", "claimed", "acknowledged", "read", "discarded", "discarded"]
     assert items[1].owner_run_id == "wr_live"
     assert items[3].read_at == "1970-01-01T00:00:02+00:00"
     assert items[4].owner_run_id is None
-    assert store.enqueue("c1", "agent", _message("new"), "inbox:catch_up").sequence > 100
+    assert store.enqueue("c1", "agent", _message("new"), "inbox:background_result").sequence > 100
     assert store.acknowledge("c1", "agent", "wr_live", ["claimed"], now=3) == 1
     with sqlite3.connect(path) as connection:
         before = connection.execute("PRAGMA schema_version").fetchone()[0]
@@ -505,14 +505,14 @@ def test_sqlite_upgrade_preserves_workflow_states_order_and_sequence_watermark(t
     with sqlite3.connect(path) as connection:
         assert connection.execute("PRAGMA schema_version").fetchone()[0] == before
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-    assert reopened.mark_notified("c1", "agent", reopened.latest_sequence("c1", "agent")) == 2
+    assert reopened.mark_notified("c1", "agent", reopened.latest_sequence("c1", "agent")) == 1
 
 
 def test_sqlite_upgrade_preserves_notice_audit_and_partial_read_progress(tmp_path):
     path = tmp_path / "notified-old.sqlite3"
     _write_legacy_database(path, [
-        (1, "pending", "inbox:catch_up", _message("notified")),
-        (2, "pending", "inbox:catch_up", _message("later")),
+        (1, "pending", "inbox:background_result", _message("notified")),
+        (2, "pending", "inbox:background_result", _message("later")),
     ])
     with sqlite3.connect(path) as connection:
         connection.executescript("""

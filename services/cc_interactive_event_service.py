@@ -208,6 +208,7 @@ class CCInteractiveSessionEvents:
     native_todo_adapter: Any = None
     # Protected by the service's sessions lock; workers check these on every wait.
     native_input_cancels: set = field(default_factory=set)
+    session_start_published: bool = False
 
 
 class CCInteractiveEventService(BaseService):
@@ -709,6 +710,7 @@ class CCInteractiveEventService(BaseService):
         # Side-channel evidence only: never part of the turn's stream.
         if event.get("type") in {"wire", "ws_prompt_submit"}:
             return
+        self._publish_codex_session_start(state, event)
         self._mirror_native_todo_event(state, event)
         self._track_turn_boundary(state, event)
         self._maybe_ingest_manual_prompt(state, event)
@@ -748,6 +750,35 @@ class CCInteractiveEventService(BaseService):
                 state.oldest_pending_at = time.time()
             state.stream_condition.notify_all()
         self._adopt_if_undelivered(state)
+
+    @staticmethod
+    def _publish_codex_session_start(state: CCInteractiveSessionEvents, event: dict) -> None:
+        """Publish startup outside the turn queue, which the first send drains."""
+        if (state.provider not in {"codex-interactive", "codex_mcp"}
+                or event.get("type") != "hook"
+                or event.get("hook_event_name") != "SessionStart"
+                or not all((state.user_id, state.conversation_id, state.agent_name))
+                or "__ephemeral_" in state.conversation_id):
+            return
+        with state.stream_condition:
+            if state.session_start_published or state.closed:
+                return
+            try:
+                from core.conversation_writer import ConversationWriter
+                from core.llm_client import stamp_message
+
+                message = stamp_message({
+                    "role": "system", "content": "Codex session started.",
+                    "source": {"type": "system", "name": state.agent_name,
+                               "provider": state.provider, "event": "session_start"},
+                }, state.conversation_id)
+                ConversationWriter.for_conversation(state.conversation_id).enqueue_message(
+                    message, agent_name=state.agent_name, user_id=state.user_id,
+                    sse_events=[{"type": "new_message", "data": {
+                        **message, "agent_name": state.agent_name}}])
+                state.session_start_published = True
+            except Exception:
+                logger.warning("Codex session start publish failed", exc_info=True)
 
     def _mirror_native_todo_event(self, state: CCInteractiveSessionEvents,
                                   event: dict) -> None:

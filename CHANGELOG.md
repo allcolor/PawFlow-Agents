@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Terminal Codex sessions (`codex-interactive`, `codex_mcp`) now show their
+  startup in the PawFlow conversation. Codex `request_user_input` and
+  `request_user_input_async` questions open PawFlow forms instead of waiting
+  unseen in the terminal. Blocking answers return to the model through the
+  documented `PreToolUse` deny reason.
+- API agents adopt a post-append compaction even when summary and bridge
+  messages increase the message count. The pre-compaction request measurement
+  is retired, so the gauge no longer triggers a new compaction after every
+  appended result.
+- A provider `context_overflow` refusal now forces compaction before the single
+  retry, even below the proactive threshold, instead of resending the rejected
+  history.
+
 ## [1.0.0-beta.326] — 2026-11-08
 
 ### Changed

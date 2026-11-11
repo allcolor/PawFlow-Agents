@@ -67,7 +67,8 @@ def handle_server_request(client, proc, message):
     manager.submit(request_id, collect, reply)
 
 
-def publish_async_questions(item, *, user_id, conversation_id, agent_name, thread_id, store=None):
+def publish_async_questions(item, *, user_id, conversation_id, agent_name, thread_id,
+                            store=None, provider="codex-app-server"):
     """Persist message-mode questions; the interaction store resumes the agent."""
     if not all((user_id, conversation_id, agent_name, thread_id, item.get("id"))):
         raise ValueError("Async Codex questions require full request identity")
@@ -82,5 +83,5 @@ def publish_async_questions(item, *, user_id, conversation_id, agent_name, threa
         title="Codex: user input", message="Please answer the Codex questions.",
         kind="form", response_schema={"fields": fields},
         idempotency_key=f"codex-async:{agent_name}:{thread_id}:{item['id']}",
-        continuation={"provider": "codex-app-server", "response_mode": "message",
+        continuation={"provider": provider, "response_mode": "message",
                       "thread_id": thread_id, "item_id": item["id"]})

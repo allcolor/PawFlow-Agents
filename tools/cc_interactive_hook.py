@@ -417,7 +417,8 @@ def _interaction_denial(event: str) -> dict:
     return {"hookSpecificOutput": fallback}
 
 
-def _interaction_output(raw: dict, url: str, token: str, session_token: str) -> dict:
+def _interaction_output(raw: dict, url: str, token: str, session_token: str,
+                        client: str = "cc") -> dict:
     """Wait for a real PawFlow answer; transport failure never means consent."""
     event = raw.get("hook_event_name")
     if not all((url, token, session_token)):
@@ -432,6 +433,15 @@ def _interaction_output(raw: dict, url: str, token: str, session_token: str) -> 
             output = result["output"]
             specific = output.get("hookSpecificOutput")
             if isinstance(specific, dict) and specific.get("hookEventName") == event:
+                if client == "codex":
+                    # Codex accepts deny with a reason, or no decision (the
+                    # tool runs); it rejects a bare "allow" as unsupported.
+                    if event == "PreToolUse" and (
+                            (specific.get("permissionDecision") == "deny"
+                             and str(specific.get("permissionDecisionReason") or "").strip())
+                            or set(specific) == {"hookEventName"}):
+                        return output
+                    return _interaction_denial(event)
                 if event == "PermissionRequest":
                     decision = specific.get("decision")
                     if isinstance(decision, dict) and decision.get("behavior") in {"allow", "deny"}:
@@ -470,18 +480,24 @@ def main() -> int:
     client = _hook_client()
     output = _client_output(client)
     event_arg = _event_argument(sys.argv[1:])
-    native_event = event_arg if client == "cc" and event_arg in {"PreToolUse", "PermissionRequest"} else ""
+    native_events = {"PreToolUse", "PermissionRequest"} if client == "cc" else (
+        {"PreToolUse"} if client == "codex" else set())
+    native_event = event_arg if event_arg in native_events else ""
     try:
         raw = json.loads(sys.stdin.read() or "{}")
         if native_event and (not isinstance(raw, dict)
                              or raw.get("hook_event_name") != native_event):
             raise ValueError("Native hook event does not match its handler")
         raw = _normalize_client_input(raw, client, event_arg)
-        if (raw.get("hook_event_name") == "PermissionRequest"
+        codex_question = (client == "codex" and raw.get("hook_event_name") == "PreToolUse"
+                          and raw.get("tool_name") in {
+                              "request_user_input", "functions.request_user_input",
+                              "request_user_input_async", "functions.request_user_input_async"})
+        if codex_question or ((raw.get("hook_event_name") == "PermissionRequest"
                 or (raw.get("hook_event_name") == "PreToolUse"
-                    and raw.get("tool_name") == "AskUserQuestion")) and client == "cc":
+                    and raw.get("tool_name") == "AskUserQuestion")) and client == "cc"):
             native_event = raw["hook_event_name"]
-            print(json.dumps(_interaction_output(raw, url, token, session_token)))
+            print(json.dumps(_interaction_output(raw, url, token, session_token, client=client)))
             return 0
         if native_event:
             raise ValueError("Unsupported native hook input")

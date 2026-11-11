@@ -626,6 +626,9 @@ class _ALCLlmTurnMixin:
                 st._compacted = self._compact(
                     list(st.messages), st.compact_client,
                     st.ctx.get("max_context_size", 64000),
+                    # Native refusal overrides our estimate/auto threshold:
+                    # output reservations can exhaust the window earlier.
+                    force=True,
                     conversation_id=st.conversation_id,
                     agent_name=st._agent_for_compact,
                     tool_defs=st.ctx.get("tool_defs"),

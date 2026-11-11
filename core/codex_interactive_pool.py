@@ -261,7 +261,7 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
                 event_token=event_token, internal_token=internal_token,
                 codex_base_url=codex_base_url,
                 cli_environment=cli_environment,
-                hook_client=spec.hook_client if spec else "")
+                hook_client=spec.hook_client if spec else "codex")
 
             state.claude_started = True
         except Exception:
@@ -279,8 +279,16 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
             "timeout": OBSERVATION_HOOK_TIMEOUT_SECONDS,
         }
         hooks = {name: [{"hooks": [handler]}] for name in (
-            "UserPromptSubmit", "Stop", "PreCompact",
+            "SessionStart", "UserPromptSubmit", "Stop", "PreCompact",
             "PostCompact", "SessionEnd")}
+        hooks["PreToolUse"] = [{
+            "matcher": r"^(functions\.)?request_user_input(_async)?$",
+            "hooks": [{
+                "type": "command",
+                "command": "python3 /opt/pawflow/cc_interactive_hook.py --event PreToolUse",
+                "timeout": 3600,
+            }],
+        }]
         path = Path(workdir) / ".codex" / "hooks.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({

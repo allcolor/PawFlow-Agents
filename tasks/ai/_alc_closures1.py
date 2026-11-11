@@ -331,7 +331,9 @@ class _ALCClosures1Mixin:
                 budget_config=getattr(st.ctx.get("resolved_svc"), "config", None),
                 independent_context=bool(st.ctx.get("_independent_context")),
             )
-            if compacted and len(compacted) <= len(st.messages):
+            # A compact can add summary/bridge messages while reducing tokens.
+            # Message count must not veto the replacement already persisted.
+            if compacted:
                 st._adopt_compacted_context(
                     compacted, reason="post_append")
         except CCCompactDetected:

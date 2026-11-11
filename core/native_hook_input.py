@@ -1,4 +1,4 @@
-"""Translate documented Claude hooks into PawFlow user interactions."""
+"""Translate native CLI hooks into PawFlow user interactions."""
 
 from __future__ import annotations
 
@@ -87,3 +87,60 @@ def answer_claude_hook(raw: dict, *, provider: str, user_id: str,
             decision["message"] = "Permission was denied or cancelled in PawFlow."
         return {"hookSpecificOutput": {"hookEventName": event, "decision": decision}}
     raise ValueError("Unsupported native Claude interaction hook")
+
+
+def answer_codex_hook(raw: dict, *, provider: str, user_id: str,
+                      conversation_id: str, agent_name: str,
+                      cancel_event: threading.Event) -> dict:
+    """Collect Codex questions before its terminal-only input tool runs.
+
+    Codex PreToolUse cannot supply a tool result. For blocking questions, its
+    documented deny reason carries the user's answers back to the model and
+    skips the redundant terminal prompt. Async questions keep their normal
+    tool execution; the durable interaction resumes the agent by message.
+    """
+    from core.llm_providers._codex_native_input import (
+        codex_questions, publish_async_questions)
+
+    if not isinstance(raw, dict) or raw.get("hook_event_name") != "PreToolUse":
+        raise ValueError("Unsupported native Codex interaction hook")
+    tool = raw.get("tool_name")
+    if tool not in {"request_user_input", "functions.request_user_input",
+                    "request_user_input_async", "functions.request_user_input_async"}:
+        raise ValueError("Unsupported native Codex question tool")
+    inputs = raw.get("tool_input")
+    request_id = raw.get("tool_use_id")
+    if not isinstance(inputs, dict) or not isinstance(request_id, str) or not request_id:
+        raise ValueError("Codex questions require tool input and a call id")
+    if cancel_event.is_set():
+        return {"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "permissionDecision": "deny",
+            "permissionDecisionReason": "User input was cancelled in PawFlow."}}
+    if tool.endswith("_async"):
+        publish_async_questions(
+            {"id": request_id, "questions": inputs.get("questions")},
+            user_id=user_id, conversation_id=conversation_id,
+            agent_name=agent_name, thread_id=raw.get("session_id"),
+            provider=provider)
+        # Codex rejects permissionDecision "allow" without updatedInput;
+        # no decision lets the tool run.
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse"}}
+
+    questions = codex_questions(inputs.get("questions"))
+    for question in questions:
+        question["allow_other"] = True
+    answers = collect_native_questions(
+        questions, provider=provider, user_id=user_id,
+        conversation_id=conversation_id, agent_name=agent_name,
+        cancel_event=cancel_event, request_id=request_id)
+    reason = "User input was cancelled in PawFlow. No answer was selected."
+    if answers is not None:
+        reason = (
+            "PawFlow collected the user's answers. The terminal prompt is skipped "
+            "because the user already answered; continue using these answers: "
+            + json.dumps([
+                {"id": q["id"], "question": q["question"], "answer": answers[q["id"]]}
+                for q in questions], ensure_ascii=False))
+    return {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": reason}}

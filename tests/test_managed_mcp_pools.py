@@ -342,8 +342,9 @@ class TestCodexLaunch:
         from core.codex_interactive_pool import _CodexInteractiveSpawnMixin
         _CodexInteractiveSpawnMixin._write_codex_hooks(str(tmp_path))
         hooks = json.loads((tmp_path / ".codex" / "hooks.json").read_text())["hooks"]
-        assert set(hooks) == {"UserPromptSubmit", "Stop", "PreCompact",
-                              "PostCompact", "SessionEnd"}
+        assert set(hooks) == {"SessionStart", "UserPromptSubmit", "Stop",
+                              "PreCompact", "PostCompact", "SessionEnd",
+                              "PreToolUse"}
         assert hooks["Stop"][0]["hooks"][0]["command"] == (
             "python3 /opt/pawflow/cc_interactive_hook.py")
 

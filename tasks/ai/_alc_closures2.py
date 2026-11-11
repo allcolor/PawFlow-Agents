@@ -280,6 +280,25 @@ class _ALCClosures2Mixin:
                     st.conversation_id[:8], reason, _adopt_err,
                     exc_info=True)
                 raise
+        if st.conversation_id and _adopt_agent and not st.ctx.get("_is_cli_provider"):
+            # API usage describes the request before replacement. Reusing it
+            # would immediately compact the new, small context again. Clients
+            # share these maps with their clones; retain revision counters so
+            # the next native sample remains newer than the previous one.
+            _usage_key = (st.conversation_id, _adopt_agent)
+            for _usage_client in (st.client, st.ctx.get("client")):
+                _modes = getattr(_usage_client, "_observed_context_mode_by_stream", None)
+                _counts = getattr(_usage_client, "_cli_observed_context_tokens_by_stream", None)
+                if (isinstance(_modes, dict) and _modes.get(_usage_key) == "request"
+                        and isinstance(_counts, dict)):
+                    _counts.pop(_usage_key, None)
+            from tasks.ai.context_usage import (
+                compute_context_usage, persist_context_usage_async)
+            _usage = compute_context_usage(
+                st.conversation_id, _adopt_agent, user_id=st.user_id,
+                source="compact_post")
+            st.ctx["_context_usage_cache"] = _usage
+            persist_context_usage_async(st.conversation_id, _adopt_agent, _usage)
         logger.info(
             "[agent:%s] adopted compacted PawFlow context for %s: %d messages (%s)",
             st.conversation_id[:8], _adopt_agent, len(st.messages), reason)

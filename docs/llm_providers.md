@@ -210,6 +210,22 @@ reuse that form. Answering it schedules the requesting agent with the question
 text and user answers as a message, so the answer can arrive after the original
 turn ends. These asynchronous items do not send a blocking RPC response.
 
+The terminal Codex providers (`codex-interactive`, `codex_mcp`) have no
+app-server RPC, so their `.codex/hooks.json` adds a `SessionStart` observation
+hook and a `PreToolUse` hook matched on `request_user_input` and
+`request_user_input_async`. `SessionStart` publishes one persisted system message,
+"Codex session started.", per session, outside the turn queue. That queue is
+drained by the first send. Ephemeral conversations publish nothing. For
+`request_user_input`, the hook waits on a PawFlow form (free text always allowed)
+and returns `permissionDecision: "deny"`. Its `permissionDecisionReason` carries
+the answers as JSON. Codex then shows the answers to the model and skips the
+terminal prompt. A cancel or transport failure is a deny with a
+"cancelled"/"unavailable" reason, never an empty answer. For
+`request_user_input_async`, the hook publishes the same message-mode form as
+the app-server path, with continuation provider set to the session provider.
+It returns `hookSpecificOutput` with no decision, so the tool runs normally.
+Codex rejects a bare `permissionDecision: "allow"` without `updatedInput`.
+
 ### Generic ACP agent
 
 `acp` is a normal `llmConnection` provider for an external agent that implements

@@ -469,8 +469,8 @@ def test_codex_hooks_use_documented_hooks_json_shape(tmp_path):
 
     payload = json.loads((tmp_path / ".codex" / "hooks.json").read_text())
     assert set(payload["hooks"]) == {
-        "UserPromptSubmit", "Stop", "PreCompact", "PostCompact",
-        "SessionEnd"}
+        "SessionStart", "UserPromptSubmit", "Stop", "PreCompact",
+        "PostCompact", "SessionEnd", "PreToolUse"}
     handler = payload["hooks"]["Stop"][0]["hooks"][0]
     assert handler == {
         "type": "command",

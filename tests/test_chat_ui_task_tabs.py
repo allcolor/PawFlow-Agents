@@ -218,11 +218,14 @@ def test_delegate_request_identity_reaches_reply_history_and_live_events():
         encoding="utf-8")
 
     assert '"task_id": st._ms.get("task_id", "")' in context
-    assert '"task_id": _tm.get("task_id", "")' in append
+    # The responder's own rows name the task they answer; only the one
+    # delivered reply joins the delegate frame (agent_delegate task_id).
+    assert '"delegate_task_id": _tm.get("task_id", "")' in append
     assert '"task_id": st._tm_end.get("task_id", "")' in completion
     assert ('incoming_mode.get("task_id") == '
             'running_mode.get("task_id")') in streaming
-    assert '"task_id": _tm.get("task_id", "")' in cc_stream
+    # Live events of the responder's turn render as its own activity.
+    assert '"agent_delegate"' not in cc_stream
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node")

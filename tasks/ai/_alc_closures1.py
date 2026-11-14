@@ -383,64 +383,27 @@ class _ALCClosures1Mixin:
             # After this message, generate a NEW msg_id for the next one
             import uuid as _uuid_append
             st.emitter._current_msg_id = _uuid_append.uuid4().hex[:12]
-        # Auto-tag: if this turn was triggered by an agent_delegate
-        # message, the assistant's reply routes privately back to
-        # the delegator only. Re-stamp the source as agent_delegate
-        # so ConversationStore.append_message routes it correctly
-        # (transcript + from+to ctx only, NOT shared, NOT peers).
+        # A turn triggered by an agent_delegate message is the responder's
+        # own work: every row it writes stays the responder's (transcript +
+        # own context, target_only keeps it out of shared and peers), so the
+        # webchat renders it as ordinary agent activity. The caller receives
+        # exactly one reply, the turn's last text, delivered at turn end by
+        # agent_core. A text segment cannot be known to be final when it is
+        # appended: CLI providers flush text and tool calls separately.
         _tm = st.ctx.get("_turn_mode") or {}
         if (_tm.get("type") == "delegate_reply"
                 and _tm.get("source_agent")
                 and msg.role in ("assistant", "tool")):
-            _self_name = st.ctx.get("active_agent_name", "") or ""
-            _delegate_visibility = "self_only"
-            _delegate_visibility_explicit = False
-            if isinstance(msg.source, dict):
-                _explicit_visibility = msg.source.get("delegate_visibility")
-                if _explicit_visibility:
-                    _delegate_visibility = _explicit_visibility
-                    _delegate_visibility_explicit = True
-            elif (msg.role == "assistant"
-                  and not msg.tool_calls
-                  and isinstance(msg.content, str)
-                  and msg.content.strip()):
-                _delegate_visibility = "final_reply"
-            if (msg.role == "assistant"
-                    and not msg.tool_calls
-                    and isinstance(msg.content, str)
-                    and msg.content.strip()
-                    and _delegate_visibility == "self_only"
-                    and not _delegate_visibility_explicit):
-                _delegate_visibility = "final_reply"
-            # Preserve the LLM meta fields from the original source
-            # (provider/model/tokens/context/base_url/containerized)
-            # so the recipient's UI can render the badge + meta line
-            # on the delegate block. Without this merge, the receiver
-            # sees a bare delegate block with no provider/tokens info.
-            _preserved = {}
-            if isinstance(msg.source, dict):
-                for _k in ("provider", "model", "llm_service",
-                           "base_url", "containerized",
-                           "tokens_in", "tokens_out",
-                           "context_used", "context_max",
-                           "context_pct"):
-                    if _k in msg.source:
-                        _preserved[_k] = msg.source[_k]
+            _preserved = dict(msg.source) if isinstance(msg.source, dict) else {}
+            for _k in ("from", "to", "kind", "delegate_visibility"):
+                _preserved.pop(_k, None)
             msg.source = {
                 **_preserved,
-                "type": "agent_delegate",
-                "from": _self_name,
-                "to": _tm["source_agent"],
-                # Mark as a REPLY so conversation_store renders the
-                # right prefix in the target's ctx ("Here is agent
-                # X's reply to your delegate:") instead of treating
-                # it like a fresh inbound request.
-                "kind": "reply",
-                "delegate_visibility": _delegate_visibility,
-                "task_id": _tm.get("task_id", ""),
-                "external_transport": _tm.get("external_transport", ""),
-                "external_call_id": _tm.get("external_call_id", ""),
-                "to_label": _tm.get("source_label", ""),
+                "type": "agent",
+                "name": st.ctx.get("active_agent_name", "") or "",
+                "visibility": "target_only",
+                "delegate_reply_to": _tm["source_agent"],
+                "delegate_task_id": _tm.get("task_id", ""),
             }
         elif (_tm.get("type") == "external_request"
               and msg.role in ("assistant", "tool")):

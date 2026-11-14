@@ -73,19 +73,6 @@ class _CCStreamTurnMixin:
         if st._task_id:
             data['task_id'] = st._task_id
             data['task_iteration'] = st._agent_ctx.get("_task_iteration", 0)
-        # If this turn is a delegate reply, tag the event with
-        # agent_delegate source so the UI groups it under the private
-        # delegate block instead of the main chat.
-        _tm = st._agent_ctx.get("_turn_mode") or {}
-        if (_tm.get("type") == "delegate_reply"
-                and _tm.get("source_agent")
-                and "source" not in data):
-            data["source"] = {
-                "type": "agent_delegate",
-                "from": st.agent_name or "",
-                "to": _tm["source_agent"],
-                "task_id": _tm.get("task_id", ""),
-            }
         # Invariant: user-visible state MUST be on disk before we
         # publish the SSE that makes it visible. For message_meta with
         # context_usage, persist the extras synchronously first.

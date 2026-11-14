@@ -152,9 +152,12 @@ function _delegateFrameKey(source, msgId) {
   return 'delegate-shared::' + pairKey + '::' + threadKey;
 }
 
+// The responder's turn renders as its own agent activity; the frame closes on
+// the one reply delivered at turn end (role=user, as the caller ingests it).
+// Assistant-role and self_only replies are rows written by older builds.
 function _delegateReplyCompletesFrame(role, text, source) {
   return !!(source && source.kind === 'reply'
-    && role === 'assistant' && String(text || '').trim()
+    && (role === 'assistant' || role === 'user') && String(text || '').trim()
     && source.delegate_visibility !== 'self_only');
 }
 

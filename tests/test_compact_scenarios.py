@@ -509,6 +509,8 @@ def test_compact_drops_previous_synthetic_context_from_tail(monkeypatch):
             return Path("/tmp/pawflow-test-compact")
 
     class _StubBS:
+        last_seq = 0
+
         @classmethod
         def get(cls, conv_dir):
             return cls()
@@ -587,6 +589,8 @@ def test_compact_backfills_tail_budget_past_oversized_tool_result(monkeypatch):
             return 5
 
     class _StubBS:
+        last_seq = 0
+
         @classmethod
         def get(cls, conv_dir):
             return cls()
@@ -689,6 +693,8 @@ def test_compact_fits_single_oversized_user_tail_to_budget(monkeypatch):
             return 426
 
     class _StubBS:
+        last_seq = 0
+
         @classmethod
         def get(cls, conv_dir):
             return cls()
@@ -777,6 +783,8 @@ def test_compact_fits_oversized_boundary_user_before_recent_tail(monkeypatch):
             return 427
 
     class _StubBS:
+        last_seq = 0
+
         @classmethod
         def get(cls, conv_dir):
             return cls()

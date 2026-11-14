@@ -68,7 +68,8 @@ def test_provider_overflow_forces_real_compaction_below_auto_threshold(
     monkeypatch.setattr("core.conversation_store.ConversationStore.instance",
                         lambda: store)
     monkeypatch.setattr("core.bucket_store.BucketStore.get", lambda _path:
-                        SimpleNamespace(assemble_summary_header=lambda: ""))
+                        SimpleNamespace(assemble_summary_header=lambda: "",
+                                        last_seq=0))
     monkeypatch.setattr("core.agent_hooks.AgentHookRunner.run",
                         lambda *_args, **_kwargs: {})
     loop = AgentLoopTask({"api_key": "test"})

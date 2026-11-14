@@ -691,6 +691,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                     "type": "agent_delegate",
                                     "from": st._self_name,
                                     "to": st._src_agent,
+                                    "target_agent": st._src_agent,
                                     "kind": "reply",
                                     "task_id": st._tm_end.get("task_id", ""),
                                 }
@@ -703,6 +704,9 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                 st._caller_key = (
                                     f"{st.conversation_id}:{st._src_agent}"
                                     if st._src_agent else st.conversation_id)
+                                SpawnAgentsHandler._record_delegate_reply(
+                                    st.conversation_id, st._src_agent,
+                                    st.user_id, st._reply_message)
                                 st._running = False
                                 if st._inst:
                                     with st._inst._active_contexts_lock:
@@ -727,7 +731,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                         st._src_agent, st.user_id,
                                         st._reply_text, st._reply_mid,
                                         source=st._reply_src,
-                                        pre_persisted=False, message=st._reply_message)
+                                        pre_persisted=True, message=st._reply_message)
                         except Exception as _dre:
                             logger.error(
                                 "[delegate-reply] wake/preempt failed: %s", _dre,

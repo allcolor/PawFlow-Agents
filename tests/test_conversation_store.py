@@ -1599,6 +1599,45 @@ class TestAppendMessage:
             ("user", "[alice to agent bob]:\ndo X"),
         ]
 
+    def test_delegate_responder_turn_stays_the_responders_own(self, conv):
+        # A delegate-mode turn is the responder's ordinary work, stamped
+        # target_only: transcript and own context only. The caller receives
+        # the one end-of-turn reply; no peer or shared view sees the turn.
+        store, cid, uid = conv
+        for agent in ("alice", "bob", "carol"):
+            store.save_agent_context(cid, agent, [])
+        store._reload_cache(cid)
+        own = {"type": "agent", "name": "bob", "visibility": "target_only",
+               "delegate_reply_to": "alice", "delegate_task_id": "t1"}
+        store.append_message(cid, _msg(role="assistant", content="working on it",
+                                       source=own), agent_name="bob", user_id=uid)
+        reply = _msg(role="user", content="the answer", display_only=True,
+                     source={"type": "agent_delegate", "from": "bob", "to": "alice",
+                             "target_agent": "alice", "kind": "reply",
+                             "task_id": "t1"})
+        store.append_message(cid, reply, agent_name="alice", user_id=uid)
+
+        assert [r["content"] for r in store.load_agent_context(cid, "bob")] == [
+            "working on it"]
+        assert not store.load_agent_context(cid, "alice")
+        assert not store.load_agent_context(cid, "carol")
+        assert not store.load_agent_context(cid, "")
+        assert not any("working on it" in str(m.get("content"))
+                       for m in store.load_shared_tail(cid, user_id=uid) or [])
+
+        def _view(agent):
+            return [(m["role"], m["content"])
+                    for m in store.load_transcript_tail_for_agent(
+                        cid, agent, limit=10)]
+
+        assert _view("bob") == [
+            ("assistant", "working on it"),
+            ("user", "[delegate bob → alice]:\nthe answer"),
+        ]
+        assert _view("alice") == [
+            ("user", "Here is agent 'bob''s reply to your delegate:\nthe answer")]
+        assert _view("carol") == []
+
     def test_external_delegate_routes_only_to_real_target(self, conv):
         store, cid, uid = conv
         store.set_extra(cid, "conv_agents", {

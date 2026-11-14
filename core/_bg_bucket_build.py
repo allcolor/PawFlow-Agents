@@ -409,16 +409,21 @@ class _BgBucketBuildMixin:
                 compact_instructions=extra_instr,
                 user_id=user_id,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "[bg-bucket] summarize failed cid=%s seq %d..%d",
                 cid[:8], first_seq, last_seq)
+            self._summary_health.failed(
+                cid, user_id, first_seq, last_seq, str(exc))
             return False
 
         if not summary or len(summary.strip()) < 20:
             logger.warning(
                 "[bg-bucket] empty summary cid=%s seq %d..%d — aborting",
                 cid[:8], first_seq, last_seq)
+            self._summary_health.failed(
+                cid, user_id, first_seq, last_seq,
+                "the summarizer returned no summary")
             return False
 
         try:
@@ -436,6 +441,7 @@ class _BgBucketBuildMixin:
         # Keep the O(1) cache in sync so subsequent maybe_trigger calls
         # reflect the new pyramid coverage without re-reading meta.json.
         self.note_pyramid_seq(cid, last_seq)
+        self._summary_health.succeeded(cid, user_id)
         self.note_pyramid_rows_bucketed(cid, len(chunk))
         self.note_shared_chars_bucketed(cid, chunk_shared_chars)
         # Decrement transcript-chars counter by the chars-weight covered

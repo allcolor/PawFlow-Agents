@@ -137,6 +137,8 @@ def _compact_harness(monkeypatch):
             return Path("/tmp/pawflow-test-bootstrap-compact")
 
     class _StubBS:
+        last_seq = 0
+
         @classmethod
         def get(cls, conv_dir):
             return cls()

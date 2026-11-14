@@ -826,3 +826,36 @@ def test_note_transcript_bytes_appended_accumulates(tmp_path):
     bb.note_pyramid_chars_bucketed(cid, 99999)
     assert bb._transcript_chars_post_pyramid_cache[cid] == 0
     bb._executor.shutdown(wait=False)
+
+
+def test_failing_summaries_notify_once_then_on_recovery(fake_builder, monkeypatch):
+    # A summarizer refusing every call (quota) used to only write log lines
+    # while compaction silently dropped the unsummarized history.
+    notices = []
+    monkeypatch.setattr(
+        "core.compaction_notices.publish_notice",
+        lambda cid, uid, text, event, **details: notices.append((cid, event, text)))
+    _patch_summarizer_config(monkeypatch, l1_trigger_msgs=8, tail_reserve_msgs=2)
+    _write_shared(fake_builder._shared_path, 10)
+    fake_builder.set_summarizer_resolver(
+        lambda uid: (_fake_client(), 128000, "svc-test"))
+
+    def _quota(*_args, **_kwargs):
+        raise RuntimeError("LLM API error 429: monthly usage limit")
+    fake_builder.set_summarize_fn(_quota)
+    for _ in range(3):
+        fake_builder.build_now_sync("cid_test", "user_test", allow_partial=False)
+
+    assert [(cid, event) for cid, event, _ in notices] == [
+        ("cid_test", "summary_failing")]
+    assert "monthly usage limit" in notices[0][2]
+
+    summarize_fn, _ = _make_summarize_fn()
+    fake_builder.set_summarize_fn(summarize_fn)
+    result = fake_builder.build_now_sync("cid_test", "user_test",
+                                         allow_partial=False)
+
+    assert result["buckets_built"] == 1
+    assert [event for _, event, _ in notices] == [
+        "summary_failing", "summary_resumed"]
+    assert "after 3 failed attempt(s)" in notices[1][2]

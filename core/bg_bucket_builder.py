@@ -198,6 +198,9 @@ class BgBucketBuilder(_BgBucketBuildMixin):
         # decision changes — otherwise every shared write prints a
         # line.
         self._last_trigger_log: Dict[str, str] = {}
+        # Failing summaries reach the user once per failure streak.
+        from core.compaction_notices import SummaryHealth
+        self._summary_health = SummaryHealth()
 
 
     def _seed_seq_caches_async(self, cid: str, user_id: str) -> bool:

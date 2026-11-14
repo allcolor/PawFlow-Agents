@@ -651,6 +651,20 @@ class _SpawnDeliveryMixin:
             logger.error("[bg-delegate] preempt failed: %s", e)
 
     @staticmethod
+    def _record_delegate_reply(conv_id, caller_agent, user_id, message):
+        """Persist a delivered delegate reply as the frame's closing row.
+
+        Transcript only (``display_only``): the caller ingests the reply
+        through its inbox; this row is what the webchat and context rebuilds
+        read, whichever delivery path (preempt or wake) runs.
+        """
+        from core.conversation_writer import ConversationWriter
+        row = dict(message, display_only=True)
+        ConversationWriter.for_conversation(conv_id).enqueue_message(
+            row, agent_name=caller_agent, user_id=user_id,
+            sse_events=[{"type": "new_message", "data": dict(row)}])
+
+    @staticmethod
     def _wake_caller(inst, conv_id, caller_agent, user_id, text, msg_id,
                      source=None, pre_persisted=True, message=None):
         """Store an idle caller's delivery and wake it with an inbox notice."""

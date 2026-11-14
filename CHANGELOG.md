@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A turn started by a delegate message is now the responder's own activity:
+  its text, tool calls and results render as that agent's normal messages
+  instead of inside the delegate frame, and stay out of shared and peer
+  contexts. The caller receives one reply, the turn's last text, instead of
+  every intermediate text segment of a CLI turn. That reply is now written to
+  the transcript on both delivery paths; it was refused before ("user
+  messages require source.target_agent") and never closed the frame.
+- Rows marked `target_only` no longer enter the shared tail or another
+  agent's transcript view when a context is rebuilt.
+- Failing background summaries are now visible: the first failure of a
+  streak posts a system notice in the conversation with the summarizer's
+  error (a quota refusal used to leave only log lines), and a recovery notice
+  follows the next successful summary.
+- A compaction that runs while background summaries are behind no longer
+  drops history silently. When the messages between the last summary and the
+  kept recent tail exceed the builder's normal lag, the compacted context
+  tells the agent which range is missing and to use `read_history`, and a
+  system notice tells the user.
+
 ## [1.0.0-beta.327] — 2026-11-11
 
 ### Fixed

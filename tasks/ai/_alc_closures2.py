@@ -498,16 +498,10 @@ class _ALCClosures2Mixin:
         # _append.
         _text_thinking = turn_thinking if (not tool_calls) else ""
         if text:
-            _text_src = _src
-            if tool_calls:
-                _text_src = {
-                    **_src,
-                    "delegate_visibility": "self_only",
-                }
             msg = LLMMessage(
                 role="assistant", content=text,
                 thinking=_text_thinking,
-                source=_text_src,
+                source=_src,
                 conversation_id=st.conversation_id)
             st._append(msg)  # persists immediately + publishes new_message (+ thinking_content)
             turn_msgs.append(msg)

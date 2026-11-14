@@ -309,9 +309,10 @@ class _CsAgentCtxMixin:
                     out.append(dict(m))
                 else:
                     # Another agent's turn — demote to user with prefix
-                    # and drop btw/task
-                    # side-channels entirely (these aren't addressed to us).
-                    if src.get("task_id") or src.get("btw"):
+                    # and drop btw/task side-channels and target_only
+                    # private turns entirely (these aren't addressed to us).
+                    if (src.get("task_id") or src.get("btw")
+                            or src.get("visibility") == "target_only"):
                         continue
                     # Tool-only turns have no text. Don't emit empty
                     # "[Agent X]:" stubs into the view. Handle both string

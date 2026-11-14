@@ -306,14 +306,17 @@ class _CsCtxIoMixin:
         """Pick messages eligible for shared.jsonl.
 
         Shared context = conversation only: no tool rows, no thinking rows,
-        no context injections. Stored rows are already canonical; this filter
-        never unwraps assistant.tool_calls or assistant.thinking.
+        no context injections, no ``target_only`` rows (a delegate responder's
+        or external caller's private turn). Stored rows are already canonical;
+        this filter never unwraps assistant.tool_calls or assistant.thinking.
         """
         out = []
         for m in messages:
             if m.get("role") in ("tool", "tool_call", "thinking"):
                 continue
-            if (m.get("source") or {}).get("type") == "context":
+            _src = m.get("source") or {}
+            if (_src.get("type") == "context"
+                    or _src.get("visibility") == "target_only"):
                 continue
             if m.get("role") == "assistant" and not str(m.get("content", "")).strip():
                 continue

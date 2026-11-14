@@ -129,9 +129,9 @@ class _AgentCompactCoreMixin:
         # to summarize a pending partial bucket, defeating "compact is
         # instant". Bg runs async via maybe_trigger and stays caught
         # up under TAIL_TOKEN_BUDGET (20k) most of the time. If bg is
-        # behind, the pyramid_header reflects fewer covered msgs and
-        # the recent_tail walk-back below picks up the slack — same
-        # final user-visible content, just sliced differently.
+        # behind, the pyramid_header covers fewer msgs and the bounded
+        # tail cannot absorb the rest: that gap is reported to the user
+        # and the agent (core.compaction_notices.report_history_gap).
         # NO pre-filter on `m.seq > pyramid.last_seq` either. The
         # contract takes the X MOST RECENT transcript rows by token
         # budget, regardless of whether they're also covered by the
@@ -308,8 +308,6 @@ class _AgentCompactCoreMixin:
         from core.llm_client import _peek_persisted_seq
         import time as _t_compact
 
-
-
         # Pyramid header read ONCE here (fresh from store). Step 2c may
         # replace _pyramid_header with a compressed version (private to
         # this compact, does NOT touch the shared pyramid). _build_output
@@ -485,8 +483,6 @@ class _AgentCompactCoreMixin:
                 else:
                     high = mid - 1
             return best
-
-
 
         if independent_context:
             return self._compact_independent_context(
@@ -669,6 +665,11 @@ class _AgentCompactCoreMixin:
                 "(~%d tokens, budget=%d, header=%d, cap=%d)",
                 len(saved_recent), len(_tail_msgs),
                 _accum, _tail_budget, _header_tokens, cap)
+            if _bucket_store is not None:
+                from core.compaction_notices import report_history_gap
+                _pyramid_header += report_history_gap(
+                    conversation_id, user_id, agent_name, _bucket_store.last_seq,
+                    (getattr(m, "seq", 0) or 0 for m in saved_recent))
 
             compacted = _build_output(saved_recent)
             new_estimate = _estimate(compacted)

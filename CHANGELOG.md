@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.328] — 2026-11-14
+
 ### Fixed
 
 - A turn started by a delegate message is now the responder's own activity:

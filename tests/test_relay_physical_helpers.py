@@ -440,7 +440,13 @@ def test_real_listeners_and_pending_connections_close_between_attempts(tmp_path,
         assert all(not thread.is_alive() for thread in threads)
         with pytest.raises(OSError):
             socket.create_connection(("127.0.0.1", port), timeout=0.2)
-        assert pending.recv(1) == b""
+        # Closed either way: FIN (b"") when the helper read the partial
+        # request before closing, RST when the bytes were still unread in its
+        # receive buffer (CI 3.13 run 43837040587 hit the RST ordering).
+        try:
+            assert pending.recv(1) == b""
+        except ConnectionResetError:
+            pass
         assert not relay._stop_event.is_set()
         relay._prepare_docker_helpers(port)
         assert probe_host_helper(f"127.0.0.1:{port}", "real-test-token", timeout=1)

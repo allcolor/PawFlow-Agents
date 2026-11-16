@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.330] — 2026-11-16
+
 ### Fixed
 
 - `from pawflow import tools` works again in scripts the server runs on a

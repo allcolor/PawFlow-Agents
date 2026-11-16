@@ -139,6 +139,11 @@ def _data(reply) -> dict[str, Any]:
     data = reply.get("data")
     if data is None and "result" in reply:
         data = reply.get("result")
+    # A handler reports most failures as text ("Error reading ..."); the MCP
+    # endpoint flags those isError, so the script gets the same verdict.
+    from services.mcp_server_endpoint import _is_tool_error_text
+    if isinstance(data, str) and _is_tool_error_text(data):
+        return _error("EIO", 5, data)
     return {"data": data if data is not None else ""}
 
 

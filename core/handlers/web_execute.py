@@ -261,6 +261,11 @@ class ExecuteScriptHandler(ToolHandler):
                 import uuid as _uuid_exec
                 _exec_id = _uuid_exec.uuid4().hex[:8]
                 _run_dir = f".pawflow_exec_{_exec_id}"
+                _server_local = getattr(svc, "_server_local_requested", None)
+                if local and callable(_server_local) and _server_local({"local": True}):
+                    # The server-local surface is rooted at "/", which the
+                    # server user cannot write: use the server's temp dir.
+                    _run_dir = os.path.join(tempfile.gettempdir(), _run_dir)
                 _script = f"{_run_dir}/script.py"
                 _exec_env = dict(env or {})
                 _exec_env.setdefault(

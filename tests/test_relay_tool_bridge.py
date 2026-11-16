@@ -110,6 +110,15 @@ class _ToolRelay:
         assert publish_code_mode is False
         self.calls.append((tool_name, arguments, user_id, conversation_id,
                            agent_name, current_run_identity()))
+        if arguments.get("path") == "missing.txt":
+            # Handlers report most failures as text, not as an error reply.
+            return {"type": "result", "request_id": request_id,
+                    "data": "Error reading 'missing.txt': [Errno 2] No such file"}
+        if tool_name == "exists":
+            path = arguments["path"]
+            answer = "Exists" if path == "a.txt" else "Does not exist"
+            return {"type": "result", "request_id": request_id,
+                    "data": f"{answer}: {path}"}
         return {"type": "result", "request_id": request_id,
                 "data": f"ran {tool_name}"}
 
@@ -245,6 +254,15 @@ def test_unknown_method_and_relay_without_owner(tool_relay):
     assert _handle("tool.call", {"cap": _mint()}, user="")["error"] == "EACCES"
 
 
+def test_a_tool_failure_reported_as_text_is_an_error(tool_relay, rows):
+    reply = _handle("tool.call", {"cap": _mint(), "tool_name": "read",
+                                  "arguments": {"path": "missing.txt"}})
+    assert reply["error"] == "EIO"
+    assert reply["message"].startswith("Error reading 'missing.txt'")
+    # The user still sees the failed call and its result.
+    assert rows[1][0]["content"].startswith("Error reading")
+
+
 # ── relay bridge + SDK over a real loopback socket ───────────────────
 
 class _ServerClient:
@@ -326,6 +344,20 @@ def test_sdk_reports_a_refused_call(bridge, tool_relay, monkeypatch):
     sdk = _load_sdk(monkeypatch, instance.endpoint, _mint())
     with pytest.raises(RuntimeError, match="cannot be called from a script"):
         sdk.tools.call("ask_user", question="?")
+
+
+def test_sdk_raises_on_a_failed_tool(bridge, tool_relay, monkeypatch):
+    instance, _ = bridge
+    sdk = _load_sdk(monkeypatch, instance.endpoint, _mint())
+    with pytest.raises(RuntimeError, match="Tool error: Error reading"):
+        sdk.fs.read_file("missing.txt")
+
+
+def test_sdk_exists_reads_the_exists_tool_answer(bridge, tool_relay, monkeypatch):
+    instance, _ = bridge
+    sdk = _load_sdk(monkeypatch, instance.endpoint, _mint())
+    assert sdk.fs.exists("a.txt") is True
+    assert sdk.fs.exists("b.txt") is False
 
 
 def test_sdk_without_capability_says_tools_are_unavailable(bridge, monkeypatch):
@@ -523,6 +555,45 @@ def test_local_true_on_the_server_local_surface(tmp_path, tool_relay, rows,
          "env": {"PAWFLOW_TOOL_CAP": _mint()}},
         relay_service_id="relayA", user_id="alice")
     _assert_e2e(result["stdout"], tool_relay, rows)
+
+
+class _ServerLocalRelay(_ExecRelay):
+    """A managed relay whose local=true runs on the real server-local surface."""
+
+    def _server_local_requested(self, kwargs):
+        return bool(kwargs.get("local"))
+
+    def _local(self, action, path, request):
+        from services._server_local_exec import execute_server_local
+        return execute_server_local(action, path, request,
+                                    relay_service_id="relayA", user_id="alice")
+
+    def write_file(self, path, content, **kwargs):
+        super().write_file(path, content, **kwargs)
+        self._local("write_file", path, {"content": content})
+
+    def delete_file(self, path, **kwargs):
+        super().delete_file(path, **kwargs)
+        self._local("delete_file", path, {})
+
+    def exec(self, path, command, env=None, **kwargs):
+        super().exec(path, command, env=env, **kwargs)
+        return self._local("exec", path, {"command": command, "env": env})
+
+
+def test_execute_script_local_on_the_server_local_surface(
+        tmp_path, tool_relay, rows, monkeypatch):
+    """The server-local root is "/": the run dir goes to the temp dir."""
+    import tempfile
+    from pathlib import Path
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.delenv("PAWFLOW_TOOL_ENDPOINT", raising=False)
+    relay = _ServerLocalRelay()
+    out = _run_execute_script(relay, local=True, code=_E2E_SCRIPT)
+    run_dir = Path(relay.writes[0][0]).parent
+    assert run_dir.parent == tmp_path and run_dir.name.startswith(".pawflow_exec_")
+    _assert_e2e(out, tool_relay, rows)
+    assert not run_dir.exists()
 
 
 def test_a_script_on_the_wrong_relay_is_refused_end_to_end(

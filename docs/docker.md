@@ -1015,6 +1015,9 @@ fs.exec("pytest -q")                    # the `bash` tool
 `edit`, `bash`, `list_dir`, `grep`, `stat`, `exists`, `delete`, `mkdir`) on
 the relay named by `PAWFLOW_FS_SERVICE`, or on the conversation's default
 relay. A refused or failed call raises `RuntimeError("Tool error: ...")`.
+A failure the tool reports as text (`Error: ...`, `Error reading ...`,
+`Blocked by hook: ...`, an HTTP status of 400 or more: the results the MCP
+endpoint flags `isError`) raises too, with that text as the message.
 
 The SDK picks its transport from the environment:
 
@@ -1023,6 +1026,8 @@ The SDK picks its transport from the environment:
   runner. `execute_script` writes the script and this SDK into a run
   directory of their own (`.pawflow_exec_<id>/script.py` and `pawflow.py`),
   so `import pawflow` works on every surface, and removes it afterwards.
+  The directory sits under the relay root, except on the server-local
+  surface: that one is rooted at `/`, so it goes in the server's temp dir.
   Each relay worker listens on a loopback port (`PAWFLOW_TOOL_ENDPOINT`,
   inherited by every command it runs) and forwards calls as `tool.*` relay
   requests over its own authenticated WebSocket (`docs/relay_server_fs.md`).

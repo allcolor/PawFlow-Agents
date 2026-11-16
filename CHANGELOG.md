@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Relay scripts (`execute_script`, PFP runners): a tool that reports its
+  failure as text (`Error reading ...`, `Error: unknown tool ...`, missing
+  arguments, `Blocked by hook: ...`) now raises `RuntimeError("Tool error:
+  ...")` in the script, as documented, instead of returning the error text as
+  a result. The bridge applies the rule the MCP endpoint uses for `isError`.
+- `execute_script` with `local=true` on a managed relay's server-local
+  surface no longer fails with `Permission denied: '/.pawflow_exec_...'`:
+  that surface is rooted at `/`, so the run directory now goes in the
+  server's temp dir.
+- SDK `fs.exists()` returned `False` for every path: it looked for `true` in
+  the `exists` tool's answer, which is `Exists: <path>` or
+  `Does not exist: <path>`.
+
 ## [1.0.0-beta.330] — 2026-11-16
 
 ### Fixed

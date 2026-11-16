@@ -284,8 +284,9 @@ class _Filesystem:
         return self._call("stat", path=path, **kwargs)
 
     def exists(self, path: str, **kwargs) -> bool:
+        # The tool answers "Exists: <path>" or "Does not exist: <path>".
         result = self._call("exists", path=path, **kwargs)
-        return bool(result) and "true" in str(result).lower()
+        return str(result).startswith("Exists")
 
     def delete_file(self, path: str, **kwargs) -> str:
         return self._call("delete", path=path, **kwargs)

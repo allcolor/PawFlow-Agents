@@ -1610,6 +1610,14 @@ PawFlow-managed section so a regeneration replaces it instead of appending a
 second table for the same path. `codex exec` never asks the question, so the
 headless provider does not emit the table.
 
+The generated `config.toml` also sets `check_for_update_on_startup = false`.
+When a newer Codex release is published, the TUI otherwise opens an
+`Update available` modal (`Update now` / `Skip` / `Skip until next version`)
+before drawing its composer and waits for a key. The bootstrap paste then never
+reaches the composer and the send fails with `prompt was not confirmed after the
+single paste`. CLI versions are managed by PawFlow (Updates screen), not by the
+TUI.
+
 ### The tool set matches `codex app-server`
 
 Both codex providers run the same binary, in a container whose cwd is the same

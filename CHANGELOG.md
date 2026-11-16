@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Codex interactive sessions no longer fail their first prompt when a
+  newer Codex release is out. The TUI opened its "Update available" modal
+  before the composer and the injected prompt never landed ("prompt was not
+  confirmed after the single paste"). The generated `config.toml` now sets
+  `check_for_update_on_startup = false`.
 - A delegate reply to a flash agent no longer copies the whole parent
   conversation into a new context for that flash agent. The reply's
   transcript row (new in beta.328) named the flash caller, and the

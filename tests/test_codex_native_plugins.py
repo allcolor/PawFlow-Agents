@@ -93,6 +93,17 @@ class TestConfigToml:
         assert content.index("model_auto_compact_token_limit") < first_table
         assert content.index("suppress_unstable_features_warning") < first_table
 
+    def test_startup_update_check_is_disabled(self, tmp_path):
+        """A newer codex release opens an 'Update available' modal before
+        the composer; the pasted prompt never lands (2026-11-16: GameDev2
+        and GameDev7 cold starts failed on 0.167 -> 0.169)."""
+        _, content = _write_config(tmp_path)
+        managed = content[:content.index(CodexSessionMixin._CODEX_MANAGED_END)]
+        body = managed.split("\n", 1)[1]
+        assert tomllib.loads(body)["check_for_update_on_startup"] is False
+        first_table = content.index("[")
+        assert content.index("check_for_update_on_startup") < first_table
+
     def test_legacy_file_without_markers_is_replaced(self, tmp_path):
         codex_home = tmp_path / ".codex"
         codex_home.mkdir()

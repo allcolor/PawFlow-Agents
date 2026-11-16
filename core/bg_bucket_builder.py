@@ -466,6 +466,10 @@ class BgBucketBuilder(_BgBucketBuildMixin):
             _log_once("resolver=None (AgentLoopTask.initialize not run?)")
             return
 
+        if self._summary_health.retry_delay_remaining(cid) > 0:
+            _log_once("summarizer failing — waiting for retry delay")
+            return
+
         with self._seq_cache_lock:
             shared_seq = self._shared_seq_cache.get(cid)
             pyramid_seq = self._pyramid_seq_cache.get(cid)

@@ -423,6 +423,17 @@ class ConversationWriter:
                 logger.debug("[conv-writer:%s] append prewarm failed",
                              self._cid[:8], exc_info=True)
 
+        def context_agent(item: Dict[str, Any]) -> str:
+            """The agent whose context the item's write touches, if any.
+
+            A display_only row is transcript-only: prewarming its agent would
+            seed that agent's context from the whole shared log (a flash
+            caller's reply row once copied 233k rows into the parent).
+            """
+            if (item.get("msg") or {}).get("display_only"):
+                return ""
+            return item.get("agent_name", "") or ""
+
         while not self._stop:
             try:
                 item = self._queue.get(timeout=_IDLE_TIMEOUT)
@@ -518,7 +529,7 @@ class ConversationWriter:
                         continue
                     if op == "append_message_if_absent":
                         _prewarm_started = time.monotonic()
-                        prewarm_before_write(write_item.get("agent_name", ""))
+                        prewarm_before_write(context_agent(write_item))
                         _prewarm_ms += ((time.monotonic() - _prewarm_started)
                                         * 1000.0)
                         _write_started = time.monotonic()
@@ -539,7 +550,7 @@ class ConversationWriter:
                         for batch_item in write_item["items"]:
                             _prewarm_started = time.monotonic()
                             prewarm_before_write(
-                                batch_item.get("agent_name", ""))
+                                context_agent(batch_item))
                             _prewarm_ms += (
                                 (time.monotonic() - _prewarm_started) * 1000.0)
                         _write_started = time.monotonic()
@@ -582,7 +593,9 @@ class ConversationWriter:
                             run.append(next_item)
                             j += 1
                         _prewarm_started = time.monotonic()
-                        prewarm_before_write(batch_agent)
+                        prewarm_before_write(
+                            batch_agent if any(context_agent(r) for r in run)
+                            else "")
                         _prewarm_ms += ((time.monotonic() - _prewarm_started)
                                         * 1000.0)
                         _write_started = time.monotonic()
@@ -594,7 +607,7 @@ class ConversationWriter:
                         continue
 
                     _prewarm_started = time.monotonic()
-                    prewarm_before_write(write_item.get("agent_name", ""))
+                    prewarm_before_write(context_agent(write_item))
                     _prewarm_ms += ((time.monotonic() - _prewarm_started)
                                     * 1000.0)
                     _write_started = time.monotonic()

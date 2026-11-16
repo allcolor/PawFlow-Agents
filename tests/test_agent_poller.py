@@ -1189,3 +1189,43 @@ def test_add_schedule_with_agent_targets_that_agent(poller_env, loop_seconds):
 
     [entry] = _remaining(cid)
     assert AgentPollerMixin()._scheduled_entry_target(cid, entry) == "GameDev2"
+
+
+def test_entry_key_kind_reads_the_suffix_after_the_conversation_id():
+    from tasks.ai.agent_poller import _entry_key_kind
+    sub = "parent::task::t_1"
+    assert _entry_key_kind(sub, f"{sub}::continuation::ab12") == "::continuation::ab12"
+    assert _entry_key_kind("parent", "parent::task::t_1") == "::task::t_1"
+    assert _entry_key_kind("parent", "other::thought::x") == "other::thought::x"
+
+
+def test_flash_continuation_is_not_taken_for_a_task_wake(poller_env):
+    """schedule_continuation from a flash agent in its finished sub-conv.
+
+    Its key carries the sub-conv's ``::task::`` marker. It used to enter the
+    task branch, try to create the sub-conversation without an owner and
+    abort the whole poll pass with ValueError.
+    """
+    from core.conversation_store import ConversationStore
+    parent = "flash_cont_parent"
+    task = _active_task(parent, [])
+    sub = f"{parent}::task::9dc21c3f"
+    key = f"{sub}::continuation::deadbeef"
+    _schedule(sub, key, "[scheduled:GameDev3::flash::audit] [continuation] verify")
+
+    assert _poll(task, sub) == []
+    store = ConversationStore.instance()
+    assert not store.exists(key)
+    assert not store.exists(sub)
+    assert _remaining(sub) == []
+
+
+def test_task_wake_without_parent_owner_is_dropped_not_raised(poller_env):
+    from core.conversation_store import ConversationStore
+    cid = "ghost_parent"
+    task = _active_task("other_conv", [])
+    key = f"{cid}::task::t_ghost"
+    _schedule(cid, key, "[agent_task:t_ghost] auto-reschedule (claude)")
+
+    assert _poll(task, cid) == []
+    assert not ConversationStore.instance().exists(key)

@@ -50,6 +50,18 @@ def _poll_generation_key(conversation_id: str, agent_name: str) -> str:
     return f"{conversation_id}:{agent_name}" if agent_name else conversation_id
 
 
+def _entry_key_kind(conversation_id: str, entry_key: str) -> str:
+    """Return the part of a schedule key that follows its conversation id.
+
+    A sub-conversation id already carries a marker (``<parent>::task::<tid>``),
+    so its own wakes (``<parent>::task::<tid>::continuation::<h>``) must be
+    classified by their suffix, not by a marker of the id they belong to.
+    """
+    if conversation_id and entry_key.startswith(conversation_id):
+        return entry_key[len(conversation_id):]
+    return entry_key
+
+
 def _check_task_limits(task: dict, task_id: str) -> str:
     """Check pre-launch limits. Returns cancel reason or empty string."""
     import time as _t
@@ -511,26 +523,27 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         for entry in due_entries:
             cid = entry["conversation_id"]
             entry_key = entry.get("key", cid)
+            kind = _entry_key_kind(cid, entry_key)
             reason = entry.get("reason", "scheduled recheck")
 
             if self._loop_command_text(entry):
                 command_entries.append(entry)
                 continue
 
-            if "::thought::" in entry_key:
+            if "::thought::" in kind:
                 # Thoughts are never blocked — they can arrive anytime
                 thought_entries.append(entry)
                 continue
 
-            if "::task::" in entry_key or "::task_verify::" in entry_key:
+            if "::task::" in kind or "::task_verify::" in kind:
                 thought_entries.append(entry)
                 continue
 
-            if "::recheck::" in entry_key:
+            if "::recheck::" in kind:
                 thought_entries.append(entry)
                 continue
 
-            if "::plan::" in entry_key or "::plan_verify::" in entry_key:
+            if "::plan::" in kind or "::plan_verify::" in kind:
                 thought_entries.append(entry)
                 continue
 
@@ -745,8 +758,9 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             cid = entry["conversation_id"]
             entry_key = entry.get("key", cid)
             reason = entry.get("reason", "scheduled recheck")
-            _is_task = "::task::" in entry_key
-            _is_task_verify = "::task_verify::" in entry_key
+            _kind = _entry_key_kind(cid, entry_key)
+            _is_task = "::task::" in _kind
+            _is_task_verify = "::task_verify::" in _kind
             _is_task_context = _is_task or _is_task_verify
             _task_id_tmp = ""
             _task_data_tmp = {}
@@ -812,7 +826,14 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                     # Inject task prompt as a normal user message
                     # (as if the human owner sent it directly)
                     _meta_tmp = store.get_metadata(cid)
-                    _uid_tmp = _meta_tmp["user_id"] if _meta_tmp else ""
+                    if not _meta_tmp or not _meta_tmp.get("user_id"):
+                        # The parent conversation is gone: nothing to run the
+                        # task in. One stale entry must not abort the pass.
+                        logger.warning(
+                            "[poller] Dropping task wake %s: parent conversation "
+                            "%s has no owner metadata", entry_key, cid[:8])
+                        continue
+                    _uid_tmp = _meta_tmp["user_id"]
                     import uuid as _poll_uuid
                     from core.llm_client import stamp_message
                     messages_data = [stamp_message({

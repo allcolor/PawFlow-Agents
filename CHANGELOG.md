@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A delegate reply to a flash agent no longer copies the whole parent
+  conversation into a new context for that flash agent. The reply's
+  transcript row (new in beta.328) named the flash caller, and the
+  conversation writer prewarmed that agent's context before writing it,
+  seeding it from the full shared log: about 233k rows (265 MB) and minutes
+  of CPU per reply in a long conversation. The writer no longer prewarms an
+  agent context for a transcript-only row.
+- The output of a background `bash` command is no longer lost when the
+  agent that launched it ends its turn first. Its FileStore file was a
+  per-turn tool result, deleted by the end-of-turn cleanup while the command
+  was still running; it now has its own category with a seven-day TTL.
+- A `schedule_continuation` called by a flash agent no longer breaks the
+  agent poller. Its key carries the sub-conversation's `::task::` marker, so
+  the poller took it for a task wake, failed to create a conversation without
+  an owner and aborted the whole poll pass, delaying every other due wake.
+  Schedule keys are now classified by the part after their conversation id.
+- A failing background summarizer is retried with an exponential delay (one
+  minute, doubling up to 15 minutes, reset by the next success) instead of on
+  every new conversation row: a rate-limited summarizer was called 880 times
+  for the same bucket during one outage.
+
 ## [1.0.0-beta.328] — 2026-11-14
 
 ### Fixed

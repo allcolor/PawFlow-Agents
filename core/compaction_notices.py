@@ -12,12 +12,18 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
 _ERROR_PREVIEW_CHARS = 300
+# Retry delay after the n-th consecutive failure: BASE * 2**(n-1), capped.
+# A summarizer refusing calls (quota, rate limit) used to be retried on every
+# new conversation row, about once a minute for as long as the refusal lasted.
+SUMMARY_RETRY_BASE_SECONDS = 60.0
+SUMMARY_RETRY_MAX_SECONDS = 900.0
 
 
 def publish_notice(conversation_id: str, user_id: str, text: str,
@@ -41,18 +47,34 @@ class SummaryHealth:
     """Tracks failing background summaries per conversation.
 
     One notice when a conversation's summaries start failing, one when they
-    succeed again; the attempts in between only count.
+    succeed again; the attempts in between only count. Each failure also
+    pushes the next attempt back with an exponential delay
+    (``retry_delay_remaining``), reset by the next success.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, clock=time.monotonic) -> None:
         self._lock = threading.Lock()
         self._failures: Dict[str, int] = {}
+        self._retry_at: Dict[str, float] = {}
+        self._clock = clock
+
+    def retry_delay_remaining(self, cid: str) -> float:
+        """Seconds before the next summary attempt for ``cid``; 0 = now."""
+        with self._lock:
+            retry_at = self._retry_at.get(cid, 0.0)
+        return max(0.0, retry_at - self._clock())
 
     def failed(self, cid: str, user_id: str, first_seq: int, last_seq: int,
                error: str) -> None:
         with self._lock:
             count = self._failures.get(cid, 0) + 1
             self._failures[cid] = count
+            delay = min(SUMMARY_RETRY_BASE_SECONDS * (2 ** min(count - 1, 30)),
+                        SUMMARY_RETRY_MAX_SECONDS)
+            self._retry_at[cid] = self._clock() + delay
+        logger.warning(
+            "[bg-bucket] summary failure #%d cid=%s — next attempt in %ds",
+            count, cid[:8], int(delay))
         if count != 1:
             return
         detail = " ".join(str(error or "no summary returned").split())
@@ -74,6 +96,7 @@ class SummaryHealth:
     def succeeded(self, cid: str, user_id: str) -> None:
         with self._lock:
             count = self._failures.pop(cid, 0)
+            self._retry_at.pop(cid, None)
         if not count:
             return
         try:

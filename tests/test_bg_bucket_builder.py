@@ -667,6 +667,52 @@ def test_maybe_trigger_submits_background_job_without_foreground_gate(tmp_path, 
     bb._executor.shutdown(wait=False)
 
 
+def test_failing_summarizer_is_not_retried_before_its_delay(monkeypatch):
+    """A summarizer refusing calls (rate_limit) used to be retried on every
+    new row: 880 attempts on the same bucket during one outage."""
+    from core.compaction_notices import SummaryHealth
+    now = [1000.0]
+    bb = BgBucketBuilder(max_workers=1)
+    bb._summary_health = SummaryHealth(clock=lambda: now[0])
+    monkeypatch.setattr("core.compaction_notices.publish_notice",
+                        lambda *a, **kw: None)
+    submitted = []
+    monkeypatch.setattr(bb._executor, "submit",
+                        lambda *a, **kw: submitted.append(a) or None)
+    bb.set_summarizer_resolver(lambda uid: (_fake_client(), 128000, "svc"))
+    bb.set_summarize_fn(_make_summarize_fn()[0])
+    cid = "cid_backoff"
+    bb._shared_seq_cache[cid] = L1_TRIGGER_MSGS + TAIL_RESERVE + 1
+    bb._pyramid_seq_cache[cid] = 0
+    bb._shared_unbucketed_rows_cache[cid] = L1_TRIGGER_MSGS + TAIL_RESERVE + 1
+    bb._shared_unbucketed_chars_cache[cid] = MIN_BG_INPUT_CHARS + 1000
+    bb._transcript_chars_post_pyramid_cache[cid] = 0
+
+    bb._summary_health.failed(cid, "uid", 1, 10, "rate_limit")
+    bb.maybe_trigger(cid, "uid")
+    assert submitted == []
+
+    now[0] += 61
+    bb.maybe_trigger(cid, "uid")
+    assert len(submitted) == 1
+    bb._executor.shutdown(wait=False)
+
+
+def test_summary_retry_delay_doubles_caps_and_resets(monkeypatch):
+    from core import compaction_notices as cn
+    monkeypatch.setattr(cn, "publish_notice", lambda *a, **kw: None)
+    now = [0.0]
+    health = cn.SummaryHealth(clock=lambda: now[0])
+    delays = []
+    for _ in range(6):
+        health.failed("c", "u", 1, 2, "rate_limit")
+        delays.append(health.retry_delay_remaining("c"))
+    assert delays == [60.0, 120.0, 240.0, 480.0, 900.0, 900.0]
+    assert health.retry_delay_remaining("other") == 0.0
+    health.succeeded("c", "u")
+    assert health.retry_delay_remaining("c") == 0.0
+
+
 def test_maybe_trigger_async_coalesces_without_inline_work(monkeypatch):
     bb = BgBucketBuilder(max_workers=1)
     submitted = []

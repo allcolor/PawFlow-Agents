@@ -11,6 +11,11 @@ from core.handlers._fs_base import BaseFsHandler, cap_binary_output
 
 logger = logging.getLogger(__name__)
 
+# FileStore scope of a background command's output file. It must outlive the
+# turn that launched the command, so it is not a per-turn "tool_result".
+BG_OUTPUT_CATEGORY = "bash_bg_output"
+BG_OUTPUT_TTL_SECONDS = 7 * 24 * 3600
+
 
 # ── Dangerous command patterns (defense-in-depth) ──────────────────────
 # The tool approval system is the primary defense. This is a safety net.
@@ -357,6 +362,9 @@ class BashHandler(BaseFsHandler):
             try:
                 from core.file_store import FileStore
                 store = FileStore.instance()
+                # Not "tool_result": the end-of-turn cleanup deletes those
+                # while the command may still be running, and its output
+                # would then have nowhere to go.
                 file_id = store.store(
                     filename,
                     b"(background command still running)\n",
@@ -364,7 +372,8 @@ class BashHandler(BaseFsHandler):
                     conversation_id=self._conversation_id,
                     user_id=self._user_id,
                     agent_name=self._agent_name,
-                    category="tool_result",
+                    category=BG_OUTPUT_CATEGORY,
+                    ttl=BG_OUTPUT_TTL_SECONDS,
                 )
                 out_path = f"fs://filestore/{file_id}/{filename}"
                 out_disk_path = store.get_disk_path(file_id, user_id=self._user_id)

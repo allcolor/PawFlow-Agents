@@ -206,6 +206,40 @@ def test_writer_prewarms_append_targets_before_batched_write(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("with_sse", [False, True])
+def test_display_only_row_does_not_prewarm_its_agent_context(monkeypatch, with_sse):
+    """A display_only row is transcript-only. Prewarming its agent seeded
+    that agent's context from the whole shared log: each delegate reply to
+    a flash caller copied ~233k rows (265 MB) into the parent conversation."""
+    events = []
+
+    class _Store:
+        def prewarm_append_targets(self, cid, agent_name=""):
+            events.append(("prewarm", agent_name))
+
+        def append_messages(self, cid, items):
+            events.append(("append_messages", len(items)))
+
+        def append_message(self, cid, msg, agent_name="", user_id="", ttl=0):
+            events.append(("append_message", agent_name))
+
+    store = _Store()
+    from core import conversation_store as _cs
+    monkeypatch.setattr(_cs.ConversationStore, "instance",
+                        classmethod(lambda _c: store))
+
+    cid = f"conv-display-only-{with_sse}"
+    w = ConversationWriter.for_conversation(cid)
+    row = dict(_msg(content="reply"), display_only=True)
+    w.enqueue_message(row, agent_name="GameDev7::flash::audit",
+                      sse_events=([{"type": "new_message", "data": row}]
+                                  if with_sse else None))
+
+    assert ConversationWriter.shutdown_all(wait_timeout=5.0)
+    assert ("prewarm", "GameDev7::flash::audit") not in events
+    assert events[0] == ("prewarm", "")
+
+
 def test_writer_does_not_batch_sse_items(monkeypatch):
     class _BatchStore:
         def __init__(self):

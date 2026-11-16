@@ -405,6 +405,7 @@ class StreamEmitter(AgentEmitter):
         self._emit("error_event", {
             "message": str(error),
             "agent_name": self._agent_name or "",
+            "source": self._agent_source(),
             "conversation_id": self.conversation_id,
             "turn_id": self.ctx.get("request_msg_id") or "",
             "request_msg_id": self.ctx.get("request_msg_id") or "",
@@ -472,6 +473,9 @@ class StreamEmitter(AgentEmitter):
         self._emit("error_event", {
             "message": error_msg,
             "agent_name": self._agent_name or "",
+            # The webchat error bubble renders this as its "agent via
+            # service" badge, like the agent's own rows.
+            "source": self._agent_source(),
             "conversation_id": self.conversation_id,
             # Without these, AgentResultWaiter._on_event (used by the
             # Telegram/API bridge to correlate the async error back to the

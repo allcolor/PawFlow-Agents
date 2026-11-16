@@ -1309,7 +1309,7 @@ therefore never erase or repaint its successor.
 | `tool_start` | Agent is calling a tool (name + arguments). |
 | `tool_result` | Tool execution completed (result summary). |
 | `done` | Agent turn is complete. Includes response, model, tokens_in/out, tools_called, duration_ms. |
-| `error_event` | An error occurred. |
+| `error_event` | An error occurred. Carries `message` and `agent_name`; the agent emitter also sends the agent `source` (name + `llm_service`). The webchat renders the error bubble with that "agent via service" badge, or with the bare `agent_name` when no source is sent, so a failure is attributable when several agents run. |
 | `message_queued` | A new message was queued because the agent is busy. |
 | `btw_thinking` | BTW side-channel query started. |
 | `btw_token` | BTW response token. |

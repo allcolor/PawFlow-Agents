@@ -601,7 +601,14 @@ function _sseWireB() {
     // passing ts through, addMsg falls back to the browser's clock at
     // *replay* time, making an already-resolved, long-past error render as
     // if it just happened right now, with no relation to current activity.
-    addMsg('error', data.message || t('unknownError'), { ts: data.ts, transcript: true });
+    // The bubble names its agent like any agent row: without a source the
+    // badge is empty and, with several agents running, nothing tells which
+    // one failed. Emitters that know the service send the full agent source.
+    const errSource = (data.source && data.source.type === 'agent' && data.source.name)
+      ? data.source : (errAgent ? { type: 'agent', name: errAgent } : null);
+    addMsg('error', data.message || t('unknownError'), {
+      ts: data.ts, transcript: true, source: errSource,
+    });
     // Error could be from any agent — clear the agent's stream + active interaction
     _finalizeLiveToolCalls(errAgent, '[Error]');
     clearStream(errAgent);

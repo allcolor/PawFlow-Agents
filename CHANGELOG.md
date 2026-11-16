@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A live error bubble in the webchat now shows which agent failed. The
+  `error_event` carried `agent_name`, but the handler rendered the bubble
+  without a source, so its badge was empty and an error such as "LLM call
+  failed: ... overloaded" could not be tied to an agent while several were
+  running. The agent emitter now also sends the agent source, so the badge
+  reads "agent via service" like the agent's other rows.
 - Codex interactive sessions no longer fail their first prompt when a
   newer Codex release is out. The TUI opened its "Update available" modal
   before the composer and the injected prompt never landed ("prompt was not

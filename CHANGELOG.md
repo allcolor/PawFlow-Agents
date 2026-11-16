@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.331] — 2026-11-16
+
 ### Fixed
 
 - Relay scripts (`execute_script`, PFP runners): a tool that reports its

@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A message sent to a busy CLI agent without interrupting it (a `/nimsg`,
+  or a user message while the agent runs a turn of another mode, such as a
+  scheduled wake-up) is no longer delivered twice. The CLI received it during
+  the turn, then the turn's final drain replayed its rescue copy as a new
+  turn, because only the interrupting path recorded the preempt.
 - A live error bubble in the webchat now shows which agent failed. The
   `error_event` carried `agent_name`, but the handler rendered the bubble
   without a source, so its badge was empty and an error such as "LLM call

@@ -1005,6 +1005,14 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                         _user_text, user_id=_uid,
                         conversation_id=conversation_id, agent_name=_target,
                         msg_id=str(_quiet.get("msg_id") or "")):
+                    # The CLI now holds this user message, exactly as after
+                    # send_user_message: mark the turn as preempted so the
+                    # final drain retires the rescue copy instead of replaying
+                    # it as a new turn. send_queued_message itself leaves the
+                    # flag alone because it also pastes inbox notices, which
+                    # have no rescue copy (incident 2026-11-16: four quiet
+                    # submissions delivered mid-turn, then again as a turn).
+                    _active_client._had_preempts_this_turn = True
                     _queue_pending_user(source="preempt_rescue", publish=False)
                     logger.info(
                         "[agent:%s] submitted to the running %s without "

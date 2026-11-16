@@ -23,6 +23,7 @@ class _CliClient:
         self.accepts = accepts
         self.interrupts = []
         self.queued = []
+        self._had_preempts_this_turn = False
 
     def send_user_message(self, text, **kwargs):
         self.interrupts.append(text)
@@ -131,6 +132,28 @@ def test_a_nimsg_is_submitted_without_interrupting():
     assert client.interrupts == []
     assert client.queued == [("hello", "m-1")]
     assert queue.items == [("m-1", "preempt_rescue")]
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"body_extra": {"no_interrupt": True}},
+    {"running_mode": {"type": "delegate_reply", "source_agent": "A",
+                      "task_id": "t1"},
+     "source": {"type": "agent_delegate", "from": "B", "task_id": "t2"}},
+])
+def test_a_quiet_submission_marks_the_turn_preempted(kwargs):
+    """The rescue copy of a quietly submitted message must be retired by the
+    final drain, which only does so when the turn saw a preempt. Without the
+    flag the message was delivered mid-turn and then replayed as a new turn
+    (2026-11-16)."""
+    client = _CliClient()
+    _deliver(client, **kwargs)
+    assert client._had_preempts_this_turn is True
+
+
+def test_a_refused_quiet_submission_does_not_mark_the_turn_preempted():
+    client = _CliClient(accepts=False)
+    _deliver(client, {"no_interrupt": True})
+    assert client._had_preempts_this_turn is False
 
 
 def test_an_agent_trigger_of_another_mode_is_submitted_now_not_at_turn_end():

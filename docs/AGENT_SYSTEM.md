@@ -1393,6 +1393,12 @@ every LLM service, API or CLI:
   reaches its next step and reads them.
 - Whether a pasted message was read is proven from the CLI's own session
   journal (see `docs/CLAUDE_CODE_INTERACTIVE.md`), never assumed.
+- A user message the live CLI accepted, with or without interrupt, also
+  leaves a `preempt_rescue` copy in the `PendingQueue`, and marks the turn as
+  preempted (`_had_preempts_this_turn`). The turn's final drain retires the
+  copy when the provider turn completed; it replays it as a new turn only when
+  no preempt was recorded. Inbox notices pasted through `send_queued_message`
+  have no rescue copy and leave the flag alone.
 
 `schedule_continuation` wake-ups are agent-qualified one-shot handoffs. When a
 continuation or explicit scheduled reminder becomes due during its target's turn,

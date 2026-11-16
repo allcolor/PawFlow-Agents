@@ -274,13 +274,30 @@ class _RelayHostHelperMixin:
 
                 abs_path = _host_abs_path(req.get("path", "."), self.directory)
                 if action in ("exec", "exec_stream"):
-                    result = handler(self.directory, abs_path, req, allow_exec=self.allow_exec)
+                    result = self._host_exec_with_tools(conn, handler, abs_path, req)
                 else:
                     result = handler(self.directory, abs_path, req)
                 resp = json_line_dumps({"type": "result", "data": result}) + "\n"
             except Exception as e:
                 resp = json.dumps({"type": "error", "error": str(e)}) + "\n"
             conn.sendall(resp.encode("utf-8"))
+
+    def _host_exec_with_tools(self, conn, handler, abs_path, req):
+        """Run a local=true command; give it PawFlow tools if it has a capability.
+
+        The command's tool calls travel back to the worker on this same
+        connection (``tool_request`` / ``tool_response`` lines), so they reach
+        the server over the worker's authenticated WebSocket.
+        """
+        from pawflow_relay.tool_bridge import LineTunnel, exec_bridge
+        env = req.get("env") if isinstance(req.get("env"), dict) else None
+        tunnel = LineTunnel(conn)
+        with exec_bridge(env, tunnel.request) as bridge:
+            if bridge is not None:
+                threading.Thread(
+                    target=tunnel.reader, name="host-tool-tunnel",
+                    daemon=True).start()
+            return handler(self.directory, abs_path, req, allow_exec=self.allow_exec)
 
     def _host_desktop_connect(self, conn, req):
         """Tunnel only the current host desktop's WebSocket listener."""

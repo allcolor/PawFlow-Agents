@@ -80,7 +80,8 @@ def _execute_server_interactive(action: str, arguments: Dict[str, Any]) -> Any:
 
 
 def execute_server_local(action: str, path: str, arguments: Dict[str, Any],
-                         on_output=None) -> Any:
+                         on_output=None, relay_service_id: str = "",
+                         user_id: str = "") -> Any:
     """Run one relay action in the PawFlow server container."""
     from tools._fs_paths import _resolve_tool_path
     from tools.fs_actions import ACTIONS
@@ -108,8 +109,14 @@ def execute_server_local(action: str, path: str, arguments: Dict[str, Any],
 
     if action in ("exec", "exec_stream"):
         extra = {"on_output": on_output} if action == "exec_stream" and on_output else {}
-        return handler(
-            abs_path, abs_path, request, allow_exec=True, **extra)
+        # A script with a capability reaches PawFlow tools through a bridge of
+        # its own that answers in-process, for this managed relay's owner.
+        from pawflow_relay.tool_bridge import exec_bridge
+        from services.relay_tool_bridge import server_local_handler
+        env = request.get("env") if isinstance(request.get("env"), dict) else None
+        with exec_bridge(env, server_local_handler(relay_service_id, user_id)):
+            return handler(
+                abs_path, abs_path, request, allow_exec=True, **extra)
     if action == "http_fetch" and on_output:
         return handler(
             SERVER_LOCAL_ROOT, abs_path, request,

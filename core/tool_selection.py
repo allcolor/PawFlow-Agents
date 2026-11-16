@@ -55,6 +55,11 @@ TOOL_FAMILIES = {
             ("shell command", ("bash",),
              "run a command with no suitable dedicated tool",
              "reading, searching, or editing via shell utilities"),
+            ("multi-tool script", ("execute_script",),
+             "chain many PawFlow tool calls plus Python filtering in one "
+             "relay script (`from pawflow import tools`) that prints only "
+             "the result",
+             "a single tool call, or anything the dedicated tool does alone"),
             ("media inspection", ("see",),
              "analyze an image, video, or audio artifact",
              "controlling a live desktop or browser"),

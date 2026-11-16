@@ -150,18 +150,24 @@ function _toolCallSummary(name, args) {
 function _toolOriginValue(extra, toolName) {
   const raw = (extra && (extra.tool_origin || extra.tool_source)) || '';
   const value = String(raw || '').toLowerCase();
-  if (value === 'mcp' || value === 'native') return value;
+  // `script`: a call made by a relay script (execute_script / a PFP runner)
+  // through the relay tool bridge, shown under the agent that ran the script.
+  if (value === 'mcp' || value === 'native' || value === 'script') return value;
   const rawName = (extra && (extra.tool_name || extra.tool)) || toolName || '';
   return _isMcpDisplayedToolCallName(rawName) ? 'mcp' : '';
 }
 
+const _TOOL_ORIGIN_STYLE = {
+  mcp: { label: 'MCP', bg: '#123b5d', fg: '#8bd3ff' },
+  native: { label: 'Native', bg: '#4a2b16', fg: '#ffbf80' },
+  script: { label: 'Script', bg: '#2c1f4a', fg: '#c9b3ff' },
+};
+
 function _toolOriginBadge(extra, toolName) {
   const origin = _toolOriginValue(extra, toolName);
   if (!origin) return '';
-  const label = origin === 'mcp' ? 'MCP' : 'Native';
-  const bg = origin === 'mcp' ? '#123b5d' : '#4a2b16';
-  const fg = origin === 'mcp' ? '#8bd3ff' : '#ffbf80';
-  return '<span class="tc-origin tc-origin-' + origin + '" style="font-size:10px;border:1px solid ' + fg + ';color:' + fg + ';background:' + bg + ';border-radius:3px;padding:1px 3px;margin-right:4px;vertical-align:middle">' + label + '</span>';
+  const style = _TOOL_ORIGIN_STYLE[origin];
+  return '<span class="tc-origin tc-origin-' + origin + '" style="font-size:10px;border:1px solid ' + style.fg + ';color:' + style.fg + ';background:' + style.bg + ';border-radius:3px;padding:1px 3px;margin-right:4px;vertical-align:middle">' + style.label + '</span>';
 }
 
 function sourceBadge(source) {

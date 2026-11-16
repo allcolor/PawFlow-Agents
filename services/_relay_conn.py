@@ -799,7 +799,25 @@ class _RelayConnMixin:
         _t0 = _time.monotonic()
         logger.debug("[server-fs] %s ENTER rid=%s args=%s",
                      method, request_id[:8], _short_args(args))
-        if method.startswith('ffs.'):
+        if method.startswith('tool.'):
+            # A script on this relay calling a PawFlow tool. No 10 s cap: a
+            # tool may legitimately run for minutes; the capability expires
+            # and is revoked with the script, and the relay side bounds the
+            # wait itself.
+            from services import relay_tool_bridge
+            loop = asyncio.get_event_loop()
+            try:
+                reply = await loop.run_in_executor(
+                    None, lambda: relay_tool_bridge.handle(
+                        method, args, relay_service_id=self._service_id,
+                        user_id=self._user_id))
+            except Exception as exc:
+                logger.warning("[script-tools] %s failed rid=%s: %s",
+                               method, request_id[:8], exc, exc_info=True)
+                reply = {'error': 'EIO', 'errno': 5,
+                         'message': f'{method} failed: {exc}'}
+            fs = None
+        elif method.startswith('ffs.'):
             fs = self._get_filestore_fs()
         elif method.startswith('skfs.'):
             fs = self._get_skills_fs()
@@ -807,7 +825,9 @@ class _RelayConnMixin:
             fs = self._get_server_fs()
         else:
             fs = None
-        if fs is None:
+        if method.startswith('tool.'):
+            pass  # reply already computed above
+        elif fs is None:
             if not self._user_id:
                 reply = {'error': 'EACCES', 'errno': 13,
                          'message': 'relay has no owner user_id'}

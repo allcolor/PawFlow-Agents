@@ -193,7 +193,8 @@ def test_chat_tool_display_unwraps_meta_use_tool_calls():
     assert "toolArgs.tool_name" in _MESSAGES_JS
     assert "toolArgs.parameters" in _MESSAGES_JS
     assert "payload.arguments || payload.parameters || {}" in _MESSAGES_JS
-    assert "if (value === 'mcp' || value === 'native') return value;" in _MESSAGES_JS
+    assert ("if (value === 'mcp' || value === 'native' || value === 'script') "
+            "return value;") in _MESSAGES_JS
     assert "_toolOriginValue(extra, (extra && (extra.tool_name || extra.tool)) || toolName)" in _MESSAGES_JS
     assert "if (!_hasCompleteMcpDisplayedToolCall(rawToolName, rawToolArgs)) return null;" in _MESSAGES_JS
     assert "!_hasCompleteMcpDisplayedToolCall(data.tool, data.arguments || {})" in _SSE_JS

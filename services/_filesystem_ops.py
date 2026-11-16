@@ -69,7 +69,10 @@ class _RelayFsOpsMixin:
         kwargs.pop("_request_timeout", None)
         kwargs.pop("_retry_on_disconnect", None)
         from services._server_local_exec import execute_server_local
-        return execute_server_local(action, path, kwargs, on_output=on_output)
+        return execute_server_local(
+            action, path, kwargs, on_output=on_output,
+            relay_service_id=getattr(self, "_service_id", ""),
+            user_id=getattr(self, "_user_id", ""))
 
     def _send_to_pool(self, pool: List[Dict], payload,
                       request_id: str = "", fence_guard=None):

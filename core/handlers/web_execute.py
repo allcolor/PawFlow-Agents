@@ -44,6 +44,7 @@ class ExecuteScriptHandler(ToolHandler):
         return "execute_script"
 
     _user_id: str = ""
+    _agent_name: str = ""
 
     @property
     def description(self) -> str:
@@ -63,11 +64,25 @@ class ExecuteScriptHandler(ToolHandler):
             "File I/O (sandbox mode):\n"
             "- open('filestore://name.zip', 'wb') — creates a downloadable file in FileStore.\n"
             "- open('fs://service_name/path', 'rb'/'wb') — reads/writes via a filesystem service.\n\n"
+            "Calling PawFlow tools from the script (relay mode, including local=true):\n"
+            "- `from pawflow import tools, fs`; `tools.call('grep', pattern='TODO', path='src')` "
+            "returns the tool's text result; `tools.get_schema(name)` gives its parameters; "
+            "`fs.read_file`, `fs.write_file`, `fs.exec`, `fs.grep`, ... wrap the matching tools.\n"
+            "- Use it when a task needs many tool calls plus processing (a grep then a "
+            "read of each hit, a check across dozens of files): one script does every "
+            "call, filters in Python, and prints only the summary. Intermediate results "
+            "never enter your context; only what the script prints does.\n"
+            "- Each call runs as you, with the usual approvals and limits, and shows in "
+            "the chat as a Script tool row. A failed or refused call raises "
+            "RuntimeError('Tool error: ...'). Tools that ask the user, plan or schedule "
+            "your turn (ask_user, request_confirmation, schedule_continuation, plan mode) "
+            "and execute_script itself cannot be called from a script.\n\n"
             "Key parameters:\n"
             "- code (required): Python code to execute. Can be a single expression ('2+2') "
             "or a full script with multiple statements.\n"
             "- destination: 'sandbox' (force server sandbox), a relay service name, or omit "
             "for auto-detection.\n"
+            "- local: run on the relay host instead of its container (like bash local=true).\n"
             "- max_output: Max output characters (default 4000). Larger outputs are "
             "auto-saved to FileStore and a download link is returned.\n\n"
             "Available in sandbox: math, json, re, csv, datetime, collections, itertools, "
@@ -94,6 +109,13 @@ class ExecuteScriptHandler(ToolHandler):
                         "'sandbox' (force server sandbox), or relay service name"
                     ),
                 },
+                "local": {
+                    "type": "boolean",
+                    "description": (
+                        "Relay mode only: run on the relay host (or the server-local "
+                        "surface of a managed relay) instead of its container."
+                    ),
+                },
                 "max_output": {
                     "type": "integer",
                     "description": "Max output chars (default: 4000). Large outputs are auto-saved to FileStore.",
@@ -105,6 +127,9 @@ class ExecuteScriptHandler(ToolHandler):
     def set_user_id(self, uid: str):
         self._user_id = uid
 
+    def set_agent_name(self, agent_name: str):
+        self._agent_name = agent_name or ""
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         code = arguments.get("code", "")
         destination = arguments.get("destination", "")
@@ -112,15 +137,19 @@ class ExecuteScriptHandler(ToolHandler):
             return "Error: no code provided"
 
         _secret_env = arguments.get("_secret_env") or {}
+        _local = bool(arguments.get("local", False))
 
         # Explicit relay service name → execute remote
         _dest_raw = destination.strip()
         _dest_kind = _dest_raw.lower()
         if _dest_raw and _dest_kind not in ("server", "sandbox", "local", ""):
-            return self._execute_remote(code, _dest_raw, env=_secret_env)
+            return self._execute_remote(code, _dest_raw, env=_secret_env,
+                                        local=_local)
 
         # Explicit sandbox request
         if _dest_kind in ("server", "sandbox"):
+            if _local:
+                return "Error: local=true needs a relay; the sandbox has no host"
             return self._execute_sandbox(code, env=_secret_env)
 
         # Auto-detect: if a relay is connected, use it; else sandbox
@@ -128,7 +157,11 @@ class ExecuteScriptHandler(ToolHandler):
         if _relay_svc:
             _svc_id = getattr(_relay_svc, '_service_id', '') or getattr(_relay_svc, 'name', '')
             if _svc_id:
-                return self._execute_remote(code, _svc_id, env=_secret_env)
+                return self._execute_remote(code, _svc_id, env=_secret_env,
+                                            local=_local)
+
+        if _local:
+            return "Error: local=true needs a connected relay"
 
         # Fallback: server sandbox
         return self._execute_sandbox(code, env=_secret_env)
@@ -187,13 +220,9 @@ class ExecuteScriptHandler(ToolHandler):
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 
-    def _execute_remote(self, code: str, service_name: str, env: dict = None) -> str:
+    def _execute_remote(self, code: str, service_name: str, env: dict = None,
+                        local: bool = False) -> str:
         """Execute code on a remote filesystem service via relay."""
-        # Inject PawFlow SDK env vars so scripts can use `from pawflow import tools`
-        from core.handlers._fs_base import get_tool_relay_env
-        _sdk_env = get_tool_relay_env()
-        if _sdk_env:
-            env = {**_sdk_env, **(env or {})}
         svc_name = service_name.replace("fs:", "", 1) if service_name.startswith("fs:") else service_name
         svc = None
         if self._fs_resolver:
@@ -208,24 +237,44 @@ class ExecuteScriptHandler(ToolHandler):
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not svc:
             return f"Error: filesystem service '{svc_name}' not found"
+        # `from pawflow import tools` in the script reaches PawFlow tools
+        # through this relay's tool bridge, with a capability bound to this
+        # relay and this agent run, revoked when the script ends.
+        from core import script_capability
+        _cap_env, _cap_token = script_capability.mint_for_relay(
+            svc, user_id=self._user_id,
+            conversation_id=self._conversation_id,
+            agent_name=self._agent_name)
+        env = {**(env or {}), **_cap_env}
+        # Only pass `local` when asked: relay doubles of other surfaces take
+        # the plain signature.
+        _where = {"local": True} if local else {}
         try:
             if hasattr(svc, 'exec'):
-                # Write to temp file then execute (avoids shell escaping issues)
+                # Write to temp files then execute (avoids shell escaping
+                # issues). The SDK sits beside the script: Python puts the
+                # script's directory first on sys.path, so `import pawflow`
+                # works on any surface (container, relay host, server-local)
+                # while the working directory stays the relay root.
                 import os
                 import tempfile
                 import uuid as _uuid_exec
                 _exec_id = _uuid_exec.uuid4().hex[:8]
-                _fname = f".pawflow_exec_{_exec_id}.py"
+                _run_dir = f".pawflow_exec_{_exec_id}"
+                _script = f"{_run_dir}/script.py"
                 _exec_env = dict(env or {})
                 _exec_env.setdefault(
                     "PAWFLOW_DATA_DIR",
                     os.path.join(tempfile.gettempdir(), "pawflow-exec-data", _exec_id))
-                svc.write_file(_fname, code.encode("utf-8"))
+                svc.write_file(_script, code.encode("utf-8"), **_where)
+                svc.write_file(f"{_run_dir}/pawflow.py", _sdk_source(), **_where)
                 try:
-                    result = svc.exec(".", f"python3 {_fname}", env=_exec_env)
+                    result = svc.exec(
+                        ".", f"{_python_command(svc, local)} {_script}",
+                        env=_exec_env, **_where)
                 finally:
                     try:
-                        svc.delete_file(_fname)
+                        svc.delete_file(_run_dir, **_where)
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             else:
@@ -246,3 +295,27 @@ class ExecuteScriptHandler(ToolHandler):
             return str(result)
         except Exception as e:
             return f"Error executing on '{svc_name}': {e}"
+        finally:
+            script_capability.revoke(_cap_token)
+
+
+def _sdk_source() -> bytes:
+    """The PawFlow SDK module shipped beside every relay script."""
+    from pathlib import Path
+    path = (Path(__file__).resolve().parents[2]
+            / "docker" / "pawflow_sdk" / "pawflow.py")
+    return path.read_bytes()
+
+
+def _python_command(svc, local: bool) -> str:
+    """Interpreter for the script: relay containers and the server have
+    ``python3``; a Windows relay host (its root is a drive path such as
+    ``D:/work``) has ``python``."""
+    if not local:
+        return "python3"
+    import re
+    info = getattr(svc, "_relay_info", None) or {}
+    host_root = str(info.get("host_root") or "")
+    if info.get("platform") == "win32" or re.match(r"^[A-Za-z]:[/\\]", host_root):
+        return "python"
+    return "python3"

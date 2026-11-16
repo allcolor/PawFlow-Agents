@@ -17,13 +17,20 @@ Usage:
     schema = tools.get_schema("generate_image")
     result = tools.call("generate_image", prompt="a cat", width=512)
 
-Environment variables (set automatically by the container):
+Two transports, chosen from the environment:
+
+- Relay tool bridge -- a script the server starts on a relay
+  (``execute_script``, a PFP runner). ``PAWFLOW_TOOL_ENDPOINT`` is the
+  relay's loopback bridge and ``PAWFLOW_TOOL_CAP`` the capability the server
+  minted for this execution; the server derives the identity from it.
+- Tool relay WebSocket -- PawFlow-spawned containers (MCP bridges):
     PAWFLOW_TOOL_RELAY_URL  — WebSocket URL of the tool relay
     PAWFLOW_TOOL_RELAY_TOKEN — auth token
     PAWFLOW_USER_ID
     PAWFLOW_CONVERSATION_ID
     PAWFLOW_AGENT_NAME
-    PAWFLOW_FS_SERVICE — default filesystem service name
+
+PAWFLOW_FS_SERVICE optionally names the relay the ``fs`` helpers target.
 """
 
 import json
@@ -43,6 +50,8 @@ _CONV_ID = os.environ.get("PAWFLOW_CONVERSATION_ID", "")
 _AGENT_NAME = os.environ.get("PAWFLOW_AGENT_NAME", "")
 _FS_SERVICE = os.environ.get("PAWFLOW_FS_SERVICE", "")
 _PFP_OUTPUT_DIR = os.environ.get("PAWFLOW_PFP_OUTPUT_DIR", "").strip()
+_TOOL_ENDPOINT = os.environ.get("PAWFLOW_TOOL_ENDPOINT", "").strip()
+_TOOL_CAP = os.environ.get("PAWFLOW_TOOL_CAP", "").strip()
 
 _sock = None
 _lock = None
@@ -160,8 +169,42 @@ def _ws_recv(sock):
     return payload.decode("utf-8")
 
 
+_BRIDGE_METHODS = {
+    "execute_tool": "call",
+    "get_tool_schema": "schema",
+    "execute_pfp_host_call": "pfp_host_call",
+}
+
+
+def _bridge_request(method, **kwargs):
+    """One request through the relay tool bridge (JSON line in, line out)."""
+    bridge_method = _BRIDGE_METHODS.get(method)
+    if bridge_method is None:
+        raise RuntimeError(f"Tool error: {method} is not available on a relay")
+    host, _, port = _TOOL_ENDPOINT.rpartition(":")
+    request = {"method": bridge_method, "cap": _TOOL_CAP, **kwargs}
+    with socket.create_connection((host or "127.0.0.1", int(port))) as conn:
+        conn.sendall((json.dumps(request) + "\n").encode("utf-8"))
+        with conn.makefile("rb") as reader:
+            line = reader.readline()
+    if not line:
+        raise ConnectionError("relay tool bridge closed the connection")
+    reply = json.loads(line.decode("utf-8"))
+    if "error" in reply:
+        raise RuntimeError(
+            f"Tool error: {reply.get('message') or reply.get('error')}")
+    return reply.get("data")
+
+
 def _request(method, **kwargs):
     """Send a request to the tool relay and return the result."""
+    if _TOOL_ENDPOINT and _TOOL_CAP:
+        return _bridge_request(method, **kwargs)
+    if _TOOL_ENDPOINT and not _RELAY_URL:
+        raise ConnectionError(
+            "PawFlow tools are not available to this script: it was not "
+            "started by PawFlow with a tool capability (execute_script or a "
+            "PFP runner on a relay).")
     _ensure_connected()
     request_id = uuid.uuid4().hex[:12]
     payload = json.dumps({
@@ -207,53 +250,45 @@ class _Tools:
 
 
 class _Filesystem:
-    """Filesystem tool shortcuts."""
+    """Shortcuts for the PawFlow filesystem tools.
+
+    Each method calls the tool of the same purpose (read, write, edit,
+    bash, list_dir, grep, stat, exists, delete, mkdir) on the relay named by
+    PAWFLOW_FS_SERVICE, or on the conversation's default relay.
+    """
 
     def __init__(self):
         self._service = _FS_SERVICE
 
-    def _call(self, action: str, **kwargs) -> str:
-        kwargs["action"] = action
+    def _call(self, tool: str, **kwargs) -> str:
         if self._service:
-            kwargs.setdefault("service", self._service)
-        return tools.call("filesystem", **kwargs)
+            kwargs.setdefault("relay", self._service)
+        return tools.call(tool, **kwargs)
 
     def read_file(self, path: str, **kwargs) -> str:
-        return self._call("read_file", path=path, **kwargs)
+        return self._call("read", path=path, **kwargs)
 
     def write_file(self, path: str, content: str, **kwargs) -> str:
-        return self._call("write_file", path=path, content=content, **kwargs)
+        return self._call("write", path=path, content=content, **kwargs)
 
     def list_dir(self, path: str = ".", **kwargs):
-        result = self._call("list_dir", path=path, **kwargs)
-        if isinstance(result, str):
-            try:
-                return json.loads(result)
-            except (json.JSONDecodeError, TypeError):
-                pass
-        return result
+        return self._call("list_dir", path=path, **kwargs)
 
     def exec(self, command: str, **kwargs) -> str:
-        return self._call("exec", command=command, **kwargs)
+        return self._call("bash", command=command, **kwargs)
 
     def grep(self, pattern: str, path: str = ".", **kwargs) -> str:
-        return self._call("grep", path=path, regex=pattern, **kwargs)
+        return self._call("grep", pattern=pattern, path=path, **kwargs)
 
     def stat(self, path: str, **kwargs):
-        result = self._call("stat", path=path, **kwargs)
-        if isinstance(result, str):
-            try:
-                return json.loads(result)
-            except (json.JSONDecodeError, TypeError):
-                pass
-        return result
+        return self._call("stat", path=path, **kwargs)
 
     def exists(self, path: str, **kwargs) -> bool:
         result = self._call("exists", path=path, **kwargs)
         return bool(result) and "true" in str(result).lower()
 
     def delete_file(self, path: str, **kwargs) -> str:
-        return self._call("delete_file", path=path, **kwargs)
+        return self._call("delete", path=path, **kwargs)
 
     def mkdir(self, path: str, **kwargs) -> str:
         return self._call("mkdir", path=path, **kwargs)
@@ -263,10 +298,17 @@ class _Filesystem:
                           old_string=old_string, new_string=new_string, **kwargs)
 
     def git_status(self, path: str = ".", **kwargs) -> str:
-        return self._call("git_status", path=path, **kwargs)
+        return self.exec(f"git -C {_shell_quote(path)} status", **kwargs)
 
     def git_commit(self, path: str = ".", message: str = "", **kwargs) -> str:
-        return self._call("git_commit", path=path, message=message, **kwargs)
+        return self.exec(
+            f"git -C {_shell_quote(path)} commit -m {_shell_quote(message)}",
+            **kwargs)
+
+
+def _shell_quote(value: str) -> str:
+    import shlex
+    return shlex.quote(str(value))
 
 
 _PFP_INVOKE_FORMAT = "pawflow.package.runtime.invoke.v1"
@@ -506,6 +548,38 @@ def get_service(service_id: str) -> _ServiceProxy:
     return _ServiceProxy(str(service_id))
 
 
+def _bytes_to_wire(value):
+    if isinstance(value, (bytes, bytearray)):
+        return {_BYTES_KEY: base64.b64encode(bytes(value)).decode("ascii")}
+    return value
+
+
+def _bytes_from_wire(value):
+    if isinstance(value, dict) and set(value) == {_BYTES_KEY}:
+        return base64.b64decode(value[_BYTES_KEY])
+    return value
+
+
+class _FsProxy:
+    """Proxy for the flow's filesystem service: the in-process ``fs``.
+
+    Every method of that service (``read_file``, ``write_file``, ``exec``,
+    ``list_dir``, ...) is called on the host; bytes cross losslessly.
+    """
+
+    def __getattr__(self, operation: str):
+        if operation.startswith("__"):
+            raise AttributeError(operation)
+
+        def _call(*args, **arguments):
+            return _bytes_from_wire(pfp._host_call(
+                "fs", "", operation=operation,
+                args=[_bytes_to_wire(a) for a in args],
+                arguments={k: _bytes_to_wire(v)
+                           for k, v in arguments.items()}))
+        return _call
+
+
 class _PawflowProxy:
     """Proxy for the scope-bounded host ``pawflow`` API facade."""
 
@@ -561,3 +635,4 @@ fs = _Filesystem()
 pfp = _PfpRuntime()
 script_pawflow = _PawflowProxy()
 script_flowfile = _FlowFileProxy()
+script_fs = _FsProxy()

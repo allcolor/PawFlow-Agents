@@ -958,48 +958,100 @@ In the flow task config:
 
 ### Script API (containerized)
 
+The container gets the same names as the in-process task, as proxies resolved
+on the host over the stdin/stdout host-call protocol
+(`core/flow_script_host.py`):
+
 ```python
 # Variables available in the script:
-content    # FlowFile content (str)
-attributes # FlowFile attributes (dict)
-fs         # PawFlow filesystem SDK
-tools      # PawFlow tools SDK
+content      # FlowFile content (str)
+attributes   # FlowFile attributes (dict)
+flowfile     # the live FlowFile (get_content/set_content/attributes)
+fs           # the flow's filesystem service, as in-process
+get_service  # services declared in this flow
+pawflow      # the scope-bounded PawFlow API
 
-# Filesystem operations (via MCP → tool relay)
-data = fs.read_file("config.json")
+# Filesystem service operations (the in-process `fs` object's methods)
+data = fs.read_file("config.json")      # bytes, as in-process
 fs.write_file("output.txt", "processed")
 fs.exec("python process.py")
 files = fs.list_dir("src/")
-
-# Any PawFlow tool
-schema = tools.get_schema("generate_image")
-result = tools.call("generate_image", prompt="a logo", width=256)
 
 # Set result (modifies FlowFile content)
 result = json.dumps({"status": "done"})
 ```
 
+`fs` is the flow's `filesystem_service_id`, or the first connected relay, then
+any filesystem service; bytes cross losslessly. Agent tools (`tools`) are not
+part of the flow script API in either mode: they need an agent identity, and a
+flow has none. `tools.<anything>` raises `RuntimeError` naming the
+alternatives (`fs`, `get_service()`, `pawflow`).
+
 ### How it works
 
 1. FlowFile content + attributes serialized to JSON
 2. Docker container starts with `pawflow-relay-dev` image
-3. PawFlow SDK (`from pawflow import fs, tools`) connects to tool relay
-4. User script executes with full tool access but no host access
+3. The wrapper and the PawFlow SDK are mounted beside the script
+4. Every `fs` / `get_service` / `pawflow` / `flowfile` call is answered by
+   the host; the container holds no secrets and no host access
 5. Result written back to FlowFile
 
 ## 5. PawFlow SDK
 
 The `pawflow` Python module is pre-installed in all PawFlow containers.
-It provides synchronous access to PawFlow tools via the tool relay WebSocket.
+It provides synchronous access to PawFlow tools.
 
 ```python
 from pawflow import fs, tools
 
-# Works identically in:
-# - ExecuteScript (containerized)
-# - Custom Docker relay scripts
-# - Any container with PAWFLOW_TOOL_RELAY_URL set
+hits = tools.call("grep", pattern="TODO", path="src")
+schema = tools.get_schema("read")
+text = fs.read_file("src/main.py")      # the `read` tool
+fs.write_file("out.txt", "done")        # the `write` tool
+fs.exec("pytest -q")                    # the `bash` tool
 ```
+
+`fs` methods call the PawFlow tool of the same purpose (`read`, `write`,
+`edit`, `bash`, `list_dir`, `grep`, `stat`, `exists`, `delete`, `mkdir`) on
+the relay named by `PAWFLOW_FS_SERVICE`, or on the conversation's default
+relay. A refused or failed call raises `RuntimeError("Tool error: ...")`.
+
+The SDK picks its transport from the environment:
+
+- **Relay tool bridge** — a script the server starts on a relay: the agent
+  `execute_script` tool (with or without `local=true`), or a PFP package
+  runner. `execute_script` writes the script and this SDK into a run
+  directory of their own (`.pawflow_exec_<id>/script.py` and `pawflow.py`),
+  so `import pawflow` works on every surface, and removes it afterwards.
+  Each relay worker listens on a loopback port (`PAWFLOW_TOOL_ENDPOINT`,
+  inherited by every command it runs) and forwards calls as `tool.*` relay
+  requests over its own authenticated WebSocket (`docs/relay_server_fs.md`).
+  A `local=true` command gets a loopback bridge of its own for its duration:
+  on the relay host it sends its calls back to the worker on the command's
+  own connection; on the server-local surface it answers in-process. The
+  server mints a
+  capability for that one execution (`PAWFLOW_TOOL_CAP`), bound to the relay,
+  its owner, the conversation, the agent and its run; it is revoked when the
+  script ends. The server takes the identity from the capability, never from
+  the script, and runs each call through the normal tool path: workflow
+  scope, tool exposure, hooks, approval, run fence, cancel and secret
+  redaction. Every nested call is written to the transcript as a
+  display-only `tool_call` / `tool` pair of the agent with
+  `tool_origin: "script"`, whatever the provider: the webchat shows it with
+  a **Script** badge, live under the `execute_script` row that ran it, and
+  the agent's context only ever receives what the script prints. A script
+  cannot call `execute_script`,
+  `ask_user`, `request_confirmation`, `schedule_continuation`, plan-mode
+  tools, `compact_result`, `get_tool_schema` or `use_tool`. A PFP package's
+  own code does not receive the capability: it goes through the runner's
+  host-calls.
+- **Tool relay WebSocket** — containers PawFlow spawns with
+  `PAWFLOW_TOOL_RELAY_URL` (the CLI MCP bridges).
+
+A command on a relay that has no capability (one the agent started with
+`bash`, for instance) gets `ConnectionError: PawFlow tools are not available
+to this script`. With `local=true` on a Windows relay host (a drive-letter
+`host_root`), `execute_script` runs `python` instead of `python3`.
 
 ## 6. Security Model
 

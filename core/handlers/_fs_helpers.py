@@ -6,7 +6,7 @@ path (core.handlers._fs_base) stays unchanged for all importers.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -113,33 +113,6 @@ def find_fs_service(user_id: str, service_name: str = "", conversation_id: str =
         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     return None
-
-
-def get_tool_relay_env() -> Dict[str, str]:
-    """Get PawFlow SDK environment variables for scripts running in relay/Docker.
-
-    Returns dict with PAWFLOW_TOOL_RELAY_URL, PAWFLOW_TOOL_RELAY_TOKEN, etc.
-    Empty dict if no tool relay is available.
-    """
-    try:
-        from core.service_registry import ServiceRegistry
-        reg = ServiceRegistry.get_instance()
-        for sid, sdef in reg.get_all("global", "").items():
-            if getattr(sdef, "service_type", "") != "toolRelay":
-                continue
-            svc = reg.get_live_instance("global", "", sid)
-            if svc:
-                cfg = getattr(sdef, "config", {}) or {}
-                port = int(cfg.get("port", 0))
-                token = cfg.get("token", "")
-                if port and token:
-                    return {
-                        "PAWFLOW_TOOL_RELAY_URL": f"ws://host.docker.internal:{port}/ws/tools",
-                        "PAWFLOW_TOOL_RELAY_TOKEN": token,
-                    }
-    except Exception:
-        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-    return {}
 
 
 def cap_binary_output(text: str, cap: int = _BINARY_CAP) -> str:

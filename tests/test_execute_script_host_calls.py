@@ -78,15 +78,34 @@ class _FakePawflow:
         return "nope"
 
 
+class _FakeFs:
+    """Stands in for the flow's filesystem service (a relay)."""
+
+    def __init__(self):
+        self.files = {}
+
+    def read_file(self, path):
+        return self.files[path]  # bytes, like a relay service
+
+    def write_file(self, path, content):
+        self.files[path] = content
+        return True
+
+    def exec(self, path, command, **kwargs):
+        return {"stdout": f"ran {command} in {path}", "exit_code": 0}
+
+
 @pytest.fixture
 def wired(monkeypatch):
     """SDK proxies wired straight to the dispatcher (no Docker hop)."""
     sdk = _load_sdk()
     flowfile = _FakeFlowFile()
+    fs = _FakeFs()
     dispatcher = FlowScriptHostDispatcher(
         services={"db": _FakeService()},
         pawflow_api=_FakePawflow(),
         flowfile=flowfile,
+        fs_service=fs,
     )
 
     def fake_host_call(kind, target, *, operation="", args=None, arguments=None):
@@ -102,7 +121,46 @@ def wired(monkeypatch):
         return resp.get("result")
 
     monkeypatch.setattr(sdk.pfp, "_host_call", fake_host_call)
+    sdk._wired_fs = fs
     return sdk, flowfile
+
+
+# ── fs proxy: the in-process `fs` service, over host-calls ───────────
+# Before 2026-11-16 the container `fs` called a `filesystem` tool over a
+# tool relay URL that no longer existed: every call failed.
+def test_fs_proxy_reaches_the_flow_filesystem_service(wired):
+    sdk, _ = wired
+    sdk.script_fs.write_file("out.bin", b"\x00\xffdata")
+    assert sdk._wired_fs.files["out.bin"] == b"\x00\xffdata"
+    assert sdk.script_fs.read_file("out.bin") == b"\x00\xffdata"
+    assert sdk.script_fs.exec(".", "ls")["stdout"] == "ran ls in ."
+
+
+def test_fs_proxy_refuses_dunders_and_unknown_operations(wired):
+    sdk, _ = wired
+    with pytest.raises(AttributeError):
+        sdk.script_fs.__class_getitem__
+    with pytest.raises(RuntimeError, match="does not support"):
+        sdk.script_fs.nope()
+
+
+def test_fs_without_a_filesystem_service_says_so():
+    env = {"format": "pawflow.package.runtime.host_call.v1", "kind": "fs",
+           "target": "", "operation": "read_file", "args": ["a"]}
+    resp = FlowScriptHostDispatcher(
+        services={}, pawflow_api=None, flowfile=None).handle(env)
+    assert resp["ok"] is False and "no filesystem service" in resp["error"]
+
+
+def test_container_wrapper_injects_fs_proxy_and_explains_tools():
+    from tasks.system.execute_script import _DOCKER_WRAPPER
+    assert "script_fs as fs" in _DOCKER_WRAPPER
+    namespace = {}
+    tools_src = _DOCKER_WRAPPER.split("class _NoAgentTools:")[1].split(
+        "tools = _NoAgentTools()")[0]
+    exec("class _NoAgentTools:" + tools_src, namespace)  # noqa: S102  # nosec B102
+    with pytest.raises(RuntimeError, match="not available in a flow script"):
+        namespace["_NoAgentTools"]().call("read")
 
 
 # ── service proxy: parity ────────────────────────────────────────────

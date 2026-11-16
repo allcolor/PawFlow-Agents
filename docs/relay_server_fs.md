@@ -417,8 +417,46 @@ third routed subtree of the single `CombinedServerFsMount`. The
 default relay docker startup passes `--skills-mount /skills` so the
 mount is live alongside `/cc_sessions` and `/filestore`.
 
+## Sister protocol: relay tool bridge (`tool.*`)
+
+The same inverse channel carries PawFlow tool calls made by scripts the server
+starts on the relay (`execute_script`, PFP package runners). The relay worker
+runs a loopback listener (`pawflow_relay/tool_bridge.py`) created once, like
+the FUSE mounts, and publishes it as `PAWFLOW_TOOL_ENDPOINT` in its own
+environment, so every command it executes inherits it. Each connection swaps
+a fresh `ServerFsClient` in; `_handle_relay_response` routes replies to it.
+
+| Method | Args | Reply `data` |
+|---|---|---|
+| `tool.call` | `cap`, `tool_name`, `arguments` | the tool's result |
+| `tool.schema` | `cap`, `tool_name` | `{name, description, parameters}` |
+| `tool.pfp_host_call` | `cap`, `invocation`, `host_call` | the PFP result envelope |
+
+`cap` is a capability from `core/script_capability.py`, minted for one
+execution and revoked when it ends. `services/relay_tool_bridge.py` resolves
+it only if it was minted for **this** relay service and its owner user, then
+takes user, conversation, agent and run fence from it; nothing in the request
+names an identity. Calls run through `ToolRelayService._handle_execute` (or
+`_handle_pfp_host_call`) with that identity, without the 10 s cap of the FS
+methods: a tool may run for minutes, and the relay bounds its wait (1 h by
+default, 6 h at most). A `local=true` command does not run beside the worker:
+the host helper gives it a loopback bridge of its own and sends each request
+back as a `tool_request` line on the command's TCP connection to the worker,
+which answers it through its bridge with a `tool_response` line
+(`pawflow_relay/auth.py:forward_to_host_helper`); on a managed relay's
+server-local surface the per-command bridge calls `relay_tool_bridge.handle`
+directly with that relay's identity. Each `tool.call` is also written to the
+transcript as a display-only tool row of the agent (`tool_origin: "script"`).
+Failures use the same errno shape: `EACCES` for a
+missing, expired, revoked or foreign capability, `EPERM` for a tool a script
+may not call, `EINVAL` for malformed arguments, `EIO` when no tool relay
+runs. The SDK side is documented in `docs/docker.md` (PawFlow SDK).
+
 ## See also
 
+- `services/relay_tool_bridge.py` — server handler (tool.*)
+- `pawflow_relay/tool_bridge.py` — relay loopback endpoint for tool.*
+- `tests/test_relay_tool_bridge.py` — capability, handler, bridge and SDK tests
 - `services/relay_server_fs.py` — server handler (sfs.*)
 - `services/relay_filestore_fs.py` — server handler (ffs.*, RO virtualized)
 - `services/relay_skills_fs.py` — server handler (skfs.*, RO virtualized)

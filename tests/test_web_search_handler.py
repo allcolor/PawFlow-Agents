@@ -117,7 +117,6 @@ def test_web_search_delegates_to_relay_when_available(monkeypatch):
         raise AssertionError("local server search should not run when relay is available")
 
     monkeypatch.setattr(handler, "_search_provider", fail_local_search)
-    monkeypatch.setattr("core.handlers._fs_base.get_tool_relay_env", lambda: {})
     handler.set_fs_resolver(lambda _svc_id: FakeRelay())
 
     out = handler.execute({"query": "AWS brand color", "max_results": 4})
@@ -157,7 +156,6 @@ def test_web_search_falls_back_to_local_when_relay_payload_cannot_import_core(mo
                  "snippet": "from local fallback"}]
 
     monkeypatch.setattr(handler, "_search_provider", fake_search)
-    monkeypatch.setattr("core.handlers._fs_base.get_tool_relay_env", lambda: {})
     handler.set_fs_resolver(lambda _svc_id: BrokenRelay())
 
     out = handler.execute({"query": "quaternius cc0 assets"})
@@ -184,7 +182,6 @@ def test_web_search_falls_back_to_local_when_relay_exec_raises(monkeypatch):
                  "snippet": "from local fallback"}]
 
     monkeypatch.setattr(handler, "_search_provider", fake_search)
-    monkeypatch.setattr("core.handlers._fs_base.get_tool_relay_env", lambda: {})
     handler.set_fs_resolver(lambda _svc_id: DeadRelay())
 
     out = handler.execute({"query": "test"})

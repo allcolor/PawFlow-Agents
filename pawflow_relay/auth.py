@@ -481,7 +481,24 @@ def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
             _fwd_msg["_host_helper_token"] = _host_token
         from pawflow_relay.binary_channel import json_line_dumps, json_line_loads
         req = json_line_dumps(_fwd_msg) + "\n"
-        sock.sendall(req.encode("utf-8"))
+        _tunnel_lock = threading.Lock()
+        with _tunnel_lock:
+            sock.sendall(req.encode("utf-8"))
+
+        def _answer_tool_request(line_msg):
+            # A local=true command calling a PawFlow tool: answer through this
+            # worker's bridge, on the connection the command came back on.
+            from pawflow_relay.tool_bridge import worker_request
+            reply = worker_request(line_msg.get("request") or {})
+            out = json.dumps({"type": "tool_response",
+                              "id": line_msg.get("id", ""),
+                              "reply": reply}, ensure_ascii=False) + "\n"
+            try:
+                with _tunnel_lock:
+                    sock.sendall(out.encode("utf-8"))
+            except OSError:
+                logging.getLogger(__name__).debug(
+                    "tool_response send failed", exc_info=True)
 
         buf = bytearray()
         scanned = 0  # bytes of buf already searched for a newline
@@ -504,7 +521,12 @@ def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
                 del buf[:newline + 1]
                 scanned = 0
                 resp = json_line_loads(line)
-                if resp.get("type") == "progress":
+                if resp.get("type") == "tool_request":
+                    threading.Thread(
+                        target=_answer_tool_request, args=(resp,),
+                        name="host-tool-request", daemon=True).start()
+                    continue
+                elif resp.get("type") == "progress":
                     if ws_sock:
                         progress = json.dumps({
                             "type": "progress",

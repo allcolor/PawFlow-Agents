@@ -100,6 +100,8 @@ class ConnContext:
     fuse_clients: tuple  # (server, filestore, skills) ServerFsClient | None
     remote_mount_mgr: Optional[Any]
     resolve_spawn_docker_env: Callable  # () -> DockerEnv
+    # ServerFsClient behind the loopback tool bridge (tool_bridge.py), or None.
+    tool_client: Optional[Any] = None
 
 
 class ConnSession:
@@ -122,6 +124,7 @@ class ConnSession:
         self.remote_mount_mgr = ctx.remote_mount_mgr
         (self.server_fs_client, self.filestore_fs_client,
          self.skills_fs_client) = ctx.fuse_clients
+        self.tool_client = ctx.tool_client
         self.inflight_cmds: dict = {}
         self.inflight_lock = threading.Lock()
         # One FIFO per terminal session, for keystrokes and resizes only.
@@ -323,14 +326,13 @@ class ConnSession:
         # callback waiting on this request_id. Try each client in turn —
         # request_ids are uuids so only one will own a given response.
         delivered = False
-        for fsc in (self.server_fs_client, self.filestore_fs_client,
-                    self.skills_fs_client):
+        clients = (self.server_fs_client, self.filestore_fs_client,
+                   self.skills_fs_client, self.tool_client)
+        for fsc in clients:
             if fsc is not None and fsc.dispatch_response(msg):
                 delivered = True
                 break
-        if not delivered and (self.server_fs_client is not None
-                              or self.filestore_fs_client is not None
-                              or self.skills_fs_client is not None):
+        if not delivered and any(c is not None for c in clients):
             sys.stderr.write(
                 f"[FSRelay] orphan relay_response: {msg.get('request_id', '?')}\n")
 

@@ -86,7 +86,8 @@ class _ToolRelayExecuteMixin:
                         relay_received_at: float = 0.0,
                         dispatch_started_at: float = 0.0,
                         external_call_id: str = "",
-                        late_result_callback=None) -> dict:
+                        late_result_callback=None,
+                        publish_code_mode: bool = True) -> dict:
         handle_started = dispatch_started_at or time.perf_counter()
         relay_received_at = relay_received_at or handle_started
         # Defensive: arguments may arrive as JSON string (double-encoded by LLM)
@@ -282,7 +283,10 @@ class _ToolRelayExecuteMixin:
         # that is not a race, it is the norm: the call lives inside a script
         # the provider only sees as one opaque item.
         code_mode_row = ""
-        if not cc_tc_id and not _is_sentinel:
+        # A relay script's calls (services/relay_tool_bridge.py) publish their
+        # own rows for every provider; publish_code_mode=False keeps the
+        # code-mode session from drawing them a second time.
+        if publish_code_mode and not cc_tc_id and not _is_sentinel:
             code_mode_row = self._publish_code_mode_call(
                 conversation_id, agent_name, request_id, tool_name, arguments)
 

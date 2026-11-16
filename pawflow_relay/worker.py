@@ -309,6 +309,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
      _server_fs_mount) = _setup_combined_fs(
         server_mount, filestore_mount, skills_mount)
 
+    # Loopback endpoint for scripts that call PawFlow tools (one-shot,
+    # survives WS reconnects like the FUSE mounts; see tool_bridge.py).
+    from pawflow_relay.tool_bridge import start_tool_bridge
+    _tool_bridge = start_tool_bridge()
+    _tool_swap = _tool_bridge.swap if _tool_bridge is not None else None
+
     try:
         from pawflow_relay.remote_mounts import RemoteMountManager
         _remote_mount_mgr = RemoteMountManager()
@@ -494,6 +500,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             # of /cc_sessions and /filestore remain valid.
             _fuse_swaps = (_server_fs_swap, _filestore_fs_swap, _skills_fs_swap)
             _fuse_clients = _attach_fuse_clients(sock, _send_lock, _fuse_swaps)
+            _tool_clients = _attach_fuse_clients(sock, _send_lock, (_tool_swap,))
 
             def _resolve_spawn_docker_env():
                 # globals()/args must be read in this (worker) module scope;
@@ -517,7 +524,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 term_mgr=_term_mgr, children=_children, child_cfg=_child_cfg,
                 term_send=_term_send, fuse_clients=_fuse_clients,
                 remote_mount_mgr=_remote_mount_mgr,
-                resolve_spawn_docker_env=_resolve_spawn_docker_env))
+                resolve_spawn_docker_env=_resolve_spawn_docker_env,
+                tool_client=_tool_clients[0]))
             # Watermarks received during the handshake arm the session
             # BEFORE any command can be dispatched.
             _session.fence_highwaters.update(_initial_fence_highwaters)
@@ -591,6 +599,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _detach_fuse_clients(
                 (_server_fs_swap, _filestore_fs_swap, _skills_fs_swap),
                 locals().get('_fuse_clients'))
+            _detach_fuse_clients(
+                (_tool_swap,), locals().get('_tool_clients'))
             # Stop watchdog
             try:
                 _watchdog_stop.set()

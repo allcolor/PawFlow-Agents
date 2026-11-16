@@ -60,8 +60,16 @@ class RelayPackageRuntimeBridge:
             shlex.quote(request_file),
             shlex.quote(entrypoint),
         ])
-        result = scratchdir.exec(
-            run_root, command, env=self._controller_env(request))
+        # The runner answers the package's host-calls through this relay's
+        # tool bridge, with a capability bound to this relay and run.
+        from core import script_capability
+        cap_env, cap_token = self._capability_env(request, relay)
+        try:
+            result = scratchdir.exec(
+                run_root, command,
+                env={**self._controller_env(request), **cap_env})
+        finally:
+            script_capability.revoke(cap_token)
         stdout = str((result or {}).get("stdout") or "")
         stderr = str((result or {}).get("stderr") or "")
         code = int((result or {}).get("returncode") or 0)
@@ -233,8 +241,6 @@ class RelayPackageRuntimeBridge:
 
     def _controller_env(self, request: Dict[str, Any]) -> Dict[str, str]:
         env = _subprocess_env(request)
-        from core.handlers._fs_base import get_tool_relay_env
-        env.update(get_tool_relay_env())
         env["PAWFLOW_PFP_RELAY_RUNNER"] = "1"
         env["PYTHONPATH"] = "runtime/sdk"
         env["PAWFLOW_PFP_SDK_PATH"] = "runtime/sdk"
@@ -244,6 +250,16 @@ class RelayPackageRuntimeBridge:
         env["PAWFLOW_CONVERSATION_ID"] = str(context.get("conversation_id") or "")
         env["PAWFLOW_AGENT_NAME"] = str(context.get("agent_name") or "")
         return env
+
+    @staticmethod
+    def _capability_env(request: Dict[str, Any], relay: Any):
+        from core import script_capability
+        context = request.get("context") or {}
+        return script_capability.mint_for_relay(
+            relay,
+            user_id=str(context.get("user_id") or ""),
+            conversation_id=str(context.get("conversation_id") or ""),
+            agent_name=str(context.get("agent_name") or ""))
 
     def _copy_result_artifacts(self, relay: Any, request: Dict[str, Any],
                                result: Dict[str, Any], run_root: str) -> None:
@@ -314,6 +330,8 @@ def _child_env():
     blocked = {
         "PAWFLOW_TOOL_RELAY_URL",
         "PAWFLOW_TOOL_RELAY_TOKEN",
+        "PAWFLOW_TOOL_CAP",
+        "PAWFLOW_TOOL_ENDPOINT",
         "PAWFLOW_PFP_RELAY_RUNNER",
     }
     env = {k: v for k, v in os.environ.items() if k not in blocked}

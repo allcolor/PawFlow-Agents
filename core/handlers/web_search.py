@@ -249,11 +249,9 @@ class WebSearchHandler(WebSearchBackendMixin, ToolHandler):
         return None
 
     def _execute_remote_code(self, relay, code: str) -> Optional[str]:
-        from core.handlers._fs_base import get_tool_relay_env
-
         import uuid as _uuid_exec
 
-        env = get_tool_relay_env() or None
+        env = None
         filename = f".pawflow_web_search_{_uuid_exec.uuid4().hex[:8]}.py"
         try:
             relay.write_file(filename, code.encode("utf-8"))

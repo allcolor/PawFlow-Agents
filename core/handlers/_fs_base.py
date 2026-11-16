@@ -30,7 +30,6 @@ from core.handlers._fs_helpers import (  # noqa: F401
     _truthy,
     cap_binary_output,
     find_fs_service,
-    get_tool_relay_env,
 )
 
 logger = logging.getLogger(__name__)

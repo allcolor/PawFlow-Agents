@@ -11,10 +11,11 @@ In-process (default) uses the unified sandbox from core.sandbox:
 
 Containerized (containerize=true) runs the script in a Docker container with
 FULL PARITY: the same names are injected (content, attributes, flowfile,
-fs, tools, get_service, pawflow). get_service/pawflow/flowfile are proxies that
+fs, get_service, pawflow). fs/get_service/pawflow/flowfile are proxies that
 route each call back to the host over the pfp host-call protocol (stdin/stdout)
-and are resolved on the host against THIS flow's declared services, its
-scope-bounded pawflow API, and the live FlowFile (Option A: the service stays
+and are resolved on the host against THIS flow's filesystem service (the same
+one the in-process `fs` is), its declared services, its scope-bounded pawflow
+API, and the live FlowFile (Option A: the service stays
 on the host, the container holds no secrets). It is a drop-in replacement for
 the in-process path: bytes round-trip losslessly (base64) and any non-dunder
 operation the in-process script could call stays callable.
@@ -37,7 +38,7 @@ from core.docker_utils import (
 
 
 # Wrapper that runs inside the container. It injects the SAME names as the
-# in-process path (content/attributes/fs/tools/get_service/pawflow/flowfile),
+# in-process path (content/attributes/fs/get_service/pawflow/flowfile),
 # captures user stdout so print() never corrupts the host-call protocol stream,
 # and reports the final result (or error) back over the pfp protocol on stdout.
 _DOCKER_WRAPPER = '''
@@ -49,12 +50,25 @@ content = _data["content"]
 attributes = _data["attributes"]
 
 from pawflow import (
-    fs, tools, get_service,
+    get_service,
+    script_fs as fs,
     script_pawflow as pawflow,
     script_flowfile as flowfile,
     pfp as _pfp,
 )
 flow_file = flowfile  # alias for parity with the in-process path
+
+
+class _NoAgentTools:
+    """Agent tools need an agent identity; a flow script has none."""
+
+    def __getattr__(self, name):
+        raise RuntimeError(
+            "PawFlow agent tools are not available in a flow script: use fs "
+            "(the flow's filesystem service), get_service() or pawflow")
+
+
+tools = _NoAgentTools()
 
 # Capture user stdout/stderr; the pfp runtime emits protocol JSON on the real
 # stdout it bound at import, so the host-call channel stays clean.
@@ -150,6 +164,49 @@ class ExecuteScriptTask(BaseTask):
                 "pawflow facade injection failed", exc_info=True)
             return None
 
+    def _flow_identity(self, flowfile: FlowFile):
+        """(user_id, conversation_id) this script runs for."""
+        try:
+            from core.flow_runtime_access import runtime_context_from_task
+            ctx = runtime_context_from_task(self)
+        except Exception:
+            ctx = None
+        uid = ((getattr(ctx, "user_id", "") if ctx else "")
+               or flowfile.get_attribute("http.auth.principal") or "")
+        cid = ((getattr(ctx, "conversation_id", "") if ctx else "")
+               or flowfile.get_attribute("conversation_id") or "")
+        return uid, cid
+
+    def _resolve_fs_service(self, uid: str, cid: str):
+        """The filesystem service a script gets as ``fs`` (both modes).
+
+        The flow's ``filesystem_service_id``, else the first connected relay,
+        else any filesystem (conv > user > global so scoped relays are found
+        too). A configured service that cannot be reached is an error.
+        """
+        fs_service_id = self.config.get('filesystem_service_id')
+        fs_svc = self.get_service(fs_service_id) if fs_service_id else None
+        if not fs_svc:
+            try:
+                from core.service_registry import ServiceRegistry
+                _reg = ServiceRegistry.get_instance()
+                for _stype in ("relay", "filesystem"):
+                    for _sdef in _reg.resolve_by_type(
+                            _stype, user_id=uid, conv_id=cid):
+                        _s = _reg.get_live_instance(
+                            _sdef.scope, _sdef.scope_id, _sdef.service_id)
+                        if _s:
+                            fs_svc = _s
+                            break
+                    if fs_svc:
+                        break
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        if not fs_svc and fs_service_id:
+            raise TaskError(
+                f"Filesystem service '{fs_service_id}' not found or not connected")
+        return fs_svc
+
     def _execute_docker(self, flowfile: FlowFile) -> List[FlowFile]:
         """Execute script in a Docker container with full host-call parity.
 
@@ -171,20 +228,14 @@ class ExecuteScriptTask(BaseTask):
         image = self.config.get('docker_image', 'pawflow-relay-dev:latest')
         timeout = int(self.config.get('docker_timeout', 120))
 
-        # Tool relay info for the websocket-based fs/tools SDK (separate channel
-        # from the stdin/stdout host-call protocol).
-        from core.handlers._fs_base import get_tool_relay_env
-        _sdk_env = get_tool_relay_env()
-        relay_url = _sdk_env.get("PAWFLOW_TOOL_RELAY_URL", "")
-        relay_token = _sdk_env.get("PAWFLOW_TOOL_RELAY_TOKEN", "")
-        fs_service = self.config.get('filesystem_service_id', '')
-
         from core.flow_script_host import (
             FlowScriptHostDispatcher, HOST_CALL_FORMAT, RESULT_FORMAT)
+        uid, cid = self._flow_identity(flowfile)
         dispatcher = FlowScriptHostDispatcher(
             services=self._services,
             pawflow_api=self._build_pawflow_api(flowfile),
             flowfile=flowfile,
+            fs_service=self._resolve_fs_service(uid, cid),
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -218,10 +269,6 @@ class ExecuteScriptTask(BaseTask):
                 "--name", container_name,
                 "-v", f"{_to_host_path(tmpdir)}:/data",
                 "--add-host", "host.docker.internal:host-gateway",
-                "-e", f"PAWFLOW_TOOL_RELAY_URL={relay_url}",
-                "-e", f"PAWFLOW_TOOL_RELAY_TOKEN={relay_token}",
-                "-e", f"PAWFLOW_FS_SERVICE={fs_service}",
-                "-e", f"PAWFLOW_USER_ID={attributes.get('http.auth.principal', '')}",
                 "-e", "PYTHONIOENCODING=utf-8",
                 "-e", "PYTHONUNBUFFERED=1",
                 "--cpus", "2",
@@ -361,13 +408,7 @@ class ExecuteScriptTask(BaseTask):
 
         try:
             created_files: list = []
-            try:
-                from core.flow_runtime_access import runtime_context_from_task
-                _ctx = runtime_context_from_task(self)
-            except Exception:
-                _ctx = None
-            _uid = (getattr(_ctx, "user_id", "") if _ctx else "") or flowfile.get_attribute("http.auth.principal") or ""
-            _cid = (getattr(_ctx, "conversation_id", "") if _ctx else "") or flowfile.get_attribute("conversation_id") or ""
+            _uid, _cid = self._flow_identity(flowfile)
             sandbox_open = make_sandbox_open(
                 created_files=created_files,
                 user_id=_uid, conversation_id=_cid)
@@ -410,34 +451,9 @@ class ExecuteScriptTask(BaseTask):
                 logging.getLogger(__name__).debug(
                     "embed helper injection failed", exc_info=True)
 
-            # Inject filesystem service — explicit config or auto-detect first relay
-            fs_service_id = self.config.get('filesystem_service_id')
-            fs_svc = None
-            if fs_service_id:
-                fs_svc = self.get_service(fs_service_id)
-            if not fs_svc:
-                # Auto-detect: prefer connected relay, then any filesystem
-                # (conv > user > global so scoped relays are found too)
-                try:
-                    from core.service_registry import ServiceRegistry
-                    _reg = ServiceRegistry.get_instance()
-                    for _stype in ("relay", "filesystem"):
-                        for _sdef in _reg.resolve_by_type(
-                                _stype, user_id=_uid, conv_id=_cid):
-                            _s = _reg.get_live_instance(
-                                _sdef.scope, _sdef.scope_id, _sdef.service_id)
-                            if _s:
-                                fs_svc = _s
-                                break
-                        if fs_svc:
-                            break
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            fs_svc = self._resolve_fs_service(_uid, _cid)
             if fs_svc:
                 local_ns['fs'] = fs_svc
-            elif self.config.get('filesystem_service_id'):
-                raise TaskError(
-                    f"Filesystem service '{self.config.get('filesystem_service_id')}' not found or not connected")
 
             # Inject get_service(sid), bounded to THIS flow's declared services
             # (self._services), mirroring how `fs` is injected. Scripts can then

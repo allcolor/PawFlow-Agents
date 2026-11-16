@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `from pawflow import tools` works again in scripts the server runs on a
+  relay (`execute_script`, PFP package runners). The SDK environment pointed
+  at a tool relay port that no longer exists and carried no identity, so
+  every call failed; the `fs` helpers called a `filesystem` tool that no
+  longer exists. Each relay worker now offers a loopback tool bridge that
+  forwards calls over its own authenticated connection; the server mints a
+  capability per execution, bound to that relay, its owner, the agent and its
+  run, takes the identity from it rather than from the script, and runs each
+  call through the normal tool path. The `fs` helpers call the real `read`,
+  `write`, `edit`, `bash`, `list_dir`, `grep`, `stat`, `exists`, `delete` and
+  `mkdir` tools. It works with `local=true` too (new `execute_script`
+  parameter): on the relay host the calls travel back over the command's own
+  connection to the worker, and on a managed relay's server-local surface
+  they are answered in-process. The SDK now ships beside each script, so
+  `import pawflow` works on every surface.
+- The calls a script makes are visible in the webchat for every provider:
+  each is written as a display-only tool row of the agent with a **Script**
+  badge, drawn live under the `execute_script` row; the agent's context still
+  only receives what the script prints.
+- Containerized flow `ExecuteScript`: `fs` is the flow's filesystem service
+  again, as in-process, through a host-call proxy (it called a tool that no
+  longer exists over a dead channel). `tools` is not part of the flow script
+  API (a flow has no agent identity) and now says so instead of failing to
+  connect.
+
 ## [1.0.0-beta.329] — 2026-11-16
 
 ### Fixed

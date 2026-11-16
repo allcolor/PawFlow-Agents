@@ -84,12 +84,17 @@ class FlowScriptHostDispatcher:
     flowfile:
         The live ``FlowFile`` the task is processing, mutated in place for
         ``kind="flowfile"`` calls so changes are visible downstream.
+    fs_service:
+        The filesystem service the in-process path injects as ``fs`` (the
+        flow's ``filesystem_service_id``, or the auto-detected relay), or
+        ``None``. Used for ``kind="fs"`` calls.
     """
 
-    def __init__(self, *, services, pawflow_api, flowfile):
+    def __init__(self, *, services, pawflow_api, flowfile, fs_service=None):
         self._services = services or {}
         self._pawflow = pawflow_api
         self._flowfile = flowfile
+        self._fs = fs_service
         self._lock = threading.Lock()
         self._inflight_agent = None  # (conversation_id, agent, runtime_port)
 
@@ -138,6 +143,8 @@ class FlowScriptHostDispatcher:
                 result = self._call_pawflow(operation, args, arguments)
             elif kind == "flowfile":
                 result = self._call_flowfile(operation, args, arguments)
+            elif kind == "fs":
+                result = self._call_fs(operation, args, arguments)
             else:
                 raise FlowScriptHostError("unsupported host-call kind: %s" % kind)
             return {"format": RESULT_FORMAT, "ok": True, "result": result}
@@ -175,6 +182,23 @@ class FlowScriptHostDispatcher:
                 % (service_id, operation))
         result = method(*args, **arguments)
         return _json_safe(result, "%s.%s" % (service_id, operation))
+
+    # ── fs (the same filesystem service as the in-process `fs`) ───────
+    def _call_fs(self, operation, args, arguments):
+        if self._fs is None:
+            raise FlowScriptHostError(
+                "no filesystem service is available to this flow "
+                "(set filesystem_service_id or connect a relay)")
+        if not operation or _is_dunder(operation):
+            raise FlowScriptHostError(
+                "fs operation is not available: %s" % operation)
+        method = getattr(self._fs, operation, None)
+        if not callable(method):
+            raise FlowScriptHostError(
+                "fs does not support operation: %s" % operation)
+        result = method(*[_from_wire(a) for a in args],
+                        **{k: _from_wire(v) for k, v in arguments.items()})
+        return _json_safe(_to_wire(result), "fs.%s" % operation)
 
     # ── pawflow facade (already scope-authorized) ─────────────────────
     def _call_pawflow(self, operation, args, arguments):
@@ -254,3 +278,16 @@ class FlowScriptHostDispatcher:
             return dict(ff.get_attributes())
         raise FlowScriptHostError(
             "flowfile operation is not available: %s" % operation)
+
+
+def _to_wire(value):
+    """Bytes cross the JSON boundary base64-encoded (lossless)."""
+    if isinstance(value, (bytes, bytearray)):
+        return {_BYTES_KEY: base64.b64encode(bytes(value)).decode("ascii")}
+    return value
+
+
+def _from_wire(value):
+    if isinstance(value, dict) and set(value) == {_BYTES_KEY}:
+        return base64.b64decode(value[_BYTES_KEY])
+    return value

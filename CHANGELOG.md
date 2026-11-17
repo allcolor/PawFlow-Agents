@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.332] — 2026-11-17
+
 ### Added
 
 - `execute_script(persistent=true)`: a persistent Python kernel per relay

@@ -18,6 +18,10 @@ import time
 from dataclasses import dataclass
 
 DEFAULT_TTL_SECONDS = 6 * 3600
+# A script's tool call gets its result in full up to this size (instead of
+# the agent's per-result cap): the script filters it, the agent only sees
+# what it prints. Larger results still become a FileStore reference.
+SCRIPT_RESULT_MAX_CHARS = 2_000_000
 
 
 @dataclass(frozen=True)

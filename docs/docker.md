@@ -1058,6 +1058,66 @@ A command on a relay that has no capability (one the agent started with
 to this script`. With `local=true` on a Windows relay host (a drive-letter
 `host_root`), `execute_script` runs `python` instead of `python3`.
 
+A tool call made from a script gets its result in full up to 2,000,000
+characters (`SCRIPT_RESULT_MAX_CHARS` in `core/script_capability.py`),
+instead of the agent's per-result cap: the script filters it and only what
+it prints reaches the agent. The override is per thread
+(`core.tool_registry.result_cap_override`), set by the bridge around the
+nested call, never on the shared handler. Beyond that size the script gets
+the usual FileStore reference. `read` keeps paging files at its own page
+size. The **Script** transcript row keeps at most 50,000 characters of the
+result.
+
+### Persistent kernel (`execute_script(persistent=true)`)
+
+With `persistent=true` the code runs in a Python process kept alive between
+calls, one per relay surface (container or `local=true`), conversation and
+agent: variables, imports and loaded data survive from one call to the next,
+and the value of a final bare expression is printed as in a REPL. The
+sandbox (no relay) stays stateless and refuses `persistent=true`.
+
+| Parameter | Meaning |
+|---|---|
+| `persistent` | Run in the agent's kernel. |
+| `restart` | Start a fresh kernel first (needs `persistent`). |
+| `idle_timeout_minutes` | Stop the kernel after this many minutes without a call; default 30, hard maximum 480 (`KERNEL_MAX_IDLE_MINUTES`). The last call's value applies. |
+
+How it runs (`docker/pawflow_sdk/pawflow_kernel.py`):
+
+- Each call is an ordinary relay `exec` of a short **client**
+  (`pawflow_kernel.py client --key <key> --idle <s> [--restart] script.py`),
+  shipped in the run directory next to the script and the SDK. Everything
+  of a one-off script still applies: per-call capability revoked at the end,
+  the `local=true` command's own loopback bridge, Script rows,
+  `RuntimeError` on tool failures, the Windows interpreter choice.
+- The key is `sha256(relay | surface | conversation | agent)[:24]`. State
+  lives in `<tempdir>/pawflow-kernels/<key>/` (mode 0700): `state.json`
+  (pid, loopback port, secret, SDK hash; mode 0600) and `sdk/`, the copy of
+  the SDK the kernel imports from.
+- The client starts the kernel when none answers: a detached process
+  (new session on POSIX, `DETACHED_PROCESS` on Windows) with its standard
+  streams on the null device, so the relay's `exec` does not wait for it.
+  It listens on `127.0.0.1`; every request carries the secret.
+- The client sends the code with the environment of this call
+  (`PAWFLOW_TOOL_CAP`, `PAWFLOW_TOOL_ENDPOINT`, identity, data dir). The
+  kernel sets it for the length of the call only and removes it afterwards:
+  a background thread left by an earlier call cannot call tools. The SDK
+  reads the capability and the endpoint per request for this reason.
+- One call runs at a time. A client finding the kernel busy waits 10 s, then
+  refuses (exit 4) and suggests `restart=true`.
+- When the client's command is killed (force stop, relay timeout), the
+  kernel sends SIGINT to its main thread: the call ends with
+  `KeyboardInterrupt` and the namespace is kept.
+- The kernel exits after the idle timeout. A new kernel is started, and the
+  output starts with `[pawflow kernel] ...: earlier variables are gone.`,
+  when the previous one stopped, on `restart=true`, and when the SDK files
+  changed (server update). A relay or server restart also loses the state.
+- Only Python-level output is captured (`print`, `sys.stdout/stderr`);
+  child processes write to the null device, so capture their output with
+  `subprocess.run(..., capture_output=True)`.
+- No memory limit beyond the relay's own: `RLIMIT_AS` breaks too many
+  libraries.
+
 ## 6. Security Model
 
 | Mode | Host access | Network | Isolation |

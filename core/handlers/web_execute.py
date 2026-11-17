@@ -11,6 +11,11 @@ from core.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
 
+# Persistent kernels (docker/pawflow_sdk/pawflow_kernel.py): idle timeout an
+# agent may choose per call, within a hard ceiling.
+KERNEL_DEFAULT_IDLE_MINUTES = 30
+KERNEL_MAX_IDLE_MINUTES = 8 * 60
+
 
 class ExecuteScriptHandler(ToolHandler):
     """Execute a Python expression or short script and return the result.
@@ -76,7 +81,28 @@ class ExecuteScriptHandler(ToolHandler):
             "the chat as a Script tool row. A failed or refused call raises "
             "RuntimeError('Tool error: ...'). Tools that ask the user, plan or schedule "
             "your turn (ask_user, request_confirmation, schedule_continuation, plan mode) "
-            "and execute_script itself cannot be called from a script.\n\n"
+            "and execute_script itself cannot be called from a script.\n"
+            "- A tool result reaches the script in full up to 2,000,000 characters "
+            "(beyond that, a FileStore reference); `read` still pages files at its "
+            "own page size.\n\n"
+            "Persistent kernel (relay mode, persistent=true):\n"
+            "- The code runs in a Python process kept alive for you (one per relay "
+            "surface, conversation and agent): variables, imports and loaded data "
+            "survive from one call to the next. The value of a final bare "
+            "expression is printed, as in a REPL.\n"
+            "- Use it for multi-step work on the same data: load or compute once "
+            "(`hits = tools.call('grep', ...)`), then filter, count or inspect "
+            "`hits` in later calls without redoing the calls. Do not use it for a "
+            "one-off script (omit persistent) or a plain shell command (use bash).\n"
+            "- The kernel stops after idle_timeout_minutes without a call (default "
+            f"{KERNEL_DEFAULT_IDLE_MINUTES}, max {KERNEL_MAX_IDLE_MINUTES}); "
+            "restart=true starts a fresh one. When a call lands on a new kernel the "
+            "output starts with '[pawflow kernel] ...: earlier variables are gone.'\n"
+            "- Print only what you need: everything printed enters your context. "
+            "Output of child processes is not captured: use "
+            "subprocess.run(..., capture_output=True) and print the part you need.\n"
+            "- Example: call 1 `rows = [l for l in fs.read_file('big.csv').splitlines()]`"
+            " then `len(rows)`; call 2 `sorted(rows, key=len)[-3:]`.\n\n"
             "Key parameters:\n"
             "- code (required): Python code to execute. Can be a single expression ('2+2') "
             "or a full script with multiple statements.\n"
@@ -120,6 +146,25 @@ class ExecuteScriptHandler(ToolHandler):
                     "type": "integer",
                     "description": "Max output chars (default: 4000). Large outputs are auto-saved to FileStore.",
                 },
+                "persistent": {
+                    "type": "boolean",
+                    "description": (
+                        "Relay mode only: run in your persistent Python kernel, "
+                        "which keeps variables and imports between calls."
+                    ),
+                },
+                "restart": {
+                    "type": "boolean",
+                    "description": "With persistent=true: start a fresh kernel first.",
+                },
+                "idle_timeout_minutes": {
+                    "type": "integer",
+                    "description": (
+                        "With persistent=true: stop the kernel after this many "
+                        f"minutes without a call (default {KERNEL_DEFAULT_IDLE_MINUTES}, "
+                        f"1 to {KERNEL_MAX_IDLE_MINUTES})."
+                    ),
+                },
             },
             "required": ["code"],
         }
@@ -138,18 +183,24 @@ class ExecuteScriptHandler(ToolHandler):
 
         _secret_env = arguments.get("_secret_env") or {}
         _local = bool(arguments.get("local", False))
+        try:
+            _kernel = _kernel_options(arguments)
+        except ValueError as exc:
+            return f"Error: {exc}"
 
         # Explicit relay service name → execute remote
         _dest_raw = destination.strip()
         _dest_kind = _dest_raw.lower()
         if _dest_raw and _dest_kind not in ("server", "sandbox", "local", ""):
             return self._execute_remote(code, _dest_raw, env=_secret_env,
-                                        local=_local)
+                                        local=_local, kernel=_kernel)
 
         # Explicit sandbox request
         if _dest_kind in ("server", "sandbox"):
             if _local:
                 return "Error: local=true needs a relay; the sandbox has no host"
+            if _kernel:
+                return "Error: persistent=true needs a relay; the sandbox is stateless"
             return self._execute_sandbox(code, env=_secret_env)
 
         # Auto-detect: if a relay is connected, use it; else sandbox
@@ -158,10 +209,12 @@ class ExecuteScriptHandler(ToolHandler):
             _svc_id = getattr(_relay_svc, '_service_id', '') or getattr(_relay_svc, 'name', '')
             if _svc_id:
                 return self._execute_remote(code, _svc_id, env=_secret_env,
-                                            local=_local)
+                                            local=_local, kernel=_kernel)
 
         if _local:
             return "Error: local=true needs a connected relay"
+        if _kernel:
+            return "Error: persistent=true needs a connected relay"
 
         # Fallback: server sandbox
         return self._execute_sandbox(code, env=_secret_env)
@@ -221,7 +274,7 @@ class ExecuteScriptHandler(ToolHandler):
         return None
 
     def _execute_remote(self, code: str, service_name: str, env: dict = None,
-                        local: bool = False) -> str:
+                        local: bool = False, kernel: dict = None) -> str:
         """Execute code on a remote filesystem service via relay."""
         svc_name = service_name.replace("fs:", "", 1) if service_name.startswith("fs:") else service_name
         svc = None
@@ -245,6 +298,13 @@ class ExecuteScriptHandler(ToolHandler):
             svc, user_id=self._user_id,
             conversation_id=self._conversation_id,
             agent_name=self._agent_name)
+        _kernel_key = ""
+        if kernel:
+            if not _cap_env:
+                return ("Error: persistent=true needs a known conversation, "
+                        "agent and relay")
+            _kernel_key = _kernel_key_for(
+                _cap_env, getattr(svc, "_service_id", "") or svc_name, local)
         env = {**(env or {}), **_cap_env}
         # Only pass `local` when asked: relay doubles of other surfaces take
         # the plain signature.
@@ -273,10 +333,19 @@ class ExecuteScriptHandler(ToolHandler):
                     os.path.join(tempfile.gettempdir(), "pawflow-exec-data", _exec_id))
                 svc.write_file(_script, code.encode("utf-8"), **_where)
                 svc.write_file(f"{_run_dir}/pawflow.py", _sdk_source(), **_where)
+                _command = f"{_python_command(svc, local)} {_script}"
+                if kernel:
+                    svc.write_file(f"{_run_dir}/pawflow_kernel.py",
+                                   _sdk_source("pawflow_kernel.py"), **_where)
+                    _command = (
+                        f"{_python_command(svc, local)} "
+                        f"{_run_dir}/pawflow_kernel.py client --key {_kernel_key} "
+                        f"--idle {kernel['idle_seconds']}"
+                        + (" --restart" if kernel["restart"] else "")
+                        + f" {_script}")
                 try:
                     result = svc.exec(
-                        ".", f"{_python_command(svc, local)} {_script}",
-                        env=_exec_env, **_where)
+                        ".", _command, env=_exec_env, **_where)
                 finally:
                     try:
                         svc.delete_file(_run_dir, **_where)
@@ -304,11 +373,42 @@ class ExecuteScriptHandler(ToolHandler):
             script_capability.revoke(_cap_token)
 
 
-def _sdk_source() -> bytes:
-    """The PawFlow SDK module shipped beside every relay script."""
+def _kernel_options(arguments: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Validated persistent-kernel options, or None for a one-off script."""
+    persistent = bool(arguments.get("persistent", False))
+    restart = bool(arguments.get("restart", False))
+    idle = arguments.get("idle_timeout_minutes")
+    if not persistent:
+        if restart or idle is not None:
+            raise ValueError("restart and idle_timeout_minutes need persistent=true")
+        return None
+    if idle is None:
+        minutes = KERNEL_DEFAULT_IDLE_MINUTES
+    else:
+        try:
+            minutes = int(idle)
+        except (TypeError, ValueError):
+            raise ValueError("idle_timeout_minutes must be an integer") from None
+        if not 1 <= minutes <= KERNEL_MAX_IDLE_MINUTES:
+            raise ValueError(
+                f"idle_timeout_minutes must be between 1 and {KERNEL_MAX_IDLE_MINUTES}")
+    return {"restart": restart, "idle_seconds": minutes * 60}
+
+
+def _kernel_key_for(cap_env: Dict[str, str], relay_id: str, local: bool) -> str:
+    """One kernel per relay surface, conversation and agent."""
+    import hashlib
+    surface = "local" if local else "container"
+    ident = "|".join((relay_id, surface, cap_env["PAWFLOW_CONVERSATION_ID"],
+                      cap_env["PAWFLOW_AGENT_NAME"]))
+    return hashlib.sha256(ident.encode("utf-8")).hexdigest()[:24]
+
+
+def _sdk_source(name: str = "pawflow.py") -> bytes:
+    """A PawFlow SDK module shipped beside every relay script."""
     from pathlib import Path
     path = (Path(__file__).resolve().parents[2]
-            / "docker" / "pawflow_sdk" / "pawflow.py")
+            / "docker" / "pawflow_sdk" / name)
     return path.read_bytes()
 
 

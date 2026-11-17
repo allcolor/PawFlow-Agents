@@ -52,6 +52,7 @@ wrap around every call.
 | Inspect image, video, or audio content | `see` | `screen` controls a live desktop; `browser` controls a browser session |
 | Run project tests | `run_tests` | Do not construct a generic `pytest` shell call when the dedicated tool fits |
 | Run a non-test command | `bash` | Prefer dedicated read/search/edit tools for filesystem work |
+| Many tool calls plus Python filtering, printing only the result | `execute_script` | `persistent=true` keeps variables between calls (see `docs/docker.md`); not for a single tool call or a plain shell command |
 
 All filesystem, shell, browser, desktop, and media calls execute on the selected
 relay surface unless the tool explicitly targets another service. `local=true`

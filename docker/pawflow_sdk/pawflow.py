@@ -50,8 +50,17 @@ _CONV_ID = os.environ.get("PAWFLOW_CONVERSATION_ID", "")
 _AGENT_NAME = os.environ.get("PAWFLOW_AGENT_NAME", "")
 _FS_SERVICE = os.environ.get("PAWFLOW_FS_SERVICE", "")
 _PFP_OUTPUT_DIR = os.environ.get("PAWFLOW_PFP_OUTPUT_DIR", "").strip()
-_TOOL_ENDPOINT = os.environ.get("PAWFLOW_TOOL_ENDPOINT", "").strip()
-_TOOL_CAP = os.environ.get("PAWFLOW_TOOL_CAP", "").strip()
+
+
+def _tool_endpoint() -> str:
+    # Read per request: a persistent kernel (pawflow_kernel.py) sets the
+    # endpoint and the capability of each execution only while it runs.
+    return os.environ.get("PAWFLOW_TOOL_ENDPOINT", "").strip()
+
+
+def _tool_cap() -> str:
+    return os.environ.get("PAWFLOW_TOOL_CAP", "").strip()
+
 
 _sock = None
 _lock = None
@@ -181,8 +190,8 @@ def _bridge_request(method, **kwargs):
     bridge_method = _BRIDGE_METHODS.get(method)
     if bridge_method is None:
         raise RuntimeError(f"Tool error: {method} is not available on a relay")
-    host, _, port = _TOOL_ENDPOINT.rpartition(":")
-    request = {"method": bridge_method, "cap": _TOOL_CAP, **kwargs}
+    host, _, port = _tool_endpoint().rpartition(":")
+    request = {"method": bridge_method, "cap": _tool_cap(), **kwargs}
     with socket.create_connection((host or "127.0.0.1", int(port))) as conn:
         conn.sendall((json.dumps(request) + "\n").encode("utf-8"))
         with conn.makefile("rb") as reader:
@@ -198,9 +207,10 @@ def _bridge_request(method, **kwargs):
 
 def _request(method, **kwargs):
     """Send a request to the tool relay and return the result."""
-    if _TOOL_ENDPOINT and _TOOL_CAP:
+    endpoint = _tool_endpoint()
+    if endpoint and _tool_cap():
         return _bridge_request(method, **kwargs)
-    if _TOOL_ENDPOINT and not _RELAY_URL:
+    if endpoint and not _RELAY_URL:
         raise ConnectionError(
             "PawFlow tools are not available to this script: it was not "
             "started by PawFlow with a tool capability (execute_script or a "

@@ -87,7 +87,8 @@ class _ToolRelayExecuteMixin:
                         dispatch_started_at: float = 0.0,
                         external_call_id: str = "",
                         late_result_callback=None,
-                        publish_code_mode: bool = True) -> dict:
+                        publish_code_mode: bool = True,
+                        result_max_chars: int = 0) -> dict:
         handle_started = dispatch_started_at or time.perf_counter()
         relay_received_at = relay_received_at or handle_started
         # Defensive: arguments may arrive as JSON string (double-encoded by LLM)
@@ -305,13 +306,15 @@ class _ToolRelayExecuteMixin:
             _set_current_cancel_event(cancel_event)
             _set_current_kill_hooks(kill_hooks)
             try:
+                from contextlib import ExitStack
+                from core.tool_registry import result_cap_override
+                _stack = ExitStack()
+                if result_max_chars:
+                    _stack.enter_context(result_cap_override(result_max_chars))
                 if external_call_id:
                     from core.external_call_router import call_scope
-                    _scope = call_scope(external_call_id)
-                else:
-                    from contextlib import nullcontext
-                    _scope = nullcontext()
-                with _scope:
+                    _stack.enter_context(call_scope(external_call_id))
+                with _stack:
                     for attempt in range(
                             1, _RELAY_TRANSPORT_RETRY_ATTEMPTS + 1):
                         try:

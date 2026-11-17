@@ -104,10 +104,16 @@ class _ToolRelay:
         self.calls = []
 
     def _handle_execute(self, request_id, tool_name, arguments, user_id,
-                        conversation_id, agent_name, publish_code_mode=True):
+                        conversation_id, agent_name, publish_code_mode=True,
+                        result_max_chars=0):
         from services._tool_relay_base import current_run_identity
         # The bridge draws its own rows, for every provider.
         assert publish_code_mode is False
+        # A script gets results in full up to the script cap.
+        assert result_max_chars == script_capability.SCRIPT_RESULT_MAX_CHARS
+        if tool_name == "big":
+            return {"type": "result", "request_id": request_id,
+                    "data": "x" * 120_000}
         self.calls.append((tool_name, arguments, user_id, conversation_id,
                            agent_name, current_run_identity()))
         if arguments.get("path") == "missing.txt":
@@ -191,6 +197,15 @@ def test_each_call_is_shown_as_a_display_only_script_row(tool_relay, rows):
     assert call_sse["data"]["llm_service"] == "svcA"
     assert result_sse["type"] == "tool_result"
     assert result_sse["data"]["tc_id"] == call_sse["data"]["tc_id"]
+
+
+def test_a_large_result_reaches_the_script_but_its_row_is_trimmed(
+        tool_relay, rows):
+    reply = _handle("tool.call", {"cap": _mint(), "tool_name": "big"})
+    assert reply == {"data": "x" * 120_000}
+    content = rows[1][0]["content"]
+    assert content.startswith("x" * 50_000) and len(content) < 50_200
+    assert "120,000 chars returned to the script" in content
 
 
 def test_a_refused_call_draws_no_row(tool_relay, rows):

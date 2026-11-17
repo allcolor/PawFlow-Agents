@@ -29,6 +29,36 @@ from core.tool_json import ToolArgumentError
 
 logger = logging.getLogger(__name__)
 
+_result_cap = threading.local()
+
+
+class result_cap_override:
+    """Raise the oversized-result safety net for calls on this thread.
+
+    A relay script's tool calls (services/relay_tool_bridge.py) get their
+    result in full up to ``max_chars`` instead of the per-handler cap: the
+    script filters it, and only what it prints reaches the agent. Handlers
+    are shared, so the override is per thread, never on the handler.
+    """
+
+    def __init__(self, max_chars: int):
+        self._max_chars = int(max_chars or 0)
+        self._previous = 0
+
+    def __enter__(self):
+        self._previous = getattr(_result_cap, "max_chars", 0)
+        _result_cap.max_chars = self._max_chars
+        return self
+
+    def __exit__(self, *exc):
+        _result_cap.max_chars = self._previous
+        return False
+
+
+def _result_max_chars(handler) -> int:
+    cap = getattr(handler, "_tool_result_max_chars", 50000)
+    return max(cap, getattr(_result_cap, "max_chars", 0) or 0)
+
 
 @dataclass(frozen=True)
 class PreparedToolCall:
@@ -390,7 +420,7 @@ class ToolRegistry:
                     self._hooks.get(f"post:{name}", [])
                     + self._hooks.get("post:*", [])):
                 result = hook(name, args, result)
-            max_chars = getattr(handler, "_tool_result_max_chars", 50000)
+            max_chars = _result_max_chars(handler)
             from core.handlers.inbox import ReadInboxHandler
             from core.handlers.catchup import CatchUpHandler
             from core.handlers.meta_tools import resolve_result_shape_handler
@@ -565,7 +595,7 @@ class ToolRegistry:
             # Skip cap only for handlers that declare _returns_images=True AND
             # actually emit a marker — otherwise a grep match on the literal
             # "__image_data__:" string would wrongly bypass the cap.
-            _max = getattr(handler, '_tool_result_max_chars', 50000)
+            _max = _result_max_chars(handler)
             from core.handlers.meta_tools import resolve_result_shape_handler
             _result_handler = (
                 resolve_result_shape_handler(self, name, args) or handler)

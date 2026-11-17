@@ -122,7 +122,8 @@ def handle(method: str, args: dict[str, Any], *, relay_service_id: str,
                 relay_service_id)
             reply = relay._handle_execute(
                 call_id, tool_name, arguments, cap.user_id,
-                cap.conversation_id, cap.agent_name, publish_code_mode=False)
+                cap.conversation_id, cap.agent_name, publish_code_mode=False,
+                result_max_chars=script_capability.SCRIPT_RESULT_MAX_CHARS)
         finally:
             _set_current_run_identity(previous)
         _publish_script_result(cap, call_id, tool_name, reply)
@@ -149,6 +150,9 @@ def _data(reply) -> dict[str, Any]:
 
 _SCRIPT_ORIGIN = "script"
 _RESULT_PREVIEW_CHARS = 2000
+# A script may receive up to SCRIPT_RESULT_MAX_CHARS; the transcript row that
+# shows the call to the user keeps the ordinary per-result size.
+_ROW_CONTENT_MAX_CHARS = 50000
 
 
 def _agent_service(cap) -> str:
@@ -208,6 +212,10 @@ def _publish_script_result(cap, call_id: str, tool_name: str, reply) -> None:
         data = f"Error: {reply.get('error') or 'tool error'}"
     text = data if isinstance(data, str) else json.dumps(
         data, default=str, ensure_ascii=False)
+    if len(text) > _ROW_CONTENT_MAX_CHARS:
+        text = (text[:_ROW_CONTENT_MAX_CHARS]
+                + f"\n\n[... {len(text):,} chars returned to the script; "
+                  "row truncated]")
     source = {"type": "agent", "name": cap.agent_name}
     msg = stamp_message({
         "role": "tool", "content": text, "tool_call_id": call_id,

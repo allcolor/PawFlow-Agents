@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `execute_script(persistent=true)`: a persistent Python kernel per relay
+  surface, conversation and agent. Variables, imports and loaded data
+  survive between calls; a final bare expression is printed. `restart=true`
+  starts a fresh kernel; `idle_timeout_minutes` (default 30, max 480) sets
+  when an idle kernel stops. Each call keeps its own tool capability, revoked
+  at the end, and a killed call is interrupted without losing the state
+  (`docker/pawflow_sdk/pawflow_kernel.py`, `docs/docker.md`).
+- Tool calls made from a relay script get their result in full up to
+  2,000,000 characters instead of the agent's per-result cap; the Script row
+  in the transcript keeps 50,000.
+- LLM guidance for `execute_script`: tool description (when to use a
+  script and the kernel, example), the `Using your tools` section and the
+  tool-selection route.
+
+### Changed
+
+- The PawFlow SDK reads `PAWFLOW_TOOL_ENDPOINT` and `PAWFLOW_TOOL_CAP` on
+  each request instead of once at import.
+
 ## [1.0.0-beta.331] — 2026-11-16
 
 ### Fixed

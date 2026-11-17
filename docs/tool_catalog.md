@@ -142,7 +142,7 @@ either way.
 |---|---|
 | `bash` | Run a shell command through the relay. Accepts `command` or `cmd`. |
 | `Monitor` | Run a command and return early on exit or regex match. |
-| `execute_script` | Execute a script/tool-backed snippet. |
+| `execute_script` | Run Python on a relay (container or `local=true`), or in the stateless server sandbox when no relay is connected. On a relay the script can call PawFlow tools (`from pawflow import tools, fs`) and receives their results in full up to 2,000,000 characters; only what it prints returns. `persistent=true` keeps a per-agent Python kernel between calls (`restart`, `idle_timeout_minutes` 1-480, default 30). See [docker.md](docker.md#persistent-kernel-execute_scriptpersistenttrue). |
 | `run_tests` | Run tests through the project environment; accepts `maxfail` (default 1, fail fast — pass `0` to run the whole selection and report every failure in one call) and `max_output` to cap returned output. |
 | `security_scan` | Run security checks. |
 | `screen` | Screenshot/click/type/key/scroll/mouse-position against local or Docker desktop. |

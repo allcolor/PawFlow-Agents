@@ -81,6 +81,14 @@ PawFlow gives agents a real operating surface without handing your workspace to 
   interrupts, call remote A2A agents, or attach Claude Code, Codex,
   Agy/Gemini, OpenCode, JCode, Pi, or Hermes as a first-class external MCP
   agent.
+- **Scripted tool calls**: on a relay (container or `local=true`), an
+  `execute_script` Python script can call any PawFlow tool
+  (`from pawflow import tools, fs`), filter the results in code, and return
+  only what it prints. Each nested call keeps the usual approvals and shows in
+  the chat as a **Script** row. With `persistent=true` the agent keeps a
+  Python kernel whose variables survive between calls, with an idle timeout
+  the agent sets (default 30 minutes, maximum 8 hours). See
+  [PawFlow SDK and persistent kernel](docs/docker.md#5-pawflow-sdk).
 - **Delegated vision**: pair a strong text-only reasoning model with a separate vision-enabled LLM so uploads, screenshots, and desktop views become detailed descriptions with UI coordinates before the reasoning turn. Images sent to a text-only model are never silently dropped: any model — including free-tier ones — gets vision, and clicks stay accurate because coordinates come from the vision model, verified locally by the pre-click screen guard.
 - **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, the Android app, API clients, or channel integrations.
 - **Workflow Agents**: bind an agent identity to an exact versioned Flow, freeze its service and resource bindings per run, checkpoint progress, inspect durable run history, and recover only generations that remain safe to retry.

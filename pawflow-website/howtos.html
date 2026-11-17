@@ -49,7 +49,7 @@
   <main class="howto-reader">
     <div class="howto-reader-toolbar"><a href="howtos.html">← Back to the animated How-to guide</a><span>Full recipe view</span></div>
     <section class="page-hero"><div class="container narrow" data-reveal><p class="eyebrow">How-tos</p><h1>Small recipes for the first useful PawFlow sessions.</h1><p class="hero-copy">Install the runtime, connect relays, configure providers, publish packages, and turn useful agent work into flows.</p></div></section>
-    <section class="band compact-band"><div class="container howto-nav" data-reveal><a href="#agent-tool-selection">Tool selection</a><a href="#install">Install</a><a href="#install-wizard">Wizard</a><a href="#published-mcp-client">MCP client</a><a href="#acp-agent">ACP agent</a><a href="#managed-mcp-providers">MCP-hook CLIs</a><a href="#agui-embed">AG-UI embed</a><a href="#chat-views">Views</a><a href="#desktop-novnc-audio">Desktop</a><a href="#multi-llm-aggregator">Multi-LLM</a><a href="#fault-tolerant-llm">LLM router</a><a href="#delegated-vision">Vision fallback</a><a href="#pawcode-installer">PawCode</a><a href="#pawcode-usage">PawCode usage</a><a href="#vscode-plugin-installer">VS Code plugin</a><a href="#relay-desktop-installer">Relay Desktop</a><a href="#relay-cli-installer">Relay CLI</a><a href="#identity">Identity</a><a href="#oauth-refresh-policy">OAuth refresh</a><a href="#resources">Resources</a><a href="#flows">Flows</a><a href="#workflow-proposals">Workflow proposals</a><a href="#workflow-agents">Workflow Agents</a><a href="#channels">Telegram</a><a href="#security-context">Security</a><a href="#encryption">Encryption</a><a href="#media-voice">Media</a><a href="#comfyui">ComfyUI</a></div></section>
+    <section class="band compact-band"><div class="container howto-nav" data-reveal><a href="#agent-tool-selection">Tool selection</a><a href="#scripted-tools">Scripted tools</a><a href="#install">Install</a><a href="#install-wizard">Wizard</a><a href="#published-mcp-client">MCP client</a><a href="#acp-agent">ACP agent</a><a href="#managed-mcp-providers">MCP-hook CLIs</a><a href="#agui-embed">AG-UI embed</a><a href="#chat-views">Views</a><a href="#desktop-novnc-audio">Desktop</a><a href="#multi-llm-aggregator">Multi-LLM</a><a href="#fault-tolerant-llm">LLM router</a><a href="#delegated-vision">Vision fallback</a><a href="#pawcode-installer">PawCode</a><a href="#pawcode-usage">PawCode usage</a><a href="#vscode-plugin-installer">VS Code plugin</a><a href="#relay-desktop-installer">Relay Desktop</a><a href="#relay-cli-installer">Relay CLI</a><a href="#identity">Identity</a><a href="#oauth-refresh-policy">OAuth refresh</a><a href="#resources">Resources</a><a href="#flows">Flows</a><a href="#workflow-proposals">Workflow proposals</a><a href="#workflow-agents">Workflow Agents</a><a href="#channels">Telegram</a><a href="#security-context">Security</a><a href="#encryption">Encryption</a><a href="#media-voice">Media</a><a href="#comfyui">ComfyUI</a></div></section>
     <section class="section surface"><div class="container howto-list">
       <article class="recipe process-recipe" id="agent-tool-selection" data-reveal>
         <div class="recipe-meta">Agent routing, work state, delegation, continuations</div>
@@ -63,6 +63,27 @@
         </div>
         <p>PawFlow injects a compact selection map containing only tools available to the active agent. The agent can then call <code>get_tool_schema(family="delegation")</code> for an on-demand comparison and <code>get_tool_schema(tool_name="delegate")</code> for exact parameters. The full technical decision map also covers search/read/edit tools, artifacts, notifications, resources, packages, skills, tasks, and flows.</p>
         <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/TOOL_SELECTION.md">Read the complete tool-selection guide</a>
+      </article>
+      <article class="recipe process-recipe" id="scripted-tools" data-reveal>
+        <div class="recipe-meta">execute_script, PawFlow SDK, persistent kernel</div>
+        <h2>Script many tool calls in one step</h2>
+        <p><strong>Objective:</strong> let an agent run a batch of tool calls, filter the results in Python, and bring back only the part it needs instead of spending one turn per call.</p>
+        <div class="wizard-grid">
+          <div><strong>Call tools from Python</strong><span>On a relay, in its container or with <code>local=true</code>, a script run by <code>execute_script</code> imports <code>from pawflow import tools, fs</code>. <code>tools.call("grep", ...)</code> returns the tool's text and raises <code>RuntimeError</code> on a failure or a refusal.</span></div>
+          <div><strong>Same rules as the agent</strong><span>Every nested call runs as the agent, through the usual approvals, hooks, and limits, and shows in the chat as a <strong>Script</strong> row under the <code>execute_script</code> call that made it.</span></div>
+          <div><strong>Big results, small context</strong><span>A nested call gets up to 2,000,000 characters of result. Only what the script prints reaches the agent's context.</span></div>
+          <div><strong>Keep state with a kernel</strong><span><code>persistent=true</code> keeps a Python process for each relay surface, conversation, and agent. Variables and imports survive between calls, and the value of a final expression is printed. <code>idle_timeout_minutes</code> sets the idle lifetime (default 30, maximum 480); <code>restart=true</code> starts over.</span></div>
+        </div>
+        <pre id="scripted-tools-example"># call 1, persistent=true
+from pawflow import tools
+hits = tools.call("grep", pattern="TODO", path="src",
+                  output_mode="content", head_limit=5000)
+len(hits.splitlines())
+
+# call 2, persistent=true: no new tool call
+[l for l in hits.splitlines() if "auth" in l][:10]</pre>
+        <p>When a call lands on a fresh kernel (after the idle timeout, a restart, or a server update), its output starts with <code>[pawflow kernel] ... earlier variables are gone.</code> Without a relay, the server sandbox stays stateless. For a plain shell command, <code>bash</code> is still the right tool.</p>
+        <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/docker.md#5-pawflow-sdk">Read the SDK and persistent-kernel reference</a>
       </article>
       <div class="howto-section" id="install" data-reveal><p class="eyebrow">Install and relays</p><h2>From first server to controlled workspaces.</h2></div>
       <article class="recipe process-recipe" id="install-wizard" data-reveal>
@@ -367,6 +388,6 @@ pawcode --dir .</code></pre></div>
   <footer class="site-footer"><div class="container footer-grid"><div><strong>PawFlow</strong><span>Recipes for the first useful workflow.</span></div><nav><a href="index.html">Home</a><a href="quickstart.html">Quickstart</a><a href="docs.html">Docs</a><a href="faq.html">FAQ</a><a href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a><a href="https://github.com/allcolor/PawFlow-Agents/issues" target="_blank" rel="noreferrer">Issues</a><a href="https://github.com/allcolor/PawFlow-Agents/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT License</a></nav></div></footer>
   <script src="esper-world.js?v=1"></script>
   <script src="esper-camera.js?v=1"></script>
-  <script src="site.js?v=esper1"></script>
+  <script src="site.js?v=esper2"></script>
 </body>
 </html>

@@ -166,7 +166,7 @@ def test_howto_canvas_indexes_every_recipe_and_keeps_full_reader() -> None:
     script = (SITE / "site.js").read_text(encoding="utf-8")
     recipe_ids = re.findall(r'<article[^>]*class="[^"]*\brecipe\b[^"]*"[^>]*\bid="([^"]+)"', html)
 
-    assert len(recipe_ids) == 56
+    assert len(recipe_ids) == 57
     assert len(recipe_ids) == len(set(recipe_ids))
     assert "workflow-agents" in recipe_ids
     assert "workflow-proposals" in recipe_ids
@@ -180,7 +180,7 @@ def test_howto_canvas_indexes_every_recipe_and_keeps_full_reader() -> None:
     assert html.count('data-zoom-target') == 9
     groups = __import__('json').loads(re.search(r'const GUIDE_GROUPS = (\[.*\]);', script)[1])
     indexed = [recipe for group in groups for recipe in group['recipes']]
-    assert len(indexed) == len(set(indexed)) == 56
+    assert len(indexed) == len(set(indexed)) == 57
     assert set(indexed) == set(recipe_ids)
 
 

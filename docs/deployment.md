@@ -518,6 +518,10 @@ result = tools.call("generate_image", prompt="a logo", width=256)
 
 Works in: ExecuteScript (containerized), custom Docker scripts, any container with `PAWFLOW_TOOL_RELAY_URL` set.
 
+The agent `execute_script` tool also runs it on a relay, in the container or
+with `local=true`, optionally in a persistent Python kernel that keeps
+variables between calls. See [docker.md](docker.md#5-pawflow-sdk).
+
 ---
 
 ## 7. Environment variable reference

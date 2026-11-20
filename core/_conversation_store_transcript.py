@@ -138,9 +138,10 @@ class _CsTranscriptMixin:
         with a new delegate. delegate_status compares a request with no reply
         of its own to the target's queue and to that time.
 
-        Only delegate rows are read, memoised per segment so a call re-reads
-        just the segment being appended to; it never materializes the full
-        conversation.
+        Only the caller's delegate rows are read, memoised per segment and
+        persisted per sealed segment, so a call re-reads just the segment
+        being appended to, even after a restart; it never materializes the
+        full conversation (see core/_conversation_store_delegate_rows.py).
         """
         empty = {"live": [], "finished": [], "contact": {}}
         if not caller or not self.exists(cid):
@@ -224,7 +225,7 @@ class _CsTranscriptMixin:
 
         from core._conversation_store_delegate_rows import DELEGATE_ROWS
 
-        for row in DELEGATE_ROWS.rows(cid, log):
+        for row in DELEGATE_ROWS.rows(cid, log, caller_key):
             if self._is_trace_update_row(row):
                 task_id = str(row.get("trace_id") or "")
                 trace = traces.get(task_id)

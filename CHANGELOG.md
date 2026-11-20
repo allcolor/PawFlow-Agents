@@ -30,7 +30,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a character outside cp1252 was never written and the client waited forever.
 - A message posted with `send_agent_message` reaches the chat UI with its
   timestamp, so it no longer stays at the bottom under later messages.
-
+- `delegate_status`/`delegate_result` read only the caller's delegate rows:
+  each segment's rows are partitioned per caller, a run of the target's
+  non-terminal reply rows for one task is kept as its last row (same state,
+  checked by a replay test), and every sealed segment's partition is
+  persisted in `transcript/delegate_rows/`. The first call after a restart
+  took 4.3 s instead of 112 s for the busiest caller of an 8.5 GB
+  conversation and 0.08 s instead of 10.6 s for a typical one; it used to run
+  past the MCP client's read timeout.
 - `find_by_msg_ids` no longer reads every segment for an id it does not
   find: beyond the two newest segments it opens only those whose msg_id
   sidecar lists the id. The idempotent append of each published-MCP

@@ -964,8 +964,36 @@ cached compactly as routing metadata plus the row's byte offset, and a reply
 row that ends the target's turn is flagged `terminal`; the reply
 text is read back from disk only for the at most 100 finished results that a
 call returns, and is empty if that row has moved. On a 439,000-row transcript
-this took a call from about 16 s to 0.2 s after the first scan, which still
-reads every segment once per server process, for about 68 MB of retained rows.
+this took a call from about 16 s to 0.2 s after the first scan, for about
+68 MB of retained rows. That first scan still decoded every delegate row of
+the conversation once per server process: on an 8.5 GB transcript holding
+2,098,734 of them, the first call after a restart ran past the MCP client's
+read timeout (150 s, 2026-11-20). Three things now bound it:
+
+- A line holding none of `agent_delegate`, `trace_update` or
+  `sub_agent_trace` is skipped without being JSON-decoded.
+- A caller's state depends only on its own rows (requests it sent, requests
+  and replies addressed to it, traces it is the parent of, and trace
+  updates), so each segment's rows are partitioned by caller and a call
+  reads its caller's only.
+- A run of the target's non-terminal reply rows for one task (its tool calls
+  and intermediate messages, 1.97 M of those rows) changes the caller's state
+  exactly as its last row does, and is kept as that row while times do not
+  go backwards. A unit test replays generated multi-agent transcripts both
+  ways and requires identical state for every caller.
+
+On that transcript this leaves 362,692 rows in all, 248,519 for the busiest
+caller and about 15,000 for most, in 93 MB of sidecars. The first call after
+a restart took 4.3 s instead of 112 s for the busiest caller, and 0.08 s
+instead of 10.6 s for a typical one, with identical state. The partition of
+every sealed segment is persisted in
+`transcript/delegate_rows/{segment}.jsonl`, keyed on the segment's device,
+inode and size like the `msg_ids` sidecars, one line per
+caller decoded only when that caller asks: after a server restart only the
+tail segment, and segments without a valid sidecar, are scanned. A sidecar
+holds the same clear-text routing metadata and offsets as the memo, and trace
+rows still encoded as on disk; they are decoded and stripped of secrets on
+load.
 The complete transcript is never loaded into memory.
 Consequently an LLM context compaction or provider-session restart
 does not lose an acknowledged asynchronous delegate or its completed result,

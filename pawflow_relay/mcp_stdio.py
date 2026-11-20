@@ -51,12 +51,41 @@ def _log(message: str) -> None:
     sys.stderr.flush()
 
 
+# While PawFlow restarts, its proxy answers 502/503 or nothing listens (0 here):
+# such a request was not processed and is sent again for up to this long.
+_UNAVAILABLE_STATUSES = frozenset({0, 502, 503})
+_UNAVAILABLE_RETRY_SECONDS = 120.0
+
+
+def _session_lost(payload: Any) -> bool:
+    """True for the server's 404 body for an MCP session it does not know."""
+    return isinstance(payload, dict) and payload.get("error") == "MCP session not found"
+
+
+def _use_utf8_stdio() -> None:
+    """Force UTF-8 on the stdio JSON-RPC channel, as MCP stdio requires.
+
+    On Windows a piped stdin/stdout defaults to the ANSI code page (cp1252).
+    Writing any reply holding a character outside it (an arrow, an em dash,
+    an emoji) then raises UnicodeEncodeError inside the call thread: the
+    reply is never written and the MCP client waits on it forever. Reading
+    is just as wrong: a UTF-8 prompt from the client decodes as mojibake.
+    """
+    for stream, options in ((sys.stdin, {}), (sys.stdout, {"newline": "\n"}),
+                            (sys.stderr, {"errors": "backslashreplace"})):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", **options)
+
+
 class HTTPBridge:
     def __init__(self, endpoint: str, api_key: str, gateway_key: str = "") -> None:
         self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key
         self.gateway_key = gateway_key
         self.session_id = ""
+        # The client's initialize message, replayed when the session is lost.
+        self._initialize: Optional[Dict[str, Any]] = None
         self._session_lock = threading.RLock()
 
     def _request(self, method: str, url: str, payload: Any = None,
@@ -103,12 +132,64 @@ class HTTPBridge:
         return response.status, response_headers, decoded
 
     def rpc(self, message: Dict[str, Any]) -> Tuple[int, Any]:
+        """Forward one JSON-RPC message, surviving a PawFlow server restart.
+
+        The server keeps MCP sessions in memory, so after a restart it answers
+        the old Mcp-Session-Id with 404. A stdio client never sees that
+        session and cannot open a new one: every call failed until the CLI
+        was relaunched. The bridge replays the client's own initialize, then
+        sends the message once more. While the server is down, a refused
+        connection or a proxy's 502/503 is retried for a while. Each retry
+        is for a request the server did not process, so none runs twice.
+        """
         method = str(message.get("method") or "")
-        status, _headers, payload = self._request(
-            "POST", self.endpoint, message,
-            include_session=method != "initialize",
-        )
+        if method == "initialize":
+            self._initialize = dict(message)
+        session = self.session_id
+        status, payload = self._post_rpc(message, method)
+        if (status == 404 and method != "initialize"
+                and _session_lost(payload) and self._reinitialize(session)):
+            status, payload = self._post_rpc(message, method)
         return status, payload
+
+    def _post_rpc(self, message: Dict[str, Any], method: str) -> Tuple[int, Any]:
+        deadline = time.monotonic() + _UNAVAILABLE_RETRY_SECONDS
+        delay = 1.0
+        while True:
+            try:
+                status, _headers, payload = self._request(
+                    "POST", self.endpoint, message,
+                    include_session=method != "initialize",
+                )
+            except ConnectionRefusedError:
+                if time.monotonic() + delay > deadline:
+                    raise
+                status, payload = 0, None
+            if status not in _UNAVAILABLE_STATUSES:
+                return status, payload
+            if time.monotonic() + delay > deadline:
+                return status, payload
+            _log(f"PawFlow unavailable ({status or 'connection refused'}); "
+                 f"retrying {method} in {delay:.0f}s")
+            time.sleep(delay)
+            delay = min(delay * 2, 15.0)
+
+    def _reinitialize(self, failed_session: str) -> bool:
+        """Open a new MCP session with the client's initialize parameters."""
+        with self._session_lock:
+            if self.session_id and self.session_id != failed_session:
+                return True  # another call already opened one
+            initialize = self._initialize
+            if initialize is None:
+                return False
+            _log("MCP session lost (PawFlow restarted?); re-initializing")
+            message = dict(initialize, id=f"pawflow-bridge-reinit-{secrets.token_hex(4)}")
+            status, _payload = self._post_rpc(message, "initialize")
+            if status >= 400 or not status:
+                return False
+            self._post_rpc({"jsonrpc": "2.0", "method": "notifications/initialized"},
+                           "notifications/initialized")
+            return True
 
     def control(self, action: str, payload: Optional[Dict[str, Any]] = None) -> Any:
         status, _headers, result = self._request(
@@ -240,9 +321,11 @@ class RelayController:
         def _heartbeat() -> None:
             while not self._stop.wait(30):
                 try:
-                    self.bridge.control("status", {"client_id": self.client_id})
+                    remote = self.bridge.control("status", {"client_id": self.client_id})
                 except Exception as exc:
                     _log(f"relay heartbeat failed: {exc}")
+                    continue
+                self._recover(remote)
 
         self._heartbeat_thread = threading.Thread(
             target=_heartbeat, daemon=True, name="pawflow-mcp-relay-heartbeat")
@@ -302,6 +385,25 @@ class RelayController:
         self.disconnect()
         return self.connect()
 
+    def _recover(self, remote: Dict[str, Any]) -> None:
+        """Reconnect a relay whose process died or whose lease was released.
+
+        A lease held by another client is left alone: that client owns the
+        publication now.
+        """
+        if self._stop.is_set():
+            return
+        dead = not self._alive()
+        released = not str(remote.get("client_id") or "")
+        if not (dead or released):
+            return
+        _log("relay " + ("process exited" if dead else "lease released")
+             + "; reconnecting")
+        try:
+            self.reconnect()
+        except Exception as exc:
+            _log(f"relay reconnect failed: {exc}")
+
 
 def _tool_result(value: Any, is_error: bool = False) -> Dict[str, Any]:
     return {
@@ -338,6 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    _use_utf8_stdio()
     args = build_parser().parse_args(argv)
     api_key = os.environ.get("PAWFLOW_MCP_API_KEY", "")
     gateway_key = os.environ.get("PAWFLOW_GATEWAY_KEY", "")

@@ -98,11 +98,29 @@ like a normal agent's tool calls; they are not injected into the selected
 agent's context. `get_initial_context`/`get_context_updates` results are
 audited as a compact summary (size and cursor), never the full document.
 
-`delegate` and `flash_delegate` remain asynchronous inside PawFlow, but the
-published MCP adapter keeps the originating `tools/call` open until every
-delegated task has produced its final result. A client may therefore delegate
-to the selected published agent itself. The answer is returned to the MCP
-client, not injected into or used to wake the capability-profile agent.
+Context reads are bounded. A published agent never runs the PawFlow agent
+loop, so its own context file is never compacted; reading it (or the full
+transcript) for every bootstrap once produced a 318 MB document and pushed the
+server to an OOM kill on an 8.5 GB multi-agent conversation. The context tools
+therefore read only the summary pyramid plus a bounded transcript tail — the
+same source PawFlow compaction uses.
+
+`delegate` and `flash_delegate` remain asynchronous inside PawFlow. How their
+result reaches the MCP client depends on whether the client has a return
+channel (a registered client terminal, `terminal_ready`):
+
+- **With a return channel**, the client operates the published agent itself,
+  so its delegate is the agent's own delegate. The `tools/call` returns the
+  delegate acknowledgement (task ids) at once, exactly as for a PawFlow agent.
+  The result reaches the agent as an ordinary `delegate_reply`; the poller
+  injects that wake-up into the client's terminal, and the client reads the
+  result with `get_context_updates`. Holding the call open instead froze the
+  client for the whole delegated run.
+- **Without a return channel**, nothing could ever wake the client, so the
+  adapter keeps the originating `tools/call` open until every delegated task
+  has produced its final result. A client may therefore delegate to the
+  selected published agent itself. The answer is returned to the MCP client,
+  not injected into or used to wake the capability-profile agent.
 
 The same ownership rule applies when a running call is detached with PawFlow's
 **Background** control. PawFlow stops treating the operation as foreground UI
@@ -249,8 +267,8 @@ Published servers expose four direct conversation tools in addition to
 
 | Tool | Contract |
 |---|---|
-| `get_initial_context` | Returns the full agent-visible bootstrap document and its current `seq` cursor. |
-| `get_context_updates` | Accepts `after_seq` and returns only later agent-visible messages plus the new cursor. |
+| `get_initial_context` | Returns the bootstrap document a normal agent gets after compaction — system instructions, the conversation's summary pyramid, and the recent transcript tail (last 250 rows, personalized for the agent) — plus its current `seq` cursor. Never the full conversation. |
+| `get_context_updates` | Accepts `after_seq` and returns the later agent-visible messages found in that same bounded recent tail, plus the new cursor. `history_truncated: true` means the tail no longer reaches the cursor (more history exists before it): call `get_initial_context` again. |
 | `send_user_message` | Canonically persists a local client prompt with a required `message_id`. |
 | `send_agent_message` | Canonically persists the external agent's response with a required `message_id`. |
 
@@ -277,6 +295,31 @@ Developers with a full PawFlow checkout can also use the `pawflow-mcp`
 console command directly. The bridge proxies stdio JSON-RPC to the Streamable
 HTTP endpoint and shares the CLI's selected project directory through a normal
 PawFlow relay.
+
+The stdio channel is always UTF-8, as MCP stdio requires: the bridge
+reconfigures its stdin, stdout and stderr at startup. On Windows a piped stdio
+otherwise defaults to the ANSI code page (cp1252), so the first reply holding a
+character outside it (an arrow, an em dash, an emoji — typical in
+`get_initial_context`) raised `UnicodeEncodeError` in the call thread, the
+reply was never written, and the client waited on it forever.
+
+The bridge survives a PawFlow server restart, so the CLI does not have to be
+relaunched. The server keeps MCP sessions in memory and answers a session it
+no longer knows with HTTP 404 `MCP session not found`; a stdio client never
+sees that session and cannot open a new one. The bridge keeps the client's
+`initialize` message, replays it (with its own request id) followed by
+`notifications/initialized` on that 404, and then sends the failed message
+once more. While the server is down, a refused connection or a proxy's
+502/503 is retried with backoff (1 s doubling to 15 s) for up to 120 seconds.
+Every retried request is one the server did not process, so no tool call
+runs twice; other errors, including 504, are returned to the client as
+before. The relay heartbeat also reconnects the relay when its process has
+exited or when PawFlow reports the lease released, and leaves a lease held by
+another client alone. The bridge runs on the CLI's machine: a server hotpatch
+does not update it.
+
+A message posted with `send_agent_message` is broadcast to the chat UI with
+its stamped `ts`, which the UI needs to place the live row chronologically.
 
 Common environment variables:
 

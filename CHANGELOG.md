@@ -6,7 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Published MCP: a client with a return channel (a registered terminal)
+  gets the `delegate`/`flash_delegate` acknowledgement at once, like a
+  PawFlow agent, and the result as an ordinary `delegate_reply` wake-up in
+  its terminal; without a return channel the call still stays open until the
+  final result.
+- Published MCP: `get_initial_context` returns the summary pyramid plus the
+  last 250 transcript rows, and `get_context_updates` reads that same bounded
+  tail (`history_truncated` when it no longer reaches the cursor), instead of
+  the full agent context, which reached 318 MB and an OOM kill on an 8.5 GB
+  conversation.
+- The MCP stdio bridge survives a PawFlow restart: on `MCP session not
+  found` it replays the client's `initialize` and sends the call once more,
+  retries a refused connection or a proxy 502/503 for up to 120 s, and its
+  heartbeat reconnects a relay whose process exited or whose lease was
+  released. Relaunching the CLI is no longer needed.
+
 ### Fixed
+
+- The MCP stdio bridge always uses UTF-8 on stdio: on Windows a reply holding
+  a character outside cp1252 was never written and the client waited forever.
+- A message posted with `send_agent_message` reaches the chat UI with its
+  timestamp, so it no longer stays at the bottom under later messages.
 
 - `find_by_msg_ids` no longer reads every segment for an id it does not
   find: beyond the two newest segments it opens only those whose msg_id

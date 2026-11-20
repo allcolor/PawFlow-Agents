@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import sqlite3
+import threading
 from pathlib import Path
 
 import jsonschema
@@ -582,11 +583,15 @@ def test_published_mcp_conversation_context_and_idempotent_messages(monkeypatch)
                 {"role": "assistant", "content": "second", "msg_id": "m2", "seq": 7},
             ]
 
+        def load_transcript_page_for_agent(self, _cid, _agent, limit, offset):
+            assert limit == endpoint._CONTEXT_TAIL_MESSAGES and offset == 0
+            return {"messages": list(self.rows), "has_more": False}
+
         def load_agent_context(self, _cid, _agent):
-            return list(self.rows)
+            raise AssertionError("the unbounded agent context must not be read")
 
         def load_transcript_for_agent(self, _cid, _agent):
-            raise AssertionError("agent context should be preferred")
+            raise AssertionError("the full transcript must not be read")
 
         def append_message_if_absent(self, _cid, message, **_kwargs):
             if any(row["msg_id"] == message["msg_id"] for row in self.rows):
@@ -643,6 +648,69 @@ def test_published_mcp_conversation_context_and_idempotent_messages(monkeypatch)
     assert retry["accepted"] is False and retry["duplicate"] is True
     assert len(writer.events) == 1
     assert writer.events[0]["data"]["msg_id"] == "external-1"
+    # The live row is placed chronologically by the stamped server time.
+    assert writer.events[0]["data"]["ts"] == store.rows[-1]["ts"] > 0
+
+
+def test_context_tools_send_summary_and_bounded_tail(monkeypatch):
+    """Like a normal agent: summary pyramid + recent tail, never the full
+    conversation (a 318 MB bootstrap document OOM-killed the server)."""
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+    }
+    key = {"key_id": "key-1", "label": "Agy"}
+    tail = [{"role": "user", "content": f"m{seq}", "msg_id": f"m{seq}",
+             "seq": seq} for seq in (100, 101, 102)]
+    tail.append({"role": "user", "content": "ui only", "msg_id": "d",
+                 "seq": 103, "display_only": True})
+
+    class Store:
+        def load_transcript_page_for_agent(self, _cid, _agent, limit, offset):
+            assert limit == endpoint._CONTEXT_TAIL_MESSAGES and offset == 0
+            return {"messages": list(tail), "has_more": True}
+
+    class Task:
+        system_prompt = ""
+
+    monkeypatch.setattr(
+        "core.conversation_store.ConversationStore.instance", lambda: Store())
+    monkeypatch.setattr(
+        "core.agent_executor.resolve_agent_task",
+        lambda *_args, **_kwargs: Task())
+    monkeypatch.setattr(
+        endpoint, "_summary_header", lambda _server: "OLD HISTORY SUMMARY")
+
+    initial = json.loads(endpoint._conversation_tool_result(
+        server, key, "get_initial_context", {}))
+    document = initial["document"]
+    assert "## Conversation Summary" in document
+    assert "OLD HISTORY SUMMARY" in document
+    assert document.index("OLD HISTORY SUMMARY") < document.index('"m100"')
+    assert "ui only" not in document
+    assert initial["cursor"] == 102
+
+    # Cursor inside the tail: exact updates, nothing skipped.
+    inside = json.loads(endpoint._conversation_tool_result(
+        server, key, "get_context_updates", {"after_seq": 100}))
+    assert [row["seq"] for row in inside["messages"]] == [101, 102]
+    assert inside["history_truncated"] is False
+
+    # Cursor older than the tail while more history exists: flagged.
+    stale = json.loads(endpoint._conversation_tool_result(
+        server, key, "get_context_updates", {"after_seq": 5}))
+    assert [row["seq"] for row in stale["messages"]] == [100, 101, 102]
+    assert stale["history_truncated"] is True
+
+
+def test_summary_header_failure_degrades_to_tail_only(monkeypatch):
+    class Store:
+        def _conv_dir(self, _cid):
+            raise OSError("no conversation dir")
+
+    monkeypatch.setattr(
+        "core.conversation_store.ConversationStore.instance", lambda: Store())
+    assert endpoint._summary_header({"conversation_id": "conv-1"}) == ""
 
 
 def test_every_builtin_tool_call_is_audited_in_conversation(monkeypatch):
@@ -657,9 +725,10 @@ def test_every_builtin_tool_call_is_audited_in_conversation(monkeypatch):
     key = {"key_id": "key-1", "label": "ChatGPT", "kind": "connector"}
 
     class Store:
-        def load_agent_context(self, _cid, _agent):
-            return [{"role": "user", "content": "first", "msg_id": "m1",
-                     "seq": 3}]
+        def load_transcript_page_for_agent(self, _cid, _agent, limit, offset):
+            return {"messages": [{"role": "user", "content": "first",
+                                  "msg_id": "m1", "seq": 3}],
+                    "has_more": False}
 
     class Task:
         system_prompt = "Published agent system prompt"
@@ -746,6 +815,82 @@ def test_use_tool_runs_through_canonical_owner_agent_runtime(monkeypatch):
     assert calls["conversation_id"] == "conv-1"
     assert calls["agent_name"] == "agent-a"
     assert calls["name"] == "read"
+
+
+@pytest.mark.parametrize("tool_name", ["delegate", "flash_delegate"])
+def test_async_mcp_tool_returns_ack_at_once_with_return_channel(
+        monkeypatch, tool_name):
+    """A client with a registered terminal operates the agent itself: its
+    delegate is the agent's own and must not freeze the client until the
+    delegated run finishes; the result comes back as a delegate_reply."""
+    from core import external_call_router
+
+    external_call_router.reset_for_tests()
+    seen = {}
+
+    class Registry:
+        def get_tool_definitions(self):
+            return [{"name": tool_name, "description": tool_name,
+                     "parameters": {}}]
+
+        def get(self, _name):
+            return None
+
+    class Runtime:
+        def _do_execute(self, _request_id, _name, arguments,
+                        _user_id, _conv_id, agent):
+            seen.update(owner=external_call_router.current_owner(),
+                        arguments=arguments, agent=agent)
+            # The delegated task is still running: nothing completes it.
+            return {"data": json.dumps([{
+                "task_id": "t-own-1", "status": "delivered",
+            }])}
+
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+        "terminal_ready": True,
+    }
+    task = (
+        {"name": "audit", "prompt": "Audit.", "message": "Check it"}
+        if tool_name == "flash_delegate"
+        else {"agent": "agent-b", "message": "Check it"}
+    )
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_runtime", lambda: Runtime())
+    monkeypatch.setattr(endpoint, "_persist_tool_call_start", lambda *_args: None)
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_agent_config",
+        lambda *_args: {"llm_service": "configured-service"})
+
+    outcome = {}
+
+    def _call():
+        outcome["result"] = endpoint._call_tool(
+            server, {"key_id": "key-1", "label": "Agy"},
+            "use_tool", {
+                "tool_name": tool_name,
+                "arguments_json": json.dumps({"tasks": [task]}),
+            },
+            session_id="session-1", mcp_request_id=8,
+        )
+
+    worker = threading.Thread(target=_call, daemon=True)
+    worker.start()
+    worker.join(5)
+    assert not worker.is_alive(), "tools/call stayed open on the delegated run"
+
+    payload = json.loads(outcome["result"]["content"][0]["text"])
+    assert payload == [{"task_id": "t-own-1", "status": "delivered"}]
+    # The agent is the caller: no external owner, no pmcp task ids.
+    assert seen["owner"] is None
+    assert seen["agent"] == "agent-a"
+    assert seen["arguments"] == {"tasks": [task]}
+    # The task is not externally owned, so its result takes the ordinary
+    # delegate_reply delivery to the agent instead of being swallowed.
+    assert not external_call_router.complete_task("t-own-1", {
+        "status": "completed", "response": "done"})
 
 
 @pytest.mark.parametrize("tool_name", ["delegate", "flash_delegate"])
@@ -1167,6 +1312,49 @@ def test_stdio_bridge_accepts_json_rpc_batches(monkeypatch, tmp_path):
     tool_names = {tool["name"] for tool in response[1]["result"]["tools"]}
     assert "remote" in tool_names
     assert "pawflow_relay_connect" in tool_names
+
+
+def test_stdio_bridge_uses_utf8_on_cp1252_pipes(monkeypatch, tmp_path):
+    """Windows pipes default to cp1252: a non-ASCII reply raised
+    UnicodeEncodeError in the call thread and the client hung forever."""
+    from pawflow_relay import mcp_stdio
+
+    received = []
+
+    class Bridge:
+        def rpc(self, message):
+            received.append(message["params"]["text"])
+            return 200, {"jsonrpc": "2.0", "id": message["id"],
+                         "result": {"text": "context \u2192 summary \u2014 \U0001f43e"}}
+
+    class Relay:
+        root = tmp_path
+
+        def connect(self):
+            return {"relay_id": "relay-1"}
+
+        def close(self):
+            return {"connected": False}
+
+    request = {"jsonrpc": "2.0", "id": 7, "method": "ping",
+               "params": {"text": "Demande du boulot \u00e0 root"}}
+    stdin = io.TextIOWrapper(io.BytesIO(
+        (json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8")),
+        encoding="cp1252")
+    stdout_bytes = io.BytesIO()
+    stdout = io.TextIOWrapper(stdout_bytes, encoding="cp1252")
+    monkeypatch.setenv("PAWFLOW_MCP_API_KEY", "pfmcp_test")
+    monkeypatch.setattr(mcp_stdio, "HTTPBridge", lambda *_args: Bridge())
+    monkeypatch.setattr(mcp_stdio, "RelayController", lambda *_args, **_kwargs: Relay())
+    monkeypatch.setattr(mcp_stdio.sys, "stdin", stdin)
+    monkeypatch.setattr(mcp_stdio.sys, "stdout", stdout)
+    monkeypatch.setattr(mcp_stdio.sys, "stderr", io.StringIO())
+
+    assert mcp_stdio.main(["--url", "https://pawflow.example/mcp/srv_test"]) == 0
+    stdout.flush()
+    assert received == ["Demande du boulot \u00e0 root"]
+    response = json.loads(stdout_bytes.getvalue().decode("utf-8"))
+    assert response["result"]["text"] == "context \u2192 summary \u2014 \U0001f43e"
 
 
 def test_relay_disconnect_keeps_cli_lease_until_bridge_closes(monkeypatch):

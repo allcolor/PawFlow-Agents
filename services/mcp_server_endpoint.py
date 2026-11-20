@@ -537,16 +537,40 @@ def _tools_for_server(server: Dict[str, Any]) -> list:
     return tools
 
 
-def _agent_context_rows(server: Dict[str, Any]) -> list:
+# A published agent gets the same bounded context as a normal agent after
+# compaction: the shared summary pyramid plus a raw recent tail (the tail size
+# matches tasks.ai.agent_compaction.COMPACT_TAIL_MESSAGES).  Never the full
+# agent context or transcript: an MCP agent never runs the agent loop, so its
+# context is never compacted, and a long multi-agent conversation reached
+# hundreds of MB per read (8.5 GB transcript -> OOM kill of the server).
+_CONTEXT_TAIL_MESSAGES = 250
+
+
+def _agent_context_page(server: Dict[str, Any]) -> Dict[str, Any]:
+    """Bounded recent tail of the transcript, personalized for the agent."""
     from core.conversation_store import ConversationStore
 
-    store = ConversationStore.instance()
-    rows = store.load_agent_context(
-        server["conversation_id"], server["agent_name"])
-    if rows is None:
-        rows = store.load_transcript_for_agent(
-            server["conversation_id"], server["agent_name"])
-    return list(rows or [])
+    page = ConversationStore.instance().load_transcript_page_for_agent(
+        server["conversation_id"], server["agent_name"],
+        limit=_CONTEXT_TAIL_MESSAGES, offset=0) or {}
+    rows = [row for row in (page.get("messages") or [])
+            if isinstance(row, dict) and not row.get("display_only")]
+    return {"messages": rows, "has_more": bool(page.get("has_more"))}
+
+
+def _summary_header(server: Dict[str, Any]) -> str:
+    """The conversation's summary pyramid, as normal agents receive it."""
+    try:
+        from core.bucket_store import BucketStore
+        from core.conversation_store import ConversationStore
+        conv_dir = ConversationStore.instance()._conv_dir(
+            server["conversation_id"])
+        return str(BucketStore.get(conv_dir).assemble_summary_header() or "")
+    except Exception:
+        logger.warning(
+            "Could not assemble published MCP summary header for %s",
+            str(server.get("conversation_id") or "")[:8], exc_info=True)
+        return ""
 
 
 def _context_cursor(rows: list) -> int:
@@ -554,7 +578,8 @@ def _context_cursor(rows: list) -> int:
                 if isinstance(row, dict)), default=0)
 
 
-def _initial_context_document(server: Dict[str, Any], rows: list) -> str:
+def _initial_context_document(server: Dict[str, Any], rows: list,
+                              summary: str = "") -> str:
     system_prompt = ""
     try:
         from core.agent_executor import resolve_agent_task
@@ -569,6 +594,17 @@ def _initial_context_document(server: Dict[str, Any], rows: list) -> str:
     body = ["# PawFlow Initial Context", ""]
     if system_prompt:
         body.extend(["## System Instructions", "", system_prompt, ""])
+    if summary.strip():
+        body.extend([
+            "## Conversation Summary",
+            "",
+            summary.strip(),
+            "",
+            "The recent messages below are the current state. Do NOT restart "
+            "or re-propose completed work. For more detail than this summary, "
+            "call read_history.",
+            "",
+        ])
     body.extend([
         "## Serialized Conversation Context",
         "",
@@ -606,9 +642,10 @@ def _initial_context_document(server: Dict[str, Any], rows: list) -> str:
 def _conversation_tool_result(server: Dict[str, Any], key: Dict[str, Any],
                               name: str, arguments: dict) -> str:
     if name == "get_initial_context":
-        rows = _agent_context_rows(server)
+        rows = _agent_context_page(server)["messages"]
         return json.dumps({
-            "document": _initial_context_document(server, rows),
+            "document": _initial_context_document(
+                server, rows, _summary_header(server)),
             "cursor": _context_cursor(rows),
         }, ensure_ascii=False)
     if name == "get_context_updates":
@@ -618,14 +655,20 @@ def _conversation_tool_result(server: Dict[str, Any], key: Dict[str, Any],
             return "Error: after_seq must be a non-negative integer"
         if after_seq < 0:
             return "Error: after_seq must be a non-negative integer"
-        rows = _agent_context_rows(server)
+        page = _agent_context_page(server)
+        rows = page["messages"]
         updates = [
             row for row in rows
-            if isinstance(row, dict) and int(row.get("seq") or 0) > after_seq
+            if int(row.get("seq") or 0) > after_seq
         ]
+        # The bounded tail did not reach back to the cursor: older updates
+        # were skipped.  The client should re-bootstrap (summary + tail).
+        truncated = bool(
+            page["has_more"] and updates and len(updates) == len(rows))
         return json.dumps({
             "messages": updates,
             "cursor": max(after_seq, _context_cursor(rows)),
+            "history_truncated": truncated,
         }, ensure_ascii=False)
 
     content = str(arguments.get("content") or "")
@@ -666,6 +709,10 @@ def _conversation_tool_result(server: Dict[str, Any], key: Dict[str, Any],
                     "role": role,
                     "content": content,
                     "msg_id": message_id,
+                    # The chat UI places a live row chronologically only by
+                    # a server timestamp; without it the row stayed at the
+                    # bottom under every later message.
+                    "ts": message["ts"],
                     "agent_name": server["agent_name"],
                     "source": source,
                 },
@@ -677,7 +724,7 @@ def _conversation_tool_result(server: Dict[str, Any], key: Dict[str, Any],
             complete_published_terminal_turn)
         complete_published_terminal_turn(
             server, reply_to_message_id, content)
-    rows = _agent_context_rows(server)
+    rows = _agent_context_page(server)["messages"]
     return json.dumps({
         "accepted": bool(inserted),
         "duplicate": not inserted,
@@ -1050,9 +1097,23 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
             else:
                 tool_call_id = _external_call_id(
                     server, session_id, mcp_request_id)
-                tool_args, expected_task_ids = (
-                    _prepare_external_async_arguments(
-                        tool_name, tool_args, tool_call_id))
+                # A client with a return channel (a registered terminal)
+                # operates the published agent itself: its delegate is the
+                # agent's own delegate. It returns the ack at once and the
+                # result reaches the agent like any delegate_reply, which the
+                # poller injects into the client's terminal. Holding the
+                # tools/call open would freeze the client for the whole run.
+                # Without a return channel nothing could ever wake the
+                # client, so the call stays open until the final result.
+                detached_async = (
+                    tool_name in _EXTERNAL_ASYNC_TOOLS
+                    and bool(server.get("terminal_ready")))
+                if detached_async:
+                    expected_task_ids = []
+                else:
+                    tool_args, expected_task_ids = (
+                        _prepare_external_async_arguments(
+                            tool_name, tool_args, tool_call_id))
                 from core import external_call_router
                 try:
                     from core.conv_agent_config import get_agent_config
@@ -1093,11 +1154,14 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
                                 tool_call_id, tool_name, tool_args,
                                 server["owner_user_id"], server["conversation_id"],
                                 server["agent_name"],
-                                external_call_id=tool_call_id,
+                                external_call_id=(
+                                    "" if detached_async else tool_call_id),
                                 late_result_callback=_late_result_callback,
                             )
                         else:
-                            with external_call_router.call_scope(tool_call_id):
+                            from contextlib import nullcontext
+                            with (nullcontext() if detached_async else
+                                  external_call_router.call_scope(tool_call_id)):
                                 execution = runtime._do_execute(
                                     tool_call_id, tool_name, tool_args,
                                     server["owner_user_id"],
@@ -1115,6 +1179,7 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
                                     tool_call_id) or "")
 
                         if (tool_name in _EXTERNAL_ASYNC_TOOLS
+                                and not detached_async
                                 and not (
                                     isinstance(result, str)
                                     and result.startswith("Error:"))):

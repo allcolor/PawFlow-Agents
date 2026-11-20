@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.333] — 2026-11-20
+
 ### Changed
 
 - Published MCP: a client with a return channel (a registered terminal)

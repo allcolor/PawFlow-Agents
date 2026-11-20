@@ -95,6 +95,24 @@ class _CsTranscriptMixin:
                 return None
         return self._read(cid, self._scan_transcript)
 
+    def find_message(self, cid: str, msg_id: str,
+                     user_id: str = "") -> Optional[Dict]:
+        """Return the one transcript message with ``msg_id``, or None.
+
+        Bounded: it goes through the msg_id sidecar index instead of
+        materialising the transcript. Completing a published-MCP terminal
+        turn used load() to find its request row and held send_agent_message
+        for 75 s on an 8.5 GB conversation (2026-11-20).
+        """
+        msg_id = str(msg_id or "").strip()
+        if not msg_id or not self.exists(cid):
+            return None
+        if user_id:
+            cache = self._load_cache(cid)
+            if cache["user_id"] and cache["user_id"] != user_id:
+                return None
+        return self._transcript_log(cid).find_by_msg_ids({msg_id}).get(msg_id)
+
     def load_delegate_state(self, cid: str, caller: str, user_id: str = "",
                             finished_limit: int = 100,
                             response_limit: int = 200_000) -> Dict[str, Any]:

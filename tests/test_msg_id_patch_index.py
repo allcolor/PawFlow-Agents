@@ -102,6 +102,49 @@ class PatchReadsOnlyTheTailTest(unittest.TestCase):
         self.assertLessEqual(len(reads), 3, f"read {reads}")
         self.assertIn("000005.jsonl", reads)
 
+    def _segment_bodies_read(self, call):
+        """Run ``call`` and list every segment body it opened."""
+        reads = []
+        real_read_bytes = Path.read_bytes
+        real_mentioning = SegmentedJsonl._segment_bytes_mentioning
+
+        def read_bytes(path):
+            if path.suffix == ".jsonl":
+                reads.append(path.name)
+            return real_read_bytes(path)
+
+        def mentioning(path, needles):
+            reads.append(path.name)
+            return real_mentioning(path, needles)
+        with mock_patch.object(Path, "read_bytes", read_bytes), \
+                mock_patch.object(SegmentedJsonl, "_segment_bytes_mentioning",
+                                  side_effect=mentioning):
+            result = call()
+        return result, reads
+
+    def test_find_by_msg_ids_of_a_missing_id_reads_only_the_tail(self):
+        """2026-11-20: the idempotent append of every MCP send_user_message
+        looked up a new -- so absent -- id by reading all 1,105 segments
+        (8.5 GB) under the conversation lock, holding it 20 s."""
+        found, reads = self._segment_bodies_read(
+            lambda: self.log.find_by_msg_ids({"not-here-at-all"}))
+
+        self.assertEqual(found, {})
+        self.assertEqual(sorted(reads), ["000038.jsonl", "000039.jsonl"])
+
+    def test_find_by_msg_ids_of_an_old_id_opens_only_its_segment(self):
+        found, reads = self._segment_bodies_read(
+            lambda: self.log.find_by_msg_ids({"id005"}))
+
+        self.assertEqual(found["id005"]["content"], "row 50")
+        self.assertEqual(sorted(reads),
+                         ["000005.jsonl", "000038.jsonl", "000039.jsonl"])
+
+    def test_find_by_msg_ids_without_sidecars_is_still_correct(self):
+        shutil.rmtree(self.log.segment_dir / "msg_ids", ignore_errors=True)
+        found = self.log.find_by_msg_ids({"id005", "id039", "absent"})
+        self.assertEqual(sorted(found), ["id005", "id039"])
+
     def test_without_sidecars_the_answer_is_still_correct(self):
         """Slower, never wrong: a missing sidecar must not hide a row."""
         shutil.rmtree(self.log.segment_dir / "msg_ids", ignore_errors=True)

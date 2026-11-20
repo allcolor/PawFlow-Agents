@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `find_by_msg_ids` no longer reads every segment for an id it does not
+  find: beyond the two newest segments it opens only those whose msg_id
+  sidecar lists the id. The idempotent append of each published-MCP
+  `send_user_message` read all 8.5 GB of a long conversation under its lock
+  (20 s, every writer frozen).
+- Completing a published-MCP terminal turn looks its request up with the new
+  bounded `ConversationStore.find_message` instead of loading the whole
+  transcript, which held `send_agent_message` for 75 s on the same
+  conversation.
+
 ## [1.0.0-beta.332] — 2026-11-17
 
 ### Added

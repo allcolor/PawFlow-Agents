@@ -733,12 +733,22 @@ class _SegmentedJsonlIOMixin:
             return found
         self._flush_own_append_handles()
         codec = self.codec
-        for path in reversed(self._segment_paths()):
+        newest_first = list(reversed(self._segment_paths()))
+        for index, path in enumerate(newest_first):
             remaining = wanted - set(found)
             if not remaining:
                 break
             needles = [needle for mid in remaining
                        for needle in self._msg_id_needles(mid)]
+            # The tail is read directly. An older segment is opened only when
+            # its msg_id sidecar lists one of the ids: an absent id -- the
+            # normal case for an idempotent append -- read all 8.5 GB of a
+            # 1,105-segment log under the conversation lock, holding it 20 s
+            # and freezing every writer of the conversation (2026-11-20).
+            if (index >= _MSG_ID_RECENT_SEGMENTS
+                    and not self._sidecar_mentions_msg_id(
+                        path, tuple(needles))):
+                continue
             try:
                 data = path.read_bytes()
             except FileNotFoundError:

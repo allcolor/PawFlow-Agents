@@ -113,6 +113,27 @@ class HotPaths(unittest.TestCase):
         self.assertFalse(self.store.append_message_if_absent(
             CONV, self._user("fresh-1"), user_id="owner"))
 
+    # -- find_message ----------------------------------------------------------
+
+    def test_find_message_returns_one_row_without_a_full_load(self):
+        with patch.object(ConversationStore, "load",
+                          side_effect=AssertionError("full load")), \
+                _Decoded() as decoded:
+            row = self.store.find_message(CONV, "m04990", user_id="owner")
+        self.assertEqual(row["content"], "message number 4990")
+        self.assertBounded(decoded.count, "find_message")
+
+    def test_find_message_finds_an_old_row(self):
+        row = self.store.find_message(CONV, "m00004", user_id="owner")
+        self.assertEqual(row["content"], "message number 4")
+
+    def test_find_message_refuses_another_owner_and_missing_ids(self):
+        self.assertIsNone(
+            self.store.find_message(CONV, "m04990", user_id="intruder"))
+        self.assertIsNone(self.store.find_message(CONV, "absent"))
+        self.assertIsNone(self.store.find_message(CONV, ""))
+        self.assertIsNone(self.store.find_message("no-such-conv", "m00004"))
+
     # -- read_history ----------------------------------------------------------
 
     def test_around_a_msg_id_parses_one_segment(self):

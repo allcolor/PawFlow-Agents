@@ -416,15 +416,16 @@ def test_hook_correlates_injected_prompt_with_final_response(
 def test_external_terminal_completion_delivers_private_delegate_result(
         monkeypatch):
     class Store:
-        def load(self, conversation_id, user_id=""):
-            assert (conversation_id, user_id) == ("conv-1", "alice")
-            return [{
+        def find_message(self, conversation_id, msg_id, user_id=""):
+            assert (conversation_id, msg_id, user_id) == (
+                "conv-1", "request-1", "alice")
+            return {
                 "role": "user", "msg_id": "request-1",
                 "source": {
                     "type": "agent_delegate", "from": "Caller",
                     "to": "External", "task_id": "task-1",
                 },
-            }]
+            }
 
     bus = MagicMock()
     delivered = MagicMock()
@@ -457,15 +458,15 @@ def test_external_terminal_completion_delivers_private_delegate_result(
 def test_external_terminal_completion_returns_to_published_mcp_caller(
         monkeypatch):
     class Store:
-        def load(self, *_args, **_kwargs):
-            return [{
+        def find_message(self, *_args, **_kwargs):
+            return {
                 "role": "user", "msg_id": "request-2",
                 "source": {
                     "type": "agent_delegate",
                     "from": "published_mcp:call-1", "to": "External",
                     "task_id": "task-2",
                 },
-            }]
+            }
 
     completed = MagicMock(return_value=True)
     monkeypatch.setattr(

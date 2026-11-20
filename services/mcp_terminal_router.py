@@ -83,12 +83,8 @@ def complete_published_terminal_turn(
     agent_name = str(server.get("agent_name") or "")
     try:
         from core.conversation_store import ConversationStore
-        rows = ConversationStore.instance().load(
-            conversation_id, user_id=owner_user_id) or []
-        request = next((
-            row for row in reversed(rows)
-            if str(row.get("msg_id") or "") == reply_to_message_id
-        ), None)
+        request = ConversationStore.instance().find_message(
+            conversation_id, reply_to_message_id, user_id=owner_user_id)
         if not isinstance(request, dict):
             logger.warning(
                 "External MCP response correlation message was not found: %s",

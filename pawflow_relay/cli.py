@@ -88,6 +88,20 @@ def _ensure_home_writable() -> None:
             f"PulseAudio may fail.\n")
 
 
+def gateway_url_from_ws(ws_url: str) -> str:
+    """Derive the HTTP(S) origin that serves /_gateway from a relay WS URL.
+
+    Only an explicit port is kept: acquire_gateway_cookie defaults to 443
+    for https and 80 for http.  Forcing :80 sent TLS to the plain-HTTP port
+    for wss://host URLs (ssl.SSLError WRONG_VERSION_NUMBER).
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(ws_url)
+    scheme = "https" if parsed.scheme in ("wss", "https") else "http"
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{scheme}://{parsed.hostname}{port}"
+
+
 def _argparse_auto_register(args, gateway_cookie):
     """argparse.Namespace bridge into pawflow_relay.register.auto_register."""
     ws_url, ws_token, session_token, resolved_id, login_url = auto_register(
@@ -240,10 +254,7 @@ def worker_main():
         if login_url:
             _gw_url = login_url
         else:
-            from urllib.parse import urlparse as _gw_parse
-            _gw_parsed = _gw_parse(ws_url)
-            _gw_scheme = "https" if _gw_parsed.scheme in ("wss", "https") else "http"
-            _gw_url = f"{_gw_scheme}://{_gw_parsed.hostname}:{_gw_parsed.port or 80}"
+            _gw_url = gateway_url_from_ws(ws_url)
         sys.stderr.write(
             f"[FSRelay] Acquiring gateway cookie at {_gw_url!r} "
             f"(login_url={login_url!r}, ws_url={ws_url!r})\n")

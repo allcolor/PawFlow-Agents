@@ -17,6 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bounded `ConversationStore.find_message` instead of loading the whole
   transcript, which held `send_agent_message` for 75 s on the same
   conversation.
+- The relay derives its gateway origin from a `wss://host` URL without
+  forcing port 80, which sent TLS to the plain-HTTP port
+  (`SSL: WRONG_VERSION_NUMBER`); an explicit port is still kept.
 
 ## [1.0.0-beta.332] — 2026-11-17
 

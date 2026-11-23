@@ -404,6 +404,16 @@ launchers register an authenticated loopback console injector. Disconnect,
 lease release, expiry, publication reconfiguration, and client replacement all
 clear terminal routing.
 
+In detached mode the client is started by the user and a separate
+`run-client.py --attach-pid PID` (Windows) or `--attach-tmux TARGET` (POSIX)
+process provides the injector. It publishes the registration in
+`SESSION/detached-terminal.json`; the bridge (`--terminal-file`, set by the
+generated launcher) registers it under its own lease within 5 seconds,
+re-registers it when status reports `terminal_ready: false`, skips it while
+another client holds the lease, and clears it when the file is removed. A
+terminal passed by the launch command takes precedence over the file. The
+server API is unchanged: both modes use the same `terminal` registration.
+
 Webchat routing reuses the already-connected automatic relay and sends the
 internal `mcp_terminal_inject` action only after the canonical user row has been
 authorized, hooked, and persisted. This internal action is independent of the

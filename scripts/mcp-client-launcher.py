@@ -63,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
         value = os.environ.get(env_name, "")
         if value:
             bridge_args.extend([option, value])
+    if not os.environ.get("PAWFLOW_MCP_TERMINAL_SESSION_ID"):
+        # Detached mode: the client was started by the user; a separate
+        # ``run-client.py --attach-*`` publishes the return channel here.
+        bridge_args.extend([
+            "--terminal-file",
+            str(profile_path.parent / "detached-terminal.json")])
     return bridge_main(bridge_args)
 
 

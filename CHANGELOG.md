@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Published MCP detached mode, in addition to the session launcher: start the
+  client (for example Agy) yourself and attach only the return channel with
+  `run-client.py --session SESSION/session.json --attach-pid PID` (Windows,
+  injection through the client's console, also in Windows Terminal) or
+  `--attach-tmux TARGET` (POSIX). The bridge picks up
+  `SESSION/detached-terminal.json` within 5 s, re-registers it after a server
+  restart, and clears it when the client or the attach process exits.
+
 ## [1.0.0-beta.333] — 2026-11-20
 
 ### Changed

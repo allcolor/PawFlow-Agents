@@ -210,7 +210,8 @@ class RelayController:
                  terminal_session_id: str = "", terminal_kind: str = "",
                  terminal_target: str = "",
                  terminal_secret: Optional[str] = None,
-                 terminal_state_path: str = "") -> None:
+                 terminal_state_path: str = "",
+                 terminal_file: str = "") -> None:
         self.bridge = bridge
         self.root = root.resolve()
         if not self.root.is_dir():
@@ -225,11 +226,16 @@ class RelayController:
         self.terminal_target = str(terminal_target or "")
         self.terminal_secret = str(terminal_secret or "")
         self.terminal_state_path = str(terminal_state_path or "")
+        # Detached mode: a separately started return channel publishes its
+        # terminal here. Ignored when the launcher passed a terminal directly.
+        self.terminal_file = str(terminal_file or "")
+        self._detached_key: Optional[tuple] = None
         self._process: Optional[subprocess.Popen] = None
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._relay_id = ""
+        self.heartbeat_ticks = 6
 
     def _alive(self) -> bool:
         return self._process is not None and self._process.poll() is None
@@ -301,6 +307,11 @@ class RelayController:
                         "release_client": True,
                     })
                     raise
+            self._detached_key = None
+            try:
+                self.sync_detached_terminal()
+            except Exception as exc:
+                _log(f"detached terminal registration failed: {exc}")
             self._ensure_heartbeat()
             return {
                 "connected": True,
@@ -319,17 +330,86 @@ class RelayController:
         self._stop.clear()
 
         def _heartbeat() -> None:
-            while not self._stop.wait(30):
+            # Ticks of 5 s: the detached terminal file is checked every tick,
+            # the server status every ``heartbeat_ticks`` ticks (30 s).
+            tick = 0
+            while not self._stop.wait(5):
+                tick += 1
+                if tick % self.heartbeat_ticks:
+                    try:
+                        self.sync_detached_terminal()
+                    except Exception as exc:
+                        _log(f"detached terminal sync failed: {exc}")
+                    continue
                 try:
                     remote = self.bridge.control("status", {"client_id": self.client_id})
                 except Exception as exc:
                     _log(f"relay heartbeat failed: {exc}")
                     continue
                 self._recover(remote)
+                try:
+                    self.sync_detached_terminal(remote)
+                except Exception as exc:
+                    _log(f"detached terminal sync failed: {exc}")
 
         self._heartbeat_thread = threading.Thread(
             target=_heartbeat, daemon=True, name="pawflow-mcp-relay-heartbeat")
         self._heartbeat_thread.start()
+
+    def _read_detached_record(self) -> Optional[Dict[str, str]]:
+        try:
+            value = json.loads(Path(self.terminal_file).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(value, dict):
+            return None
+        record = {key: str(value.get(key) or "") for key in (
+            "session_id", "kind", "target", "secret", "state_path")}
+        if (record["kind"] not in {"tmux", "winpty"}
+                or not record["session_id"] or not record["target"]):
+            return None
+        return record
+
+    def sync_detached_terminal(
+            self, remote: Optional[Dict[str, Any]] = None) -> None:
+        """Register, refresh or clear the detached return channel.
+
+        Registers when the file appears or changes, re-registers when the
+        server reports no terminal (for example after a server restart), and
+        clears the registration when the attach process removed the file.
+        """
+        if self.terminal_session_id or not self.terminal_file:
+            return
+        if remote is not None and str(remote.get("client_id") or "") not in (
+                "", self.client_id):
+            return
+        with self._lock:
+            if not self._alive():
+                return
+            record = self._read_detached_record()
+            if record is None:
+                if self._detached_key is not None:
+                    self._detached_key = None
+                    self.bridge.control("terminal", {
+                        "client_id": self.client_id, "operation": "clear"})
+                    _log("detached terminal cleared")
+                return
+            key = tuple(record[name] for name in sorted(record))
+            lost = remote is not None and not remote.get("terminal_ready")
+            if key == self._detached_key and not lost:
+                return
+            result = self.bridge.control("terminal", {
+                "client_id": self.client_id,
+                "operation": "register",
+                "session_id": record["session_id"],
+                "kind": record["kind"],
+                "target": record["target"],
+                "secret": record["secret"],
+                "state_path": record["state_path"],
+            })
+            if result.get("terminal_ready"):
+                self._detached_key = key
+                _log(f"detached terminal registered ({record['kind']})")
 
     def disconnect(self, release_client: bool = False) -> Dict[str, Any]:
         with self._lock:
@@ -436,6 +516,10 @@ def build_parser() -> argparse.ArgumentParser:
         "PAWFLOW_MCP_TERMINAL_SECRET", ""))
     parser.add_argument("--terminal-state-path", default=os.environ.get(
         "PAWFLOW_MCP_TERMINAL_STATE_PATH", ""))
+    parser.add_argument(
+        "--terminal-file", default=os.environ.get("PAWFLOW_MCP_TERMINAL_FILE", ""),
+        help="Detached mode: JSON file written by a separately started return "
+             "channel (run-client.py --attach-pid/--attach-tmux)")
     return parser
 
 
@@ -457,6 +541,7 @@ def main(argv=None) -> int:
         terminal_target=args.terminal_target,
         terminal_secret=args.terminal_secret,
         terminal_state_path=args.terminal_state_path,
+        terminal_file=args.terminal_file,
     )
     try:
         state = relay.connect()

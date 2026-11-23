@@ -196,6 +196,53 @@ into the TUI. Immediately before `Enter`, the transport writes the prompt's
 `message_id` and SHA-256 marker. The prompt hook consumes that marker and does
 not call `send_user_message` a second time.
 
+### Detached mode: start the client yourself
+
+The launch command above is optional. Detached mode is an additional way to
+run the same session in which the user starts the client binary directly and a
+separate process provides only the return channel:
+
+1. Start the client yourself with the session's isolated configuration, for
+   example Agy with `HOME` and `USERPROFILE` set to `SESSION/agy-home`. The
+   PawFlow MCP server loads normally; PawFlow never spawns or wraps the client.
+2. In another terminal, attach the return channel to that running client:
+
+   ```sh
+   # Windows: the process id of the running client (agy.exe)
+   python INSTALL/run-client.py --session SESSION/session.json --attach-pid 12345
+   # Linux/macOS: the tmux pane where the client runs
+   python INSTALL/run-client.py --session SESSION/session.json --attach-tmux work:0.0
+   ```
+
+   On Windows, for example in PowerShell:
+
+   ```powershell
+   # terminal 1: start Agy yourself in the project directory
+   $env:HOME = "$S\agy-home"; $env:USERPROFILE = "$S\agy-home"; agy
+   # terminal 2: attach the return channel (any process of that console works)
+   python "$I\run-client.py" --session "$S\session.json" --attach-pid (Get-Process agy).Id
+   ```
+
+   where `$S` is the session directory and `$I` the install directory printed
+   by the installer. If several Agy processes run, pick the PID of the one in
+   the target console.
+
+The attach process writes `SESSION/detached-terminal.json` (owner-only). The
+bridge, started by the client, checks that file every 5 seconds, registers the
+terminal under its own client lease, re-registers it when the server reports no
+terminal (for example after a server restart), and clears the registration
+when the file disappears. On Windows the attach process injects each prompt
+through a short-lived helper that attaches to the client's console
+(`AttachConsole` + `WriteConsoleInputW`), so it works in a classic console and
+in Windows Terminal without stealing focus. The record is removed when the
+client exits or the attach process is stopped with `Ctrl+C`.
+
+Without an attach process the client still works: prompts typed in its
+terminal reach the conversation, but PawFlow cannot push webchat prompts,
+delegations or wake-ups into it, and `delegate` waits for its result inside the
+calling tool. When the launch command already registered a terminal, the
+detached file is ignored.
+
 An `external_mcp` agent never falls back to a PawFlow LLM. If its publication is
 active but its terminal cannot be reached, webchat submission returns
 `external_mcp_terminal_unavailable` with HTTP 503; the canonical user message
@@ -285,7 +332,8 @@ Close every active instance first so the publication lease can be released.
 - POSIX launcher reports that `tmux` is missing: install `tmux`, then rerun the
   same session-bound launch command.
 - Webchat returns `external_mcp_terminal_unavailable`: reattach or restart the
-  generated client command and confirm `pawflow_relay_status` reports both the
+  generated client command (or, in detached mode, rerun the `--attach-pid` /
+  `--attach-tmux` command) and confirm `pawflow_relay_status` reports both the
   relay and terminal as ready.
 - A generic client also loads another PawFlow publication: use a dedicated
   profile or per-invocation config rather than merging `mcp.json` globally.

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.335] — 2026-11-24
+
 ### Fixed
 
 - A text file sent as an image no longer blocks an agent. `see` checks the

@@ -19,6 +19,10 @@
 #   PAWFLOW_SERVER_RELAY_IMAGE Full server relay image used by PawFlow (default: pawflow-relay-dev:latest)
 #   PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE Minimal server relay image used by PawFlow (default: pawflow-relay-minimal:latest)
 #   PAWFLOW_RECREATE_CONTAINER Recreate an existing PawFlow container in place (default: 1)
+#   PAWFLOW_MEMORY      Container memory limit, swap included (e.g. 24g). Unset:
+#                       keep the limit of the container being replaced, else none.
+#                       Above it the kernel kills the server (OOM) and the
+#                       unless-stopped restart policy starts it again.
 #
 # The first PawFlow bootstrap gateway key is RoyBatty. The installer wizard
 # must force the user to replace it before finalization.
@@ -42,6 +46,7 @@ SOURCE_DIR="$(printenv PAWFLOW_SOURCE_DIR || true)"
 SERVER_RELAY_IMAGE="$(printenv PAWFLOW_SERVER_RELAY_IMAGE || true)"
 SERVER_RELAY_MINIMAL_IMAGE="$(printenv PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE || true)"
 RECREATE_CONTAINER="$(printenv PAWFLOW_RECREATE_CONTAINER || true)"
+MEMORY_LIMIT="$(printenv PAWFLOW_MEMORY || true)"
 STARTUP_HEALTH_RETRIES="$(printenv PAWFLOW_STARTUP_HEALTH_RETRIES || true)"
 STARTUP_HEALTH_INTERVAL="$(printenv PAWFLOW_STARTUP_HEALTH_INTERVAL || true)"
 if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
@@ -86,6 +91,15 @@ if [[ "$NETWORK_MODE" == "host" ]]; then
   DOCKER_ARGS+=("--network" "host")
 else
   DOCKER_ARGS+=("-p" "$PUBLISH_HOST:$PORT:$PORT")
+fi
+if [[ -z "$MEMORY_LIMIT" ]]; then
+  # An update recreates the container: keep the limit it was given (bytes).
+  PREVIOUS_MEMORY="$(docker inspect -f '{{.HostConfig.Memory}}' "$CONTAINER" 2>/dev/null || true)"
+  if [[ "$PREVIOUS_MEMORY" =~ ^[1-9][0-9]*$ ]]; then MEMORY_LIMIT="${PREVIOUS_MEMORY}b"; fi
+fi
+if [[ -n "$MEMORY_LIMIT" ]]; then
+  echo "Server memory limit: $MEMORY_LIMIT (OOM kill, then automatic restart)"
+  DOCKER_ARGS+=("--memory" "$MEMORY_LIMIT" "--memory-swap" "$MEMORY_LIMIT")
 fi
 
 remove_managed_relay_containers() {

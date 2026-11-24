@@ -200,6 +200,14 @@ daemon access, and port availability, then explains how to install or enable the
 missing pieces. Use the PowerShell installer from native Windows, or the Bash
 installer from inside the WSL distro.
 
+The server container always runs with `--restart unless-stopped`. Set a memory
+limit with `--memory 24g` (Bash), `-Memory 24g` (PowerShell) or
+`PAWFLOW_MEMORY=24g`; swap is included in the limit. Above it the kernel kills
+the server process (OOM) and Docker starts it again, instead of letting one
+runaway allocation take the whole host down. Without an explicit value, an
+update or reinstall keeps the limit of the container it replaces; a first
+install has none.
+
 For updates, first check GitHub releases, optionally refresh the installer
 scripts, then run the requested version. The update recreates the server
 container on the new image while preserving `PAWFLOW_HOME` data and removes older

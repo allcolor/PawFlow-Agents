@@ -724,6 +724,7 @@ Messages are loaded from the conversation store with these strategies:
 
 - **Shared context**: The default -- all messages from the conversation, filtered for the active agent.
 - **Diverged context**: Per-agent context that has been manually edited or diverged from shared history.
+- **New agent context seed**: The first message routed to an agent that has no private context yet (a new agent, a flash agent, a published MCP agent) first seeds that context with the compacted shared context (`load_compacted_shared_for_agent`): the shared summary pyramid as the leading context pair, then only the `shared.jsonl` rows after the pyramid's `last_seq`, read from the end of the file and personalized for the agent. The raw shared log is never copied whole.
 - **Preloaded messages**: For task sub-conversations that have their own isolated message store.
 - **Claude Code session resume**: If the CC provider has an active session, context loading is skipped (CC manages its own context).
 

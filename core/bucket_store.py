@@ -101,6 +101,17 @@ class BucketStore:
     def get(cls, conv_dir: Path) -> "BucketStore":
         return cls(conv_dir)
 
+    @classmethod
+    def existing(cls, conv_dir: Path) -> Optional["BucketStore"]:
+        """The conversation's pyramid for reading, or None when it has none.
+
+        Unlike ``get``, never creates the summaries directory: a reader must
+        not change the conversation's files.
+        """
+        if not (conv_dir / "summaries" / "_shared" / "meta.json").exists():
+            return None
+        return cls(conv_dir)
+
     def _empty_meta(self) -> Dict:
         return {"version": 2, "last_seq": 0, "last_ts": 0.0,
                 "objects": [], "_next_b_num": 1, "_next_sb_num": 1}

@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Server memory limit at start: `install-pawflow.sh --memory 24g`,
+  `install-pawflow.ps1 -Memory 24g` or `PAWFLOW_MEMORY` (swap included).
+  Above it the kernel kills the server and the `unless-stopped` policy
+  restarts it. An update or reinstall without a value keeps the limit of the
+  container it replaces, so a limit set once is never lost on update.
+
+### Fixed
+
+- A new agent context (a new agent, a flash agent, a published MCP agent)
+  is seeded with the compacted shared context, like every agent: the
+  summary pyramid plus the shared rows it does not cover yet, read from the
+  end of the shared log. Before, the raw shared log was copied whole: in a
+  long conversation every flash agent and published MCP agent got ~250k
+  rows (282 MB), and a few seeds in a row pushed the server past its 24 GB
+  memory limit (OOM kill).
+- The MCP stdio bridge never answers a JSON-RPC notification. A failed
+  notification (for example after a server restart lost the MCP session)
+  was answered with `"id": null`; Agy then closed the MCP connection and
+  every later call failed with `invalid request` until `/mcp` reconnected.
+
 ## [1.0.0-beta.335] — 2026-11-24
 
 ### Fixed

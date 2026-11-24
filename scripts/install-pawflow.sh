@@ -60,6 +60,7 @@ if [[ -z "$START_TARGET" ]]; then START_TARGET="container"; fi
 if [[ -z "$CLI_LLM_IMAGE" ]]; then CLI_LLM_IMAGE="pawflow-claude-code:latest"; fi
 if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
 if [[ -z "$CLEAN_OLD_IMAGES" ]]; then CLEAN_OLD_IMAGES="1"; fi
+MEMORY_LIMIT="$(printenv PAWFLOW_MEMORY || true)"
 
 RUN_DOCTOR=1
 START_SERVER=1
@@ -98,6 +99,7 @@ while [[ $# -gt 0 ]]; do
     --check-updates) CHECK_UPDATES=1; shift ;;
     --self-update) SELF_UPDATE=1; shift ;;
     --keep-old-images) CLEAN_OLD_IMAGES=0; shift ;;
+    --memory) MEMORY_LIMIT="$2"; shift 2 ;;
     --help|-h)
       sed -n '1,17p' "$0"
       cat <<'HELP'
@@ -146,6 +148,9 @@ Options:
   --check-updates    Query GitHub releases, show the installed server image tag, and print the recommended update command.
   --self-update      Replace installer scripts from the latest release zip, then exit. Rerun the installer afterward.
   --keep-old-images  Do not remove older PawFlow server/relay image tags after a successful container start.
+  --memory LIMIT     Server container memory limit, swap included (e.g. 24g). Above it the kernel
+                     kills the server and Docker restarts it (unless-stopped). Default: keep the
+                     limit of the container being replaced; none on a first install.
 
 Default server/runtime mode is auto: try prebuilt images first, then build from
 source if an image is unavailable. The Claude/Codex/Gemini/Antigravity CLI image
@@ -1099,7 +1104,7 @@ if [[ "$START_TARGET" == "native" ]]; then
   trim_build_cache
   run_native_server
 elif [[ "$START_TARGET" == "container" ]]; then
-  PAWFLOW_IMAGE="$IMAGE" PAWFLOW_CONTAINER="$CONTAINER" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_NETWORK_MODE="$NETWORK_MODE" PAWFLOW_HOME="$PAWFLOW_HOME" PAWFLOW_SERVER_RELAY_IMAGE="$RELAY_DEV_IMAGE" PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE" bash "$REPO_DIR/scripts/run-pawflow-docker.sh"
+  PAWFLOW_IMAGE="$IMAGE" PAWFLOW_CONTAINER="$CONTAINER" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_NETWORK_MODE="$NETWORK_MODE" PAWFLOW_HOME="$PAWFLOW_HOME" PAWFLOW_SERVER_RELAY_IMAGE="$RELAY_DEV_IMAGE" PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE" PAWFLOW_MEMORY="$MEMORY_LIMIT" bash "$REPO_DIR/scripts/run-pawflow-docker.sh"
   STOPPED_SERVER=""
   cleanup_old_pawflow_images
   cleanup_retagged_pawflow_images

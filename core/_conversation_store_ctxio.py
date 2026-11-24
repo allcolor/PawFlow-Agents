@@ -125,6 +125,13 @@ class _CsCtxIoMixin:
         context containing only that message. If no private context exists yet,
         copy the current shared context personalized for this agent, then let
         the caller append the new row.
+
+        The copy is the compacted shared context, exactly what every agent
+        starts from: the summary pyramid plus the shared rows it does not
+        cover yet. Copying the raw shared file gave every flash agent and
+        published MCP agent of a long conversation ~250k rows (a 282 MB
+        context each), and three such seeds in a few minutes pushed the
+        server past 24 GB (OOM kill).
         """
         agent = self._canon_agent(agent) if agent else ""
         if not agent:
@@ -138,7 +145,7 @@ class _CsCtxIoMixin:
             with self._cache_lock:
                 self._agent_ctx_exists_cache.add(key)
             return 0
-        seed = self.load_shared_for_agent(cid, agent) or []
+        seed = self.load_compacted_shared_for_agent(cid, agent) or []
         if not seed:
             return 0
         self._write_ctx_file(self._agent_ctx_path(cid, agent), seed, cid=cid)

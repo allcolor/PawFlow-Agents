@@ -318,6 +318,12 @@ exited or when PawFlow reports the lease released, and leaves a lease held by
 another client alone. The bridge runs on the CLI's machine: a server hotpatch
 does not update it.
 
+A JSON-RPC notification (a message without `id`) never gets a response from
+the bridge, even when forwarding it fails: the failure is logged on stderr.
+Answering a failed notification with `"id": null` made Agy close the MCP
+connection (`invalid request`) and refuse every later call until `/mcp`
+reconnected it.
+
 A message posted with `send_agent_message` is broadcast to the chat UI with
 its stamped `ts`, which the UI needs to place the live row chronologically.
 

@@ -485,6 +485,24 @@ class RelayController:
             _log(f"relay reconnect failed: {exc}")
 
 
+def _http_error_response(request_id: Any, method: str, status: int,
+                         payload: Any) -> Optional[Dict[str, Any]]:
+    """The JSON-RPC error for a failed forward, or None for a notification.
+
+    A notification has no id and must never get a response. Answering one
+    with ``"id": null`` (for example after a server restart lost the MCP
+    session) made Agy's MCP client treat the stream as invalid, close the
+    connection, and refuse every later call until /mcp reconnected it.
+    """
+    message = (payload.get("error") if isinstance(payload, dict)
+               else f"PawFlow returned HTTP {status}")
+    if request_id is None:
+        _log(f"notification {method or '?'} failed: HTTP {status} {message}")
+        return None
+    return {"jsonrpc": "2.0", "id": request_id,
+            "error": {"code": -32000, "message": str(message)}}
+
+
 def _tool_result(value: Any, is_error: bool = False) -> Dict[str, Any]:
     return {
         "content": [{"type": "text", "text": json.dumps(
@@ -599,12 +617,7 @@ def main(argv=None) -> int:
 
             status, payload = bridge.rpc(message)
             if status >= 400:
-                return {
-                    "jsonrpc": "2.0", "id": request_id,
-                    "error": {"code": -32000, "message": (
-                        payload.get("error") if isinstance(payload, dict)
-                        else f"PawFlow returned HTTP {status}")},
-                }
+                return _http_error_response(request_id, method, status, payload)
             if method == "tools/list" and isinstance(payload, dict):
                 tools = (((payload.get("result") or {}).get("tools")) or [])
                 payload["result"]["tools"] = tools + _LOCAL_TOOLS

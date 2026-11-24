@@ -95,6 +95,22 @@ def test_a_server_down_for_good_still_fails(monkeypatch):
     raise AssertionError("a refused connection must surface once retries end")
 
 
+def test_a_failed_notification_gets_no_response():
+    # A response with "id": null made Agy close the MCP connection.
+    assert mcp_stdio._http_error_response(
+        None, "notifications/cancelled", 404,
+        {"error": "MCP session not found"}) is None
+
+
+def test_a_failed_request_gets_an_error_with_its_id():
+    response = mcp_stdio._http_error_response(
+        7, "tools/call", 404, {"error": "MCP session not found"})
+    assert response == {"jsonrpc": "2.0", "id": 7, "error": {
+        "code": -32000, "message": "MCP session not found"}}
+    assert mcp_stdio._http_error_response(
+        8, "tools/call", 502, None)["error"]["message"] == "PawFlow returned HTTP 502"
+
+
 class _Proc:
     def __init__(self, alive):
         self.alive = alive

@@ -1,6 +1,7 @@
 """ConversationStore agent-context load/save/personalize."""
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from core.segmented_jsonl import SegmentedJsonl
@@ -430,6 +431,62 @@ class _CsAgentCtxMixin:
         if not raw:
             return None
         return [self._personalize_from_shared(m, agent_name) for m in raw]
+
+    def load_compacted_shared_for_agent(self, cid: str, agent_name: str
+                                        ) -> Optional[List[Dict]]:
+        """Shared context compacted the way every agent receives it.
+
+        The shared summary pyramid stands for every row up to its
+        ``last_seq``: it becomes the leading context pair (summary, then
+        acknowledgement), as the compactor writes it. Only the shared rows
+        after it are read, from the end of the log, and personalized for the
+        agent, so the cost follows the uncompacted tail, not the whole
+        conversation. Without any bucket the shared context is returned whole.
+        """
+        from core.bucket_store import BucketStore
+        from core.llm_client import stamp_message
+
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
+        log = self._content_seg(cid, self._shared_ctx_path(cid))
+        if not log.exists():
+            return None
+        buckets = BucketStore.existing(self._conv_dir(cid))
+        covered = buckets.last_seq if buckets and buckets.has_any() else 0
+        tail: List[Dict] = []
+        lock = self._get_conv_lock(cid)
+        with lock:
+            for row in log.iter_rows_reverse():
+                if covered and int(row.get("seq") or 0) <= covered:
+                    break
+                tail.append(row)
+        tail.reverse()
+        rows = [self._personalize_from_shared(m, agent_name) for m in tail]
+        header = buckets.assemble_summary_header() if covered else ""
+        if header:
+            first_ts = min((float(m.get("ts") or 0) for m in rows
+                            if m.get("ts")), default=time.time())
+            first_seq = min((int(m.get("seq") or 0) for m in rows
+                             if m.get("seq")), default=covered + 2)
+            rows = [
+                stamp_message({
+                    "role": "user",
+                    "content": header + (
+                        "\nThe recent messages below are the current state. "
+                        "Do NOT restart or re-propose completed work. If you "
+                        "need more detail than the summary above, call "
+                        "read_history."),
+                    "source": {"type": "context"},
+                    "ts": first_ts - 0.002, "seq": first_seq - 2,
+                }, cid),
+                stamp_message({
+                    "role": "assistant",
+                    "content": ("Understood. I have the summary and will "
+                                "continue from the recent messages."),
+                    "source": {"type": "context"},
+                    "ts": first_ts - 0.001, "seq": first_seq - 1,
+                }, cid),
+            ] + rows
+        return rows or None
 
     def _invalidate_ctx_cache(self, cid: str, agent_name: str = ""):
         with self._ctx_cache_lock:

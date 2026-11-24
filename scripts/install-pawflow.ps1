@@ -24,6 +24,7 @@ param(
     [string]$RuntimeDir = $env:PAWFLOW_RUNTIME_DIR,
     [string]$DockerPlatform = $env:PAWFLOW_DOCKER_PLATFORM,
     [string]$CliLlmImage = $(if ($env:PAWFLOW_CLI_LLM_IMAGE) { $env:PAWFLOW_CLI_LLM_IMAGE } else { "pawflow-claude-code:latest" }),
+    [string]$Memory = $env:PAWFLOW_MEMORY,
     [switch]$PullImages,
     [switch]$NoStart,
     [switch]$SkipDoctor,
@@ -197,6 +198,12 @@ function Remove-ManagedRelayContainers {
 function Run-ServerContainer($repoDir) {
     Ensure-Dirs
     $existing = & docker ps -a --format '{{.Names}}' | Where-Object { $_ -eq $Container }
+    $memoryLimit = $Memory
+    if (-not $memoryLimit -and $existing) {
+        # An update recreates the container: keep the limit it was given (bytes).
+        $previousMemory = (& docker inspect -f '{{.HostConfig.Memory}}' $Container 2>$null | Out-String).Trim()
+        if ($previousMemory -match '^[1-9][0-9]*$') { $memoryLimit = "${previousMemory}b" }
+    }
     if ($existing) {
         Info "Container '$Container' already exists; recreating it with image $Image while keeping persistent volumes."
         Remove-ManagedRelayContainers
@@ -229,6 +236,12 @@ function Run-ServerContainer($repoDir) {
         $Image,
         "python", "cli.py", "start", "--host", "0.0.0.0", "--port", [string]$Port
     )
+    if ($memoryLimit) {
+        # Above the limit the kernel kills the server (OOM) and the
+        # unless-stopped policy starts it again.
+        Info "Server memory limit: $memoryLimit (OOM kill, then automatic restart)"
+        $args = @($args[0..1]) + @("--memory", $memoryLimit, "--memory-swap", $memoryLimit) + @($args[2..($args.Count - 1)])
+    }
     Info "Starting $Container from $Image"
     & docker @args
     if ($LASTEXITCODE -ne 0) { Fail "Failed to start PawFlow container." }

@@ -73,8 +73,8 @@ def test_tool_result_images_are_materialized_to_filestore_refs(tmp_path, monkeyp
     monkeypatch.setattr(FileStore, "_instance", store)
     content = [
         {"type": "text", "text": "Image: screenshot.png (1 bytes, image/png)"},
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
-        {"type": "image", "mimeType": "image/png", "data": "AA=="},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+        {"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgo="},
     ]
 
     materialized = AgentCoreMixin._materialize_tool_result_images(
@@ -93,7 +93,7 @@ def test_deflated_tool_result_image_ref_stays_text_for_later_turns(tmp_path, mon
     store = FileStore(base_dir=str(tmp_path / "files"))
     monkeypatch.setattr(FileStore, "_instance", store)
     file_id = store.store(
-        "tool.png", b"PNGDATA", "image/png",
+        "tool.png", b"\x89PNG\r\n\x1a\nDATA", "image/png",
         user_id="user-1", conversation_id="conv-1")
     messages = [
         LLMMessage(
@@ -183,7 +183,7 @@ def test_builder_never_interleaves_user_image_between_tool_results():
             content=[
                 {"type": "text", "text": "first"},
                 {"type": "image_url",
-                 "image_url": {"url": "data:image/png;base64,QUJD"}},
+                 "image_url": {"url": "data:image/png;base64,iVBORw0KGgpBQkM="}},
             ],
             tool_call_id="tc-1", conversation_id="conv-1"),
         LLMMessage(
@@ -191,7 +191,7 @@ def test_builder_never_interleaves_user_image_between_tool_results():
             content=[
                 {"type": "text", "text": "second"},
                 {"type": "image_url",
-                 "image_url": {"url": "data:image/png;base64,REVG"}},
+                 "image_url": {"url": "data:image/png;base64,iVBORw0KGgpERUY="}},
             ],
             tool_call_id="tc-2", conversation_id="conv-1"),
         LLMMessage(role="assistant", content="I saw them.",

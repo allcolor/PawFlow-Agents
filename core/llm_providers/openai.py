@@ -554,7 +554,10 @@ class LLMOpenaiMixin:
 
         Base64 belongs in the provider vision payload for images the model must
         inspect now. It must not be persisted into text context for old turns.
+        Returns None when the bytes are not a real image, so a mislabelled
+        entry becomes a text link instead of a request the provider rejects.
         """
+        from core.image_resize import sniff_image_mime
         if part.get("type") == "image_ref":
             file_id = str(part.get("file_id") or "").strip()
             if not file_id:
@@ -562,7 +565,13 @@ class LLMOpenaiMixin:
             from core.file_store import FileStore
             _fname, data, content_type = FileStore.instance().get_required(
                 file_id, user_id=user_id, conversation_id=conversation_id)
-            mime = part.get("mime_type", content_type) or "image/png"
+            mime = sniff_image_mime(data)
+            if not mime:
+                logger.warning(
+                    "image_ref %s is not a valid image (declared %s); "
+                    "sending it as a link", file_id,
+                    part.get("mime_type") or content_type)
+                return None
             return {
                 "type": "image_url",
                 "image_url": {
@@ -572,6 +581,15 @@ class LLMOpenaiMixin:
         if part.get("type") == "image_url":
             image_url = part.get("image_url") or {}
             url = image_url.get("url", "") if isinstance(image_url, dict) else str(image_url or "")
+            if url.startswith("data:"):
+                payload = url.split(",", 1)[-1][:64]
+                try:
+                    head = base64.b64decode(payload[: len(payload) // 4 * 4])
+                except (ValueError, TypeError):
+                    head = b""
+                if not sniff_image_mime(head):
+                    logger.warning("inline image is not a valid image; dropped")
+                    return None
             if url:
                 return part
         return None
@@ -598,6 +616,7 @@ class LLMOpenaiMixin:
             "image_url",
             "vision",
             "multimodal",
+            "invalid image",
         )
         return any(marker in text for marker in markers)
 

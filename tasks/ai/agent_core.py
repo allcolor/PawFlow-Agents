@@ -153,6 +153,17 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                 return {"type": "text", "text": "[image omitted: missing FileStore context]"}
             try:
                 raw = _b64.b64decode(data_b64, validate=False)
+                from core.image_resize import sniff_image_mime
+                real_mime = sniff_image_mime(raw)
+                if not real_mime:
+                    logger.warning(
+                        "tool-result image is not a valid image, dropped "
+                        "(declared %s, %d bytes, filename=%s)",
+                        mime, len(raw), filename)
+                    return {"type": "text", "text": (
+                        f"[image omitted: {filename or 'tool result'} is not a "
+                        f"valid image (declared {mime}); use read() for text]")}
+                mime = real_mime
                 # Downscale to the shared vision ceiling before storing, so
                 # tool-produced images (screenshots, renders) reach providers
                 # within the pixel limit just like user attachments do.

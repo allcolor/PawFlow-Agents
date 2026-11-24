@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A text file sent as an image no longer blocks an agent. `see` checks the
+  real content (PNG, JPEG, GIF, WebP, BMP) instead of the extension, and for
+  `fs://filestore/<id>/<name>` uses the stored entry's name, not the one typed
+  after the id; tool-result bytes that are not an image are no longer stored
+  as `image_ref`; the OpenAI-compatible provider sends a mislabelled image as
+  a link and retries without images on an `invalid image` rejection. Before,
+  Ollama rejected every later request of the agent, and compaction kept the
+  bad image. SVG and ICO are now refused by `see`.
+
 ## [1.0.0-beta.334] — 2026-11-23
 
 ### Added

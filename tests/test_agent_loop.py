@@ -224,7 +224,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
             role="user",
             content=[
                 {"type": "text", "text": "current image"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgpEQVRB"}},
             ],
             conversation_id="test_conv",
         )]
@@ -234,7 +234,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
 
         assert result == [{"role": "user", "content": [
             {"type": "text", "text": "current image"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgpEQVRB"}},
         ]}]
 
     @patch.object(LLMClient, '_http_post')
@@ -275,7 +275,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         FileStore._instance = store
         self.addCleanup(lambda: setattr(FileStore, "_instance", old_instance))
         file_id = store.store(
-            "shot.png", b"PNGDATA", "image/png",
+            "shot.png", b"\x89PNG\r\n\x1a\nDATA", "image/png",
             conversation_id="test_conv", user_id="u")
         messages = [LLMMessage(
             role="user",
@@ -292,7 +292,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         assert result == [{"role": "user", "content": [
             {"type": "text", "text": "look"},
             {"type": "text", "text": f"Attached image: fs://filestore/{file_id}/shot.png"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,UE5HREFUQQ=="}},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgpEQVRB"}},
         ]}]
         assert "fs://filestore" in json.dumps(result)
 
@@ -307,7 +307,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         FileStore._instance = store
         self.addCleanup(lambda: setattr(FileStore, "_instance", old_instance))
         file_id = store.store(
-            "shot.png", b"PNGDATA", "image/png",
+            "shot.png", b"\x89PNG\r\n\x1a\nDATA", "image/png",
             conversation_id="test_conv", user_id="u")
         captured_bodies = []
 
@@ -334,7 +334,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         assert response.content == "ok"
         first_body = captured_bodies[0]
         retry_body = captured_bodies[1]
-        assert {"type": "image_url", "image_url": {"url": "data:image/png;base64,UE5HREFUQQ=="}} in first_body["messages"][0]["content"]
+        assert {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgpEQVRB"}} in first_body["messages"][0]["content"]
         assert {"type": "text", "text": f"Attached image: fs://filestore/{file_id}/shot.png"} in retry_body["messages"][0]["content"]
         assert "image_url" not in json.dumps(retry_body)
 

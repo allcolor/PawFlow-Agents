@@ -747,6 +747,8 @@ Protected request keys such as `model`, `messages`, `tools`, `stream`, token lim
 
 The Anthropic provider accepts direct Anthropic services and compatible endpoints such as DeepSeek. The `supports_vision` setting on OpenAI and Anthropic API services is the user-controlled capability flag: when enabled, PawFlow resolves `image_ref` attachments and multimodal `see` tool results into native image blocks; when disabled, PawFlow sends only a text note and never transmits image bytes to that provider. For Anthropic payloads, PawFlow logs the number of image blocks included.
 
+An image is identified by its content, never by its file name or declared MIME type. `see` reads the leading bytes and accepts only PNG, JPEG, GIF, WebP, and BMP; anything else (a text file named `.png`, SVG, ICO) returns `Error: ... is not an image` instead of an image block. For a `fs://filestore/<id>/<name>` URL, the stored entry's own name decides the type, not the name typed after the id. Tool-result images whose bytes are not an image are not stored as `image_ref`; they become a text note. As a last line of defence, the OpenAI-compatible provider sends an `image_ref` or inline image whose bytes are not an image as a text link, and treats an `invalid image` rejection like any other vision rejection (retry without native images). A mislabelled image therefore can no longer make every later request of an agent fail.
+
 ## Responses API
 
 `openai-responses` speaks OpenAI's Responses API, the successor to

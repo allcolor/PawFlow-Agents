@@ -85,6 +85,13 @@ class SeeHandler(BaseFsHandler):
                     prefix="pawflow-see-") as temporary:
                 if svc == "filestore":
                     source_path = self._filestore_path(path)
+                    # The stored file decides the type, not the name typed
+                    # after the id: fs://filestore/<id>/x.png on a Markdown
+                    # entry must not be treated as a PNG.
+                    stored = source_path.name.split("_", 1)[-1]
+                    if "." in stored:
+                        fname = stored
+                        ext = stored.rsplit(".", 1)[-1].lower()
                 elif workdir:
                     source_path = Path(self._sandbox_path(path, workdir))
                 elif svc:
@@ -181,8 +188,12 @@ class SeeHandler(BaseFsHandler):
     def _see_image(self, fname: str, data: bytes, ext: str) -> str:
         """Return image as multimodal marker."""
         import base64
-        import mimetypes
-        mime = mimetypes.guess_type(fname)[0] or f"image/{ext}"
+
+        from core.image_resize import sniff_image_mime
+        mime = sniff_image_mime(data)
+        if not mime:
+            return (f"Error: '{fname}' is not an image: its content is not "
+                    "PNG, JPEG, GIF, WebP or BMP. Use read() for text files.")
 
         # Downscale large images to the shared vision ceiling (saves context
         # tokens and keeps payloads within the provider's pixel limit).
@@ -198,10 +209,13 @@ class SeeHandler(BaseFsHandler):
     def _see_image_path(self, fname: str, path: Path, ext: str) -> str:
         """Return a bounded image payload decoded directly from a disk path."""
         import base64
-        import mimetypes
-        from core.image_resize import resize_image_path_for_vision
+        from core.image_resize import resize_image_path_for_vision, sniff_image_mime
 
-        mime = mimetypes.guess_type(fname)[0] or f"image/{ext}"
+        with open(path, "rb") as handle:
+            mime = sniff_image_mime(handle.read(16))
+        if not mime:
+            return (f"Error: '{fname}' is not an image: its content is not "
+                    "PNG, JPEG, GIF, WebP or BMP. Use read() for text files.")
         data, mime = resize_image_path_for_vision(path, mime)
         encoded = base64.b64encode(data).decode("ascii")
         return (f"Image: {fname} ({len(data):,} bytes, {mime})\n"

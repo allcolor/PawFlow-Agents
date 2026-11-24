@@ -44,6 +44,29 @@ MAX_DIM = min(_env_int("PAWFLOW_VISION_MAX_DIM", 1568), _VISION_HARD_CAP)
 MAX_BYTES = _env_int("PAWFLOW_VISION_MAX_BYTES", 1_000_000)
 
 
+def sniff_image_mime(data: bytes) -> str:
+    """Return the image MIME type that ``data`` really contains, or ``""``.
+
+    Checks the leading magic bytes of the formats vision providers accept
+    (PNG, JPEG, GIF, WebP, BMP). A file name or declared MIME type is not
+    evidence: a text file named ``x.png`` must never be sent as an image,
+    because providers reject the whole request and the agent stays stuck
+    for as long as that message remains in its context.
+    """
+    head = bytes(data[:16]) if data else b""
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head.startswith(b"BM") and len(head) >= 14:
+        return "image/bmp"
+    return ""
+
+
 def resize_image_for_vision(data: bytes, mime: str = "",
                             *, max_dim: int = MAX_DIM,
                             max_bytes: int = MAX_BYTES) -> tuple[bytes, str]:

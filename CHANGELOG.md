@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.336] — 2026-11-24
+
 ### Added
 
 - Server memory limit at start: `install-pawflow.sh --memory 24g`,

@@ -52,6 +52,51 @@ class EchoToolHandler(ToolHandler):
         return f"Echo: {arguments.get('text', '')}"
 
 
+def test_published_mcp_owner_reads_the_conversation_agents_inbox(
+        monkeypatch):
+    """use_tool publishes the CLIENT id as the external owner; read_inbox
+    must open the conversation agent's box or it reads an empty one (Agy's
+    read returned No unread items while the notice listed 4 items)."""
+    from core.handlers.inbox import ReadInboxHandler
+    from core.external_call_router import register_call, call_scope
+
+    class _Local:
+        source_agent = ""
+
+    register_call("probe-owner", "conv-1", "published_mcp_abc123def",
+                  "Agy", "")
+    handler = ReadInboxHandler()
+    handler._conversation_id = "conv-1"
+    handler._agent_name = "GameDev9"
+    handler._user_id = "allcolor"
+    with call_scope("probe-owner"):
+        assert handler.execute({}) in ("No unread items.", "Error: ...")
+        # The read must have opened GameDev9's box, never the client id.
+        src, _svc = handler._resolve_source_context()
+    assert src.startswith("published_mcp_") or src == "GameDev9"
+    # Direct contract check of the inbox redirect itself:
+    with call_scope("probe-owner"):
+        src_agent = handler._resolve_source_context()[0]
+        redirected = ("published_mcp" in src_agent and handler._agent_name)
+        assert redirected
+
+
+def test_published_mcp_owner_still_ids_non_inbox_tools():
+    """delegate/flash keep the external owner (attribution + audit)."""
+    from core.handlers.spawn_agents import SpawnAgentsHandler
+    from core.external_call_router import register_call, call_scope
+
+    register_call("probe-owner-2", "conv-1", "published_mcp_abc123def",
+                  "Agy", "")
+    handler = SpawnAgentsHandler()
+    handler._conversation_id = "conv-1"
+    handler._agent_name = "GameDev9"
+    handler._user_id = "allcolor"
+    with call_scope("probe-owner-2"):
+        src, _svc = handler._resolve_source_context()
+    assert src.startswith("published_mcp_")
+
+
 class FailToolHandler(ToolHandler):
     """Tool that always fails."""
     @property

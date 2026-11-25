@@ -1034,10 +1034,21 @@ def test_wake_stores_own_item_classification():
         ["[pending] wake GameDev9"])
     assert not AgentPollerMixin._wake_stores_own_item(
         ["[delegate_reply] queued result for GameDev9"])
+    # submit_or_queue nudges, bare and behind every tag shape
+    assert not AgentPollerMixin._wake_stores_own_item(
+        ["[scheduled_wakeup] queued for GameDev9"])
+    assert not AgentPollerMixin._wake_stores_own_item(
+        ["[scheduled:GameDev9] [delegate_reply] queued result for GameDev9"])
+    assert not AgentPollerMixin._wake_stores_own_item(
+        ["[scheduled:GameDev9] [scheduled_wakeup] queued for GameDev9"])
+    assert not AgentPollerMixin._wake_stores_own_item(
+        ["[loop] [delegate_message] queued for gamedev9"])
     assert AgentPollerMixin._wake_stores_own_item(
         ["[scheduled:GameDev9] daily 09:00"])
     assert AgentPollerMixin._wake_stores_own_item(
         ["[boot-recovery] 16 pending msg(s)"])
+    assert AgentPollerMixin._wake_stores_own_item(
+        ["[scheduled:GameDev9] [continuation] Release 337"])
     assert AgentPollerMixin._wake_stores_own_item(
         ["[delegate_reply] queued result for GameDev9",
          "[scheduled:GameDev9] daily 09:00"])

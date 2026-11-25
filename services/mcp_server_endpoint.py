@@ -664,44 +664,30 @@ def _conversation_tool_result(server: Dict[str, Any], key: Dict[str, Any],
             "cursor": _context_cursor(rows),
         }, ensure_ascii=False)
     if name == "get_context_updates":
-        try:
-            after_seq = int(arguments.get("after_seq"))
-        except (TypeError, ValueError):
-            return "Error: after_seq must be a non-negative integer"
-        if after_seq < 0:
-            return "Error: after_seq must be a non-negative integer"
-        page = _agent_context_page(server)
-        rows = page["messages"]
-        updates = [
-            row for row in rows
-            if int(row.get("seq") or 0) > after_seq
-        ]
-        # The bounded tail did not reach back to the cursor: older updates
-        # were skipped.  The client should re-bootstrap (summary + tail).
-        truncated = bool(
-            page["has_more"] and updates and len(updates) == len(rows))
-        # A running session may predate the read_inbox-first bootstrap
-        # contract (it only ships inside get_initial_context). Attach the
-        # inbox reminder + the current notice to EVERY poll so a session
-        # started under the old contract still migrates without a restart.
-        # record_notice only lands AFTER the response below is built — a
-        # peek twice would be racy, so capture (notice, newest) once.
+        # Retired as an inbox channel: every non-user message waits in the
+        # read_inbox box and notice, so a poll of the whole conversation
+        # tail (~250k tokens per call) only existed for one-way clients.
+        # Publications with a client terminal keep the same inbox over the
+        # injected-notice channel; one-way clients still get the compact
+        # notice through bootstrap/get_initial_context. A client that polls
+        # anyway (an old session) is told what to do instead. only_new +
+        # record_notice make this poll a delivery exactly once: the item
+        # stays notified for the turn-start re-announcement, but this
+        # retired channel never repeats it.
         from core import agent_inbox
         notice, newest = agent_inbox.peek_notice(
-            server["conversation_id"], server["agent_name"])
+            server["conversation_id"], server["agent_name"], only_new=True)
         if notice:
             agent_inbox.record_notice(
                 server["conversation_id"], server["agent_name"], newest)
         return json.dumps({
-            "messages": updates,
-            "cursor": max(after_seq, _context_cursor(rows)),
-            "history_truncated": truncated,
+            "retired": True,
             "inbox_notice": notice,
             "inbox_policy": (
-                "PawFlow work (delegate results, scheduled wake-ups) waits in "
-                "your inbox: call read_inbox (directly, or through use_tool) "
-                "before answering whenever inbox_notice is non-empty — do not "
-                "poll get_context_updates for it."),
+                "get_context_updates is retired for this publication: PawFlow "
+                "work waits in your read_inbox box. Call read_inbox now, and "
+                "whenever a [PawFlow inbox: ACTION REQUIRED] notice appears. "
+                "Do NOT poll this tool again."),
         }, ensure_ascii=False)
 
     content = str(arguments.get("content") or "")

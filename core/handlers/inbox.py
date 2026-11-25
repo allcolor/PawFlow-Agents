@@ -93,6 +93,12 @@ class ReadInboxHandler(SpawnAgentsHandler):
 
         conversation_id = str(self._conversation_id or "").strip()
         src_agent, _src_svc = self._resolve_source_context()
+        # A published-MCP external owner ids the CLIENT
+        # (published_mcp_<hash>), not the conversation agent this inbox
+        # belongs to. read_inbox must always open the agent's box — that
+        # agent is pinned on the publication itself.
+        if src_agent.startswith("published_mcp_"):
+            src_agent = self._agent_name or src_agent
         if not conversation_id or not src_agent:
             return (
                 "Error: read_inbox could not determine the calling agent:"

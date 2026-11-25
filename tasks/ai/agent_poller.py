@@ -39,6 +39,17 @@ _TARGETED_WAKE_REASON_RES = (
     re.compile(r"^\[pending\] wake ([\w.-]+)$"),
     re.compile(r"^\[delegate_reply\] queued result for ([\w.-]+)$"),
 )
+# A queued-content nudge after the ``[scheduled:<agent>]``/``[loop]`` tag is
+# stripped: ``[pending] wake X`` plus every ``[<source>] queued (result)? for
+# X`` form ``submit_or_queue`` and the delivery handlers generate. Storing
+# these as inbox items duplicated every delivery into an identical ~93-char
+# row (the notice even listed the phantom right next to the content it
+# announces), eating tokens on every read for nothing.
+_NUDGE_REASON_RE = re.compile(
+    r"^(?:\[pending\]\s*wake [\w.-]+"
+    r"|\[[a-z_]+\] queued (?:result )?for [\w.-]+)$")
+_TAGGED_REASON_RE = re.compile(
+    r"^(?:(?:\[loop\]\s*)?\[scheduled:[\w.-]+\]\s*|(?:\[loop\]\s*))(.*$)")
 # Loop keys whose slash command is still running: a slow command skips the
 # ticks that come due meanwhile instead of piling up.
 _RUNNING_LOOP_COMMANDS: set = set()
@@ -91,14 +102,19 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
 
         Timer reminders, boot recovery, continuations and task check-ins
         carry information the inbox must hold. Reasons that only announce
-        queued content ([pending] wake X, [delegate_reply] queued result
-        for X) reference an item that is already unread in the same inbox,
-        so their wake rows are not stored — the notice still fires and,
-        for external_agui, the raw reason text still pastes fine.
+        queued content — bare (``[pending] wake X``) or behind an agent
+        tag (``[scheduled:X] [delegate_reply] queued result for X``) —
+        reference items that are already unread in the same inbox, so
+        their wake rows are not stored. The notice still fires (the
+        content's own delivery recorded it) and, for external_agui, the
+        raw reason text still pastes fine.
         """
         for reason in reasons or []:
             text = str(reason or "").strip()
-            if any(pattern.match(text) for pattern in _TARGETED_WAKE_REASON_RES):
+            tag = _TAGGED_REASON_RE.match(text)
+            if tag:
+                text = tag.group(1).strip()
+            if _NUDGE_REASON_RE.match(text):
                 continue
             return True
         return False

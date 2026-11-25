@@ -631,10 +631,11 @@ def test_published_mcp_conversation_context_and_idempotent_messages(monkeypatch)
     assert "Published agent system prompt" in initial["document"]
     assert '"content": "second"' in initial["document"]
 
+    # get_context_updates is retired: it no longer returns tail rows.
     updates = json.loads(endpoint._conversation_tool_result(
         server, key, "get_context_updates", {"after_seq": 3}))
-    assert updates["cursor"] == 7
-    assert [row["msg_id"] for row in updates["messages"]] == ["m2"]
+    assert updates["retired"] is True
+    assert "messages" not in updates
 
     first = json.loads(endpoint._conversation_tool_result(
         server, key, "send_agent_message", {
@@ -690,22 +691,19 @@ def test_context_tools_send_summary_and_bounded_tail(monkeypatch):
     assert "ui only" not in document
     assert initial["cursor"] == 102
 
-    # Cursor inside the tail: exact updates, nothing skipped.
+    # Cursor inside the tail: get_context_updates is retired — it answers
+    # with the inbox notice/policy instead of tail rows, and records the
+    # notice delivered (one poll = one delivery).
     inside = json.loads(endpoint._conversation_tool_result(
         server, key, "get_context_updates", {"after_seq": 100}))
-    assert [row["seq"] for row in inside["messages"]] == [101, 102]
-    assert inside["history_truncated"] is False
-
-    # Cursor older than the tail while more history exists: flagged.
-    stale = json.loads(endpoint._conversation_tool_result(
-        server, key, "get_context_updates", {"after_seq": 5}))
-    assert [row["seq"] for row in stale["messages"]] == [100, 101, 102]
-    assert stale["history_truncated"] is True
+    assert inside["retired"] is True
+    assert "messages" not in inside
+    assert "read_inbox" in inside["inbox_policy"]
 
 
-def test_context_updates_carries_inbox_notice(monkeypatch, tmp_path):
-    """A running session may predate the read_inbox bootstrap contract; the
-    reminder and the pending notice ride on every get_context_updates."""
+def test_context_updates_retired_with_inbox_notice(monkeypatch, tmp_path):
+    """A stale session that still polls gets the notice exactly once and is
+    told to use read_inbox — no more full-context pulls."""
     from core import agent_inbox
     from core.agent_inbox_store import AgentInboxStore
     from core.llm_client import stamp_message
@@ -713,11 +711,10 @@ def test_context_updates_carries_inbox_notice(monkeypatch, tmp_path):
     inbox_store = AgentInboxStore(tmp_path / "inbox.sqlite3")
     monkeypatch.setattr(AgentInboxStore, "_instance", inbox_store)
     PendingQueue.drop_cache()
-    tail = [{"role": "user", "content": "m100", "msg_id": "m100", "seq": 100}]
 
     class Store:
         def load_transcript_page_for_agent(self, _cid, _agent, limit, offset):
-            return {"messages": list(tail), "has_more": False}
+            return {"messages": [], "has_more": False}
 
     class Task:
         system_prompt = ""
@@ -737,15 +734,15 @@ def test_context_updates_carries_inbox_notice(monkeypatch, tmp_path):
         "delegate_reply", "GameDev3")
 
     out = json.loads(endpoint._conversation_tool_result(
-        server, key, "get_context_updates", {"after_seq": 99}))
-    assert out["cursor"] == 100
+        server, key, "get_context_updates", {"after_seq": 0}))
+    assert out["retired"] is True
     assert "delegate reply from GameDev3" in out["inbox_notice"]
     assert "read_inbox" in out["inbox_policy"]
-
-    agent_inbox.read_inbox("conv-1", "agent-a")
+    # Recorded as delivered: a second poll no longer carries the notice.
     out2 = json.loads(endpoint._conversation_tool_result(
-        server, key, "get_context_updates", {"after_seq": 100}))
+        server, key, "get_context_updates", {"after_seq": 0}))
     assert out2["inbox_notice"] == ""
+    PendingQueue.drop_cache()
 
 
 def test_summary_header_failure_degrades_to_tail_only(monkeypatch):

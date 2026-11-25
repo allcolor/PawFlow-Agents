@@ -21,7 +21,11 @@ def calls(monkeypatch):
                          "item": item, "offset": offset})
         return "INBOX-OUTPUT"
 
+    def fake_unread_count(conversation_id, agent_name):
+        return 1
+
     monkeypatch.setattr("core.agent_inbox.read_inbox", fake_read_inbox)
+    monkeypatch.setattr("core.agent_inbox.unread_count", fake_unread_count)
     return recorded
 
 

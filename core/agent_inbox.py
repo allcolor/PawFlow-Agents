@@ -354,7 +354,12 @@ def _read_inbox(conversation_id: str, agent_name: str, *,
         if not items:
             return f"No unread inbox item {item}."
     if not items:
-        return "No unread items."
+        return (
+            "No unread items. Your inbox is empty: do NOT call read_inbox "
+            "again until a new [PawFlow inbox: ACTION REQUIRED] notice "
+            "appears. If you have nothing else to act on, end your turn "
+            "without scheduling another wake-up."
+        )
     parts: list[str] = []
     done: list[str] = []
     used = 0

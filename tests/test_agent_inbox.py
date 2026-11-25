@@ -121,7 +121,7 @@ def test_read_returns_items_in_order_and_marks_them_read(inbox):
     assert out.index("first message") < out.index("second message")
     assert "msg_id=m1" in out and "delegate result from GameDev7" in out
     assert agent_inbox.unread_items(CID, AGENT) == []
-    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
+    assert agent_inbox.read_inbox(CID, AGENT).startswith("No unread items. Your inbox is empty")
 
 
 def test_read_stops_at_the_budget_and_says_more_are_unread(inbox):
@@ -216,7 +216,7 @@ def test_catch_up_delivery_never_wakes_an_idle_agent_even_with_wake_enabled(
         _live_submit.submit_or_queue(
             CID, AGENT, _msg("chatter", "context only"), "catch_up",
             kind="catch_up", sender="GameDev2", wake=True)
-    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
+    assert agent_inbox.read_inbox(CID, AGENT).startswith("No unread items. Your inbox is empty")
 
 
 @pytest.mark.parametrize("wake", [False, True])
@@ -237,7 +237,7 @@ def test_workflow_catch_up_is_rejected_without_resolving_or_submitting_runtime(
         _live_submit.submit_or_queue(
             CID, AGENT, _msg("chatter", "workflow context only"), "catch_up",
             kind="catch_up", sender="GameDev2", wake=wake)
-    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
+    assert agent_inbox.read_inbox(CID, AGENT).startswith("No unread items. Your inbox is empty")
 
 
 def test_turn_mode_messages_expose_the_item_sources(inbox):
@@ -467,7 +467,7 @@ def test_read_is_scoped_to_the_exact_agent_and_subconversation(inbox):
     sub = CID + "::task::child"
     assert agent_inbox.enqueue_item(sub, AGENT, _msg("m2", "child content"),
                                     "delegate_result", "GameDev2")
-    assert agent_inbox.read_inbox(CID, "GameDev4") == "No unread items."
+    assert agent_inbox.read_inbox(CID, "GameDev4").startswith("No unread items. Your inbox is empty")
     assert "child content" in agent_inbox.read_inbox(sub, AGENT)
     assert [i.msg_id for i in agent_inbox.unread_items(CID, AGENT)] == ["m1"]
 
@@ -525,7 +525,7 @@ def test_broadcast_stays_in_shared_without_inbox_or_recipient_copy(inbox, tmp_pa
     assert not any("TEAM DATA" in str(row.get("content"))
                    for row in store.load_agent_context(CID, AGENT))
     assert "TEAM DATA" in str(store.load_shared_for_agent(CID, AGENT))
-    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
+    assert agent_inbox.read_inbox(CID, AGENT).startswith("No unread items. Your inbox is empty")
     notice = stamp_message({
         "role": "user", "content": "[PawFlow inbox: ACTION REQUIRED]",
         "source": {"type": "system", "name": "inbox", "target_agent": "A",
@@ -546,7 +546,7 @@ def test_concurrent_reads_do_not_return_the_same_item_twice(inbox):
     with ThreadPoolExecutor(max_workers=2) as executor:
         outputs = [future.result() for future in [executor.submit(read), executor.submit(read)]]
     assert sum("ONCE ONLY" in output for output in outputs) == 1
-    assert "No unread items." in outputs
+    assert any(out.startswith("No unread items.") for out in outputs)
 
 
 def test_notice_length_is_bounded_when_many_items_are_unread(inbox):
@@ -568,10 +568,10 @@ def test_shared_history_creates_no_inbox_items_across_cold_rebuilds(inbox):
     assert agent_inbox.prepare_context_messages(history, CID, AGENT) == []
     assert agent_inbox.prepare_context_messages(history, CID, AGENT) == []
     assert agent_inbox.unread_items(CID, AGENT) == []
-    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
+    assert agent_inbox.read_inbox(CID, AGENT).startswith("No unread items. Your inbox is empty")
     inbox.purge_acknowledged(0, now=time.time() + 1)
     assert agent_inbox.prepare_context_messages(history, CID, AGENT) == []
-    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
+    assert agent_inbox.read_inbox(CID, AGENT).startswith("No unread items. Your inbox is empty")
 
 
 @pytest.mark.parametrize("active", [False, True])
@@ -593,7 +593,7 @@ def test_delegate_delivery_preserves_creation_time_across_force_stop(inbox, acti
     item, = inbox.list_items(CID, AGENT)
     assert item.state == "discarded"
     assert item.payload["ts"] == 1.0
-    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
+    assert agent_inbox.read_inbox(CID, AGENT).startswith("No unread items. Your inbox is empty")
 
 
 def test_workflow_recipient_keeps_claimable_lease_delivery(inbox, monkeypatch):
@@ -619,7 +619,7 @@ def test_workflow_recipient_keeps_claimable_lease_delivery(inbox, monkeypatch):
     assert written[0]["ts"] == message["ts"]
     assert submitted[0]["message_id"] == message["msg_id"]
     assert submitted[0]["message"] == "LEASE WORK"
-    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
+    assert agent_inbox.read_inbox(CID, AGENT).startswith("No unread items. Your inbox is empty")
     _, items = inbox.claim(CID, AGENT, "workflow-run", "receive")
     assert [item.msg_id for item in items] == ["workflow-delegate"]
 

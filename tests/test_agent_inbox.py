@@ -667,3 +667,53 @@ def test_empty_read_cooldown_blocks_repeated_polling(monkeypatch):
         assert third.startswith("No unread items. Your inbox is empty")
     finally:
         inbox_mod._reset_empty_read_window(CID, AGENT)
+
+
+def test_rapid_empty_reads_force_stop_the_spin(monkeypatch):
+    """The first empty read explains; rapid repeats get hard errors with a
+    real (non-refreshing) countdown, and enough rapid rejections force-stop
+    the offending run. Slow re-reads reset the rapid counter instead."""
+    import core.handlers.inbox as inbox_mod
+    stopped = []
+    monkeypatch.setattr(inbox_mod, "_force_stop_read_loop",
+                        lambda cid, agent: stopped.append((cid, agent)))
+    monkeypatch.setattr(
+        "core.handlers.spawn_agents.SpawnAgentsHandler"
+        "._resolve_source_context",
+        lambda self: (AGENT, "svc"), raising=False)
+    handler = inbox_mod.ReadInboxHandler()
+    handler._conversation_id = CID
+    handler._agent_name = AGENT
+    inbox_mod._reset_empty_read_window(CID, AGENT)
+    clock = {"t": 1000.0}
+
+    class _FrozenMonotonic:
+        @staticmethod
+        def now():
+            return clock["t"]
+
+    real_monotonic = inbox_mod.time.monotonic
+    monkeypatch.setattr(inbox_mod.time, "monotonic",
+                        lambda: clock["t"] - real_monotonic.start
+                        if hasattr(real_monotonic, "start") else clock["t"])
+    try:
+        # Freeze clock entirely by patching time.monotonic used inside the
+        # module (imported as core.handlers.inbox.time).
+        monkeypatch.setattr(inbox_mod.time, "monotonic",
+                            lambda: clock["t"])
+        first = handler.execute({})
+        assert first.startswith("No unread items. Your inbox is empty")
+        clock["t"] += 6  # rapid re-poll (LLM iteration cadence)
+        second = handler.execute({})
+        assert second.startswith("Error: your inbox is empty") and \
+            "retry in ~174" in second
+        third_time = clock["t"]
+        clock["t"] += 6
+        third = handler.execute({})
+        assert third.startswith("Error: your inbox is empty") and \
+            stopped == [(CID, AGENT)]
+        # The countdown is never refreshed: same anchor.
+        assert "retry in ~174" in second and "retry in ~168" in third \
+            or "retry in ~173" in third
+    finally:
+        inbox_mod._reset_empty_read_window(CID, AGENT)

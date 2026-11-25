@@ -739,6 +739,10 @@ class _SubAgentExecutorLoopMixin:
                         "source_task_id": task.source_task_id,
                     })
                     from tasks.ai.agent_core import AgentCoreMixin
+                    if _disp_name == "read_inbox":
+                        from tasks.ai._inbox_notice_consumed import (
+                            neutralize_notices_in_messages)
+                        neutralize_notices_in_messages(messages)
                     messages.append(LLMMessage(
                         role="tool",
                         content=AgentCoreMixin._wrap_tool_output(_disp_name, tool_result),

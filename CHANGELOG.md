@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.338] — 2026-11-25
+
+### Changed
+
+- `get_context_updates` is retired from published MCP servers: it is no
+  longer advertised by `tools/list`, a stale session that still calls it
+  receives only the current inbox notice (delivered once) plus a
+  `read_inbox` instruction, and the bootstrap contract says the inbox is
+  the update channel. `get_tool_schema` now describes the transport meta
+  tools too.
+- Published MCP wake nudges that only announce already-queued content
+  (`[pending] wake X`, `[source] queued result for X`, including behind an
+  agent tag) no longer store their own inbox item, which duplicated every
+  delivery into an identical ~93-char row. Timers and boot recovery keep
+  their items.
+- `read_inbox` and `catchUp` calls over a published MCP server opened on the
+  published client's owner id and returned "No unread items" while a notice
+  listed unread items; they now resolve to the conversation agent, so the
+  agent's box is read.
+
+### Fixed
+
+- Sub-agent tool results carrying inline images no longer append the raw
+  `__image_data__` base64: delegated vision describes them for text-only
+  services, otherwise they are materialised as FileStore image refs, and
+  images are deflated after each turn — a flash agent reading 8 PNGs no
+  longer sends 1.5M+ prompt tokens.
+
 ## [1.0.0-beta.337] — 2026-11-25
 
 ### Changed

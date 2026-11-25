@@ -680,10 +680,28 @@ def _conversation_tool_result(server: Dict[str, Any], key: Dict[str, Any],
         # were skipped.  The client should re-bootstrap (summary + tail).
         truncated = bool(
             page["has_more"] and updates and len(updates) == len(rows))
+        # A running session may predate the read_inbox-first bootstrap
+        # contract (it only ships inside get_initial_context). Attach the
+        # inbox reminder + the current notice to EVERY poll so a session
+        # started under the old contract still migrates without a restart.
+        # record_notice only lands AFTER the response below is built — a
+        # peek twice would be racy, so capture (notice, newest) once.
+        from core import agent_inbox
+        notice, newest = agent_inbox.peek_notice(
+            server["conversation_id"], server["agent_name"])
+        if notice:
+            agent_inbox.record_notice(
+                server["conversation_id"], server["agent_name"], newest)
         return json.dumps({
             "messages": updates,
             "cursor": max(after_seq, _context_cursor(rows)),
             "history_truncated": truncated,
+            "inbox_notice": notice,
+            "inbox_policy": (
+                "PawFlow work (delegate results, scheduled wake-ups) waits in "
+                "your inbox: call read_inbox (directly, or through use_tool) "
+                "before answering whenever inbox_notice is non-empty — do not "
+                "poll get_context_updates for it."),
         }, ensure_ascii=False)
 
     content = str(arguments.get("content") or "")

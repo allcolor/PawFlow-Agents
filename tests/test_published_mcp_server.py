@@ -703,6 +703,51 @@ def test_context_tools_send_summary_and_bounded_tail(monkeypatch):
     assert stale["history_truncated"] is True
 
 
+def test_context_updates_carries_inbox_notice(monkeypatch, tmp_path):
+    """A running session may predate the read_inbox bootstrap contract; the
+    reminder and the pending notice ride on every get_context_updates."""
+    from core import agent_inbox
+    from core.agent_inbox_store import AgentInboxStore
+    from core.llm_client import stamp_message
+    from core.pending_queue import PendingQueue
+    inbox_store = AgentInboxStore(tmp_path / "inbox.sqlite3")
+    monkeypatch.setattr(AgentInboxStore, "_instance", inbox_store)
+    PendingQueue.drop_cache()
+    tail = [{"role": "user", "content": "m100", "msg_id": "m100", "seq": 100}]
+
+    class Store:
+        def load_transcript_page_for_agent(self, _cid, _agent, limit, offset):
+            return {"messages": list(tail), "has_more": False}
+
+    class Task:
+        system_prompt = ""
+
+    monkeypatch.setattr(
+        "core.conversation_store.ConversationStore.instance", lambda: Store())
+    monkeypatch.setattr(
+        "core.agent_executor.resolve_agent_task", lambda *a, **k: Task())
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+    }
+    key = {"key_id": "k1", "label": "Agy"}
+    agent_inbox.enqueue_item(
+        "conv-1", "agent-a",
+        stamp_message({"role": "user", "content": "GD3 says hi"}, "conv-1"),
+        "delegate_reply", "GameDev3")
+
+    out = json.loads(endpoint._conversation_tool_result(
+        server, key, "get_context_updates", {"after_seq": 99}))
+    assert out["cursor"] == 100
+    assert "delegate reply from GameDev3" in out["inbox_notice"]
+    assert "read_inbox" in out["inbox_policy"]
+
+    agent_inbox.read_inbox("conv-1", "agent-a")
+    out2 = json.loads(endpoint._conversation_tool_result(
+        server, key, "get_context_updates", {"after_seq": 100}))
+    assert out2["inbox_notice"] == ""
+
+
 def test_summary_header_failure_degrades_to_tail_only(monkeypatch):
     class Store:
         def _conv_dir(self, _cid):

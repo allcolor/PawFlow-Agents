@@ -222,7 +222,8 @@ def test_installer_generates_native_profiles_for_additional_harnesses(tmp_path):
     jcode_overlay = (jcode_home / "prompt-overlay.md").read_text(
         encoding="utf-8")
     assert "get_initial_context" in jcode_overlay
-    assert "get_context_updates" in jcode_overlay
+    assert "read_inbox" in jcode_overlay
+    assert "before each request" in jcode_overlay
 
     pi_home = Path(session["configs"]["pi_home"])
     pi_extension = (pi_home / "extensions" / "pawflow.js").read_text(

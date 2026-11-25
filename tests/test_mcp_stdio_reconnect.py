@@ -144,3 +144,53 @@ def test_a_lease_held_by_another_client_is_left_alone(tmp_path, monkeypatch):
     controller._recover({"client_id": "cli_other"})
     controller._recover({"client_id": controller.client_id})
     assert calls == []
+
+
+def test_a_refused_first_connection_is_retried_until_it_works(tmp_path, monkeypatch):
+    controller = RelayController(object(), tmp_path, "agy")
+    attempts = []
+
+    def _connect():
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise RuntimeError("MCP server already has an active CLI instance")
+        return {"relay_id": "mcp_cli_x"}
+
+    monkeypatch.setattr(controller, "connect", _connect)
+    controller.connect_until_ready(retry_seconds=0.01).join(timeout=5)
+    assert len(attempts) == 3
+
+
+def test_closing_the_bridge_stops_the_connection_retries(tmp_path, monkeypatch):
+    controller = RelayController(object(), tmp_path, "agy")
+    attempts = []
+    monkeypatch.setattr(controller, "connect", lambda: attempts.append(1))
+    controller._stop.set()
+    controller.connect_until_ready(retry_seconds=0.01).join(timeout=5)
+    assert attempts == []
+
+
+def test_a_refused_relay_lease_keeps_mcp_serving(tmp_path, monkeypatch, capsys):
+    # Exiting here closed stdio before initialize: Agy reported EOF.
+    import io
+    import json
+
+    def _refused(self):
+        raise RuntimeError("MCP server already has an active CLI instance")
+
+    retries = []
+    monkeypatch.setattr(RelayController, "connect", _refused)
+    monkeypatch.setattr(RelayController, "connect_until_ready",
+                        lambda self: retries.append(1))
+    monkeypatch.setattr(RelayController, "close", lambda self: {})
+    monkeypatch.setattr(HTTPBridge, "rpc", lambda self, message: (
+        200, {"jsonrpc": "2.0", "id": message["id"], "result": {}}))
+    monkeypatch.setenv("PAWFLOW_MCP_API_KEY", "key")
+    monkeypatch.setattr(mcp_stdio.sys, "stdin", io.StringIO(json.dumps(_INIT) + "\n"))
+
+    code = mcp_stdio.main(["--url", "https://pawflow.example/mcp/srv_x",
+                           "--relay-dir", str(tmp_path)])
+
+    assert code == 0 and retries == [1]
+    answer = json.loads(capsys.readouterr().out.strip())
+    assert answer == {"jsonrpc": "2.0", "id": 0, "result": {}}

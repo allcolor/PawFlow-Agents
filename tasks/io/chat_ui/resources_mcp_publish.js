@@ -32,8 +32,10 @@ function _publishedMcpConnectorPrompt(server) {
     '  connector advertises.',
   ] : [
     'Every later turn:',
-    '- First call get_context_updates with your last cursor: other channels (webchat, CLI,',
-    '  other agents) may have added messages. Update your cursor from the response.',
+    '- First call read_inbox: delegate results and other PawFlow work for this agent wait',
+    '  there. Act on its items before answering.',
+    '- Do not poll get_context_updates every turn. Call it with your last cursor only when',
+    '  you need messages other channels (webchat, CLI, other agents) added.',
     '- Persist the user\'s new message with send_user_message (content plus a fresh unique',
     '  message_id such as a UUID). A retry must reuse the same message_id.',
     '- When your turn is finished, persist your final answer with send_agent_message',

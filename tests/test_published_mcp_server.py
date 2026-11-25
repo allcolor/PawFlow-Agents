@@ -2533,6 +2533,16 @@ def test_bootstrap_contract_is_mode_aware():
         doc = endpoint._initial_context_document(_readonly_server(mode), rows)
         assert "send_user_message" in doc
         assert "send_agent_message" in doc
+        # Inbox model: no per-turn poll, read_inbox on the notice.
+        assert "Do NOT call get_context_updates before each turn" in doc
+        assert "read_inbox" in doc
+        assert "before each later turn" not in doc
+
+
+def test_a_restricted_publication_always_exposes_read_inbox():
+    assert endpoint._publication_allowlist(
+        {"tool_allowlist": ["read"]}) == {"read", "read_inbox"}
+    assert endpoint._publication_allowlist({"tool_allowlist": []}) == frozenset()
 
 
 def test_full_readonly_real_registry_invariant(monkeypatch):

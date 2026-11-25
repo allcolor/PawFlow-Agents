@@ -324,6 +324,31 @@ class RelayController:
                 "auto_default": False,
             }
 
+    def connect_until_ready(self, retry_seconds: float = 10.0) -> threading.Thread:
+        """Retry the first relay connection in the background until it works.
+
+        An MCP client that kills its server process (Agy on exit) never lets
+        the bridge release its CLI lease, so a bridge restarted within
+        ``CLIENT_LEASE_TTL_SECONDS`` is refused with "already has an active
+        CLI instance". Exiting then closed stdio before ``initialize`` and
+        the client showed the whole server as dead. The bridge keeps serving
+        MCP and takes the relay as soon as the stale lease expires.
+        """
+        def _retry() -> None:
+            while not self._stop.wait(retry_seconds):
+                try:
+                    state = self.connect()
+                except Exception as exc:
+                    _log(f"relay connection retry failed: {exc}")
+                    continue
+                _log(f"relay registered: {state.get('relay_id')} root={self.root}")
+                return
+
+        thread = threading.Thread(
+            target=_retry, daemon=True, name="pawflow-mcp-relay-connect")
+        thread.start()
+        return thread
+
     def _ensure_heartbeat(self) -> None:
         if self._heartbeat_thread and self._heartbeat_thread.is_alive():
             return
@@ -565,8 +590,9 @@ def main(argv=None) -> int:
         state = relay.connect()
         _log(f"relay registered: {state.get('relay_id')} root={relay.root}")
     except Exception as exc:
-        _log(f"automatic relay connection failed: {exc}")
-        return 1
+        _log(f"automatic relay connection failed: {exc}; "
+             "MCP stays up and the relay connection is retried")
+        relay.connect_until_ready()
 
     cleaned = False
 

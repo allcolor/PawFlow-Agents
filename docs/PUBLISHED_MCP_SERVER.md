@@ -166,8 +166,10 @@ Setup:
    **Customize → Connectors**.
 3. Copy the **Bootstrap prompt** from the same dialog section and paste it as
    the first message of the external client's conversation. It instructs the remote
-   model to load the PawFlow context (`get_initial_context`), keep its cursor
-   in sync (`get_context_updates`), persist both sides of the dialogue
+   model to load the PawFlow context (`get_initial_context`), call
+   `read_inbox` at the start of every turn (delegate results and other
+   PawFlow work wait there), call `get_context_updates` only when it needs
+   messages other channels added, persist both sides of the dialogue
    (`send_user_message` / `send_agent_message` with idempotent `message_id`s),
    discover tools lazily (`get_tool_schema` → `use_tool`), and respect the
    one-way limits. The client answers "Ready — PawFlow context loaded" once
@@ -212,10 +214,24 @@ instead of scheduling a wake the client could never observe. The refusal
 lifts automatically while a client terminal is registered.
 
 Independently, the agent poller never runs an `external_mcp` agent's
-scheduled wake through PawFlow's internal LLM loop: the wake prompt is
-persisted to the conversation (visible to one-way clients through
-`get_context_updates` on their next turn) and injected into the client
-terminal when one is available.
+scheduled wake through PawFlow's internal LLM loop. The wake is persisted to
+the conversation and stored as a `scheduled_wakeup` item in the agent's
+inbox, like for any agent. The client terminal, when one is available,
+receives only the inbox notice (`[PawFlow inbox: ACTION REQUIRED] ...`); the
+agent reads the items with `read_inbox`. The notice is recorded as delivered
+only after the injection succeeded, so a failed paste is delivered with the
+next notice.
+
+## Inbox instead of per-turn polling
+
+A published agent does not poll `get_context_updates` before each turn. The
+bootstrap contract of `get_initial_context` tells the client to call
+`read_inbox` when the inbox notice appears (a client without a return
+channel calls it once at the start of each turn), and to call
+`get_context_updates` only when it needs conversation messages it does not
+have yet. A read-only publication keeps the cursor-based
+`get_context_updates` contract, since it cannot read (and acknowledge) its
+inbox. `read_inbox` is always part of a restricted tool allowlist.
 
 ## Tool allowlist
 

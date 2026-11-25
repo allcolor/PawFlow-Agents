@@ -91,9 +91,10 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         """Keep autonomous wakes for external_mcp agents out of the LLM loop.
 
         Returns True when the wake targets a published external agent and was
-        handled here: the wake prompt is persisted to the conversation (so a
-        one-way client sees it through get_context_updates on its next turn)
-        and injected into the client terminal when one is registered.
+        handled here: the wake is persisted to the conversation, stored as an
+        inbox item for an external_mcp agent, and the inbox notice (the raw
+        wake for external_agui) is injected into the client terminal when
+        one is registered.
         """
         agent = self._extract_agent_from_reasons(reasons) or ""
         from core.conversation_store import ConversationStore
@@ -141,9 +142,23 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             user_id = ""
         message = self._persist_scheduled_wakeup(
             conversation_id, agent, content, user_id)
+        prompt, newest = content, 0
+        if runtime_kind == "external_mcp":
+            # The wake reaches a published MCP agent like any agent: as an
+            # inbox item behind an imperative notice, read with read_inbox.
+            # Injecting the raw wake made the client poll get_context_updates.
+            from core import agent_inbox
+            agent_inbox.enqueue_item(
+                conversation_id, agent, dict(message),
+                "scheduled_wakeup", "scheduler")
+            notice, newest = agent_inbox.peek_notice(conversation_id, agent)
+            prompt = notice or content
         from services.external_agent_runtime_router import route_external_agent_prompt
         _kind, routed = route_external_agent_prompt(
-            conversation_id, agent, content, message["msg_id"], channel="web")
+            conversation_id, agent, prompt, message["msg_id"], channel="web")
+        if routed is True and newest:
+            from core import agent_inbox
+            agent_inbox.record_notice(conversation_id, agent, newest)
         if routed is True:
             logger.info(
                 "[poller] Routed %s wake "

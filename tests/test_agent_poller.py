@@ -934,6 +934,35 @@ def test_cancel_at_active_queue_handoff_cannot_report_success(poller_env, monkey
     assert len(agent_inbox.unread_items(cid, "assistant")) == 1
 
 
+@pytest.mark.parametrize("routed", [True, False])
+def test_external_mcp_wake_is_an_inbox_item_behind_its_notice(
+        poller_env, monkeypatch, routed):
+    # The raw wake text made the published client poll get_context_updates.
+    from core import agent_inbox
+    cid = f"external_wake_notice_{routed}"
+    task = _active_task(cid, [])
+    task._redirect_external_mcp_wake = (
+        AgentPollerMixin._redirect_external_mcp_wake.__get__(task))
+    monkeypatch.setattr("core.conv_agent_config.get_agent_config",
+                        lambda *args: {"runtime_kind": "external_mcp"})
+    route = MagicMock(return_value=("external_mcp", routed))
+    monkeypatch.setattr(
+        "services.external_agent_runtime_router.route_external_agent_prompt", route)
+
+    assert task._redirect_external_mcp_wake(
+        cid, ["[scheduled:assistant] resume the build"])
+
+    prompt = route.call_args.args[2]
+    assert prompt.startswith("[PawFlow inbox: ACTION REQUIRED]")
+    assert "resume the build" not in prompt
+    items = agent_inbox.unread_items(cid, "assistant")
+    assert len(items) == 1
+    assert "resume the build" in items[0].payload["content"]
+    # Only a delivered notice is recorded; a failed paste is delivered later.
+    pending_notice = agent_inbox.peek_notice(cid, "assistant", only_new=True)[0]
+    assert bool(pending_notice) is (not routed)
+
+
 def test_scheduled_entry_target_uses_roster_canonical_name(poller_env):
     from core.conv_agent_config import CONV_AGENTS_KEY
     from core.conversation_store import ConversationStore

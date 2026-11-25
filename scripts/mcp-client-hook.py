@@ -266,19 +266,6 @@ def _message_id(raw: dict, role: str, content: str) -> str:
     return "pfhook_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
 
 
-def _render_updates(messages: list, exclude_message_id: str = "") -> str:
-    visible = [
-        row for row in messages if isinstance(row, dict)
-        and str(row.get("msg_id") or "") != exclude_message_id
-    ]
-    if not visible:
-        return ""
-    return (
-        "<pawflow_context_updates>\n"
-        + json.dumps(visible, ensure_ascii=False, indent=2)
-        + "\n</pawflow_context_updates>")
-
-
 def _hook_output(client: str, event: str, context: str) -> dict:
     if not context:
         return {}
@@ -325,8 +312,9 @@ def process_hook(client: str, event: str, raw: dict, profile: dict,
                 return _hook_output(client, event, "\n\n".join(contexts))
 
         if event in prompt_events:
-            updates = api.call_tool(
-                "get_context_updates", {"after_seq": int(state.get("cursor") or 0)})
+            # No per-prompt get_context_updates: PawFlow work reaches the
+            # agent through its inbox notice, and the agent reads the
+            # conversation on demand.
             prompt = str(raw.get("prompt") or raw.get("user_message") or "")
             if not prompt and client == "agy":
                 prompt = _last_transcript_message(
@@ -341,11 +329,6 @@ def process_hook(client: str, event: str, raw: dict, profile: dict,
                 state["reply_to_message_id"] = injected_id
             elif prompt:
                 state.pop("reply_to_message_id", None)
-            context = _render_updates(
-                list(updates.get("messages") or []), injected_id)
-            if context:
-                contexts.append(context)
-            state["cursor"] = int(updates.get("cursor") or state.get("cursor") or 0)
             if prompt and not injected_id:
                 sent = api.call_tool("send_user_message", {
                     "message_id": _message_id(raw, "user", prompt),

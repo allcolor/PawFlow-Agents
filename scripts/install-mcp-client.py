@@ -575,10 +575,11 @@ def _write_jcode_home(session_dir: Path, name: str, entry: dict,
 
 This isolated JCode session is bound to the PawFlow MCP server `{name}`.
 Before answering the first user request, call `get_initial_context` and use its
-document as authoritative conversation context. Retain the returned cursor.
-Before each later user request, call `get_context_updates` with the last cursor
-and incorporate the returned messages before answering. Update the cursor from
-every response. Lifecycle hooks already persist local user prompts and final
+document as authoritative conversation context. Do not call
+`get_context_updates` before each request: when a `[PawFlow inbox: ACTION
+REQUIRED]` notice appears, call `read_inbox` before anything else, and call
+`get_context_updates` only when you need conversation messages you do not
+have yet. Lifecycle hooks already persist local user prompts and final
 assistant replies, so do not call `send_user_message` or `send_agent_message`
 for ordinary turns.
 """

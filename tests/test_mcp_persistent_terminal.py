@@ -305,7 +305,7 @@ class _FakeHookAPI:
         return value(arguments) if callable(value) else dict(value)
 
 
-def test_hook_bootstrap_and_server_injected_prompt_delta_are_deduplicated(
+def test_hook_correlates_an_injected_prompt_without_polling_updates(
         monkeypatch, tmp_path):
     hook = _load_script("mcp-client-hook.py", "pawflow_mcp_hook_dedupe_test")
     state = tmp_path / "hook-state.json"
@@ -318,26 +318,18 @@ def test_hook_bootstrap_and_server_injected_prompt_delta_are_deduplicated(
     }) + "\n", encoding="utf-8")
     state.write_text(json.dumps({"cursor": 3, "bootstrapped": True}),
                      encoding="utf-8")
-    api = _FakeHookAPI({
-        "get_context_updates": {
-            "messages": [
-                {"seq": 4, "msg_id": "m-web", "content": prompt},
-                {"seq": 5, "msg_id": "m-other", "content": "other delta"},
-            ],
-            "cursor": 5,
-        },
-    })
+    api = _FakeHookAPI({})
     monkeypatch.setattr(hook, "PublishedMCPClient", lambda _profile: api)
 
     output = hook.process_hook(
         "codex", "UserPromptSubmit", {"prompt": prompt, "turn_id": "t1"},
         {}, state, marker)
 
-    context = output["hookSpecificOutput"]["additionalContext"]
-    assert "other delta" in context
-    assert "from webchat" not in context
-    assert [name for name, _args in api.calls] == ["get_context_updates"]
-    assert json.loads(state.read_text())["cursor"] == 5
+    # PawFlow work arrives through the inbox notice: no per-prompt poll.
+    assert output == {}
+    assert api.calls == []
+    saved = json.loads(state.read_text())
+    assert saved["cursor"] == 3 and saved["reply_to_message_id"] == "m-web"
     assert "consumed_at" in marker.read_text(encoding="utf-8")
 
 
@@ -349,7 +341,6 @@ def test_hook_persists_manual_prompt_and_final_response_idempotently(
     state.write_text(json.dumps({"cursor": 1, "bootstrapped": True}),
                      encoding="utf-8")
     api = _FakeHookAPI({
-        "get_context_updates": {"messages": [], "cursor": 1},
         "send_user_message": {"cursor": 2},
         "send_agent_message": {"cursor": 3},
     })
@@ -366,10 +357,9 @@ def test_hook_persists_manual_prompt_and_final_response_idempotently(
         {}, state, marker)
 
     names = [name for name, _args in api.calls]
-    assert names == [
-        "get_context_updates", "send_user_message", "send_agent_message"]
-    user_args = api.calls[1][1]
-    assistant_args = api.calls[2][1]
+    assert names == ["send_user_message", "send_agent_message"]
+    user_args = api.calls[0][1]
+    assistant_args = api.calls[1][1]
     assert user_args["content"] == "typed locally"
     assert assistant_args["content"] == "final answer"
     assert user_args["message_id"].startswith("pfhook_")
@@ -392,7 +382,6 @@ def test_hook_correlates_injected_prompt_with_final_response(
     state.write_text(json.dumps({"cursor": 1, "bootstrapped": True}),
                      encoding="utf-8")
     api = _FakeHookAPI({
-        "get_context_updates": {"messages": [], "cursor": 1},
         "send_agent_message": {"cursor": 2},
     })
     monkeypatch.setattr(hook, "PublishedMCPClient", lambda _profile: api)
@@ -512,10 +501,6 @@ def test_extension_hook_bootstraps_persists_and_returns_context_in_one_event(
     hook = _load_script("mcp-client-hook.py", "pawflow_mcp_extension_hook_test")
     api = _FakeHookAPI({
         "get_initial_context": {"document": "initial document", "cursor": 2},
-        "get_context_updates": {
-            "messages": [{"seq": 3, "msg_id": "remote", "content": "delta"}],
-            "cursor": 3,
-        },
         "send_user_message": {"cursor": 4},
         "send_agent_message": {"cursor": 5},
     })
@@ -532,11 +517,9 @@ def test_extension_hook_bootstraps_persists_and_returns_context_in_one_event(
         {"last_assistant_message": "final", "session_id": "pi-session"},
         {}, state, marker)
 
-    assert "initial document" in output["context"]
-    assert "delta" in output["context"]
+    assert output["context"] == "initial document"
     assert [name for name, _args in api.calls] == [
-        "get_initial_context", "get_context_updates",
-        "send_user_message", "send_agent_message"]
+        "get_initial_context", "send_user_message", "send_agent_message"]
 
 
 def test_jcode_hook_reads_prompt_from_isolated_session(monkeypatch, tmp_path):
@@ -553,7 +536,6 @@ def test_jcode_hook_reads_prompt_from_isolated_session(monkeypatch, tmp_path):
         ]
     }), encoding="utf-8")
     api = _FakeHookAPI({
-        "get_context_updates": {"messages": [], "cursor": 1},
         "send_user_message": {"cursor": 2},
         "send_agent_message": {"cursor": 3},
     })
@@ -566,6 +548,6 @@ def test_jcode_hook_reads_prompt_from_isolated_session(monkeypatch, tmp_path):
     hook.process_hook("jcode", "turn_start", raw, {}, state, tmp_path / "m")
     hook.process_hook("jcode", "turn_end", raw, {}, state, tmp_path / "m")
 
-    assert api.calls[1][1]["content"] == "typed"
-    assert api.calls[2][1]["content"] == "answer"
-    assert api.calls[1][1]["message_id"] != api.calls[2][1]["message_id"]
+    assert api.calls[0][1]["content"] == "typed"
+    assert api.calls[1][1]["content"] == "answer"
+    assert api.calls[0][1]["message_id"] != api.calls[1][1]["message_id"]

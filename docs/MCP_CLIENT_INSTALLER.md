@@ -196,6 +196,13 @@ into the TUI. Immediately before `Enter`, the transport writes the prompt's
 `message_id` and SHA-256 marker. The prompt hook consumes that marker and does
 not call `send_user_message` a second time.
 
+A client that kills the bridge on exit (Agy) never lets it release its CLI
+lease, which stays fresh for `CLIENT_LEASE_TTL_SECONDS` (120 s). A client
+restarted within that window is refused with "MCP server already has an
+active CLI instance". The bridge then keeps serving MCP and retries the relay
+connection every 10 s in the background, so the client starts normally and
+gets its relay and return channel as soon as the stale lease expires.
+
 ### Detached mode: start the client yourself
 
 The launch command above is optional. Detached mode is an additional way to
@@ -255,8 +262,10 @@ The session-scoped hook program uses the four published conversation tools:
 1. The first native pre-turn lifecycle event calls `get_initial_context` and
    injects its document as hidden context where the harness supports mutable
    pre-model hooks.
-2. Before later turns, the hook calls `get_context_updates(after_seq)` under a
-   local file lock. The cursor advances only after a successful response.
+2. Later turns make no per-prompt `get_context_updates` call. PawFlow work
+   (delegate results, scheduled wake-ups) reaches the agent as an inbox
+   notice injected into its terminal; the agent calls `read_inbox`, and
+   `get_context_updates` only when it needs conversation messages it lacks.
 3. A prompt typed directly in the terminal is persisted with
    `send_user_message`. A server-injected webchat prompt is recognized by its
    marker and skipped.

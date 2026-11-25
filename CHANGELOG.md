@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Published MCP agents no longer poll `get_context_updates` before each
+  turn. A scheduled wake-up of an `external_mcp` agent is stored in its inbox
+  and its terminal receives the inbox notice instead of the raw wake; the
+  agent reads it with `read_inbox`. The bootstrap contract, the JCode overlay
+  and the connector bootstrap prompt say so, and the client lifecycle hook no
+  longer calls `get_context_updates` on every prompt. `get_context_updates`
+  stays available on demand. A restricted tool allowlist always includes
+  `read_inbox`.
+
+### Fixed
+
+- MCP stdio bridge: a refused relay lease at start (a client such as Agy
+  restarted within 120 s of a previous run that was killed without releasing
+  its lease) no longer exits the bridge. Agy showed `calling "initialize":
+  EOF`. The bridge now serves MCP and retries the relay connection in the
+  background until the stale lease expires.
+
 ## [1.0.0-beta.336] — 2026-11-24
 
 ### Added

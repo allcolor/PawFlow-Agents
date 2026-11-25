@@ -2,7 +2,7 @@
 
 import threading
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,8 +15,10 @@ from core.agent_inbox_store import AgentInboxStore
 from core.handlers.inbox import ReadInboxHandler
 from core.llm_client import LLMMessage, LLMToolCall, stamp_message
 from core.pending_queue import PendingQueue
+from core.tool_handler import ToolHandler
 from tests.test_multi_agent import (
-    make_client_mock, make_registry, simple_response, tool_call_response,
+    EchoToolHandler, make_client_mock, make_registry, simple_response,
+    tool_call_response,
 )
 
 
@@ -448,3 +450,120 @@ def test_result_queue_preserves_explicit_kind_sender_and_id(inbox):
         assert "result body" not in notice
     finally:
         unregister_live_delegate("parent", "caller", "flash")
+
+
+class _ImageToolHandler(ToolHandler):
+    """Tool whose result carries inline images."""
+    @property
+    def name(self):
+        return "see_img"
+
+    @property
+    def description(self):
+        return "Returns an inline image"
+
+    @property
+    def parameters_schema(self):
+        return {"type": "object", "properties": {}}
+
+    def execute(self, arguments):
+        return ("Image: pic.png (3 bytes, image/png)\n"
+                "__image_data__:image/png:QUJD")
+
+    _returns_images = True
+
+
+IMAGE_B64 = "iVBORw0KGgo="
+IMAGE_PAYLOAD = (
+    "Image: pic.png (3 bytes, image/png)\n"
+    f"__image_data__:image/png:{IMAGE_B64}")
+
+
+def _image_bound_result(backend, task=None):
+    from core.agent_executor import AgentTask
+    loop = SubAgentExecutor.__new__(SubAgentExecutor)
+    loop._registry = make_registry(_ImageToolHandler())
+    task = task or AgentTask(
+        id="t", agent_name="flash", message="m", source_agent="caller",
+        user_id="alice", llm_service="svc", parent_conversation_id="p")
+    svc = SimpleNamespace(_service_id="svc", config={})
+    tc = LLMToolCall(id="c1", name="see_img", arguments={})
+    return loop._bound_tool_result_images(
+        tc, IMAGE_PAYLOAD, task=task, resolved_svc=svc,
+        conversation_id="p::task::t", user_id="alice")
+
+
+def test_sub_agent_image_tool_result_uses_delegated_vision(inbox, tmp_path,
+                                                           monkeypatch):
+    # A text-only service gets a plain-text description — never a data URL —
+    # so later LLM calls cannot resubmit the image as a vision part (the
+    # 1.56M-token failure).
+    import core.vision_describe as vd
+    monkeypatch.setattr(
+        vd, "describe_tool_result_images", lambda *a, **k:
+            "Image: pic.png — described by the vision model")
+    out = _image_bound_result(None)
+    assert isinstance(out, str)
+    assert "described by the vision model" in out
+    assert "__image_data__" not in out
+    assert IMAGE_B64 not in out
+
+
+def test_sub_agent_image_tool_result_is_materialized_to_image_ref(
+        inbox, tmp_path, monkeypatch):
+    # No describe path (vision-capable backend or no fallback service): the
+    # bytes are materialised into a FileStore image_ref instead of base64.
+    import core.vision_describe as vd
+    from core import file_store as fs_mod
+    monkeypatch.setattr(
+        vd, "describe_tool_result_images",
+        lambda *a, **k: None)
+    stored = {}
+
+    class _FS:
+        def store(self, fname, data, mime, **kw):
+            stored["name"], stored["data"], stored["mime"] = fname, data, mime
+            return "fid123"
+    monkeypatch.setattr(fs_mod.FileStore, "instance",
+                        classmethod(lambda cls: _FS()))
+    out = _image_bound_result(None)
+    assert isinstance(out, list)
+    parts = {p["type"] for p in out}
+    assert "image_ref" in parts
+    ref = next(p for p in out if p["type"] == "image_ref")
+    assert ref["file_id"] == "fid123"
+    assert stored["mime"] == "image/png"
+    assert "__image_data__" not in str(out)
+
+
+def test_sub_agent_image_tool_result_skips_non_image_tools(inbox):
+    from core.agent_executor import AgentTask
+    loop = SubAgentExecutor.__new__(SubAgentExecutor)
+    loop._registry = make_registry(EchoToolHandler())
+    task = AgentTask(
+        id="t", agent_name="flash", message="m", source_agent="caller",
+        user_id="alice", llm_service="svc", parent_conversation_id="p")
+    tc = LLMToolCall(id="c1", name="echo", arguments={})
+    raw = "result mentioning __image_data__:image/png:QUJD literally"
+    out = loop._bound_tool_result_images(
+        tc, raw, task=task, resolved_svc=SimpleNamespace(_service_id="s"),
+        conversation_id="p::task::t", user_id="alice")
+    assert out == raw
+
+
+def test_sub_agent_images_deflated_after_each_turn(inbox, tmp_path,
+                                                   monkeypatch):
+    # After the LLM has seen native images they must not persist for later
+    # calls: the messages list gets deflated (keep_last).
+    from tasks.ai._agent_msg_proc import _AgentMsgProcMixin
+    messages = [LLMMessage(role="user", content=[
+        {"type": "text", "text": "before"},
+        {"type": "image_url", "image_url": {
+            "url": "data:image/png;base64,QUJD"}},
+    ], conversation_id="p::task::t")]
+    _AgentMsgProcMixin._deflate_image_messages(
+        messages, user_id="alice", conversation_id="p::task::t")
+    out = messages[0].content
+    assert isinstance(out, str)
+    assert "QUJD" not in out
+    assert "fs://filestore/" in out or "[images deflated]" in out

@@ -27,6 +27,56 @@ logger = logging.getLogger(__name__)
 class _SubAgentExecutorLoopMixin:
     """Core agent loop for SubAgentExecutor."""
 
+    def _bound_tool_result_images(self, tc, tool_result, *, task,
+                                  resolved_svc, conversation_id: str,
+                                  user_id: str):
+        """Bound inline images in a sub-agent tool result.
+
+        Reflects the main agent loop's tool-result shape pipeline
+        (agent_tool_exec._exec_one): delegated vision for a text-only
+        service first (describe_tool_result_images returns a plain-text
+        replacement), then data-URL extraction, then FileStore
+        materialisation so the context carries image_ref pointers instead
+        of base64 bytes.
+
+        Sub-agents previously appended the raw ``__image_data__`` string.
+        build_openai_messages then re-sent every tool-result image as a
+        native vision user message on ALL later calls, so a flash agent
+        reading 8 PNGs ballooned to 1.56M prompt tokens and died with
+        HTTP 400 ("prompt is too long").
+        """
+        from core.handlers.meta_tools import resolve_result_shape_handler
+        from tasks.ai.agent_core import AgentCoreMixin
+        if not isinstance(tool_result, str) or "__image_data__:" not in tool_result:
+            return tool_result
+        _h = resolve_result_shape_handler(
+            self._registry, tc.name,
+            tc.arguments if isinstance(tc.arguments, dict) else {})
+        if not getattr(_h, "_returns_images", False):
+            return tool_result
+        agent_svc = (getattr(resolved_svc, "_service_id", "")
+                     or getattr(getattr(resolved_svc, "config", None) or {},
+                                "service_id", ""))
+        from core.vision_describe import describe_tool_result_images
+        _vision_text = describe_tool_result_images(
+            tool_result, agent_svc=agent_svc, user_id=user_id,
+            conversation_id=conversation_id, agent_name=task.agent_name)
+        if _vision_text is not None:
+            return _vision_text
+        content = [{"type": "text", "text": "\n".join(
+            line for line in tool_result.split("\n")
+            if not line.startswith("__image_data__:"))}]
+        for line in tool_result.split("\n"):
+            if line.startswith("__image_data__:"):
+                parts = line.split(":", 2)
+                if len(parts) == 3:
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{parts[1]};base64,{parts[2]}"},
+                    })
+        return AgentCoreMixin._materialize_tool_result_images(
+            content, user_id=user_id, conversation_id=conversation_id)
+
     def _run_agent_loop(self, task: AgentTask) -> AgentResult:
         """Core agent loop: LLM → tool_call → execute → LLM → ..."""
         result = AgentResult(
@@ -618,6 +668,15 @@ class _SubAgentExecutorLoopMixin:
                     source=agent_source,
                     conversation_id=sub_conv_id or task.parent_conversation_id,
                 ))
+                # Same image lifecycle as the main agent loop
+                # (_alc_iteration): the LLM has now SEEN this turn's native
+                # vision parts; deflate every older image message to
+                # FileStore refs so later calls do not re-send megabytes of
+                # base64 as user-image parts.
+                from tasks.ai._agent_msg_proc import _AgentMsgProcMixin
+                _AgentMsgProcMixin._deflate_image_messages(
+                    messages, keep_last=True, user_id=task.user_id,
+                    conversation_id=_delegate_conv_id)
 
                 for tc in response.tool_calls:
                     # Tools have NO timeout — only user cancel breaks the loop.
@@ -662,6 +721,11 @@ class _SubAgentExecutorLoopMixin:
                         tc, tool_handlers, task.agent_name,
                         conversation_id=_delegate_conv_id,
                         user_id=task.user_id, read_only=task.read_only)
+                    tool_result = self._bound_tool_result_images(
+                        tc, tool_result, task=task,
+                        resolved_svc=resolved_svc,
+                        conversation_id=_delegate_conv_id,
+                        user_id=task.user_id)
                     # Emit tool result for delegate block display
                     _result_preview = (tool_result[:500] if isinstance(tool_result, str)
                                        else str(tool_result)[:500])

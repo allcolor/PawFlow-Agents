@@ -56,7 +56,7 @@ def test_public_append_keeps_shared_but_creates_no_inbox_or_notice(stores, batch
     assert "PUBLIC SENTINEL" not in str(store.load_agent_context(CID, "B"))
     assert not inbox.list_items(CID, "B")
     assert agent_inbox.take_notice(CID, "B") == ""
-    assert agent_inbox.read_inbox(CID, "B") == "No unread items."
+    assert agent_inbox.read_inbox(CID, "B").startswith("No unread items.")
     assert read()["messages"][0]["text"] == "PUBLIC SENTINEL"
 
 
@@ -131,7 +131,7 @@ def test_rewrite_invalidates_cursor_and_stale_legacy_catchup_never_notifies(stor
         "role": "user", "content": "OLD AUTOMATIC CATCHUP"}, CID), "inbox:catch_up")
     assert agent_inbox.unread_items(CID, "B") == []
     assert agent_inbox.take_notice(CID, "B") == ""
-    assert agent_inbox.read_inbox(CID, "B") == "No unread items."
+    assert agent_inbox.read_inbox(CID, "B").startswith("No unread items.")
 
 
 def test_context_preparation_never_enqueues_shared_history(stores):

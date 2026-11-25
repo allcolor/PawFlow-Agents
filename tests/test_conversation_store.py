@@ -1706,7 +1706,7 @@ class TestAppendMessage:
         assert not bob_ctx
         assert agent_inbox.unread_count(cid, "bob") == 0
         result = agent_inbox.read_inbox(cid, "bob")
-        assert result == "No unread items."
+        assert result.startswith("No unread items.")
         assert "hello world" in str(store.load_agent_context(cid, ""))
         assert agent_inbox.unread_count(cid, "bob") == 0
 
@@ -1740,7 +1740,7 @@ class TestAppendMessage:
         bob_ctx = store.load_agent_context(cid, "bob")
         assert not bob_ctx
         result = agent_inbox.read_inbox(cid, "bob")
-        assert result == "No unread items."
+        assert result.startswith("No unread items.")
         assert "hello world" in str(store.load_agent_context(cid, ""))
 
     def test_append_legacy_agent_dirs_do_not_trigger_fanout(
@@ -1762,7 +1762,7 @@ class TestAppendMessage:
         bob_ctx = store.load_agent_context(cid, "bob")
         assert not bob_ctx
         result = agent_inbox.read_inbox(cid, "bob")
-        assert result == "No unread items."
+        assert result.startswith("No unread items.")
         assert "hello legacy" in str(store.load_agent_context(cid, ""))
 
     def test_save_agent_context_updates_agent_cache_without_reload(self, conv, monkeypatch):

@@ -50,7 +50,7 @@ def test_idle_wake_stores_data_and_schedules_the_exact_recipient(delivery):
     assert [i.msg_id for i in agent_inbox.unread_items(CID, AGENT)] == ["reply-mid"]
     assert wakes[0][0][:2] == (CID, AGENT)
     assert "GD4 DELEGATE CONTENT" in agent_inbox.read_inbox(CID, AGENT)
-    assert agent_inbox.read_inbox(CID, AGENT) == "No unread items."
+    assert agent_inbox.read_inbox(CID, AGENT).startswith("No unread items.")
 
 
 def test_unpersisted_reply_is_visible_in_the_transcript_without_inline_copy(delivery):

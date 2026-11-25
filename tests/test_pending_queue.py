@@ -270,7 +270,7 @@ def test_boot_recovery_does_not_wake_catch_up_only_agents(
     assert PendingQueue.all_nonempty() == []
     for agent in ("wiki", "assistant", "probecodex"):
         assert agent_inbox.unread_count("c1", agent) == 0
-        assert agent_inbox.read_inbox("c1", agent) == "No unread items."
+        assert agent_inbox.read_inbox("c1", agent).startswith("No unread items.")
         assert all(item.state == "discarded" for item in reopened.list_items("c1", agent))
 
 

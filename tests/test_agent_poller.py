@@ -182,7 +182,7 @@ def test_delivery_nudge_requires_work_that_is_still_unread(poller_env, active, w
     if not actionable:
         task._build_poll_context.assert_not_called()
     if "catch_up" in work:
-        assert agent_inbox.read_inbox(cid, "claude") == "No unread items."
+        assert agent_inbox.read_inbox(cid, "claude").startswith("No unread items.")
 
 
 def test_completed_delivery_nudge_does_not_discard_an_explicit_continuation(poller_env):

@@ -19,6 +19,41 @@ from core.agent_inbox import MAX_READ_CHARS as _MAX_CHARS
 from core.agent_inbox import MIN_READ_CHARS as _MIN_CHARS
 from core.handlers.spawn_agents import SpawnAgentsHandler
 
+# A turn that already found its inbox empty and keeps calling read_inbox is
+# spinning (Monitor schedules feeding it a wake every few minutes for an
+# hour). The first empty answer explains and asks the turn to end; if the
+# same agent keeps polling within this window, the reads fail instead of
+# feeding the loop.
+_EMPTY_CALL_COOLDOWN_SECONDS = 180.0
+
+_LAST_EMPTY_READ: Dict[tuple, float] = {}
+_LAST_EMPTY_READ_STATS = {"blocked": 0}
+
+
+def _register_empty_read(conversation_id: str, agent_name: str) -> float:
+    """Record an empty read; return (now - last empty read) for that agent."""
+    import time
+
+    key = (conversation_id, agent_name)
+    now = time.monotonic()
+    previous = _LAST_EMPTY_READ.get(key, 0.0)
+    _LAST_EMPTY_READ[key] = now
+    return now - previous if previous else float("inf")
+
+
+def _reset_empty_read_window(conversation_id: str, agent_name: str) -> None:
+    """Forget the empty-read window (test helper / item arrival clears it)."""
+    _LAST_EMPTY_READ.pop((conversation_id, agent_name), None)
+
+
+def _blocked_message(retry_after: int) -> str:
+    return (
+        f"Error: your inbox is empty and you already read it moments ago "
+        f"(retry in ~{retry_after}s). Do not call read_inbox again in this "
+        f'turn: end it instead. A new "[PawFlow inbox: ACTION REQUIRED]" '
+        f"notice will wake you — no notice means nothing to read."
+    )
+
 
 def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
@@ -105,6 +140,31 @@ class ReadInboxHandler(SpawnAgentsHandler):
                 " no conversation id or no agent identity (thread-local"
                 " source context or configured agent instance name)."
             )
+        from core import agent_inbox as _inbox_mod
+
+        if _inbox_mod.unread_count(conversation_id, src_agent) == 0:
+            return self._empty_answer(conversation_id, src_agent)
+        # Items arrived since the last empty read: clear the loop window.
+        _reset_empty_read_window(conversation_id, src_agent)
         return agent_inbox.read_inbox(
             conversation_id, src_agent,
             max_chars=max_chars, item=item, offset=offset)
+
+    def _empty_answer(self, conversation_id: str, agent_name: str) -> str:
+        """The empty-inbox answer, or a blocking error inside the cooldown.
+
+        The first empty read explains and asks the turn to end; repeats
+        within the cooldown window are hard errors so a spinning turn
+        cannot keep burning its context on an immutable answer.
+        """
+        gap = _register_empty_read(conversation_id, agent_name)
+        if gap < _EMPTY_CALL_COOLDOWN_SECONDS:
+            _LAST_EMPTY_READ_STATS["blocked"] += 1
+            return _blocked_message(
+                int(_EMPTY_CALL_COOLDOWN_SECONDS - gap))
+        return (
+            "No unread items. Your inbox is empty: do NOT call read_inbox "
+            "again until a new [PawFlow inbox: ACTION REQUIRED] notice "
+            "appears. If you have nothing else to act on, end your turn "
+            "without scheduling another wake-up."
+        )

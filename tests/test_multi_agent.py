@@ -70,7 +70,8 @@ def test_published_mcp_owner_reads_the_conversation_agents_inbox(
     handler._agent_name = "GameDev9"
     handler._user_id = "allcolor"
     with call_scope("probe-owner"):
-        assert handler.execute({}) in ("No unread items.", "Error: ...")
+        empty = handler.execute({})
+        assert empty.startswith("No unread items.") or "Error:" in empty
         # The read must have opened GameDev9's box, never the client id.
         src, _svc = handler._resolve_source_context()
     assert src.startswith("published_mcp_") or src == "GameDev9"

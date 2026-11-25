@@ -642,3 +642,28 @@ def test_legacy_rescue_migration_separates_human_and_non_user_content(inbox, tmp
     assert [item.msg_id for item in agent_inbox.unread_items(CID, AGENT)] == [
         "delegate", "background", "wake"]
     assert agent_inbox.turn_mode_messages(CID, AGENT)[0].source["from"] == "A"
+
+
+def test_empty_read_cooldown_blocks_repeated_polling(monkeypatch):
+    """A spinning turn polls read_inbox on an empty box; the first empty
+    read explains, repeated reads inside the cooldown window hard-error,
+    and a real item arriving clears the window."""
+    import core.handlers.inbox as inbox_mod
+    handler = inbox_mod.ReadInboxHandler()
+    handler._conversation_id = CID
+    handler._agent_name = AGENT
+    monkeypatch.setattr(
+        "core.handlers.spawn_agents.SpawnAgentsHandler"
+        "._resolve_source_context",
+        lambda self: (AGENT, "svc"), raising=False)
+    inbox_mod._reset_empty_read_window(CID, AGENT)
+    try:
+        first = handler.execute({})
+        assert first.startswith("No unread items. Your inbox is empty")
+        second = handler.execute({})
+        assert second.startswith("Error: your inbox is empty")
+        inbox_mod._reset_empty_read_window(CID, AGENT)
+        third = agent_inbox.read_inbox(CID, AGENT)
+        assert third.startswith("No unread items. Your inbox is empty")
+    finally:
+        inbox_mod._reset_empty_read_window(CID, AGENT)

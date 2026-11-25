@@ -95,8 +95,8 @@ the MCP client owns the call and receives its result. Calls and results are
 appended to the ordinary conversation transcript as display-only audit rows —
 every `tools/call` (context reads and schema discovery included), rendered
 like a normal agent's tool calls; they are not injected into the selected
-agent's context. `get_initial_context`/`get_context_updates` results are
-audited as a compact summary (size and cursor), never the full document.
+agent's context. `get_initial_context` results are audited as a compact
+summary (size and cursor), never the full document.
 
 Context reads are bounded. A published agent never runs the PawFlow agent
 loop, so its own context file is never compacted; reading it (or the full
@@ -113,8 +113,8 @@ channel (a registered client terminal, `terminal_ready`):
   so its delegate is the agent's own delegate. The `tools/call` returns the
   delegate acknowledgement (task ids) at once, exactly as for a PawFlow agent.
   The result reaches the agent as an ordinary `delegate_reply`; the poller
-  injects that wake-up into the client's terminal, and the client reads the
-  result with `get_context_updates`. Holding the call open instead froze the
+  injects the inbox notice into the client's terminal, and the client reads
+  the result with `read_inbox`. Holding the call open instead froze the
   client for the whole delegated run.
 - **Without a return channel**, nothing could ever wake the client, so the
   adapter keeps the originating `tools/call` open until every delegated task
@@ -168,8 +168,7 @@ Setup:
    the first message of the external client's conversation. It instructs the remote
    model to load the PawFlow context (`get_initial_context`), call
    `read_inbox` at the start of every turn (delegate results and other
-   PawFlow work wait there), call `get_context_updates` only when it needs
-   messages other channels added, persist both sides of the dialogue
+   PawFlow work wait there), persist both sides of the dialogue
    (`send_user_message` / `send_agent_message` with idempotent `message_id`s),
    discover tools lazily (`get_tool_schema` → `use_tool`), and respect the
    one-way limits. The client answers "Ready — PawFlow context loaded" once
@@ -224,14 +223,17 @@ next notice.
 
 ## Inbox instead of per-turn polling
 
-A published agent does not poll `get_context_updates` before each turn. The
-bootstrap contract of `get_initial_context` tells the client to call
-`read_inbox` when the inbox notice appears (a client without a return
-channel calls it once at the start of each turn), and to call
-`get_context_updates` only when it needs conversation messages it does not
-have yet. A read-only publication keeps the cursor-based
-`get_context_updates` contract, since it cannot read (and acknowledge) its
-inbox. `read_inbox` is always part of a restricted tool allowlist.
+A published agent does not poll for context updates: every non-user message
+(delegate messages and results, background results, scheduled wake-ups)
+waits in its inbox, and the imperative inbox notice is the delivery
+channel. `get_context_updates` is retired: it is no longer advertised by
+`tools/list`, and a stale session that still calls it receives only the
+current inbox notice plus a `read_inbox` instruction (recorded as
+delivered — one poll, one notice, no transcript pull). The bootstrap
+contract of `get_initial_context` tells the client to call `read_inbox`
+whenever the notice appears (a client without a return channel calls it
+once at the start of each turn). `read_inbox` is always part of a
+restricted tool allowlist.
 
 ## Tool allowlist
 
@@ -254,7 +256,7 @@ and stored per publication:
 | `api` | The six meta tools; every PawFlow tool is reached through the `use_tool` gateway. |
 | `full` | The four conversation transport tools plus every PawFlow tool as a first-class MCP tool with its real behavior annotations; the `use_tool`/`get_tool_schema` shims are dropped. |
 | `api_readonly` | The `api` surface minus `send_user_message`/`send_agent_message`; `get_tool_schema` lists and `use_tool` executes only read-only tools, and `use_tool` is honestly annotated `readOnlyHint: true`. |
-| `full_readonly` | The `full` surface reduced to `get_initial_context`, `get_context_updates`, and the read-only PawFlow tools. |
+| `full_readonly` | The `full` surface reduced to `get_initial_context` and the read-only PawFlow tools. |
 
 Read-only status comes from `ToolApprovalGate.READ_ONLY_ALLOWED`, the same
 source of truth as tool approval. The read-only modes enforce the restriction
@@ -284,9 +286,12 @@ Published servers expose four direct conversation tools in addition to
 | Tool | Contract |
 |---|---|
 | `get_initial_context` | Returns the bootstrap document a normal agent gets after compaction — system instructions, the conversation's summary pyramid, and the recent transcript tail (last 250 rows, personalized for the agent) — plus its current `seq` cursor. Never the full conversation. |
-| `get_context_updates` | Accepts `after_seq` and returns the later agent-visible messages found in that same bounded recent tail, plus the new cursor. `history_truncated: true` means the tail no longer reaches the cursor (more history exists before it): call `get_initial_context` again. |
 | `send_user_message` | Canonically persists a local client prompt with a required `message_id`. |
 | `send_agent_message` | Canonically persists the external agent's response with a required `message_id`. |
+
+`get_context_updates` is retired and no longer listed: context updates ride
+the inbox notice (`read_inbox`). A stale client that still calls it gets the
+pending notice and a `read_inbox` instruction — never a transcript pull.
 
 Both write tools are durably idempotent: the duplicate check and append occur
 under the conversation lock. A retry with the same `message_id` reports the
@@ -465,14 +470,17 @@ or deleting the publication does the same.
 
 ## Protocol surface
 
-The Streamable HTTP endpoint advertises six MCP tools:
+The Streamable HTTP endpoint advertises five MCP tools:
 
 - `get_tool_schema`: list PawFlow tools/families, return one full schema, or
   compare an availability-filtered routing family;
 - `use_tool`: execute a named PawFlow tool with `arguments_json`.
-- `get_initial_context` and `get_context_updates`: bootstrap and cursor-based
-  agent-visible synchronization;
+- `get_initial_context`: the bootstrap document (system prompt, summary
+  pyramid, recent personalized tail) plus its sequence cursor;
 - `send_user_message` and `send_agent_message`: idempotent conversation writes.
+
+`get_context_updates` is retired (see “Inbox instead of per-turn polling”):
+updates ride the inbox notice.
 
 The wrapper keeps the MCP tool list small while exposing the exact set available
 to the bound conversation and agent. MCP sessions expire after eight hours of

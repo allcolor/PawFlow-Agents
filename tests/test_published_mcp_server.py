@@ -564,7 +564,11 @@ def test_mcp_missing_session_is_400_and_batch_returns_only_request_results(monke
     assert status == 200
     assert headers["Mcp-Session-Id"] == session_id
     assert [item["id"] for item in payload] == [2, 3]
-    assert payload[1]["result"]["tools"] == endpoint._MCP_TOOLS
+    # The retired get_context_updates is no longer part of the advertised list.
+    advertised = payload[1]["result"]["tools"]
+    assert advertised == [tool for tool in endpoint._MCP_TOOLS
+                          if tool["name"] != "get_context_updates"]
+    assert all(tool["name"] != "get_context_updates" for tool in advertised)
 
 
 def test_published_mcp_conversation_context_and_idempotent_messages(monkeypatch):
@@ -1891,7 +1895,9 @@ def test_connector_synthesizes_session_for_stale_or_missing_id(monkeypatch):
     endpoint.handle_mcp_post(stale)
     status, headers, payload = _decoded(stale)
     assert status == 200
-    assert payload["result"]["tools"] == endpoint._MCP_TOOLS
+    advertised = payload["result"]["tools"]
+    assert advertised == [tool for tool in endpoint._MCP_TOOLS
+                          if tool["name"] != "get_context_updates"]
     assert headers["Mcp-Session-Id"] != "gone"
     assert headers["Mcp-Session-Id"] in endpoint._sessions
 
@@ -2476,7 +2482,9 @@ def test_api_readonly_advertises_no_write_tool(monkeypatch):
         _readonly_server("api_readonly"))}
     assert "send_user_message" not in tools
     assert "send_agent_message" not in tools
-    assert "get_initial_context" in tools and "get_context_updates" in tools
+    # The retired get_context_updates is not advertised either.
+    assert "get_initial_context" in tools
+    assert "get_context_updates" not in tools
     # The gateway only executes read-only tools, so it is honestly read-only.
     assert tools["use_tool"]["annotations"]["readOnlyHint"] is True
     assert "read-only" in tools["use_tool"]["description"]
@@ -2491,7 +2499,7 @@ def test_full_readonly_advertises_only_read_tools(monkeypatch):
         endpoint, "_registry", lambda _server: _ReadWriteRegistry())
     tools = {tool["name"]: tool for tool in endpoint._tools_for_server(
         _readonly_server("full_readonly"))}
-    assert set(tools) == {"get_initial_context", "get_context_updates", "read"}
+    assert set(tools) == {"get_initial_context", "read"}
     assert tools["read"]["annotations"]["readOnlyHint"] is True
 
 
@@ -2575,8 +2583,8 @@ def test_bootstrap_contract_is_mode_aware():
         doc = endpoint._initial_context_document(_readonly_server(mode), rows)
         assert "send_user_message" in doc
         assert "send_agent_message" in doc
-        # Inbox model: no per-turn poll, read_inbox on the notice.
-        assert "Do NOT call get_context_updates before each turn" in doc
+        # Inbox model: get_context_updates is retired, read_inbox on the notice.
+        assert "Do NOT poll get_context_updates" in doc
         assert "read_inbox" in doc
         assert "before each later turn" not in doc
 

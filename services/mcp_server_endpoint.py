@@ -408,11 +408,12 @@ def _tool_schema(registry, tool_name: str,
     return f"Error: unknown tool '{tool_name}'"
 
 
-# Meta tools kept when a publication exposes its tools directly (full mode).
-# get_tool_schema and use_tool are dropped: in full mode every tool is a
-# first-class MCP tool, so the schema-lookup and dispatch shims are redundant.
+# Meta tools advertized by a publication's tool list. get_context_updates is
+# retired (the inbox notice is the update channel): a call still answers —
+# with the current notice and a read_inbox instruction — but it is no longer
+# listed, so fresh sessions never see or use it.
 _FULL_MODE_META = frozenset({
-    "get_initial_context", "get_context_updates",
+    "get_initial_context",
     "send_user_message", "send_agent_message",
 })
 
@@ -420,7 +421,7 @@ _FULL_MODE_META = frozenset({
 # meta tools are writes, and merely attempting a write tool makes some clients
 # (ChatGPT) disable the whole connector for the conversation, reads included —
 # so a read-only publication must never advertise or execute one.
-_READONLY_META = frozenset({"get_initial_context", "get_context_updates"})
+_READONLY_META = frozenset({"get_initial_context"})
 _WRITE_META = frozenset({"send_user_message", "send_agent_message"})
 
 
@@ -491,19 +492,23 @@ def _is_mcp_tool_name(value: str) -> bool:
 def _tools_for_server(server: Dict[str, Any]) -> list:
     """MCP tool list advertised for this publication, honoring its mode.
 
-    api mode: the six meta tools (every PawFlow tool reached via use_tool).
-    full mode: the conversation/messaging meta tools plus every PawFlow tool
-    exposed directly, each carrying its real behavior annotations.
-    api_readonly / full_readonly: the same surfaces restricted to read-only
-    tools, with the messaging meta tools dropped entirely.
+    api mode: the meta tools except the retired get_context_updates (every
+    PawFlow tool reached via use_tool; the inbox notice is the update
+    channel). full mode: the conversation/messaging meta tools plus every
+    PawFlow tool exposed directly, each carrying its real behavior
+    annotations. api_readonly / full_readonly: the same surfaces restricted
+    to read-only tools, with the messaging meta tools dropped entirely.
     """
     mode = _publication_mode(server)
     readonly = mode.endswith("_readonly")
     if not mode.startswith("full"):
-        if not readonly:
-            return _MCP_TOOLS
         tools = []
         for tool in _MCP_TOOLS:
+            if tool["name"] == "get_context_updates":
+                continue
+            if not readonly:
+                tools.append(tool)
+                continue
             if tool["name"] in _WRITE_META:
                 continue
             if tool["name"] == "use_tool":
@@ -628,8 +633,6 @@ def _initial_context_document(server: Dict[str, Any], rows: list,
     # connector.
     if _is_readonly_mode(server):
         body.extend([
-            "- Use get_context_updates with the returned cursor before each "
-            "later turn.",
             "- This publication is read-only: do not attempt to persist user "
             "or agent messages, and use only the tools this connector "
             "advertises.",
@@ -637,15 +640,13 @@ def _initial_context_document(server: Dict[str, Any], rows: list,
         ])
     else:
         body.extend([
-            "- Do NOT call get_context_updates before each turn. Delegate "
-            "results, scheduled wake-ups and background results wait in your "
-            "PawFlow inbox: when a `[PawFlow inbox: ACTION REQUIRED]` notice "
-            "appears, call read_inbox before anything else (directly, or "
-            "through use_tool). A client that never receives injected PawFlow "
-            "prompts calls read_inbox once at the start of each turn instead.",
-            "- Call get_context_updates only when you need conversation "
-            "messages you do not have yet (for example what the user wrote "
-            "in the PawFlow webchat).",
+            "- Do NOT poll get_context_updates — it is retired and not "
+            "advertised. Delegate results, scheduled wake-ups and background "
+            "results wait in your PawFlow inbox: when a `[PawFlow inbox: "
+            "ACTION REQUIRED]` notice appears, call read_inbox before "
+            "anything else (directly, or through use_tool). A client that "
+            "never receives injected PawFlow prompts calls read_inbox once "
+            "at the start of each turn instead.",
             "- Persist local user prompts with send_user_message and final "
             "responses with send_agent_message.",
             "- Reuse the same message_id when retrying a write.",

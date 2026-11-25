@@ -53,6 +53,25 @@ class _ALCSetupMixin:
         st._need_more_retried = False
         st._fatal_error = False
         st._fatal_error_msg = ""
+        # A notice loaded from the transcript whose items are ALL read must
+        # not arm again in the new turn's context: the model would re-obey
+        # "STOP. Call read_inbox NOW" at iteration 1. Disarm it before the
+        # first call (read_inbox's own disarm covers anything arriving
+        # later in this turn).
+        try:
+            from core import agent_inbox as _inbx
+            _agent_now = st.ctx.get("active_agent_name", "")
+            if _inbx.unread_count(st.conversation_id, _agent_now) == 0:
+                from tasks.ai._inbox_notice_consumed import (
+                    neutralize_notices_in_messages)
+                _n = neutralize_notices_in_messages(st.ctx.get("messages", []))
+                if _n:
+                    logger.info(
+                        "[inbox] %s/%s context: disarmed %d stale notice(s)"
+                        " whose items are all read",
+                        st.conversation_id[:8], _agent_now, _n)
+        except Exception:
+            logger.debug("inbox disarm on load failed", exc_info=True)
         # Cumulative spend-budget precheck (core/budget_store.py) runs once
         # per external turn, on the first _alc_llm_turn call — see there.
         st._budget_precheck_done = False

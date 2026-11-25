@@ -143,7 +143,11 @@ class ReadInboxHandler(SpawnAgentsHandler):
         from core import agent_inbox as _inbox_mod
 
         if _inbox_mod.unread_count(conversation_id, src_agent) == 0:
-            return self._empty_answer(conversation_id, src_agent)
+            # A paged read (item=...) must keep its specific answer: it is a
+            # continuation of a large item, not an incremental poll.
+            if not item:
+                return self._empty_answer(conversation_id, src_agent)
+            return "No unread inbox item %s." % item
         # Items arrived since the last empty read: clear the loop window.
         _reset_empty_read_window(conversation_id, src_agent)
         return agent_inbox.read_inbox(

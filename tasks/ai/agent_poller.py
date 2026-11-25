@@ -85,6 +85,23 @@ def _check_task_limits(task: dict, task_id: str) -> str:
 class AgentPollerMixin(_AgentPollCheckinMixin):
     """Methods extracted from AgentLoopTask."""
 
+    @staticmethod
+    def _wake_stores_own_item(reasons: List[str]) -> bool:
+        """Whether an external wake is itself data, not just a nudge.
+
+        Timer reminders, boot recovery, continuations and task check-ins
+        carry information the inbox must hold. Reasons that only announce
+        queued content ([pending] wake X, [delegate_reply] queued result
+        for X) reference an item that is already unread in the same inbox,
+        so their wake rows are not stored — the notice still fires and,
+        for external_agui, the raw reason text still pastes fine.
+        """
+        for reason in reasons or []:
+            text = str(reason or "").strip()
+            if any(pattern.match(text) for pattern in _TARGETED_WAKE_REASON_RES):
+                continue
+            return True
+        return False
 
     def _redirect_external_mcp_wake(self, conversation_id: str,
                                     reasons: List[str]) -> bool:
@@ -147,10 +164,16 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             # The wake reaches a published MCP agent like any agent: as an
             # inbox item behind an imperative notice, read with read_inbox.
             # Injecting the raw wake made the client poll get_context_updates.
+            # A pure content nudge ("[pending] wake X", "[delegate_reply]
+            # queued result for X") stores no item of its own: the content it
+            # announces is already unread in the same inbox and the notice
+            # lists it — storing the nudge only piled identical 93-char
+            # items, six per offline client, into every notice.
             from core import agent_inbox
-            agent_inbox.enqueue_item(
-                conversation_id, agent, dict(message),
-                "scheduled_wakeup", "scheduler")
+            if self._wake_stores_own_item(reasons):
+                agent_inbox.enqueue_item(
+                    conversation_id, agent, dict(message),
+                    "scheduled_wakeup", "scheduler")
             notice, newest = agent_inbox.peek_notice(conversation_id, agent)
             prompt = notice or content
         from services.external_agent_runtime_router import route_external_agent_prompt

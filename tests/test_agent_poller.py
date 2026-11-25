@@ -963,6 +963,85 @@ def test_external_mcp_wake_is_an_inbox_item_behind_its_notice(
     assert bool(pending_notice) is (not routed)
 
 
+@pytest.mark.parametrize("routed", [True, False])
+def test_external_mcp_nudge_wake_stores_no_item_but_notifies(
+        poller_env, monkeypatch, routed):
+    # "[delegate_reply] queued result for X" announces an item that is
+    # already unread in the same inbox; storing the nudge only duplicated
+    # it as a 93-char wake row on every delivery.
+    from core import agent_inbox
+    cid = f"external_wake_nudge_{routed}"
+    task = _active_task(cid, [])
+    task._redirect_external_mcp_wake = (
+        AgentPollerMixin._redirect_external_mcp_wake.__get__(task))
+    monkeypatch.setattr("core.conv_agent_config.get_agent_config",
+                        lambda *args: {"runtime_kind": "external_mcp"})
+    route = MagicMock(return_value=("external_mcp", routed))
+    monkeypatch.setattr(
+        "services.external_agent_runtime_router.route_external_agent_prompt", route)
+    # "[pending] wake X" names its agent only through the pending key, not
+    # the reason text; the nudge test relies on active_resources (manage_
+    # resource) for the first call's identity fallback.
+    from core.conversation_store import ConversationStore
+    ConversationStore.instance().set_extra(
+        cid, "active_resources", {"agent": "assistant"})
+    from core.llm_client import stamp_message
+    agent_inbox.enqueue_item(
+        cid, "assistant",
+        stamp_message({"role": "user", "content": "GD3's answer"}, cid),
+        "delegate_reply", "GameDev3")
+
+    assert task._redirect_external_mcp_wake(
+        cid, ["[delegate_reply] queued result for assistant"])
+    assert task._redirect_external_mcp_wake(
+        cid, ["[pending] wake assistant"])
+
+    items = agent_inbox.unread_items(cid, "assistant")
+    assert [(i.source, "GD3's answer" in i.payload["content"])
+            for i in items] == [("inbox:delegate_reply", True)]
+    prompt = route.call_args.args[2]
+    assert prompt.startswith("[PawFlow inbox: ACTION REQUIRED]")
+    assert "delegate reply from GameDev3" in prompt
+    pending_notice = agent_inbox.peek_notice(cid, "assistant", only_new=True)[0]
+    assert bool(pending_notice) is (not routed)
+
+
+def test_external_mcp_timer_wake_still_stores_its_item(poller_env,
+                                                       monkeypatch):
+    # A scheduled reminder is itself data; it must stay an inbox item.
+    from core import agent_inbox
+    cid = "external_wake_timer"
+    task = _active_task(cid, [])
+    task._redirect_external_mcp_wake = (
+        AgentPollerMixin._redirect_external_mcp_wake.__get__(task))
+    monkeypatch.setattr("core.conv_agent_config.get_agent_config",
+                        lambda *args: {"runtime_kind": "external_mcp"})
+    monkeypatch.setattr(
+        "services.external_agent_runtime_router.route_external_agent_prompt",
+        MagicMock(return_value=("external_mcp", True)))
+
+    assert task._redirect_external_mcp_wake(
+        cid, ["[scheduled:assistant] 09:00 daily standup"])
+
+    items = agent_inbox.unread_items(cid, "assistant")
+    assert len(items) == 1
+    assert "09:00 daily standup" in items[0].payload["content"]
+    assert agent_inbox.peek_notice(cid, "assistant", only_new=True)[0] == ""
+
+
+def test_wake_stores_own_item_classification():
+    assert not AgentPollerMixin._wake_stores_own_item(
+        ["[pending] wake GameDev9"])
+    assert not AgentPollerMixin._wake_stores_own_item(
+        ["[delegate_reply] queued result for GameDev9"])
+    assert AgentPollerMixin._wake_stores_own_item(
+        ["[scheduled:GameDev9] daily 09:00"])
+    assert AgentPollerMixin._wake_stores_own_item(
+        ["[boot-recovery] 16 pending msg(s)"])
+    assert AgentPollerMixin._wake_stores_own_item(
+        ["[delegate_reply] queued result for GameDev9",
+         "[scheduled:GameDev9] daily 09:00"])
+
 def test_scheduled_entry_target_uses_roster_canonical_name(poller_env):
     from core.conv_agent_config import CONV_AGENTS_KEY
     from core.conversation_store import ConversationStore

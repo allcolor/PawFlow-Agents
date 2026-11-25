@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.339] — 2026-11-25
+
+### Changed
+
+- An `read_inbox` over an already-delivered box answers one calm, always
+  identical terminal message — "inbox fully delivered, nothing pending, a
+  NEW `[PawFlow inbox: ACTION REQUIRED]` notice is the only reason to call
+  it again" — instead of an escalating error/kill/countdown guard. Paged
+  `item=...` reads keep their specific "No unread inbox item" answer.
+- After `read_inbox` has actually run in a turn, every imperative inbox
+  notice present in that turn's context (main loop and sub-agent loops
+  alike) is rewritten in place to the auditable
+  `[PawFlow inbox: DELIVERED — read_inbox executed this turn]` marker, so
+  the stale "STOP. Call read_inbox NOW" order cannot be re-obeyed at the
+  next iteration — the loop that made agents poll every few seconds while
+  still working.
+- A transcript-loaded notice whose items are ALL read is disarmed at turn
+  start (before the first LLM call), so a new turn cannot re-arm a stale
+  order on context reload.
+
 ## [1.0.0-beta.338] — 2026-11-25
 
 ### Changed

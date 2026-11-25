@@ -13,8 +13,6 @@ registry wiring identify the calling agent the same way.
 """
 
 import logging
-import threading
-import time
 from typing import Any, Dict
 
 from core.agent_inbox import DEFAULT_READ_CHARS as _DEFAULT_CHARS
@@ -24,92 +22,36 @@ from core.handlers.spawn_agents import SpawnAgentsHandler
 
 logger = logging.getLogger(__name__)
 
-# A turn that already found its inbox empty and keeps calling read_inbox is
-# spinning: the ACTION REQUIRED notice stays in the turn's context, so the
-# model re-obeying it every iteration is exactly the loop. The first empty
-# answer explains and asks the turn to end; reads that keep coming back
-# fast (~seconds apart, the LLM iteration cadence) are hard errors, and two
-# rapid rejections in a row force-stop the offending run — kill, not error,
-# per the platform rule that a force stop never affects the next run.
-_EMPTY_CALL_COOLDOWN_SECONDS = 180.0
-_RAPID_RECALL_SECONDS = 30.0
-_RAPID_RECALL_LIMIT = 2
-
-_EMPTY_READ_STATE: Dict[tuple, Dict[str, float]] = {}
-_EMPTY_READ_STATS = {"blocked": 0, "force_stopped": 0}
-_EMPTY_READ_LOCK = threading.Lock()
-
-
-def _register_empty_read(conversation_id: str,
-                         agent_name: str) -> tuple:
-    """Record an empty read; return (blocked, retry_after, rapid_count).
-
-    The window anchor is set once and never refreshed while reads keep
-    arriving, so the printed countdown actually counts down. Rapid recall
-    (less than _RAPID_RECALL_SECONDS since the previous empty read)
-    accumulates toward the force-stop limit; slow re-reads do not.
-    """
-    key = (conversation_id, agent_name)
-    now = time.monotonic()
-    with _EMPTY_READ_LOCK:
-        state = _EMPTY_READ_STATE.setdefault(key, {})
-        anchor = state.get("anchor", 0.0)
-        if anchor and now - anchor < _EMPTY_CALL_COOLDOWN_SECONDS:
-            gap = now - state.get("last", 0.0)
-            rapid = state.get("rapid", 0) + 1 if gap < _RAPID_RECALL_SECONDS \
-                else 0
-            state["rapid"] = rapid
-            state["last"] = now
-            _EMPTY_READ_STATS["blocked"] += 1
-            remaining = max(1, int(_EMPTY_CALL_COOLDOWN_SECONDS
-                                   - (now - anchor)))
-            return (True, remaining, rapid)
-        state.clear()
-        state["anchor"] = now
-        state["last"] = now
-        state["rapid"] = 0
-        return (False, 0, 0)
-
-
-def _reset_empty_read_window(conversation_id: str, agent_name: str) -> None:
-    """Forget the empty-read window (test helper / item arrival clears it)."""
-    with _EMPTY_READ_LOCK:
-        _EMPTY_READ_STATE.pop((conversation_id, agent_name), None)
-
-
-def _blocked_message(retry_after: int, stopped: bool = False) -> str:
-    text = (
-        f"Error: your inbox is empty and you already read it moments ago "
-        f"(retry in ~{retry_after}s). Do not call read_inbox again in this "
-        f'turn: end it instead. A new "[PawFlow inbox: ACTION REQUIRED]" '
-        f"notice will wake you — no notice means nothing to read."
-    )
-    if stopped:
-        text += " This turn is being force-stopped: no further calls."
-    return text
+# A turn that keeps calling read_inbox on an already-delivered box is
+# re-obeying the notice that stayed in its context. The answer must be a
+# calm, always-identical termination message — no error, no kill, no
+# countdown: the turn ends on it, and a NEW notice appears the moment real
+# work arrives.
+_EMPTY_READ_MESSAGE = (
+    "Your inbox is fully delivered: every item the last notice announced "
+    "was read and nothing new is pending. Acknowledge nothing, re-read "
+    'nothing. Do not call read_inbox again — a NEW "[PawFlow inbox: '
+    'ACTION REQUIRED]" notice will appear here the moment new work '
+    "arrives, and that notice is the only reason to call it again."
+)
 
 
 def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _force_stop_read_loop(conversation_id: str, agent_name: str) -> None:
-    """Kill the run whose turn keeps polling an empty inbox.
-
-    Called from a tool handler thread: the cancel propagates in the
-    background (cancel_provider_client + TaskGroup cancel), so the read
-    returns its error immediately. Bumping the fence first guarantees the
-    stopped run cannot act again; the next run clears it at start, so this
-    never affects the successor.
-    """
-    def _stop():
-        try:
-            from tasks.ai.agent_loop import AgentLoopTask
-            AgentLoopTask.force_stop_agent(conversation_id, agent_name)
-        except Exception:
-            logger.debug(
-                "read_inbox force-stop failed", exc_info=True)
-    threading.Thread(target=_stop, daemon=True).start()
+# A turn that keeps calling read_inbox on an already-delivered box is
+# re-obeying the notice that stayed in its context. The answer must be a
+# calm, always-identical termination message — no error, no kill, no
+# countdown: the turn ends on it and a NEW notice wakes the turn again
+# when real work arrives.
+_EMPTY_READ_MESSAGE = (
+    "Your inbox is fully delivered: every item the last notice announced "
+    "has been read just now. Nothing to acknowledge, nothing pending. "
+    "Do not call read_inbox again — a NEW '[PawFlow inbox: ACTION "
+    "REQUIRED]' notice will appear here the moment new work arrives, "
+    "and that is the only reason to call it again."
+)
 
 
 class ReadInboxHandler(SpawnAgentsHandler):
@@ -199,37 +141,8 @@ class ReadInboxHandler(SpawnAgentsHandler):
             # A paged read (item=...) must keep its specific answer: it is a
             # continuation of a large item, not an incremental poll.
             if not item:
-                return self._empty_answer(conversation_id, src_agent)
+                return _EMPTY_READ_MESSAGE
             return "No unread inbox item %s." % item
-        # Items arrived since the last empty read: clear the loop window.
-        _reset_empty_read_window(conversation_id, src_agent)
         return agent_inbox.read_inbox(
             conversation_id, src_agent,
             max_chars=max_chars, item=item, offset=offset)
-
-    def _empty_answer(self, conversation_id: str, agent_name: str) -> str:
-        """The empty-inbox answer, escalating to a force stop.
-
-        The first empty read explains and asks the turn to end; reads that
-        keep coming back inside the cooldown window are hard errors with a
-        real countdown, and enough rapid rejections force-stop the offending
-        run — a kill, which never affects the agent's next run.
-        """
-        blocked, retry_after, rapid = _register_empty_read(
-            conversation_id, agent_name)
-        if not blocked:
-            return (
-                "No unread items. Your inbox is empty: do NOT call "
-                "read_inbox again until a new [PawFlow inbox: ACTION "
-                "REQUIRED] notice appears. If you have nothing else to act "
-                "on, end your turn without scheduling another wake-up."
-            )
-        if rapid >= _RAPID_RECALL_LIMIT:
-            _EMPTY_READ_STATS["force_stopped"] += 1
-            _force_stop_read_loop(conversation_id, agent_name)
-            logger.warning(
-                "[read_inbox] force-stopped empty-read spin %s/%s after "
-                "%d rapid rejected reads", conversation_id[:8], agent_name,
-                rapid)
-            return _blocked_message(retry_after, stopped=True)
-        return _blocked_message(retry_after)

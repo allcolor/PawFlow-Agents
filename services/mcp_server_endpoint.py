@@ -405,6 +405,12 @@ def _tool_schema(registry, tool_name: str,
     for definition in definitions:
         if identifier_key(definition.get("name")) == identifier_key(tool_name):
             return definition
+    # Meta tools are transport, not registry entries: get_tool_schema must
+    # describe them too (Agy asks for send_agent_message's schema before
+    # calling it; without this it got "unknown tool" and retried).
+    for definition in _MCP_TOOLS:
+        if identifier_key(definition.get("name")) == identifier_key(tool_name):
+            return definition
     return f"Error: unknown tool '{tool_name}'"
 
 

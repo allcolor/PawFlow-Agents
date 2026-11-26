@@ -11,7 +11,7 @@ from typing import Dict, List
 
 
 from core.llm_client import (
-    LLMClient, LLMMessage,
+    LLMClient, LLMMessage, LLMResponse,
 )
 from tasks.ai.agent_summarize import AgentSummarizeMixin
 from tasks.ai._agent_compact_core import _AgentCompactCoreMixin
@@ -356,10 +356,7 @@ class AgentCompactionMixin(
                          token_callback=None, tools_called: list = None,
                          compact_threshold: float = 0.6,
                          conversation_id: str = ""):
-        """Force a final synthesis from the LLM (no tools).
-
-        Returns (content, tokens_in, tokens_out, model).
-        """
+        """Force a final synthesis and preserve the provider response's usage."""
         messages.append(LLMMessage(role="user", content=prompt,
                                     conversation_id=conversation_id))
         _cc = compact_client or client
@@ -397,7 +394,7 @@ class AgentCompactionMixin(
                     )
                 messages.append(LLMMessage(role="assistant", content=resp.content,
                                             conversation_id=conversation_id))
-                return resp.content, resp.tokens_in, resp.tokens_out, resp.model
+                return resp
             except Exception as synth_err:
                 err_str = str(synth_err)
                 if "exceed_context_size" in err_str or "n_prompt_tokens" in err_str:
@@ -420,7 +417,7 @@ class AgentCompactionMixin(
             "I performed research but encountered an error generating the response.\n"
             f"Tools used: {', '.join(tools_called or [])}"
         )
-        return fallback, 0, 0, ""
+        return LLMResponse(content=fallback, finish_reason="error")
 
     # ── Image deflation (multimodal → text-only after LLM sees it) ──
 

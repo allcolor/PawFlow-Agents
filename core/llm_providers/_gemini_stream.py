@@ -628,6 +628,14 @@ class _GeminiStreamMixin:
             self.record_observed_cli_context(
                 conv_id, agent_name,
                 self._gemini_acp_prompt_tokens(usage_meta))
+            native_prompt = self._gemini_acp_reported_tokens(
+                usage_meta, "promptTokenCount", "prompt_token_count", "inputTokens", "input_tokens")
+            native_cache = self._gemini_acp_reported_tokens(
+                usage_meta, "cachedContentTokenCount", "cached_content_token_count")
+            cache_read = 0
+            if native_prompt is not None:
+                cache_read = min(native_prompt, native_cache or 0)
+                prompt_tokens = native_prompt - cache_read
             if session_id and conv_id and store is not None and not is_ephemeral:
                 try:
                     store.set_extra(conv_id, session_key, session_id)
@@ -639,6 +647,9 @@ class _GeminiStreamMixin:
                 model=model,
                 tokens_in=max(0, int(prompt_tokens or 0)),
                 tokens_out=max(0, int(tokens_out or 0)),
+                input_usage_native=native_prompt is not None,
+                cache_read_tokens=cache_read,
+                cache_read_reported=native_prompt is not None and native_cache is not None,
                 finish_reason="stop",
                 raw={"session_id": session_id, "tool_results": len(completed_tool_ids)},
                 thinking="".join(thinking_parts).strip(),

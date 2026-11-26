@@ -103,6 +103,47 @@ class TestRecord:
                             cost_per_1m_cache_read=2.0)
         assert cost == pytest.approx(2.0)
 
+    def test_cache_coverage_excludes_missing_and_partial_counts(self, ledger):
+        for provider, input_count, cache, reported in (
+            ("anthropic", 40, 60, True),
+            ("openai", 100, 0, True),
+            ("local", 1_000, 0, None),
+            ("partial", 1_000, 80, False),
+            ("legacy", 20, 80, None),
+        ):
+            ledger.record(user_id="alice", channel="chat", conversation_id="c1",
+                          provider=provider, tokens_in=input_count,
+                          cache_read=cache, cache_read_reported=reported)
+        totals = ledger.summary(conversation_id="c1")
+        assert totals["calls"] == 5
+        assert totals["cache_observed_calls"] == 3
+        assert totals["cache_observed_input"] == 300
+        assert totals["cache_observed_read"] == 140
+        assert totals["cache_read"] == 220
+        by_provider = {row["value"]: row for row in
+                       ledger.conversation_breakdown("c1")["by_provider"]}
+        assert by_provider["openai"]["cache_observed_calls"] == 1
+        assert by_provider["local"]["cache_observed_calls"] == 0
+        assert by_provider["partial"]["cache_observed_calls"] == 0
+
+    def test_chat_ledger_records_response_duration_and_zero_cache(self, ledger):
+        from types import SimpleNamespace
+        from core.llm_client import LLMResponse
+        from tasks.ai._alc_base import _record_response_usage
+
+        state = SimpleNamespace(
+            user_id="alice", conversation_id="c1", ctx={}, client=SimpleNamespace(),
+            total_tokens_in=0, total_tokens_out=0, total_cache_read=0,
+            total_cache_write=0, _turn_cost_ref=[0.0], _client_provider="openai",
+        )
+        response = LLMResponse(model="remote", tokens_in=100, tokens_out=10,
+                               duration_ms=432.5, cache_read_reported=True)
+        assert _record_response_usage(state, response) is response
+        row, = ledger.export_rows(conversation_id="c1")
+        assert row["duration_ms"] == 432
+        assert row["cache_read_reported"] == 1
+        assert ledger.summary(conversation_id="c1")["cache_observed_calls"] == 1
+
     def test_persistent_across_reopen(self, tmp_path):
         path = str(tmp_path / "u.db")
         UsageLedger.reset()

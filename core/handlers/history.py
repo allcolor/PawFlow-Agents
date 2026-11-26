@@ -23,6 +23,7 @@ _SEARCH_IN_PROCESS_MAX_BYTES = 0
 # messages (a super-bucket range) into the LLM's context.
 _MAX_LIMIT = 100
 _DEFAULT_LIMIT = 50
+_MESSAGE_PAGE_CHARS = 16000
 
 _QUERY_TOKEN_RE = re.compile(r"[a-z0-9_][a-z0-9_.-]*", re.IGNORECASE)
 
@@ -233,7 +234,8 @@ class ReadHistoryHandler(ToolHandler):
             "  oldest         — first N messages (head).\n"
             "  search         — full-text match (case-insensitive), "
             "with keyword fallback for non-contiguous terms.\n"
-            "  read           — a single message by numeric index.\n"
+            "  read           — one message by index, or its text paged by "
+            "from_msg_id and character offset.\n"
             "  count          — total message count.\n"
             "  range          — inclusive slice [from_msg_id, to_msg_id]. "
             "The UUIDs quoted in compact/bucket summary headers "
@@ -286,7 +288,7 @@ class ReadHistoryHandler(ToolHandler):
                         "recent: last N messages (default). "
                         "oldest: first N messages. "
                         "search: find messages matching a query. "
-                        "read: read a specific message by index. "
+                        "read: read a message by index, or page its text by from_msg_id. "
                         "count: total message count. "
                         "range: inclusive slice between two msg_ids. "
                         "range_by_seq: inclusive slice between two seq values "
@@ -303,7 +305,9 @@ class ReadHistoryHandler(ToolHandler):
                 "offset": {
                     "type": "integer",
                     "description": (
-                        "Pagination cursor. For 'recent' it skips the N most "
+                        "Pagination cursor. For 'read' with from_msg_id it is "
+                        "a character offset into the message text. "
+                        "For 'recent' it skips the N most "
                         "recent filtered messages; for 'oldest' and every "
                         "other list action (range, range_by_seq, "
                         "range_by_date, search) "
@@ -335,7 +339,7 @@ class ReadHistoryHandler(ToolHandler):
                 },
                 "from_msg_id": {
                     "type": "string",
-                    "description": "Start msg_id. Used by range (inclusive start) and around (anchor).",
+                    "description": "Message ID for read, range (inclusive start) or around (anchor).",
                 },
                 "to_msg_id": {
                     "type": "string",
@@ -664,9 +668,29 @@ class ReadHistoryHandler(ToolHandler):
 
     def _do_read(self, store, arguments,
                  role_filter: str, agent_filter: str) -> str:
-        idx = int(arguments.get("index", 0))
         if not self._owns_conversation(store):
             return "No history found"
+        cid = self._conversation_id
+        msg_id = arguments.get("from_msg_id")
+        if msg_id:
+            idx = store.find_display_index(cid, msg_id=msg_id)
+            window = store.load_window_by_index(cid, idx, 1) if idx >= 0 else []
+            if not window or _msg_id(window[0]) != msg_id:
+                return f"Error: msg_id {msg_id} not found"
+            msg = window[0]
+            if not self._matches(msg, role_filter, agent_filter):
+                return f"Message {msg_id} does not match {_scope_label(role_filter, agent_filter)}"
+            offset = arguments.get("offset", 0)
+            if type(offset) is not int or offset < 0:
+                return "Error: offset must be a non-negative character offset"
+            body = self._render_body(msg, role_filter)
+            if offset > len(body):
+                return f"Error: offset exceeds the message length ({len(body)} characters)"
+            end = min(offset + _MESSAGE_PAGE_CHARS, len(body))
+            header = f"Message {msg_id}, characters {offset}–{end} of {len(body)}"
+            footer = f"\n\nMore text available. Repeat this read with offset={end}." if end < len(body) else ""
+            return f"{header}\n{body[offset:end]}{footer}"
+        idx = int(arguments.get("index", 0))
         total = store.message_count(self._conversation_id)
         if not total:
             return "No history found"

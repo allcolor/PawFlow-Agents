@@ -2380,9 +2380,8 @@ def test_sub_agent_provider_compact_is_provider_agnostic():
     assert "invalidate_claude_session_for_agent" in block
     assert "set_extra(\n                                _delegate_conv_id,\n                                f\"claude_session:" not in block
 
-    recover_block = src[
-        src.index("# Recover OAuth tokens"):
-        src.index("result.tokens_in += response.tokens_in")]
+    recover_start = src.index("# Recover OAuth tokens")
+    recover_block = src[recover_start:src.index("account_response(response)", recover_start)]
     assert "client._recover_tokens(" in recover_block
     assert "user_id=task.user_id" in recover_block
     assert "conversation_id=_delegate_conv_id" in recover_block

@@ -39,6 +39,25 @@ def test_codex_app_server_dispatch_contracts_are_wired():
     assert '"codex-app-server"' in stream_src
 
 
+def test_codex_app_usage_counts_only_exchanges_in_the_current_turn():
+    from core.llm_providers._codex_app_stream import _codex_app_usage_delta
+
+    def counts(gross, cached, written, output):
+        return {"inputTokens": gross, "cachedInputTokens": cached,
+                "cacheWriteInputTokens": written, "outputTokens": output}
+
+    sample = {"total": counts(280, 150, 10, 40), "last": counts(80, 60, 3, 7)}
+    snapshot, step = _codex_app_usage_delta(sample, None)
+    assert step == (80, 60, 3, 7)
+    assert _codex_app_usage_delta(sample, snapshot)[1] == (0, 0, 0, 0)
+    sample["total"] = counts(390, 230, 12, 45)
+    assert _codex_app_usage_delta(sample, snapshot)[1] == (110, 80, 2, 5)
+    sample["total"] = counts(20, 10, 0, 4)
+    assert _codex_app_usage_delta(sample, snapshot)[1] is None
+    assert _codex_app_usage_delta(sample, None)[1] is None
+    assert _codex_app_usage_delta([], snapshot) == (snapshot, None)
+
+
 def test_codex_app_server_uses_app_server_protocol_and_local_images():
     src = "".join(
         inspect.getsource(_c) for _c in LLMCodexAppServerMixin.__mro__

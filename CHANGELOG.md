@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The conversation usage panel shows a breakdown by provider. The dashboard
+  reports the cache read rate for calls with observed cache telemetry.
+
+### Changed
+
+- Cold CLI bootstraps, stateless calls, and reusable delegates send previews of
+  large historical tool results when the agent can read the full transcript.
+  Current tool results remain available in full.
+- Automatic delegation context carries shareable conversation text with speaker
+  attribution. Private delegate content is delivered through the targeted inbox.
+- Usage accounting preserves zero fresh input on fully cached requests and
+  distinguishes reported cache zeros from missing telemetry. CLI turn totals
+  include completed provider exchanges, and delegate totals include synthesis.
+
+### Fixed
+
+- Cold CLI sessions drop leftover assistant text after cancellation and keep
+  the active request's tool exchanges.
+- Persistent delegates can resume by task ID with their provider session and
+  completed tool exchanges. A failure to save a turn is reported to its caller.
+- Inbox reads preserve paged delivery cursors and mark genuine notices as
+  delivered without changing quoted notices or tool output. Published MCP
+  bootstraps issue a fresh notice when items are pending.
+
 ## [1.0.0-beta.339] — 2026-11-25
 
 ### Changed

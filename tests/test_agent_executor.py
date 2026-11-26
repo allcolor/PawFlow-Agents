@@ -1,6 +1,7 @@
 """Isolated delegates receive durable inbox data, notices and explicit read ack."""
 
 import threading
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -77,6 +78,8 @@ def test_task_and_parent_context_only_arrive_after_read_inbox(inbox, mode, ephem
         output = snapshots[-1][-1]
         assert output[0] == "tool"
         assert '<tool_output tool="read_inbox">' in output[1]
+        assert all("Call read_inbox() NOW" not in str(text)
+                   for _, text in snapshots[-1])
         assert "PRIVATE TASK BODY" in output[1]
         assert "PRIVATE PARENT CONTEXT" in output[1]
         assert "PRIVATE PARENT SYSTEM CONTEXT" in output[1]
@@ -567,3 +570,246 @@ def test_sub_agent_images_deflated_after_each_turn(inbox, tmp_path,
     assert isinstance(out, str)
     assert "QUJD" not in out
     assert "fs://filestore/" in out or "[images deflated]" in out
+
+
+def test_sub_agent_sends_a_native_image_only_once(inbox):
+    client = make_client_mock([])
+    images_in_prompt = []
+    image = LLMMessage(role="user", content=[
+        {"type": "image_url", "image_url": {"url": "https://example.test/image.png"}},
+    ], conversation_id="parent")
+
+    def complete_stream(**kwargs):
+        images_in_prompt.append(sum(
+            isinstance(msg.content, list) and any(
+                part.get("type") == "image_url" for part in msg.content)
+            for msg in kwargs["messages"]
+        ))
+        if len(images_in_prompt) == 1:
+            return tool_call_response("echo", {"message": "inspect"})
+        return simple_response("done")
+
+    client.complete_stream.side_effect = complete_stream
+    executor = SubAgentExecutor(client, make_registry(EchoToolHandler()))
+    try:
+        result = executor.execute_agent(AgentTask(
+            id="image-once", agent_name="worker", user_id="alice",
+            message="Inspect the image.", parent_conversation_id="parent",
+            context_messages=[image], tools=["echo"], internal=True))
+    finally:
+        executor.shutdown()
+    assert result.status == "completed", result.error
+    assert images_in_prompt == [1, 0]
+    assert isinstance(image.content, list)
+
+
+@pytest.fixture
+def delegate_store(tmp_path, monkeypatch):
+    from core.conversation_store import ConversationStore
+
+    store = ConversationStore(str(tmp_path / "conversations"))
+    store.save("parent", [], user_id="alice")
+    monkeypatch.setattr(ConversationStore, "instance", lambda: store)
+    return store
+
+
+def test_subagent_ledger_includes_cache_from_tools_and_synthesis(inbox, tmp_path, monkeypatch):
+    from core.usage_ledger import UsageLedger
+
+    ledger = UsageLedger(str(tmp_path / "usage.db"))
+    monkeypatch.setattr(UsageLedger, "instance", lambda: ledger)
+    first = replace(tool_call_response("echo", {"text": "work"}),
+                    cache_read_tokens=60, cache_creation_tokens=10,
+                    cache_read_reported=True)
+    final = replace(simple_response("done"), cache_read_tokens=70, cache_read_reported=True)
+    client = make_client_mock([first])
+    client.complete.side_effect = [final]
+    executor = SubAgentExecutor(client, make_registry(EchoToolHandler()))
+    try:
+        result = executor.execute_agent(AgentTask(
+            id="usage", agent_name="worker", user_id="alice", message="work",
+            parent_conversation_id="parent", internal=True,
+            max_iterations=1, tools=["echo"]))
+        assert result.status == "completed", result.error
+        row, = ledger.export_rows(task_id="usage")
+        assert row["tokens_in"] == first.tokens_in + final.tokens_in
+        assert row["cache_read"] == 130
+        assert row["cache_write"] == 10
+        assert row["cache_read_reported"] == 1
+    finally:
+        executor.shutdown()
+
+
+@pytest.mark.parametrize("wrapped_inbox", [False, True])
+def test_persistent_delegate_appends_and_resumes_its_own_history(
+        inbox, delegate_store, monkeypatch, wrapped_inbox):
+    from core.conversation_store import ConversationStore
+    client = make_client_mock([])
+    task = AgentTask(
+        id="reusable", agent_name="worker", message="original job",
+        source_agent="caller", user_id="alice", llm_service="svc",
+        parent_conversation_id="parent", context_mode="last:2", persist=True,
+        context_messages=[{"role": "assistant", "content": "first parent snapshot"}])
+    cid = "parent::task::reusable"
+    snapshots = []
+
+    def complete_stream(**kwargs):
+        messages = kwargs["messages"]
+        snapshots.append([(m.role, m.content, [tc.id for tc in m.tool_calls or []])
+                          for m in messages])
+        if len(snapshots) in (1, 3):
+            response = (tool_call_response(
+                "use_tool", {"tool_name": "read_inbox", "arguments": "{}"})
+                if wrapped_inbox else tool_call_response("read_inbox", {}))
+            response.tool_calls[0].id = f"read-{len(snapshots)}"
+            return response
+        return simple_response("first answer" if len(snapshots) == 2 else "next answer")
+
+    client.complete_stream.side_effect = complete_stream
+    executor = SubAgentExecutor(client, make_registry())
+    try:
+        first = executor.execute_agent(task)
+        assert first.status == "completed", first.error
+        earlier = delegate_store.load(cid, user_id="alice")
+        assert sorted(row["role"] for row in earlier) == ["assistant", "assistant", "tool", "tool_call"]
+        call, = [row for row in earlier if row["role"] == "tool_call"]
+        assert any(row["msg_id"] == call["parent_message_id"] for row in earlier)
+        assert all(row["msg_id"] and row["ts"] for row in earlier)
+        delegate_store.set_extra(cid, "claude_session:worker", "existing-session")
+
+        reopened_store = ConversationStore(str(delegate_store._store_dir))
+        monkeypatch.setattr(ConversationStore, "instance", lambda: reopened_store)
+        next_task = replace(
+            task, message="follow-up job",
+            context_messages=[{"role": "assistant", "content": "duplicate new parent snapshot"}])
+        second = executor.execute_agent(next_task)
+        assert second.status == "completed", second.error
+        assert second.response == "next answer"
+        assert "first answer" in [body for _, body, _ in snapshots[2]]
+        assert [calls for _, _, calls in snapshots[2] if calls] == [["read-1"]]
+        assert sum("first parent snapshot" in str(body) for _, body, _ in snapshots[2]) == 1
+        assert sum("Call read_inbox() NOW" in str(body) for _, body, _ in snapshots[2]) == 1
+        assert "follow-up job" not in str(snapshots[2])
+        assert "follow-up job" in str(snapshots[3])
+        assert "duplicate new parent snapshot" not in str(snapshots)
+        assert agent_inbox.unread_count(cid, "worker") == 0
+
+        for invalid in (
+                replace(task, user_id="other-user"),
+                replace(task, source_agent="other-caller"),
+                replace(task, agent_name="other-target"),
+                replace(task, id="reusable?"),
+                replace(task, persist=False)):
+            assert executor.execute_agent(invalid).status == "error"
+        assert len(snapshots) == 4
+    finally:
+        executor.shutdown()
+
+    restored = reopened_store.load(cid, user_id="alice")
+    assert restored[:len(earlier)] == earlier
+    assert [row["content"] for row in restored if row["role"] == "assistant"][-1] == "next answer"
+    assert len({row["msg_id"] for row in restored}) == len(restored)
+    assert not any("PawFlow inbox: ACTION REQUIRED" in str(row["content"]) for row in restored)
+    assert reopened_store.get_extra(cid, "claude_session:worker") == "existing-session"
+
+
+def test_concurrent_runs_cannot_share_a_persistent_task_id(inbox, delegate_store):
+    entered = threading.Event()
+    release = threading.Event()
+    client = make_client_mock([])
+    task = AgentTask(
+        id="concurrent", agent_name="worker", message="work",
+        user_id="alice", llm_service="svc", parent_conversation_id="parent",
+        internal=True, persist=True)
+
+    def complete_stream(**_kwargs):
+        entered.set()
+        assert release.wait(5)
+        return simple_response("done")
+
+    client.complete_stream.side_effect = complete_stream
+    first = SubAgentExecutor(client, make_registry())
+    second = SubAgentExecutor(client, make_registry())
+    try:
+        pending = first.spawn([task], wait=False)
+        assert entered.wait(5)
+        same_id = second.execute_agent(replace(task))
+        assert same_id.status == "error"
+        assert "already has an active turn" in same_id.error
+        release.set()
+        assert first._pending[pending[0].task_id].result(timeout=5).status == "completed"
+        assert client.complete_stream.call_count == 1
+    finally:
+        release.set()
+        first.shutdown()
+        second.shutdown()
+
+
+def test_persistent_delegate_reports_checkpoint_failure(inbox, delegate_store, monkeypatch):
+    client = make_client_mock([simple_response("done")])
+    task = AgentTask(
+        id="save-error", agent_name="worker", message="work",
+        user_id="alice", llm_service="svc", parent_conversation_id="parent",
+        internal=True, persist=True)
+    def fail(*_args):
+        raise OSError("storage unavailable")
+
+    monkeypatch.setattr(delegate_store, "append_messages_if_absent", fail)
+    executor = SubAgentExecutor(client, make_registry())
+    try:
+        result = executor.execute_agent(task)
+    finally:
+        executor.shutdown()
+    assert result.status == "error"
+    assert "Could not save" in result.error
+
+
+@pytest.mark.parametrize("receipt_path", ["transcript", "callback", "both", "none"])
+def test_persistent_delegate_preserves_native_input_and_answer(
+        inbox, delegate_store, receipt_path):
+    client = make_client_mock([])
+    task = AgentTask(
+        id="native-answer", agent_name="worker", message="work",
+        user_id="alice", llm_service="svc", parent_conversation_id="parent",
+        source_agent="caller", persist=True)
+
+    def complete_stream(call_conversation_id, turn_callback, **_kwargs):
+        receipt = agent_inbox.read_inbox(call_conversation_id, "worker")
+        if receipt_path in {"callback", "both"}:
+            turn_callback("", [
+                {"id": "native-read", "name": "read_inbox",
+                 "arguments": {}, "result": receipt},
+            ], "")
+            turn_callback("native answer", [], "")
+        if receipt_path == "callback":
+            return simple_response("")
+        if receipt_path in {"transcript", "both"}:
+            for row in (
+                {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "native-read", "name": "read_inbox", "arguments": {}}]},
+                {"role": "tool", "content": receipt, "tool_call_id": "native-read"},
+            ):
+                delegate_store.append_message(
+                    call_conversation_id, stamp_message(row, call_conversation_id),
+                    agent_name="worker", user_id="alice")
+        final = stamp_message({
+            "role": "assistant", "content": "native answer",
+            "source": {"type": "agent", "name": "worker"},
+        }, call_conversation_id)
+        delegate_store.append_message(
+            call_conversation_id, final, agent_name="worker", user_id="alice")
+        return simple_response("native answer")
+
+    client.complete_stream.side_effect = complete_stream
+    executor = SubAgentExecutor(client, make_registry())
+    try:
+        result = executor.execute_agent(task)
+    finally:
+        executor.shutdown()
+    assert result.status == "completed", result.error
+    assert result.response == "native answer"
+    rows = delegate_store.load("parent::task::native-answer", user_id="alice")
+    assert [r["content"] for r in rows if r["role"] == "assistant" and r["content"]] == ["native answer"]
+    assert sum("work" in row["content"] for row in rows) == 1
+    assert sum(row["role"] == "user" for row in rows) == int(receipt_path == "none")
+    assert sum(row["role"] == "tool" for row in rows) == int(receipt_path != "none")

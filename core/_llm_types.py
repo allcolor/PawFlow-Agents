@@ -341,6 +341,13 @@ class LLMResponse:
     # Sanitized, provider-owned diagnostics. Never contains arbitrary headers,
     # raw response bodies, endpoint URLs, or credentials.
     provider_metadata: Dict[str, Any] = field(default_factory=dict)
+    # True includes explicit zero hits. False means the response has no
+    # complete cache-read accounting. None is unspecified for older callers.
+    cache_read_reported: Optional[bool] = None
+
+    def has_input_usage(self) -> bool:
+        return bool(self.input_usage_native or self.tokens_in
+                    or self.cache_read_tokens or self.cache_creation_tokens)
 
 
 

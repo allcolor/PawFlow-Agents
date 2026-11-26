@@ -131,6 +131,7 @@ def is_anthropic_messages_endpoint(path: str) -> bool:
 _TOOL_ARG_TRUNC = 120
 _TOOL_PARALLEL_ARG_TRUNC = 80
 _TOOL_RESULT_TRUNC = 400
+_BOOTSTRAP_TOOL_PREVIEW_CHARS = 2000
 _BOOTSTRAP_CONTEXT_HEADER_RE = re.compile(
     r"(?:\A|\r?\n)# PawFlow Initial Context(?:\r?\n|\Z)")
 
@@ -197,12 +198,9 @@ def textualize_message(
     - user / system → text content (multipart collapsed)
     - empty / unknown → None (caller may skip)
 
-    This is used both when serializing history for a fresh CC session
-    and when building the summarizer's input — both contexts need every
-    tool action to leave a readable trace. The summarizer input may be
-    truncated (its job is to compress); the cold-start context injection
-    must NOT truncate — stripping tool results there is not compaction,
-    it just hides the real context size from the compaction trigger.
+    The summarizer can use plain snippets. A cold-start caller uses a
+    transcript pointer for persisted results so their exact text stays
+    available, and keeps other results intact.
     """
     role = getattr(m, "role", "")
     content = getattr(m, "content", "")
@@ -238,6 +236,35 @@ def textualize_message(
         return text.strip() if isinstance(text, str) and text.strip() else None
 
     return None
+
+
+def historical_tool_result_preview(content: str, msg_id: str) -> str:
+    """Keep the start of a stored result and point to the rest by character."""
+    limit = _BOOTSTRAP_TOOL_PREVIEW_CHARS
+    if len(content) <= limit or "\n[Historical tool result," in content[limit:limit + 80]:
+        return content
+    close = ("\n</tool_output>" if content.startswith("<tool_output ")
+             and content.rfind("\n</tool_output>") >= limit else "")
+    return (
+        f"{content[:limit]}{close}\n"
+        f'[Historical tool result, {len(content)} chars. Read the rest only if needed with '
+        f'read_history(action="read", from_msg_id={json.dumps(msg_id)}, offset={limit}).]'
+    )
+
+
+def preview_persisted_tool_result(msg, conversation_id: str):
+    """Copy a stored string result only when its exact text has a durable ID."""
+    if (getattr(msg, "role", "") != "tool" or not conversation_id
+            or getattr(msg, "conversation_id", None) != conversation_id
+            or (getattr(msg, "seq", 0) or 0) <= 0
+            or not getattr(msg, "msg_id", "") or not isinstance(msg.content, str)):
+        return msg
+    preview = historical_tool_result_preview(msg.content, msg.msg_id)
+    if preview == msg.content:
+        return msg
+    msg = copy.copy(msg)
+    msg.content = preview
+    return msg
 
 
 def trailing_user_messages(messages: list[Any]) -> list[Any]:
@@ -519,32 +546,35 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
             "</message>"
         )
 
-    def _cli_current_turn_text(self, messages: List[Any]) -> str:
-        if not messages:
-            return ""
+    @staticmethod
+    def _cli_current_turn_start(messages: List[Any]) -> int:
+        last_user = None
         for idx in range(len(messages) - 1, -1, -1):
             msg = messages[idx]
-            if (getattr(msg, "role", "") == "user"
-                    and getattr(msg, "_pawflow_current_user_message", False)):
-                rendered = textualize_message(msg, tool_result_trunc=None)
-                if rendered:
-                    return self._cli_message_block("user", rendered) + "\n\nContinue from this latest turn."
-                return ""
-        last_user_idx = -1
-        for idx in range(len(messages) - 1, -1, -1):
-            if getattr(messages[idx], "role", "") == "user":
-                last_user_idx = idx
-                break
-        start = last_user_idx if last_user_idx >= 0 else max(0, len(messages) - 3)
+            if getattr(msg, "role", "") != "user":
+                continue
+            if getattr(msg, "_pawflow_current_user_message", False):
+                return idx
+            if last_user is None:
+                last_user = idx
+        return last_user if last_user is not None else max(0, len(messages) - 3)
+
+    def _cli_current_turn_text(self, messages: List[Any]) -> str:
+        current_turn = messages[self._cli_current_turn_start(messages):]
+        marked = bool(current_turn and getattr(
+            current_turn[0], "_pawflow_current_user_message", False))
         lines = []
         bootstrap_ids = bootstrap_read_call_ids(messages)
-        for msg in messages[start:]:
+        for msg in current_turn:
             role = getattr(msg, "role", "") or "message"
             if role == "system":
                 continue
             if is_bootstrap_read_result(msg, bootstrap_ids):
                 continue
             msg = drop_bootstrap_calls(msg, bootstrap_ids)
+            # A text-only assistant tail can survive a cancelled turn.
+            if marked and role == "assistant" and not getattr(msg, "tool_calls", None):
+                continue
             rendered = textualize_message(msg, tool_result_trunc=None)
             if rendered:
                 lines.append(self._cli_message_block(role, rendered))
@@ -552,15 +582,10 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
             return ""
         return "\n".join(lines) + "\n\nContinue from this latest turn."
 
-    def _cli_context_before_latest_text(self, messages: List[Any]) -> str:
-        if not messages:
-            return ""
-        last_user_idx = -1
-        for idx in range(len(messages) - 1, -1, -1):
-            if getattr(messages[idx], "role", "") == "user":
-                last_user_idx = idx
-                break
-        end = last_user_idx if last_user_idx >= 0 else len(messages)
+    def _cli_context_before_latest_text(
+        self, messages: List[Any], conversation_id: str = "",
+    ) -> str:
+        end = self._cli_current_turn_start(messages)
         lines = []
         bootstrap_ids = bootstrap_read_call_ids(messages)
         for msg in messages[:end]:
@@ -570,6 +595,7 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
             if is_bootstrap_read_result(msg, bootstrap_ids):
                 continue
             msg = drop_bootstrap_calls(msg, bootstrap_ids)
+            msg = preview_persisted_tool_result(msg, conversation_id)
             rendered = textualize_message(msg, tool_result_trunc=None)
             if not rendered:
                 continue
@@ -601,7 +627,7 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
         if system_prompt:
             body.extend(["## System Instructions", "", system_prompt.strip(), ""])
         latest = self._cli_current_turn_text(messages)
-        prior_context = self._cli_context_before_latest_text(messages)
+        prior_context = self._cli_context_before_latest_text(messages, conversation_id)
         if prior_context:
             body.extend(["## Serialized Conversation Context", "", prior_context.strip(), ""])
         elif user_text and not latest:

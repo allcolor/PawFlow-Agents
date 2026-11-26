@@ -105,6 +105,16 @@ server to an OOM kill on an 8.5 GB multi-agent conversation. The context tools
 therefore read only the summary pyramid plus a bounded transcript tail — the
 same source PawFlow compaction uses.
 
+If the publication exposes `read_history`, the bootstrap sends a 2,000-character
+preview for large tool results before the latest user input. The preview points
+to the original transcript message and its next character offset. Publications
+that restrict history access keep the original tool text.
+
+Bootstrap retains public replies and the agent's own outgoing delegation
+history. Incoming delegate content stays in the inbox. A writable publication
+shows a fresh metadata-only notice while work is pending and omits stored notices
+from the transcript tail.
+
 `delegate` and `flash_delegate` remain asynchronous inside PawFlow. How their
 result reaches the MCP client depends on whether the client has a return
 channel (a registered client terminal, `terminal_ready`):

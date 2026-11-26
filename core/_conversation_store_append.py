@@ -245,8 +245,7 @@ class _CsAppendMixin:
             without tool_calls, not display_only, not context, not
             delegate-reply; assistant+tool_calls contributes a
             stripped-of-tool_calls copy (filter_for_shared).
-          - agent_delegate: private A↔B routing via
-            _route_delegate_message(); requests also project into shared.
+          - agent_delegate: private A↔B routing via _route_delegate_message().
           - display_only: transcript only.
 
         Raises on any I/O error (no silent swallow).
@@ -328,8 +327,7 @@ class _CsAppendMixin:
             if display_only:
                 pass  # transcript only, no context files
             elif src_type == "agent_delegate":
-                # Private A↔B routing (requests project to shared,
-                # replies stay private between from/to).
+                # Private A↔B routing.
                 _t0 = time.monotonic()
                 touched_agents.update(
                     self._route_delegate_message(
@@ -578,7 +576,7 @@ class _CsAppendMixin:
 
     def _route_delegate_message(self, cid: str, rows: List[Dict],
                                 agent_name: str) -> set:
-        """Keep the sender's delegate history and shared request projection.
+        """Keep the sender's private delegate history.
 
         ``rows`` are the message's canonical rows: the anchor first, then
         its ``thinking`` / ``tool_call`` children. The sender keeps all of
@@ -611,24 +609,5 @@ class _CsAppendMixin:
 
         # The delivery ingress stores the target's inbox item. Copying its
         # content here would bring it back inline on cold rebuild/compaction.
-
-        # Replies stay private between from/to — don't leak to shared.
-        if _kind == "reply":
-            return touched_agents
-
-        # External requests are target-only. The published agent configuration
-        # supplies capabilities but is neither the sender nor a result target.
-        if _external_transport:
-            return touched_agents
-
-        # Requests project to shared history. The sender keeps its
-        # own output above; targeted inbox delivery belongs to the ingress.
-        _for_shared = dict(msg)
-        if _for_shared.get("role") == "assistant":
-            _for_shared["role"] = "user"
-        _for_shared["content"] = self._prefix_content(
-            _for_shared.get("content", ""),
-            f"[{_from} to agent {_to}]:")
-        self._append_shared_ctx(cid, [_for_shared])
 
         return touched_agents

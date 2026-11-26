@@ -36,6 +36,11 @@ catch-up is no longer produced. Existing pending/notified catch-up copies are
 discarded at startup and excluded from inbox reads, notices and work selection,
 including copies recovered from a legacy queue. Their original conversation
 history remains available. Explicit delegate context is a delegate message.
+Automatic parent context for `last:N`, `summary:N` and `full` contains
+shareable conversation text with speaker attribution. Private delegates, tool
+output, internal notices and binary attachments are excluded. `last:0` sends
+no transcript context. Positive tail and summary limits read from the recent
+end of the transcript. `summary:0` keeps the full shareable text.
 Read/discarded rows are retained
 for 30 days; the normal transcript retains the visible history.
 
@@ -90,9 +95,21 @@ image inputs when a context guard requests rebuilding before submission.
 
 Delegate routing preserves private response metadata independently of the
 notice text. The append router keeps the sender's own output in its context
-and public conversation history in shared storage, without broadcasting to
-other inboxes. Recipient copies from older stored contexts are excluded from
-inline cold rebuilds without creating catch-up items.
+and the targeted inbox carries the recipient's copy. New shared context and
+shared summaries exclude private delegate requests and replies. The owner can
+still inspect the canonical conversation transcript. Recipient copies from
+older stored contexts are excluded from inline cold rebuilds without creating
+catch-up items.
+
+For a reusable sub-agent, `persist=true` and the same task `id` resume the
+previously completed turn. Use the same caller, target and conversation.
+The new request enters the same inbox with a fresh notice. The parent snapshot
+is copied on the first run. Completed turns append their messages to the
+sub-agent history with the original IDs and timestamps, preserving the
+provider session metadata and earlier tool results. The executor records
+completed tool exchanges reported by a CLI and reuses the rows when the
+provider already stored them. PawFlow reports a persistence failure as a
+failed turn.
 
 ## Optional participant catchup
 
@@ -137,10 +154,16 @@ FileStore pointer, even when the agent only has permission to read its inbox.
 
 Fully returned items become `read`. An oversized item returns a page and an
 imperative continuation such as `read_inbox(item="<msg_id>", offset=40000)`.
-The last returned offset is persisted; a plain `read_inbox()` resumes it too.
-An offset cannot skip content that has never been returned. The item stays
-unread until its last page is returned. Calling after everything was read
-returns `No unread items.`; a duplicate notice therefore does not replay data.
+The last returned offset is persisted. A plain `read_inbox()` resumes it too.
+An older offset returns the saved cursor without repeating the page. An offset
+ahead of the cursor cannot skip unread content. The item stays unread until its
+last page is returned. A whole-inbox read after delivery returns one short,
+consistent empty response.
+
+After a successful read, the main and delegate loops replace complete platform
+notices in their working context with a short delivered marker. Human quotes
+and tool output keep their original text and delimiters. A failed read keeps
+the notice actionable.
 Existing large-output FileStore pointers retain their normal behavior.
 
 The tool is always discoverable, available to tool-restricted agents and

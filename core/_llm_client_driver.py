@@ -300,8 +300,9 @@ class _LLMClientDriverMixin:
                 call_user_id=call_user_id or "",
                 call_event_cid=call_event_cid or "",
             )
-            if self.provider not in (*ACP_PROVIDERS, "opencode", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_in and messages:
+            if self.provider not in (*ACP_PROVIDERS, "opencode", "cc_mcp", "codex_mcp", "agy_mcp") and not result.has_input_usage() and messages:
                 result.tokens_in = count_messages_tokens(messages)
+                result.input_usage_native = False
             if self.provider not in (*ACP_PROVIDERS, "opencode", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_out and result.content:
                 result.tokens_out = len(result.content) // 4
             self._report_tokens(result, messages)
@@ -714,8 +715,9 @@ class _LLMClientDriverMixin:
                 call_user_id=call_user_id or "",
                 call_event_cid=call_event_cid or "",
             )
-            if self.provider not in (*ACP_PROVIDERS, "opencode", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_in and messages:
+            if self.provider not in (*ACP_PROVIDERS, "opencode", "cc_mcp", "codex_mcp", "agy_mcp") and not result.has_input_usage() and messages:
                 result.tokens_in = count_messages_tokens(messages)
+                result.input_usage_native = False
             if self.provider not in (*ACP_PROVIDERS, "opencode", "cc_mcp", "codex_mcp", "agy_mcp") and not result.tokens_out and result.content:
                 result.tokens_out = len(result.content) // 4
             self._report_tokens(result, messages)

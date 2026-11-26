@@ -215,6 +215,8 @@ class _OpenCodeTurn:
             content="".join(self.text), thinking="".join(self.thinking),
             model=model, tokens_in=tokens_in, tokens_out=tokens_out,
             cache_read_tokens=cache_read, cache_creation_tokens=cache_write,
+            cache_read_reported=bool(usage) and all(
+                (counter.get("cache") or {}).get("read") is not None for counter in usage),
             input_usage_native=bool(usage),
             finish_reason="cancelled" if cancelled else (self.finish or "end_turn"),
             raw={"session_id": self.session_id, "tool_results": len(self.completed_tools)})

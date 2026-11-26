@@ -39,6 +39,53 @@ def test_context_summary_zero_keeps_complete_parent_context(monkeypatch):
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
+def test_delegate_context_uses_a_bounded_tail_of_shareable_text(monkeypatch):
+    from core.conversation_store import ConversationStore
+    from core.handlers.spawn_agents import resolve_context_messages
+
+    older = {"role": "user", "content": "older public"}
+    noise = [
+        {"role": "tool", "content": "private tool result", "msg_id": str(i)}
+        for i in range(65)
+    ]
+    private = {
+        "role": "user", "content": "private delegation",
+        "source": {"type": "agent_delegate", "from": "a", "to": "b"},
+    }
+    latest = {
+        "role": "assistant",
+        "content": [
+            {"type": "text", "text": "latest public"},
+            {"type": "image_url", "image_url": {"url": "private image bytes"}},
+        ],
+        "source": {"type": "agent", "name": "b"},
+    }
+    rows = [older, private, *noise, latest]
+
+    class Store:
+        def __init__(self):
+            self.reads = []
+
+        def load_page(self, cid, *, limit, offset, before_msg_id, user_id):
+            self.reads.append((cid, limit, offset, before_msg_id, user_id))
+            end = len(rows) - offset
+            start = max(0, end - limit)
+            return {"messages": rows[start:end], "offset": offset, "has_more": start > 0}
+
+    store = Store()
+    monkeypatch.setattr(ConversationStore, "instance", lambda: store)
+    assert resolve_context_messages("last:0", "conv", "owner") == []
+    assert store.reads == []
+    assert resolve_context_messages("last:2", "conv", "owner") == [
+        older, {"role": "assistant", "content": "latest public", "speaker": "b"}]
+    assert [(cid, limit, offset, owner) for cid, limit, offset, _, owner in store.reads] == [
+        ("conv", 64, 0, "owner"), ("conv", 64, 64, "owner")]
+    store.reads.clear()
+    result, = resolve_context_messages("summary:2", "conv", "owner")
+    assert result["content"].split("\n")[1] == "t public"
+    assert len(store.reads) == 1
+
+
 class EchoToolHandler(ToolHandler):
     """Simple tool that echoes its input."""
     @property
@@ -70,8 +117,8 @@ def test_published_mcp_owner_reads_the_conversation_agents_inbox(
     handler._agent_name = "GameDev9"
     handler._user_id = "allcolor"
     with call_scope("probe-owner"):
-        from core.handlers.inbox import _EMPTY_READ_MESSAGE
-        assert handler.execute({}) == _EMPTY_READ_MESSAGE
+        from core.agent_inbox import EMPTY_READ_MESSAGE
+        assert handler.execute({}) == EMPTY_READ_MESSAGE
         # The read must have opened GameDev9's box, never the client id.
         src, _svc = handler._resolve_source_context()
     assert src.startswith("published_mcp_") or src == "GameDev9"
@@ -264,6 +311,7 @@ class TestSingleAgentExecution:
             client_resolver=MagicMock(side_effect=RuntimeError("resolver down")),
         )
         store = MagicMock()
+        store.exists.return_value = False
         task = AgentTask(
             id="resolver-trace", agent_name="worker", message="audit",
             llm_service="svc", user_id="alice",
@@ -292,7 +340,7 @@ class TestSingleAgentExecution:
             client_resolver=lambda *_args: (client, None),
         )
         store = MagicMock()
-        store.load.return_value = []
+        store.exists.return_value = False
         task = AgentTask(
             id="complete-trace", agent_name="worker", message="audit",
             llm_service="svc", user_id="alice",

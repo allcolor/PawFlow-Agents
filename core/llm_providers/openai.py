@@ -143,6 +143,14 @@ class LLMOpenaiMixin:
         cache_hits = max(0, int(details.get("cached_tokens", 0) or 0))
         return max(0, prompt_total - cache_hits), cache_hits, prompt_total
 
+    @staticmethod
+    def _openai_cache_read_reported(usage: Dict[str, Any]) -> bool:
+        if "prompt_cache_hit_tokens" in usage or "prompt_cache_miss_tokens" in usage:
+            return (usage.get("prompt_cache_hit_tokens") is not None
+                    or (usage.get("prompt_cache_miss_tokens") is not None
+                        and usage.get("prompt_tokens") is not None))
+        return (usage.get("prompt_tokens_details") or {}).get("cached_tokens") is not None
+
     def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback,
                         thinking_callback=None, *,
                         call_user_id: str = "",
@@ -489,9 +497,10 @@ class LLMOpenaiMixin:
             ))
             tokens_in, cached_tokens, prompt_tokens_total = (
                 self._openai_cache_token_counts(usage_data))
+            cache_reported = self._openai_cache_read_reported(usage_data)
             tokens_out = usage_data.get("completion_tokens", 0)
             total_tokens = usage_data.get("total_tokens", 0)
-            if not tokens_in and not cached_tokens:
+            if not input_usage_native and not tokens_in and not cached_tokens:
                 tokens_in = count_messages_tokens(messages)
                 prompt_tokens_total = tokens_in
             if not tokens_out:
@@ -503,7 +512,7 @@ class LLMOpenaiMixin:
                 _hit_pct = (cached_tokens / prompt_tokens_total * 100) if prompt_tokens_total else 0
                 logger.info("OpenAI-compatible prompt cache: %d cached of %d prompt tokens (%.0f%% hit)",
                             cached_tokens, prompt_tokens_total, _hit_pct)
-            elif prompt_tokens_total > 1024:
+            elif cache_reported and prompt_tokens_total > 1024:
                 logger.info("OpenAI-compatible prompt cache: MISS — %d prompt tokens, 0 cached", prompt_tokens_total)
 
             return LLMResponse(
@@ -516,6 +525,7 @@ class LLMOpenaiMixin:
                 total_tokens=total_tokens,
                 thinking=thinking,
                 cache_read_tokens=cached_tokens,
+                cache_read_reported=cache_reported,
                 input_usage_native=input_usage_native,
                 provider_metadata=self._openai_provider_metadata(
                     response_headers, provider_comments),
@@ -1014,11 +1024,12 @@ class LLMOpenaiMixin:
         # nested OpenAI-compatible cached-token detail when both are present.
         _input_miss_tokens, cached_tokens, _prompt_tokens = (
             self._openai_cache_token_counts(usage))
+        cache_reported = self._openai_cache_read_reported(usage)
         if cached_tokens > 0:
             _hit_pct = (cached_tokens / _prompt_tokens * 100) if _prompt_tokens else 0
             logger.info("OpenAI-compatible prompt cache: %d cached of %d prompt tokens (%.0f%% hit)",
                         cached_tokens, _prompt_tokens, _hit_pct)
-        elif _prompt_tokens > 1024:
+        elif cache_reported and _prompt_tokens > 1024:
             logger.info("OpenAI-compatible prompt cache: MISS — %d prompt tokens, 0 cached", _prompt_tokens)
 
         return LLMResponse(
@@ -1032,6 +1043,7 @@ class LLMOpenaiMixin:
             thinking=reasoning,
             raw=data,
             cache_read_tokens=cached_tokens,
+            cache_read_reported=cache_reported,
             input_usage_native=any(key in usage for key in (
                 "prompt_tokens",
                 "prompt_cache_hit_tokens",

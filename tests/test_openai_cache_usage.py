@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from core._llm_types import LLMMessage
 from core.llm_client import LLMClient
 from core.llm_providers.openai import LLMOpenaiMixin
@@ -123,3 +125,31 @@ def test_openai_nested_cached_tokens_remain_supported(monkeypatch):
 
     assert response.tokens_in == 40
     assert response.cache_read_tokens == 60
+
+
+@pytest.mark.parametrize("call", [_non_streaming_completion, _streaming_completion])
+@pytest.mark.parametrize("details,reported", [({}, False), ({"cached_tokens": 0}, True)])
+def test_zero_cache_hits_differ_from_an_unreported_counter(monkeypatch, call, details, reported):
+    response = call(monkeypatch, {
+        "prompt_tokens": 100, "completion_tokens": 10,
+        "prompt_tokens_details": details,
+    })
+    assert response.cache_read_reported is reported
+    assert response.cache_read_tokens == 0
+    assert response.tokens_in == 100
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_driver_does_not_estimate_fresh_tokens_for_fully_cached_input(monkeypatch, streaming):
+    from core.llm_client import LLMResponse
+
+    client = _client()
+    response = LLMResponse(model="test-model", content="answer", tokens_out=5,
+                           cache_read_tokens=200, cache_read_reported=True)
+    method = "_stream_openai" if streaming else "_complete_openai"
+    monkeypatch.setattr(client, method, lambda *_a, **_kw: response)
+    call = client.complete_stream if streaming else client.complete
+
+    result = call([LLMMessage("user", "prompt", conversation_id="conv1")])
+    assert result.tokens_in == 0
+    assert result.cache_read_tokens == 200

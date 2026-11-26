@@ -551,6 +551,29 @@ def test_build_now_sync_empty_summary_breaks_loop(fake_builder):
 # ── bucket persistence ──────────────────────────────────────────
 
 
+def test_shared_tool_activity_omits_delegate_turns(monkeypatch):
+    from types import SimpleNamespace
+
+    from core.bg_bucket_builder import BgBucketBuilder
+    from core.conversation_store import ConversationStore
+
+    transcript = [
+        {"role": "assistant", "seq": 1,
+         "source": {"type": "agent", "visibility": "target_only"},
+         "tool_calls": [{"name": "edit", "arguments": {"path": "private.py"}}]},
+        {"role": "assistant", "seq": 2,
+         "tool_calls": [{"name": "edit", "arguments": {"path": "public.py"}}]},
+        {"role": "assistant", "seq": 3,
+         "tool_calls": [{"name": "delegate", "arguments": {
+             "agent": "worker", "message": "private brief"}}]},
+    ]
+    store = SimpleNamespace(load_transcript_seq_range=lambda *_args: transcript)
+    monkeypatch.setattr(ConversationStore, "instance", lambda: store)
+    trace = BgBucketBuilder._extract_trace(None, "conv", 1, 3)
+    assert trace["edits"] == {"public.py": 1}
+    assert trace["delegations"] == [{"agent": "worker"}]
+
+
 def test_build_persists_tool_trace_on_bucket(fake_builder):
     # Exactly L1 + TAIL_RESERVE msgs: one L1 bucket fires, the rest is
     # tail reserved (allow_partial default is True but available=0).

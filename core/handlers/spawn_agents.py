@@ -7,12 +7,57 @@ mixed in here. Re-exported from core.handlers.resource_agent.
 import json
 import logging
 import threading
+from itertools import islice
 from typing import Any, Dict, List
 
 from core.tool_handler import ToolHandler
 from core.handlers._spawn_delivery import _SpawnDeliveryMixin
 
 logger = logging.getLogger(__name__)
+
+
+def _shared_context_message(row: dict) -> dict | None:
+    """Project ordinary conversation text for a different agent."""
+    role = row.get("role")
+    source = row.get("source") or {}
+    if (role not in ("user", "assistant") or row.get("display_only")
+            or source.get("visibility") == "target_only"
+            or source.get("btw") or source.get("task_id")
+            or source.get("type") in {
+                "agent_delegate", "cross_conversation_delegate", "a2a",
+                "context", "scheduled_wakeup", "system",
+            }):
+        return None
+    content = row.get("content")
+    if isinstance(content, list):
+        content = "\n".join(
+            part["text"] for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+            and isinstance(part.get("text"), str))
+    if not isinstance(content, str) or not content.strip():
+        return None
+    message = {"role": role, "content": content}
+    if source.get("name"):
+        message["speaker"] = source["name"]
+    return message
+
+
+def _recent_shared_context(store, conversation_id: str, user_id: str):
+    """Yield shareable transcript messages newest first, in bounded pages."""
+    offset = 0
+    before_msg_id = ""
+    while True:
+        page = store.load_page(conversation_id, limit=64, offset=offset,
+                               before_msg_id=before_msg_id, user_id=user_id) or {}
+        rows = page.get("messages") or []
+        for row in reversed(rows):
+            message = _shared_context_message(row)
+            if message:
+                yield message
+        if not rows or not page.get("has_more"):
+            return
+        offset = int(page.get("offset", offset)) + len(rows)
+        before_msg_id = rows[0].get("msg_id") or ""
 
 
 def resolve_context_messages(mode: str, conversation_id: str,
@@ -23,49 +68,52 @@ def resolve_context_messages(mode: str, conversation_id: str,
     'full' — used by sub-agent spawning, task assignment, and realtime
     voice sessions.
     """
+    kind, separator, amount = mode.partition(":")
+    count = None
+    if separator and kind in {"last", "summary"}:
+        try:
+            count = int(amount)
+        except ValueError:
+            raise ValueError(f"context_mode {kind}:N requires a non-negative N") from None
+        if count < 0:
+            raise ValueError(f"context_mode {kind}:N requires a non-negative N")
+    elif mode != "full":
+        return []
+    if kind == "last" and count == 0:
+        return []
+
     from core.conversation_store import ConversationStore
     store = ConversationStore.instance()
-
-    if mode == "full":
+    if mode == "full" or count == 0:
         raw = store.load(conversation_id, user_id=user_id) or []
-        # Filter out system messages, keep user/assistant/tool
-        return [m for m in raw if m.get("role") != "system"]
+        messages = [message for row in raw if (message := _shared_context_message(row))]
+        if mode == "full":
+            return messages
+        recent = reversed(messages)
+    else:
+        recent = _recent_shared_context(store, conversation_id, user_id)
+    if kind == "last":
+        return list(reversed(list(islice(recent, count))))
 
-    if mode.startswith("last:"):
-        try:
-            n = int(mode.split(":")[1])
-        except (ValueError, IndexError):
-            raise ValueError("context_mode last:N requires a non-negative N")
-        if n < 0:
-            raise ValueError("context_mode last:N requires a non-negative N")
-        raw = store.load(conversation_id, user_id=user_id) or []
-        non_system = [m for m in raw if m.get("role") != "system"]
-        return non_system[-n:]
-
-    if mode.startswith("summary:"):
-        try:
-            max_tokens = int(mode.split(":")[1])
-        except (ValueError, IndexError):
-            raise ValueError("context_mode summary:N requires a non-negative N")
-        if max_tokens < 0:
-            raise ValueError("context_mode summary:N requires a non-negative N")
-        raw = store.load(conversation_id, user_id=user_id) or []
-        # Build a simple text summary from recent messages
-        text_parts = []
-        for m in raw:
-            role = m.get("role", "")
-            content = m.get("content", "")
-            if role in ("user", "assistant") and content:
-                text_parts.append(f"{role}: {content}")
-        summary = "\n".join(text_parts)
-        # Truncate to approximate token limit
-        if max_tokens > 0 and len(summary) > max_tokens * 4:
-            summary = summary[-(max_tokens * 4):]
-        return [{"role": "user",
-                 "content": f"[Context summary from parent conversation]"
-                            f"\n{summary}"}]
-
-    return []  # isolated
+    parts = []
+    remaining = count * 4 if count else None
+    for message in recent:
+        label = message.get("speaker") or message["role"]
+        text = f"{label}: {message['content']}"
+        if remaining is not None:
+            remaining -= bool(parts)
+            if remaining <= 0:
+                break
+            text = text[-remaining:]
+            remaining -= len(text)
+        parts.append(text)
+        if remaining == 0:
+            break
+    if not parts:
+        return []
+    return [{"role": "user",
+             "content": "[Context summary from parent conversation]\n"
+                        + "\n".join(reversed(parts))}]
 
 
 class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
@@ -264,7 +312,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                             },
                             "persist": {
                                 "type": "boolean",
-                                "description": "Only for context='isolated' or 'last:N': keep the sub-agent's sub-conversation after completion for later resume. Ignored in context='shared' (the target uses the main conv, nothing separate to persist).",
+                                "description": "Keep an isolated sub-conversation after completion. Call delegate again with the same id, agent and persist=true to resume it. Shared and full modes already use the main conversation.",
                             },
                         },
                         "required": ["message"],
@@ -512,7 +560,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                             f"Use a different agent or respond directly.")
 
                 agent_tasks.append(task)
-            except KeyError as e:
+            except (KeyError, ValueError) as e:
                 return f"Error: {e}"
 
         if not agent_tasks:

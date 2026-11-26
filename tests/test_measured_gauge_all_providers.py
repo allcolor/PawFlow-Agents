@@ -167,6 +167,25 @@ def test_gemini_acp_prompt_tokens_absent_reports_nothing():
         {"quota": {"token_count": {"candidatesTokenCount": 400}}}) == 0
 
 
+def test_gemini_and_antigravity_preserve_native_cache_counters():
+    from tools.ag_observer_semantics import _extract_usage
+
+    client = LLMClient("gemini")
+    wire = {
+        "promptTokenCount": 100,
+        "cachedContentTokenCount": 90,
+        "candidatesTokenCount": 0,
+        "thoughtsTokenCount": 4,
+    }
+    meta = {"quota": {"tokenCount": wire}}
+    assert client._gemini_acp_prompt_tokens(meta) == 100
+    assert client._gemini_acp_reported_tokens(meta, "cachedContentTokenCount") == 90
+    assert client._gemini_acp_output_tokens(meta, "estimated text") == 4
+    assert _extract_usage({"usageMetadata": wire}) == {
+        "input_tokens": 100, "cached_input_tokens": 90, "output_tokens": 0,
+    }
+
+
 def test_gemini_stream_records_the_native_prompt_size():
     from core.llm_providers import _gemini_stream
     src = inspect.getsource(_gemini_stream)

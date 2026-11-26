@@ -97,7 +97,7 @@ def test_extract_delegations():
     t = extract_tool_activity(transcript, 1, 1)
     assert len(t["delegations"]) == 1
     assert t["delegations"][0]["agent"] == "qwen"
-    assert "review module X" in t["delegations"][0]["brief"]
+    assert "review module X" not in str(t)
 
 
 def test_extract_handles_string_arguments():
@@ -139,6 +139,7 @@ def test_format_includes_all_sections():
     assert "→ ok" in out
     assert "Delegations:" in out
     assert "qwen" in out
+    assert "hello" not in out
 
 
 def test_merge_keeps_only_last_bucket_for_file_fields():

@@ -501,9 +501,10 @@ class LLMOpenaiResponsesMixin:
             input_usage_native = "input_tokens" in usage
             tokens_in = usage.get("input_tokens", 0) or 0
             tokens_out = usage.get("output_tokens", 0) or 0
-            cached = ((usage.get("input_tokens_details") or {})
-                      .get("cached_tokens", 0) or 0)
-            if not tokens_in:
+            cached = (usage.get("input_tokens_details") or {}).get("cached_tokens")
+            cache_reported = cached is not None
+            cached = min(max(0, int(cached or 0)), tokens_in)
+            if not input_usage_native:
                 tokens_in = count_messages_tokens(messages)
             if not tokens_out:
                 tokens_out = len(content) // 4
@@ -534,6 +535,7 @@ class LLMOpenaiResponsesMixin:
                 total_tokens=total_tokens,
                 thinking=thinking,
                 cache_read_tokens=cached,
+                cache_read_reported=cache_reported,
                 input_usage_native=input_usage_native,
                 reasoning_item=reasoning_item,
             )

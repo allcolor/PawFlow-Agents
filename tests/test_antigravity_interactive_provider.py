@@ -82,7 +82,8 @@ def test_antigravity_turn_coordinator_reads_jsonl_text_thinking_and_tools(monkey
         {"type": "ag_text_delta", "tool_results": [{
             "tool_use_id": "ag_tool_1", "content": "ok",
         }]},
-        {"type": "ag_text_delta", "done": True, "usage": {"input_tokens": 3, "output_tokens": 2}},
+        {"type": "ag_text_delta", "done": True,
+         "usage": {"input_tokens": 3, "output_tokens": 2, "cached_input_tokens": 2}},
     ]
     log_path.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
 
@@ -101,8 +102,11 @@ def test_antigravity_turn_coordinator_reads_jsonl_text_thinking_and_tools(monkey
     assert response.thinking == "plan"
     assert seen == ["Hi ", "there"]
     assert thinking == ["plan"]
-    assert response.tokens_in == 3
+    assert response.tokens_in == 1
     assert response.tokens_out == 2
+    assert response.cache_read_tokens == 2
+    assert response.cache_read_reported is True
+    assert response.raw["usage"]["input_tokens"] == 3
     assert ("text", {"text": "Hi there"}) in blocks
     assert ("tool_use", {
         "id": "ag_tool_1", "name": "read", "arguments": {"path": "a.py"},

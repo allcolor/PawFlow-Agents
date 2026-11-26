@@ -3,6 +3,7 @@
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 from core.llm_client import (
@@ -10,6 +11,30 @@ from core.llm_client import (
     LLMToolCall, LLMClientError,
 )
 
+
+
+def test_claude_code_final_usage_comes_from_result_and_includes_all_exchanges():
+    client = LLMClient(provider="claude-code", config={"api_key": "test-key"})
+    client._stall_killed = False
+    state = SimpleNamespace(
+        proc=SimpleNamespace(returncode=0), model="sonnet",
+        turn_callback=None, content_parts=["Done"], _compact_result_done=False,
+        _latest_usage={"input_tokens": 5, "cache_read_input_tokens": 80, "output_tokens": 12},
+        last_data={"usage": {"input_tokens": 20, "cache_read_input_tokens": 150,
+                             "cache_creation_input_tokens": 50, "output_tokens": 29}},
+    )
+
+    response = client._ccs_finalize(state)
+
+    assert (response.tokens_in, response.cache_read_tokens,
+            response.cache_creation_tokens, response.tokens_out) == (20, 150, 50, 29)
+    assert response.total_tokens == 249
+    assert response.input_usage_native and response.cache_read_reported
+
+    state.last_data = {}
+    response = client._ccs_finalize(state)
+    assert response.cache_read_tokens == 80
+    assert not response.cache_read_reported
 
 
 class TestSerializeMessages(unittest.TestCase):
@@ -283,7 +308,7 @@ class TestSerializeMessages(unittest.TestCase):
 
         latest = body.split("## Latest User Request", 1)[1]
         self.assertIn("message after stop", latest)
-        self.assertNotIn("cancelled tail", latest)
+        self.assertNotIn("cancelled tail", body)
         self.assertNotIn("message after stop", prompt)
         self.assertNotIn("cancelled tail", prompt)
         self.assertNotIn("\n", prompt)

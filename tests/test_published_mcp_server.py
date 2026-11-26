@@ -633,7 +633,7 @@ def test_published_mcp_conversation_context_and_idempotent_messages(monkeypatch)
     assert initial["cursor"] == 7
     assert "# PawFlow Initial Context" in initial["document"]
     assert "Published agent system prompt" in initial["document"]
-    assert '"content": "second"' in initial["document"]
+    assert '"content":"second"' in initial["document"]
 
     # get_context_updates is retired: it no longer returns tail rows.
     updates = json.loads(endpoint._conversation_tool_result(
@@ -703,6 +703,96 @@ def test_context_tools_send_summary_and_bounded_tail(monkeypatch):
     assert inside["retired"] is True
     assert "messages" not in inside
     assert "read_inbox" in inside["inbox_policy"]
+
+
+@pytest.mark.parametrize("allowlist, expect_preview", [([], True), (["read"], False)])
+def test_published_context_previews_only_when_history_can_be_read(
+        monkeypatch, allowlist, expect_preview):
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+        "tool_allowlist": allowlist,
+    }
+    rows = [
+        {"role": "tool", "content": "x" * 2200 + "old tail", "msg_id": "old", "seq": 3},
+        {"role": "user", "content": "latest", "msg_id": "latest", "seq": 4},
+        {"role": "tool", "content": "z" * 2200 + "current tail", "msg_id": "new", "seq": 5},
+        {"role": "user", "content": "peer reply", "msg_id": "peer", "seq": 6,
+         "source": {"type": "agent", "name": "peer"}},
+    ]
+
+    class Registry:
+        def get_tool_definitions(self):
+            return [{"name": "read_history"}]
+
+        def get(self, _name):
+            return None
+
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_agent_context_page", lambda _server: {"messages": rows})
+    monkeypatch.setattr(endpoint, "_summary_header", lambda _server: "")
+    monkeypatch.setattr(endpoint, "_persist_tool_call_start", lambda *_args: None)
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+    monkeypatch.setattr("core.agent_executor.resolve_agent_task",
+                        lambda *_args, **_kwargs: type("Task", (), {"system_prompt": ""})())
+
+    response = endpoint._call_tool(server, {"key_id": "key-1"}, "get_initial_context", {})
+    payload = json.loads(response["content"][0]["text"])
+    document = payload["document"]
+    assert payload["cursor"] == 6
+    assert ("old tail" not in document) is expect_preview
+    assert ("offset=2000" in document) is expect_preview
+    assert "current tail" in document
+    assert rows[0]["content"].endswith("old tail")
+
+
+def test_initial_context_keeps_pending_delegation_in_the_inbox(monkeypatch, tmp_path):
+    from core import agent_inbox
+    from core.agent_inbox_store import AgentInboxStore
+    from core.llm_client import stamp_message
+
+    monkeypatch.setattr(AgentInboxStore, "_instance", AgentInboxStore(tmp_path / "inbox.db"))
+    server = {"server_id": "srv", "conversation_id": "conv",
+              "agent_name": "receiver", "owner_user_id": "owner"}
+    rows = [
+        {"role": "user", "content": "public human input", "seq": 1},
+        {"role": "user", "content": "public agent reply", "seq": 2,
+         "source": {"type": "agent", "name": "peer"}},
+        {"role": "user", "content": "own outgoing delegation", "seq": 3,
+         "source": {"type": "agent_delegate", "from": "receiver", "to": "peer"}},
+        {"role": "user", "content": "private incoming body", "seq": 4,
+         "source": {"type": "agent_delegate", "from": "peer", "to": "receiver"}},
+        {"role": "user", "content": "unrelated delegation", "seq": 5,
+         "source": {"type": "agent_delegate", "from": "peer", "to": "other"}},
+        {"role": "user", "content": "old inbox notice", "seq": 6,
+         "source": {"type": "system", "name": "inbox", "target_agent": "receiver"}},
+    ]
+
+    class Store:
+        def load_transcript_page_for_agent(self, *_args, **_kwargs):
+            return {"messages": rows}
+
+    monkeypatch.setattr("core.conversation_store.ConversationStore.instance", lambda: Store())
+    monkeypatch.setattr(endpoint, "_summary_header", lambda _server: "")
+    monkeypatch.setattr("core.agent_executor.resolve_agent_task",
+                        lambda *_args, **_kwargs: type("Task", (), {"system_prompt": ""})())
+    item = stamp_message({"role": "user", "content": "private incoming body"}, "conv")
+    assert agent_inbox.enqueue_item("conv", "receiver", item, "delegate_message", "peer")
+
+    def bootstrap():
+        return json.loads(endpoint._conversation_tool_result(
+            server, {}, "get_initial_context", {}))
+
+    payload = bootstrap()
+    assert payload["cursor"] == 6
+    for text in ("public human input", "public agent reply", "own outgoing delegation",
+                 "## Current Inbox", "1 unread item"):
+        assert text in payload["document"]
+    for text in ("private incoming body", "unrelated delegation", "old inbox notice"):
+        assert text not in payload["document"]
+    assert agent_inbox.unread_count("conv", "receiver") == 1
+    assert "private incoming body" in agent_inbox.read_inbox("conv", "receiver")
+    assert "## Current Inbox" not in bootstrap()["document"]
 
 
 def test_context_updates_retired_with_inbox_notice(monkeypatch, tmp_path):

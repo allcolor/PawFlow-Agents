@@ -618,6 +618,22 @@ task in progress, including one another agent delegated. Without that, two
 Sonnet agents cold-restarted on 2026-09-29 read the file as a prompt injection
 and asked what to do instead of resuming their delegated task.
 
+In a cold CLI bootstrap, a prior tool result already stored in the same
+conversation contributes up to 2,000 characters and a transcript reference.
+The model can call `read_history(action="read", from_msg_id=..., offset=...)`
+when it needs the remaining text. Each request reads at most 16,000 characters
+and provides the next offset. Current-turn results and results without a
+durable reference are kept in full. The stored transcript is the source of the
+exact result. A cold CLI bootstrap with a marked current request drops trailing
+assistant text without tool calls, which can be left over from cancellation.
+In a running delegate loop, an image the model has seen becomes a text
+reference for subsequent iterations.
+Stateless provider calls also use the preview for stored tool results before
+the active user message when the conversation owner can call `read_history`.
+Persistent delegates use it for results from earlier runs when that tool is
+available. This projection keeps current results complete and leaves the
+transcript available for exact retrieval.
+
 ### Scratchpad
 
 `scratchpad` is temporary working state, not a second memory or todo system.

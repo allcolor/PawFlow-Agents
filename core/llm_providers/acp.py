@@ -1303,6 +1303,8 @@ class LLMAcpMixin:
                     tokens_in=tokens_in,
                     tokens_out=tokens_out,
                     cache_read_tokens=cache_read,
+                    cache_read_reported=getattr(getattr(response, "usage", None),
+                                                "cached_read_tokens", None) is not None,
                     cache_creation_tokens=cache_write,
                     input_usage_native=(
                         True if getattr(response, "usage", None) is not None

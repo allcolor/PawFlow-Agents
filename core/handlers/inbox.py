@@ -22,36 +22,8 @@ from core.handlers.spawn_agents import SpawnAgentsHandler
 
 logger = logging.getLogger(__name__)
 
-# A turn that keeps calling read_inbox on an already-delivered box is
-# re-obeying the notice that stayed in its context. The answer must be a
-# calm, always-identical termination message — no error, no kill, no
-# countdown: the turn ends on it, and a NEW notice appears the moment real
-# work arrives.
-_EMPTY_READ_MESSAGE = (
-    "Your inbox is fully delivered: every item the last notice announced "
-    "was read and nothing new is pending. Acknowledge nothing, re-read "
-    'nothing. Do not call read_inbox again — a NEW "[PawFlow inbox: '
-    'ACTION REQUIRED]" notice will appear here the moment new work '
-    "arrives, and that notice is the only reason to call it again."
-)
-
-
 def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
-
-
-# A turn that keeps calling read_inbox on an already-delivered box is
-# re-obeying the notice that stayed in its context. The answer must be a
-# calm, always-identical termination message — no error, no kill, no
-# countdown: the turn ends on it and a NEW notice wakes the turn again
-# when real work arrives.
-_EMPTY_READ_MESSAGE = (
-    "Your inbox is fully delivered: every item the last notice announced "
-    "has been read just now. Nothing to acknowledge, nothing pending. "
-    "Do not call read_inbox again — a NEW '[PawFlow inbox: ACTION "
-    "REQUIRED]' notice will appear here the moment new work arrives, "
-    "and that is the only reason to call it again."
-)
 
 
 class ReadInboxHandler(SpawnAgentsHandler):
@@ -135,14 +107,6 @@ class ReadInboxHandler(SpawnAgentsHandler):
                 " no conversation id or no agent identity (thread-local"
                 " source context or configured agent instance name)."
             )
-        from core import agent_inbox as _inbox_mod
-
-        if _inbox_mod.unread_count(conversation_id, src_agent) == 0:
-            # A paged read (item=...) must keep its specific answer: it is a
-            # continuation of a large item, not an incremental poll.
-            if not item:
-                return _EMPTY_READ_MESSAGE
-            return "No unread inbox item %s." % item
         return agent_inbox.read_inbox(
             conversation_id, src_agent,
             max_chars=max_chars, item=item, offset=offset)

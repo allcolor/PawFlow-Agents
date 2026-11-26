@@ -4,7 +4,7 @@ import time
 from typing import Dict
 
 from core.llm_client import (
-    AgentSuperseded, LLMMessage, LLMResponse,
+    AgentSuperseded, LLMMessage,
 )
 from tasks.ai.agent_emitter import AgentEmitter, AgentResult
 from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
@@ -456,7 +456,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     and st.outcome != "client_tool_pending"):
                 logger.warning(f"[agent:{st.conversation_id[:8]}] empty response — forcing synthesis")
                 st._pre = len(st.messages)
-                st.content, st.ti, st.to, st.fm = self._force_synthesis(
+                synthesis = self._force_synthesis(
                     st.messages, st.client, st.ctx,
                     prompt=(
                         "[System: You did not provide a response to the user. "
@@ -467,12 +467,11 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     token_callback=st.emitter.get_token_callback(False) if st.emitter.is_streaming else None,
                     tools_called=st.tools_called, conversation_id=st.conversation_id)
                 st.new_messages.extend(st.messages[st._pre:])
-                st.response_content = st.content
-                _record_response_usage(st, LLMResponse(
-                    content=st.content, tokens_in=st.ti, tokens_out=st.to,
-                    model=st.fm))
-                if st.fm:
-                    st.final_model = st.fm
+                st.response_content = synthesis.content
+                if synthesis.finish_reason != "error":
+                    _record_response_usage(st, synthesis)
+                if synthesis.model:
+                    st.final_model = synthesis.model
 
             # The final drain below selects ownership of the NEXT turn. Keep an
             # immutable copy for finalizing the turn that just produced this

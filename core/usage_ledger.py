@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
     ,route_attempt_index INTEGER NOT NULL DEFAULT -1
     ,run_id TEXT NOT NULL DEFAULT ''
     ,task_id TEXT NOT NULL DEFAULT ''
+    ,cache_read_reported INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage_events (user_id, ts);
 CREATE INDEX IF NOT EXISTS idx_usage_conv_ts
@@ -92,8 +93,13 @@ CREATE INDEX IF NOT EXISTS idx_usage_conv_ts
 CREATE INDEX IF NOT EXISTS idx_usage_day ON usage_events (day);
 """
 
+_CACHE_OBSERVED = "COALESCE(cache_read_reported, cache_read > 0)"
 _SUM_COLS = ("SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out, "
              "SUM(cache_read) AS cache_read, SUM(cache_write) AS cache_write, "
+             f"SUM({_CACHE_OBSERVED}) AS cache_observed_calls, "
+             f"SUM(CASE WHEN {_CACHE_OBSERVED} THEN tokens_in + cache_read + cache_write "
+             "ELSE 0 END) AS cache_observed_input, "
+             f"SUM(CASE WHEN {_CACHE_OBSERVED} THEN cache_read ELSE 0 END) AS cache_observed_read, "
              "COUNT(*) AS calls, SUM(cost_usd) AS cost_usd, "
              "SUM(virtual_cost_usd) AS virtual_cost_usd")
 
@@ -146,6 +152,7 @@ class UsageLedger:
                 ("route_attempt_index", "INTEGER NOT NULL DEFAULT -1"),
                 ("run_id", "TEXT NOT NULL DEFAULT ''"),
                 ("task_id", "TEXT NOT NULL DEFAULT ''"),
+                ("cache_read_reported", "INTEGER"),
             ):
                 if name not in existing:
                     self._conn.execute(
@@ -190,6 +197,7 @@ class UsageLedger:
                conversation_id: str = "", agent_name: str = "",
                llm_service: str = "", model: str = "", provider: str = "",
                cache_read: int = 0, cache_write: int = 0,
+               cache_read_reported: Optional[bool] = None,
                duration_ms: int = 0,
                cost_per_1m_input: Optional[float] = None,
                cost_per_1m_output: Optional[float] = None,
@@ -241,8 +249,8 @@ class UsageLedger:
                 "physical_llm_service,logical_service_scope,"
                 "logical_service_scope_id,physical_service_scope,"
                 "physical_service_scope_id,route_plan_id,route_attempt_id,"
-                "route_attempt_index,run_id,task_id) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "route_attempt_index,run_id,task_id,cache_read_reported) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (event_id, ts, day, user_id, conversation_id,
                  agent_name, llm_service, model, provider, channel,
                  int(tokens_in), int(tokens_out), int(cache_read),
@@ -251,7 +259,7 @@ class UsageLedger:
                  logical_service_scope, logical_service_scope_id,
                  physical_service_scope, physical_service_scope_id,
                  route_plan_id, route_attempt_id, int(route_attempt_index),
-                 str(run_id or ""), str(task_id or "")))
+                 str(run_id or ""), str(task_id or ""), cache_read_reported))
             inserted = cursor.rowcount == 1
             if not inserted:
                 existing = self._conn.execute(
@@ -384,22 +392,24 @@ class UsageLedger:
         """Full cost/token picture of one conversation for the UI panel.
 
         Includes the conversation's task sub-conversations
-        (`<cid>::task::<tid>`). Returns totals plus by_agent / by_channel /
-        by_model groupings and the most recent events.
+        (`<cid>::task::<tid>`). Returns totals, agent, channel, model and
+        provider groupings, and the most recent events.
         """
         totals = self.summary(conversation_prefix=conversation_id)
         out: Dict[str, Any] = {"conversation_id": conversation_id,
                                "totals": totals}
         for key, dimension in (("by_agent", "agent_name"),
                                ("by_channel", "channel"),
-                               ("by_model", "model")):
+                               ("by_model", "model"),
+                               ("by_provider", "provider")):
             out[key] = self.top(dimension=dimension, limit=50,
                                 order_by="cost_usd",
                                 conversation_prefix=conversation_id)
         out["recent"] = [
-            {k: r[k] for k in ("ts", "agent_name", "llm_service", "model",
+            {k: r[k] for k in ("ts", "agent_name", "llm_service", "model", "provider",
                                "channel", "tokens_in", "tokens_out",
-                               "cache_read", "cache_write", "cost_usd")}
+                               "cache_read", "cache_write", "cache_read_reported",
+                               "duration_ms", "cost_usd")}
             for r in self.export_rows(conversation_prefix=conversation_id,
                                       limit=recent_limit)]
         return out

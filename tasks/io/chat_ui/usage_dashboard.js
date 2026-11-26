@@ -221,15 +221,25 @@ function _usageDashKpisHtml(kpis) {
     const primary = anyCost ? _usageFmtUsd(s.cost_usd)
       : ((s.virtual_cost_usd || 0) > 0 ? '\u007e ' + _usageFmtUsd(s.virtual_cost_usd)
                                        : _usageFmtUsd(0));
-    const cacheTotal = (s.tokens_in || 0) + (s.cache_read || 0);
-    const hitPct = cacheTotal > 0 ? Math.round((s.cache_read || 0) / cacheTotal * 100) : 0;
+    const observedCalls = s.cache_observed_calls || 0;
+    const cacheTotal = s.cache_observed_input || 0;
+    let cacheLabel = '';
+    if (cacheTotal > 0) {
+      const hitPct = Math.round((s.cache_observed_read || 0) / cacheTotal * 100);
+      cacheLabel = hitPct + '% ' + t('usageDashCacheHit');
+      if (observedCalls < s.calls) {
+        cacheLabel += ' · ' + t('usageDashCacheCoverage', { observed: observedCalls, calls: s.calls });
+      }
+    } else if (s.calls) {
+      cacheLabel = t('usageDashCacheUnavailable');
+    }
     return '<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px 14px;min-width:130px;flex:1;">'
       + '<div style="font-size:11px;opacity:0.65;text-transform:uppercase;letter-spacing:0.04em;">'
       + escapeHtml(label) + '</div>'
       + '<div style="font-size:19px;font-weight:600;margin-top:2px;">' + primary + '</div>'
       + '<div style="font-size:11px;opacity:0.6;margin-top:2px;">'
       + _usageFmtTok(s.tokens_in) + ' / ' + _usageFmtTok(s.tokens_out) + ' tok'
-      + (hitPct ? (' \u00b7 ' + hitPct + '% ' + escapeHtml(t('usageDashCacheHit'))) : '')
+      + (cacheLabel ? ' · ' + escapeHtml(cacheLabel) : '')
       + '</div>'
       + '</div>';
   };

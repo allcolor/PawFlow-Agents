@@ -564,6 +564,7 @@ _CONTEXT_TAIL_MESSAGES = 250
 
 def _agent_context_page(server: Dict[str, Any]) -> Dict[str, Any]:
     """Bounded recent tail of the transcript, personalized for the agent."""
+    from core.agent_inbox import inline_context_messages
     from core.conversation_store import ConversationStore
 
     page = ConversationStore.instance().load_transcript_page_for_agent(
@@ -571,7 +572,16 @@ def _agent_context_page(server: Dict[str, Any]) -> Dict[str, Any]:
         limit=_CONTEXT_TAIL_MESSAGES, offset=0) or {}
     rows = [row for row in (page.get("messages") or [])
             if isinstance(row, dict) and not row.get("display_only")]
-    return {"messages": rows, "has_more": bool(page.get("has_more"))}
+    cursor = _context_cursor(rows)
+    messages = inline_context_messages(
+        rows, server["agent_name"], include_public_replies=True)
+    messages = [
+        row for row in messages
+        if (row.get("source") or {}).get("name") != "inbox"
+        or (row.get("source") or {}).get("type") != "system"
+    ]
+    return {"messages": messages, "cursor": cursor,
+            "has_more": bool(page.get("has_more"))}
 
 
 def _summary_header(server: Dict[str, Any]) -> str:
@@ -595,7 +605,9 @@ def _context_cursor(rows: list) -> int:
 
 
 def _initial_context_document(server: Dict[str, Any], rows: list,
-                              summary: str = "") -> str:
+                              summary: str = "", *,
+                              history_available: bool = False,
+                              inbox_notice: str = "") -> str:
     system_prompt = ""
     try:
         from core.agent_executor import resolve_agent_task
@@ -621,13 +633,32 @@ def _initial_context_document(server: Dict[str, Any], rows: list,
             "call read_history.",
             "",
         ])
+    if history_available:
+        from core.llm_providers.cli_shared import historical_tool_result_preview
+
+        latest_input = max((
+            i for i, row in enumerate(rows)
+            if row.get("role") == "user"
+            and (row.get("source") or {}).get("type") not in {"agent", "agent_delegate", "system"}
+        ), default=len(rows))
+        rows = [
+            {**row, "content": historical_tool_result_preview(
+                row["content"], row["msg_id"])}
+            if i < latest_input and row.get("role") == "tool" and row.get("msg_id")
+            and isinstance(row.get("content"), str) else row
+            for i, row in enumerate(rows)
+        ]
     body.extend([
         "## Serialized Conversation Context",
         "",
         "```json",
-        json.dumps(rows, ensure_ascii=False, indent=2),
+        json.dumps(rows, ensure_ascii=False, separators=(",", ":")),
         "```",
         "",
+    ])
+    if inbox_notice:
+        body.extend(["## Current Inbox", "", inbox_notice, ""])
+    body.extend([
         "## Bootstrap Contract",
         "",
         "- Treat this document as PawFlow conversation context, not as a new user command.",
@@ -662,13 +693,20 @@ def _initial_context_document(server: Dict[str, Any], rows: list,
 
 
 def _conversation_tool_result(server: Dict[str, Any], key: Dict[str, Any],
-                              name: str, arguments: dict) -> str:
+                              name: str, arguments: dict, *,
+                              history_available: bool = False) -> str:
     if name == "get_initial_context":
-        rows = _agent_context_page(server)["messages"]
+        page = _agent_context_page(server)
+        rows = page["messages"]
+        notice = ""
+        if not _is_readonly_mode(server):
+            from core.agent_inbox import peek_notice
+            notice, _ = peek_notice(server["conversation_id"], server["agent_name"])
         return json.dumps({
             "document": _initial_context_document(
-                server, rows, _summary_header(server)),
-            "cursor": _context_cursor(rows),
+                server, rows, _summary_header(server),
+                history_available=history_available, inbox_notice=notice),
+            "cursor": page.get("cursor", _context_cursor(rows)),
         }, ensure_ascii=False)
     if name == "get_context_updates":
         # Retired as an inbox channel: every non-user message waits in the
@@ -1077,8 +1115,14 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
     executed_args = args
     if readonly and name in _WRITE_META:
         result = _readonly_error(name)
+    elif name == "get_initial_context":
+        history_available = isinstance(_tool_schema(
+            registry, "read_history", _publication_allowlist(server),
+            readonly=readonly), dict)
+        result = _conversation_tool_result(
+            server, key, name, args, history_available=history_available)
     elif name in {
-            "get_initial_context", "get_context_updates",
+            "get_context_updates",
             "send_user_message", "send_agent_message"}:
         result = _conversation_tool_result(server, key, name, args)
     elif name == "get_tool_schema":

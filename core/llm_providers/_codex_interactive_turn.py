@@ -124,6 +124,7 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         # Last, not max: a compaction inside Codex shrinks the window and the
         # gauge has to follow it down.
         self.observed_context_tokens = 0
+        self._cache_read_reported: bool | None = None
         self.context_tokens_callback = context_tokens_callback
         # Code-mode call id -> how many MCP rows existed when it was emitted.
         # The relay's rows for a script all arrive before that script's own
@@ -235,6 +236,10 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         # Codex turn displays (and prices) the same cached prefix as ordinary
         # input once per exchange.
         self._record_context_tokens(usage)
+        if "input_tokens" in usage:
+            details = usage.get("input_tokens_details")
+            reported = isinstance(details, dict) and details.get("cached_tokens") is not None
+            self._cache_read_reported = self._cache_read_reported is not False and reported
 
         try:
             prompt_total = max(
@@ -571,6 +576,7 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
             tokens_out=tokens_out,
             total_tokens=(total or tokens_in + cached_tokens + tokens_out),
             cache_read_tokens=cached_tokens,
+            cache_read_reported=bool(self._cache_read_reported),
             thinking="".join(self.thinking_parts),
             model=self.effective_model,
             raw={

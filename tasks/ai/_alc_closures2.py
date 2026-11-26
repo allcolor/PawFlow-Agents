@@ -107,6 +107,20 @@ class _ALCClosures2Mixin:
 
     def _alc_build_provider_context(self, st, stored_msgs):
         provider_context = st._with_provider_system_prompt(list(stored_msgs))
+        if (st.ctx.get("use_conv_store") and not st.ctx.get("_is_cli_provider")
+                and any(getattr(tool, "name", "") == "read_history" for tool in st.tool_defs or ())):
+            current_input = next((index for index, msg in enumerate(provider_context)
+                                  if getattr(msg, "_pawflow_current_user_message", False)), 0)
+            if current_input:
+                from core.conversation_store import ConversationStore
+                from core.llm_providers.cli_shared import preview_persisted_tool_result
+
+                store = ConversationStore.instance()
+                if st.user_id and store.resolve_owner(st.conversation_id) == st.user_id:
+                    provider_context[:current_input] = [
+                        preview_persisted_tool_result(msg, st.conversation_id)
+                        for msg in provider_context[:current_input]
+                    ]
         pre_inject_chars = self._estimate_tokens(
             provider_context, tool_defs=st.tool_defs, chars_per_token=1.0)
         return provider_context, pre_inject_chars

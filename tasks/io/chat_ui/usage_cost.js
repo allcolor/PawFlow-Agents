@@ -172,6 +172,7 @@ function _usageRenderBreakdown(data) {
   html += _usageDimTable(t('usageCostByAgent'), data.by_agent, anyCost);
   html += _usageDimTable(t('usageCostByChannel'), data.by_channel, anyCost);
   html += _usageDimTable(t('usageCostByModel'), data.by_model, anyCost);
+  html += _usageDimTable(t('usageCostByProvider'), data.by_provider, anyCost);
   html += _usageRecentTable(data.recent, anyCost);
   return html;
 }
@@ -185,7 +186,8 @@ function _usageDimTable(title, rows, anyCost) {
   const anyVirtual = rows.some(r => (r.virtual_cost_usd || 0) > 0);
   const metric = r => anyCost ? (r.cost_usd || 0)
     : (anyVirtual ? (r.virtual_cost_usd || 0)
-                  : ((r.tokens_in || 0) + (r.tokens_out || 0)));
+                  : ((r.tokens_in || 0) + (r.tokens_out || 0)
+                     + (r.cache_read || 0) + (r.cache_write || 0)));
   const max = Math.max.apply(null, rows.map(metric).concat([1e-12]));
   let html = '<div style="margin:10px 0 4px;font-weight:600;opacity:0.85;">'
     + escapeHtml(title) + '</div>'

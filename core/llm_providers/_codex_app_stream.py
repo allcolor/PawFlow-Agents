@@ -20,6 +20,32 @@ from core.llm_providers._codex_app_rpc import _CodexAppServerProtocolError  # no
 logger = logging.getLogger(__name__)
 
 
+def _codex_app_usage_delta(usage, previous):
+    """Use the first exchange and then deltas of the cumulative thread counters."""
+    def counts(snapshot):
+        try:
+            return (
+                int(snapshot["inputTokens"]), int(snapshot["cachedInputTokens"]),
+                int(snapshot.get("cacheWriteInputTokens", 0)),
+                int(snapshot["outputTokens"]),
+            )
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return None
+
+    if not isinstance(usage, dict):
+        return previous, None
+    current = counts(usage.get("total"))
+    if current is None or min(current) < 0:
+        return previous, None
+    if previous is None:
+        delta = counts(usage.get("last"))
+        if delta is not None and any(last > total for last, total in zip(delta, current)):
+            delta = None
+    else:
+        delta = tuple(new - old for new, old in zip(current, previous))
+    return current, delta if delta is not None and min(delta) >= 0 else None
+
+
 class _CodexAppStreamMixin:
     """The streaming turn loop (MRO mixin)."""
 
@@ -443,6 +469,9 @@ class _CodexAppStreamMixin:
                     int(prompt_tokens or 0), len(initial_text or ""),
                     _turn_start_ms)
             turn_id = (turn or {}).get("id", "")
+            last_usage = None
+            turn_usage = None
+            complete_cache_usage = True
 
             lock = self._codex_app_ensure_lock()
             with lock:
@@ -524,6 +553,16 @@ class _CodexAppStreamMixin:
                     continue
                 method = msg.get("method", "")
                 params = msg.get("params", {}) or {}
+                if method == "thread/tokenUsage/updated":
+                    if params.get("threadId") == thread_id and params.get("turnId") == turn_id:
+                        snapshot, delta = _codex_app_usage_delta(params.get("tokenUsage"), last_usage)
+                        if delta is not None:
+                            turn_usage = tuple(a + b for a, b in
+                                               zip(turn_usage or (0, 0, 0, 0), delta))
+                        else:
+                            complete_cache_usage = False
+                        last_usage = snapshot
+                    continue
                 if method == "serverRequest/resolved":
                     self._codex_native_inputs.cancel(params.get("requestId"))
                     continue
@@ -774,11 +813,25 @@ class _CodexAppStreamMixin:
             self.record_observed_cli_context(conv_id, agent_name, _native_used)
             self.record_observed_cli_window(
                 conv_id, agent_name, _native_window)
+            cache_read = cache_write = 0
+            tokens_out = len(content) // 4
+            total_tokens = 0
+            if turn_usage is not None:
+                gross_input, cached, written, tokens_out = turn_usage
+                cache_read = min(gross_input, cached)
+                cache_write = min(gross_input - cache_read, written)
+                prompt_tokens = gross_input - cache_read - cache_write
+                total_tokens = gross_input + tokens_out
             return LLMResponse(
                 content=content,
                 model=model,
                 tokens_in=max(0, int(prompt_tokens or 0)),
-                tokens_out=max(0, len(content) // 4),
+                tokens_out=tokens_out,
+                total_tokens=total_tokens,
+                input_usage_native=turn_usage is not None,
+                cache_read_tokens=cache_read,
+                cache_creation_tokens=cache_write,
+                cache_read_reported=turn_usage is not None and complete_cache_usage,
                 finish_reason="stop",
                 raw={"thread_id": thread_id, "turn_id": turn_id,
                      "tool_results": len(completed_tool_ids)},

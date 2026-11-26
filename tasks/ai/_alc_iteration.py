@@ -595,8 +595,8 @@ class _ALCIterationMixin:
                 st._wrapped = self._attach_platform_note(st._wrapped, _conflict_note)
             if st.display_tc.name == "read_inbox":
                 from tasks.ai._inbox_notice_consumed import (
-                    neutralize_notices_in_messages)
-                neutralize_notices_in_messages(st.messages, self._wrap_tool_output)
+                    neutralize_after_inbox_read)
+                neutralize_after_inbox_read(st.messages, st.result_text)
             st._tr_msg = LLMMessage(role="tool", content=st._wrapped, tool_call_id=st.tc.id,
                                   conversation_id=st.conversation_id)
             st._tr_msg._tool_name = st.display_tc.name

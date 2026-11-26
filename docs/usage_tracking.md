@@ -1,6 +1,6 @@
 # Usage & Cost Tracking
 
-PawFlow records every LLM call as one event in a persistent SQLite ledger
+PawFlow records usage events in a persistent SQLite ledger
 (`core/usage_ledger.py`, `data/system/usage.db`). The ledger is the single
 source of truth for tokens and cost — it replaced the former TokenTracker
 (JSON aggregates without a conversation dimension) and CostTracker
@@ -12,6 +12,24 @@ Each event carries: timestamp, `user_id`, `conversation_id`, `agent_name`,
 `llm_service`, `model`, `provider`, `channel`, token counts
 (`tokens_in` / `tokens_out` / `cache_read` / `cache_write`), `duration_ms`,
 and `cost_usd`.
+
+`tokens_in` counts input outside cache reads and writes when the provider
+supplies those counters. A fully cached prompt can have zero fresh input.
+For a native CLI turn the usage event can cover several provider exchanges.
+Claude Code's live context gauge uses the latest exchange, while its ledger
+event adds the exchanges. Codex App Server derives usage from token
+notifications for the current turn by taking deltas of the thread counters.
+An isolated or flash delegate produces one ledger event covering its
+completed calls, including synthesis, with its task ID.
+
+`cache_read_reported` distinguishes an explicitly reported zero from a
+missing or incomplete cache measurement. Earlier rows with a positive
+cache read remain usable. The rate shown in the dashboard is
+`cache_observed_read / cache_observed_input` and covers the
+`cache_observed_calls` events with measured cache reads. Providers and
+local endpoints can omit cache telemetry. Managed MCP providers without
+vendor observation leave it unavailable. Durations are wall-clock
+milliseconds for the recorded call or, for sub-agents, the whole run.
 
 Cost is **frozen at write time** using the rates configured on the LLM
 service (`cost_per_1m_input` / `cost_per_1m_output`, plus optional
@@ -123,7 +141,7 @@ keeps long-running tool-use turns live instead of deferring all accounting
 until the final answer. The webchat header shows a
 cost badge (`usage_cost.js`) hydrated from `usage_conversation` on
 conversation open and refreshed live from `usage.updated`; clicking it
-opens a breakdown panel (totals, by agent/channel/model, recent turns).
+opens a breakdown panel (totals, by agent/channel/model/provider, recent turns).
 When a conversation only uses services without configured pricing (e.g.
 subscription CLI providers), bars scale on tokens instead of cost.
 

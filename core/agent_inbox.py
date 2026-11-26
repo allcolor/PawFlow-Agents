@@ -58,6 +58,15 @@ MAX_READ_CHARS = 100000
 # re-triggered and the conversation shows a warning.
 MAX_UNREAD_TURNS = 3
 MAX_NOTICE_ITEMS = 20
+NOTICE_PREFIX = "[PawFlow inbox: ACTION REQUIRED]"
+NOTICE_INSTRUCTIONS = (
+    "STOP. Call read_inbox() NOW, before any other tool call or answer.",
+    "Their content is ONLY available through read_inbox(); do not guess it.",
+)
+EMPTY_READ_MESSAGE = (
+    "No unread items. Your inbox is fully delivered. "
+    "Read it again only when a new inbox notice arrives."
+)
 _read_locks: dict[tuple[str, str], threading.Lock] = {}
 _read_locks_guard = threading.Lock()
 
@@ -150,7 +159,8 @@ def turn_mode_messages(conversation_id: str, agent_name: str) -> list:
             in {"agent_delegate", "a2a", "cross_conversation_delegate"}]
 
 
-def inline_context_messages(messages: list, agent_name: str) -> list:
+def inline_context_messages(messages: list, agent_name: str, *,
+                            include_public_replies: bool = False) -> list:
     """Exclude recipient copies left in contexts written before migration.
 
     The author's own output and human messages to this agent stay inline.
@@ -159,15 +169,21 @@ def inline_context_messages(messages: list, agent_name: str) -> list:
     agent = agent_name.lower()
     kept = []
     for message in messages:
-        source = getattr(message, "source", None) or {}
+        if isinstance(message, dict):
+            source = message.get("source") or {}
+            role = message.get("role", "")
+        else:
+            source = message.source or {}
+            role = message.role
         kind = source.get("type")
-        role = getattr(message, "role", "")
         if kind == "agent_delegate":
             if str(source.get("from") or "").lower() != agent:
                 continue
         elif kind == "agent":
             if str(source.get("name") or "").lower() != agent:
-                continue
+                if (not include_public_replies or source.get("visibility") == "target_only"
+                        or source.get("task_id") or source.get("btw")):
+                    continue
         elif role == "user":
             if kind == "scheduled_wakeup" or source.get("delegate"):
                 continue
@@ -175,7 +191,8 @@ def inline_context_messages(messages: list, agent_name: str) -> list:
                     "background", "skills", "workflow_proposal", "catch_up"}:
                 continue
             target = str(source.get("target_agent") or "").lower()
-            if kind == "user" and target and target not in {agent, "all"}:
+            if target and target not in {agent, "all"} and (
+                    kind == "user" or source.get("visibility") == "target_only"):
                 continue
         kept.append(message)
     return kept
@@ -226,13 +243,12 @@ def build_notice(items: list) -> str:
         return ""
     count = len(items)
     noun = "item" if count == 1 else "items"
-    lines = [f"[PawFlow inbox: ACTION REQUIRED] You have {count} unread {noun}:"]
+    lines = [f"{NOTICE_PREFIX} You have {count} unread {noun}:"]
     for index, item in enumerate(items[:MAX_NOTICE_ITEMS], 1):
         lines.append(f"  {index}. {_describe(item)}")
     if count > MAX_NOTICE_ITEMS:
         lines.append(f"  ... and {count - MAX_NOTICE_ITEMS} more unread items.")
-    lines.append("STOP. Call read_inbox() NOW, before any other tool call or answer.")
-    lines.append("Their content is ONLY available through read_inbox(); do not guess it.")
+    lines.extend(NOTICE_INSTRUCTIONS)
     return "\n".join(lines)
 
 
@@ -354,12 +370,7 @@ def _read_inbox(conversation_id: str, agent_name: str, *,
         if not items:
             return f"No unread inbox item {item}."
     if not items:
-        return (
-            "No unread items. Your inbox is empty: do NOT call read_inbox "
-            "again until a new [PawFlow inbox: ACTION REQUIRED] notice "
-            "appears. If you have nothing else to act on, end your turn "
-            "without scheduling another wake-up."
-        )
+        return EMPTY_READ_MESSAGE
     parts: list[str] = []
     done: list[str] = []
     used = 0
@@ -369,6 +380,9 @@ def _read_inbox(conversation_id: str, agent_name: str, *,
         start = max(0, int(offset)) if item else saved
         if start > saved:
             raise ValueError("offset cannot skip unread content")
+        if start < saved:
+            return (f"That page was already delivered. Continue with "
+                    f'read_inbox(item="{entry.msg_id}", offset={saved}).')
         remaining = text[start:]
         header = _header(entry, len(text), start, len(text))
         block = header + "\n" + remaining
@@ -398,7 +412,6 @@ def _read_inbox(conversation_id: str, agent_name: str, *,
         parts.extend([header, remaining])
         used += bool(used) + len(block)
         done.append(entry.msg_id)
-        store.set_notice_state(conversation_id, agent_name, unread_turns=0)
     if done:
         store.mark_read(conversation_id, agent_name, done,
                         read_call_id=read_call_id)

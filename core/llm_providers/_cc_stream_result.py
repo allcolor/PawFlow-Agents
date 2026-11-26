@@ -473,22 +473,29 @@ class _CCStreamResultMixin:
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
 
-        # Context-fill semantics: report the LAST assistant event's per-call
-        # usage (real prompt size at end of turn, ≤ context_max), NOT the
-        # `result.usage` summed across sub-calls (which balloons cache_read to
-        # N×prefix and makes the UI clamp at 100%). `_latest_usage` is captured
-        # at every assistant event in the stream loop.
-        _u_final = st._latest_usage or st.last_data.get("usage", {})
-        _ti_in = _u_final.get("input_tokens", 0)
-        _ti_creation = _u_final.get("cache_creation_input_tokens", 0)
-        _ti_read = _u_final.get("cache_read_input_tokens", 0)
-        _to = _u_final.get("output_tokens", 0)
-        if not (_ti_in or _ti_creation or _ti_read or _to):
-            for _mu in st.last_data.get("modelUsage", {}).values():
-                _ti_in += _mu.get("inputTokens", 0) + _mu.get("input_tokens", 0)
-                _ti_read += _mu.get("cacheReadInputTokens", 0) + _mu.get("cache_read_input_tokens", 0)
-                _ti_creation += _mu.get("cacheCreationInputTokens", 0) + _mu.get("cache_creation_input_tokens", 0)
-                _to += _mu.get("outputTokens", 0) + _mu.get("output_tokens", 0)
+        # The live gauge already has the last request's occupancy. The
+        # ledger needs the entire turn, whose native result carries totals.
+        _u_final = st.last_data.get("usage") or {}
+        _model_usage = st.last_data.get("modelUsage") or {}
+        _cache_reported = _u_final.get("cache_read_input_tokens") is not None
+        if not _u_final and not _model_usage:
+            _u_final = st._latest_usage or {}
+        _input_observed = _u_final.get("input_tokens") is not None
+        _ti_in = _u_final.get("input_tokens") or 0
+        _ti_creation = _u_final.get("cache_creation_input_tokens") or 0
+        _ti_read = _u_final.get("cache_read_input_tokens") or 0
+        _to = _u_final.get("output_tokens") or 0
+        if not _u_final and _model_usage:
+            _input_observed = True
+            _cache_reported = True
+            for _mu in _model_usage.values():
+                _ti_in += _mu.get("inputTokens", _mu.get("input_tokens", 0)) or 0
+                _ti_read += _mu.get("cacheReadInputTokens", _mu.get("cache_read_input_tokens", 0)) or 0
+                _ti_creation += _mu.get("cacheCreationInputTokens", _mu.get("cache_creation_input_tokens", 0)) or 0
+                _to += _mu.get("outputTokens", _mu.get("output_tokens", 0)) or 0
+                _input_observed &= _mu.get("inputTokens", _mu.get("input_tokens")) is not None
+                _cache_reported &= _mu.get("cacheReadInputTokens",
+                                           _mu.get("cache_read_input_tokens")) is not None
         _ti = _ti_in + _ti_creation + _ti_read
         return LLMResponse(
             content=full_content,
@@ -498,6 +505,8 @@ class _CCStreamResultMixin:
             total_tokens=_ti + _to,
             cache_creation_tokens=_ti_creation,
             cache_read_tokens=_ti_read,
+            input_usage_native=_input_observed,
+            cache_read_reported=_cache_reported,
             finish_reason="stop",
             raw=st.last_data,
         )

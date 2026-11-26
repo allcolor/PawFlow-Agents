@@ -514,10 +514,12 @@ class TestSessionContextInjection:
 
     def _fake_store(self, monkeypatch, messages, seen=None):
         class _Store:
-            def load(self, cid, user_id=""):
+            def load_page(self, cid, *, limit, offset, before_msg_id, user_id):
                 if seen is not None:
                     seen["load"] = (cid, user_id)
-                return list(messages)
+                end = len(messages) - offset
+                start = max(0, end - limit)
+                return {"messages": messages[start:end], "offset": offset, "has_more": start > 0}
 
         monkeypatch.setattr(
             "core.conversation_store.ConversationStore.instance",
@@ -575,7 +577,7 @@ class TestSessionContextInjection:
         from services._realtime_bridge import resolve_session_instructions
 
         class _Broken:
-            def load(self, cid, user_id=""):
+            def load_page(self, *_args, **_kwargs):
                 raise RuntimeError("store down")
 
         monkeypatch.setattr(

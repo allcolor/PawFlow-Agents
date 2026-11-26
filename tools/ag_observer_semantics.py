@@ -295,12 +295,14 @@ def _extract_usage(value) -> dict:
         usage = value.get("usage") or value.get("usageMetadata") or value.get("usage_metadata")
         if isinstance(usage, dict):
             out = {}
-            in_tokens = usage.get("input_tokens") or usage.get("promptTokenCount") or usage.get("prompt_tokens")
-            out_tokens = usage.get("output_tokens") or usage.get("candidatesTokenCount") or usage.get("completion_tokens")
-            if in_tokens is not None:
-                out["input_tokens"] = in_tokens
-            if out_tokens is not None:
-                out["output_tokens"] = out_tokens
+            for target, keys in (
+                ("input_tokens", ("input_tokens", "promptTokenCount", "prompt_tokens")),
+                ("output_tokens", ("output_tokens", "candidatesTokenCount", "completion_tokens")),
+                ("cached_input_tokens", ("cachedContentTokenCount", "cached_content_token_count")),
+            ):
+                count = next((usage[key] for key in keys if usage.get(key) is not None), None)
+                if count is not None:
+                    out[target] = count
             return out
         for item in value.values():
             found = _extract_usage(item)

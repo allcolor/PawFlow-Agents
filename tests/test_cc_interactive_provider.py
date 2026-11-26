@@ -422,6 +422,32 @@ def test_turn_coordinator_captures_effective_model_from_message_start():
     assert resp.tokens_out == 6208
 
 
+def test_turn_coordinator_sums_cache_and_usage_without_counting_cumulative_deltas_twice():
+    events = []
+    for fresh, read, write, output in [(10, 90, 5, 7), (1, 110, 0, 4)]:
+        events.extend([
+            _sse("message_start", {"message": {"usage": {
+                "input_tokens": fresh, "cache_read_input_tokens": read,
+                "cache_creation_input_tokens": write, "output_tokens": 1}}}),
+            _sse("message_delta", {"usage": {"output_tokens": 2}}),
+            _sse("message_delta", {"usage": {"output_tokens": output}}),
+            _sse("message_stop", {}),
+        ])
+    events.append({"type": "hook", "hook_event_name": "Stop", "input": {}})
+    observed = []
+    response = _CCITurnCoordinator(
+        _Events(events), "sess", usage_callback=observed.append).run()
+
+    assert response.tokens_in == 11
+    assert response.tokens_out == 11
+    assert response.cache_read_tokens == 200
+    assert response.cache_creation_tokens == 5
+    assert response.total_tokens == 227
+    assert response.cache_read_reported is True
+    assert [usage["cache_read_input_tokens"] for usage in observed] == [90, 110]
+    assert response.raw["usage"]["cache_read_input_tokens"] == 110
+
+
 def test_turn_coordinator_keeps_last_model_across_multiple_requests():
     events = [
         _sse("message_start", {

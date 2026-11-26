@@ -90,6 +90,30 @@ def test_read_history_search_falls_back_to_keyword_matches():
     assert "PAWFLOW_USE_RTK" in result
 
 
+def test_read_history_can_recover_a_stored_result_by_character_offset(monkeypatch):
+    prefix = "é" * 2000
+    middle = "界" * 16000
+    tail = "last line"
+    store = FakeConversationStore([{
+        "role": "tool", "msg_id": "saved-result", "content": prefix + middle + tail,
+    }])
+    monkeypatch.setattr(
+        "core.conversation_store.ConversationStore.instance", lambda: store)
+    handler = ReadHistoryHandler()
+    handler.set_conversation_id("conv")
+    args = {"action": "read", "from_msg_id": "saved-result", "role_filter": "tool"}
+
+    page = handler.execute({**args, "offset": 2000})
+    assert page.split("\n", 1)[1] == (
+        middle + "\n\nMore text available. Repeat this read with offset=18000.")
+    assert handler.execute({**args, "offset": 18000}).split("\n", 1)[1] == tail
+    assert handler.execute({**args, "offset": -1}).startswith("Error: offset")
+    assert "does not match" in handler.execute({**args, "role_filter": "user"})
+    monkeypatch.setattr(store, "_load_cache", lambda _cid: {"user_id": "owner"})
+    handler.set_user_id("another-user")
+    assert handler.execute(args) == "No history found"
+
+
 def test_read_history_search_prefers_exact_phrase_matches():
     handler = ReadHistoryHandler()
     messages = [

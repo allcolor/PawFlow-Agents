@@ -162,6 +162,8 @@ def _record_response_usage(st, response):
             tokens_out=tokens_out,
             cache_read=cache_read,
             cache_write=cache_write,
+            cache_read_reported=getattr(response, "cache_read_reported", None),
+            duration_ms=max(0, int(getattr(response, "duration_ms", 0) or 0)),
             cost_per_1m_input=ci,
             cost_per_1m_output=co,
             cost_per_1m_cache_read=ccr,

@@ -186,13 +186,18 @@ class _AntigravityTurnCoordinator:
         self._finalize_segment_text()
         text = self._last_segment_text
         thinking = "".join(self.thinking_parts)
+        prompt_tokens = max(0, int(self.usage.get("input_tokens") or 0))
+        cache_tokens = min(prompt_tokens, max(0, int(self.usage.get("cached_input_tokens") or 0)))
+        output_tokens = int(self.usage.get("output_tokens") or 0)
         return LLMResponse(
             content=text,
             tool_calls=[],
-            tokens_in=int(self.usage.get("input_tokens", 0) or 0),
-            tokens_out=int(self.usage.get("output_tokens", 0) or 0),
-            total_tokens=(int(self.usage.get("input_tokens", 0) or 0)
-                          + int(self.usage.get("output_tokens", 0) or 0)),
+            tokens_in=prompt_tokens - cache_tokens,
+            tokens_out=output_tokens,
+            total_tokens=prompt_tokens + output_tokens,
+            input_usage_native="input_tokens" in self.usage,
+            cache_read_tokens=cache_tokens,
+            cache_read_reported={"input_tokens", "cached_input_tokens"} <= self.usage.keys(),
             thinking=thinking,
             raw={"provider": "antigravity-interactive", "usage": self.usage},
         )
@@ -269,6 +274,8 @@ class _AntigravityTurnCoordinator:
         self._saw_proxy_event = True
         self._last_event_at = time.time()
         if event.get("usage") and isinstance(event.get("usage"), dict):
+            if "input_tokens" in event["usage"]:
+                self.usage.pop("cached_input_tokens", None)
             self.usage.update(event["usage"])
             self._publish_usage_observation()
         thinking = event.get("thinking", "") or "".join(event.get("thinking_texts") or [])

@@ -19,6 +19,7 @@ Deduplicating the first must never leak into the second.
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,6 +33,49 @@ OPAQUE_EXEC_RESULT = (
     f"{BOOTSTRAP_BODY}\n"
     "</tool_output>"
 )
+
+
+@pytest.mark.parametrize("has_history,owner,previewed", [
+    (True, "alice", True), (False, "alice", False), (True, "different-user", False),
+])
+def test_api_provider_context_keeps_current_results_and_previews_readable_history(
+        monkeypatch, has_history, owner, previewed):
+    from core.conversation_store import ConversationStore
+    from tasks.ai._alc_closures2 import _ALCClosures2Mixin
+    from tasks.ai.agent_core import AgentCoreMixin
+
+    payload = AgentCoreMixin._wrap_tool_output("bash", "old text " * 900)
+    old = LLMMessage(role="tool", content=payload, msg_id="old-tool",
+                     conversation_id="conv", seq=12)
+    current = LLMMessage(role="user", content="continue", conversation_id="conv")
+    current._pawflow_current_user_message = True
+    active_result = LLMMessage(role="tool", content="current text " * 900,
+                               conversation_id="conv", seq=15)
+
+    class Builder(_ALCClosures2Mixin):
+        @staticmethod
+        def _estimate_tokens(messages, **_kwargs):
+            return sum(len(message.content) for message in messages)
+
+    monkeypatch.setattr(ConversationStore, "instance",
+                        lambda: SimpleNamespace(resolve_owner=lambda _cid: owner))
+    state = SimpleNamespace(
+        ctx={"use_conv_store": True}, user_id="alice", conversation_id="conv",
+        _with_provider_system_prompt=list,
+        tool_defs=[SimpleNamespace(name="read_history")] if has_history else [],
+    )
+    outgoing, measured_chars = Builder()._alc_build_provider_context(
+        state, [old, current, active_result])
+
+    assert old.content == payload
+    assert outgoing[1:] == [current, active_result]
+    if previewed:
+        assert measured_chars < len(payload) + len(current.content) + len(active_result.content)
+        assert '</tool_output>\n[Historical tool result,' in outgoing[0].content
+        assert 'from_msg_id="old-tool", offset=2000' in outgoing[0].content
+    else:
+        assert outgoing[0] is old
+
 
 # Every shape the CLI providers use to open their own bootstrap file.
 BOOTSTRAP_CALLS = [
@@ -224,6 +268,44 @@ def test_cold_start_context_file_does_not_embed_its_own_previous_copy(tmp_path):
     assert "serialized history" not in written
     assert "system rules" in written
     assert "latest request" in written
+
+
+def test_cold_start_sends_previews_only_for_persisted_prior_tool_results(tmp_path):
+    durable = LLMMessage(
+        role="tool", content="historical preview " + "x" * 48000 + "historical tail",
+        msg_id="old-result", seq=5, conversation_id="conv")
+    transient = LLMMessage(
+        role="tool", content="y" * 2100 + "transient tail", conversation_id="conv")
+    call = LLMMessage(
+        role="assistant", content="",
+        tool_calls=[LLMToolCall(id="current-call", name="bash", arguments={})],
+        conversation_id="conv")
+    current = LLMMessage(
+        role="tool", content="z" * 2100 + "current tail", tool_call_id="current-call",
+        msg_id="current-result", seq=8, conversation_id="conv")
+    latest_request = LLMMessage(
+        role="user", content="latest request", conversation_id="conv")
+    latest_request._pawflow_current_user_message = True
+    messages = [
+        LLMMessage(role="user", content="earlier", conversation_id="conv"),
+        durable, transient, latest_request, call, current,
+        LLMMessage(role="user", content="current inbox notice", conversation_id="conv"),
+    ]
+
+    _client()._cci_prompt(
+        messages, None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv",
+        initial_context=True, agent_name="a")
+    written = (tmp_path / ".pawflow_cci" / "initial_context.md").read_text()
+
+    assert "historical preview" in written
+    assert "historical tail" not in written
+    assert 'read_history(action="read", from_msg_id="old-result", offset=2000)' in written
+    assert "transient tail" in written
+    assert written.count("\nlatest request\n") == 1
+    assert "current inbox notice" in written
+    assert "[ran: bash(" in written
+    assert "current tail" in written
+    assert durable.content.endswith("historical tail")
 
 
 @pytest.mark.parametrize(("tool_name", "arguments", "origin"), BOOTSTRAP_CALLS)

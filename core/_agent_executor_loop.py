@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import logging
 import time
-import threading
+from dataclasses import replace
 
-from core.llm_client import LLMMessage
+from core.llm_client import LLMMessage, LLMToolCall
 
 from core._agent_executor_base import (
     AgentResult,
@@ -77,7 +77,8 @@ class _SubAgentExecutorLoopMixin:
         return AgentCoreMixin._materialize_tool_result_images(
             content, user_id=user_id, conversation_id=conversation_id)
 
-    def _run_agent_loop(self, task: AgentTask) -> AgentResult:
+    def _run_agent_loop(self, task: AgentTask, sub_conv_id: str,
+                        history: list[LLMMessage] | None) -> AgentResult:
         """Core agent loop: LLM → tool_call → execute → LLM → ..."""
         result = AgentResult(
             task_id=task.id,
@@ -194,13 +195,10 @@ class _SubAgentExecutorLoopMixin:
 
         # Sub-conversation persistence
         # "full" context mode = work directly in parent conv (no sub-context)
-        sub_conv_id = ""
-        _resumed = False
+        persist_turn = bool(sub_conv_id and task.persist)
         if task.ephemeral:
             from core.conversation_store import ConversationStore
             sub_conv_id = ConversationStore.instance().generate_id()
-        elif task.parent_conversation_id and task.context_mode != "full":
-            sub_conv_id = f"{task.parent_conversation_id}::task::{task.id}"
         elif not task.parent_conversation_id:
             # Orphan sub-agent (tests / standalone execution): mint an
             # ephemeral cid so LLMMessage invariant holds throughout
@@ -229,6 +227,7 @@ class _SubAgentExecutorLoopMixin:
         # The initial sub-agent prompt is built in full below. Never inherit
         # a different turn's delta marker from the resolver client.
         client._pawflow_context_is_delta = False
+        client._last_turn_msg_id = ""
         client._conversation_id = _delegate_conv_id
         client._agent_name = task.agent_name
         client._user_id = task.user_id
@@ -297,28 +296,24 @@ class _SubAgentExecutorLoopMixin:
         except Exception as _e:
             logger.warning("[sub-agent:%s] failed to wire client: %s",
                             task.agent_name, _e)
-            # Try to resume existing sub-conversation
-            try:
-                from core.conversation_store import ConversationStore
-                store = ConversationStore.instance()
-                existing = store.load(sub_conv_id)
-                if existing and len(existing) > 1:
-                    messages = self._deserialize_sub_messages(existing, sub_conv_id)
-                    # New parent input is inbox data, including on resume.
-                    messages.extend(self._build_initial_context(
-                        task, sys_prompt, user_source, sub_conv_id)[1:])
-                    _resumed = True
-                    logger.info("Resuming sub-conv %s with %d messages (+1 new)",
-                                sub_conv_id, len(messages) - 1)
-                else:
-                    messages = self._build_initial_context(
-                        task, sys_prompt, user_source, sub_conv_id)
-            except Exception:
-                messages = self._build_initial_context(
-                    task, sys_prompt, user_source, sub_conv_id)
-        else:
-            messages = self._build_initial_context(
-                task, sys_prompt, user_source, sub_conv_id)
+
+        initial_task = replace(task, context_messages=None) if history else task
+        submitted_items = []
+        messages = self._build_initial_context(
+            initial_task, sys_prompt, user_source, sub_conv_id,
+            submitted_items=submitted_items if persist_turn else None)
+        if history:
+            from core.llm_providers.cli_shared import preview_persisted_tool_result
+            from tasks.ai._inbox_notice_consumed import neutralize_notices_in_messages
+            neutralize_notices_in_messages(history)
+            messages[1:1] = [
+                preview_persisted_tool_result(msg, sub_conv_id)
+                if "read_history" in tool_handlers else msg
+                for msg in history
+                if msg.role != "system"
+                and ((msg.source or {}).get("type"), (msg.source or {}).get("name"))
+                != ("system", "inbox")
+            ]
 
         # Follow-ups use this exact inbox identity; full and ephemeral tasks
         # must not be mistaken for parent::task::<id> runs.
@@ -340,6 +335,8 @@ class _SubAgentExecutorLoopMixin:
             if notice:
                 messages.append(LLMMessage(
                     role="user", content=notice,
+                    source={"type": "system", "name": "inbox",
+                            "target_agent": task.agent_name, "visibility": "target_only"},
                     conversation_id=_delegate_conv_id))
 
         def _unread_error(message):
@@ -385,75 +382,30 @@ class _SubAgentExecutorLoopMixin:
         except Exception:
             _active_inst = None
 
-        # Coalescing background persister for the sub-conversation. The old
-        # code re-serialized and rewrote the ENTIRE transcript synchronously
-        # on every iteration (O(iterations × messages)) between the tool
-        # round and the next LLM call. Serialization is now incremental
-        # (messages only grow; a compaction that swaps the list triggers a
-        # rebuild) and the rewrite runs on a worker thread that coalesces
-        # bursts. The finally block flushes the final state synchronously.
-        _sub_cache = {"rows": [], "src": None}
-        _sub_persist = {"dirty": False, "running": False, "rows": []}
-        _sub_persist_lock = threading.Lock()
+        responses = 0
+        cache_read = cache_write = 0
+        cache_reported = True
 
-        def _serialize_sub_msg(m):
-            d = {"role": m.role, "content": m.content}
-            if hasattr(m, 'tool_calls') and m.tool_calls:
-                d["tool_calls"] = [
-                    {"id": tc.id, "name": tc.name,
-                     "arguments": tc.arguments}
-                    for tc in m.tool_calls
-                ]
-            if getattr(m, 'thinking', ''):
-                d["thinking"] = m.thinking
-            if getattr(m, 'thinking_signature', ''):
-                d["thinking_signature"] = m.thinking_signature
-            if hasattr(m, 'tool_call_id') and m.tool_call_id:
-                d["tool_call_id"] = m.tool_call_id
-            return d
-
-        def _sub_rows_snapshot():
-            if (_sub_cache["src"] is not messages
-                    or len(messages) < len(_sub_cache["rows"])):
-                _sub_cache["rows"] = [_serialize_sub_msg(m) for m in messages]
-                _sub_cache["src"] = messages
-            else:
-                _sub_cache["rows"].extend(
-                    _serialize_sub_msg(m)
-                    for m in messages[len(_sub_cache["rows"]):])
-            return list(_sub_cache["rows"])
-
-        def _sub_persist_save(rows):
-            try:
-                from core.conversation_store import ConversationStore
-                ConversationStore.instance().save(
-                    sub_conv_id, rows, user_id=task.user_id)
-            except Exception:
-                logger.debug("exception suppressed", exc_info=True)
-
-        def _sub_persist_worker():
-            while True:
-                with _sub_persist_lock:
-                    if not _sub_persist["dirty"]:
-                        _sub_persist["running"] = False
-                        return
-                    _sub_persist["dirty"] = False
-                    rows = _sub_persist["rows"]
-                _sub_persist_save(rows)
-
-        def _schedule_sub_persist():
-            if not sub_conv_id or task.ephemeral:
-                return
-            rows = _sub_rows_snapshot()
-            with _sub_persist_lock:
-                _sub_persist["rows"] = rows
-                _sub_persist["dirty"] = True
-                if not _sub_persist["running"]:
-                    _sub_persist["running"] = True
-                    threading.Thread(
-                        target=_sub_persist_worker, daemon=True).start()
+        def account_response(response):
+            nonlocal responses, cache_read, cache_write, cache_reported
+            responses += 1
+            result.tokens_in += response.tokens_in
+            result.tokens_out += response.tokens_out
+            read = getattr(response, "cache_read_tokens", 0) or 0
+            cache_read += read
+            cache_write += getattr(response, "cache_creation_tokens", 0) or 0
+            reported = getattr(response, "cache_read_reported", None)
+            cache_reported &= bool(read if reported is None else reported)
+            if response.model:
+                result.model = response.model
+            if not result.provider:
+                result.provider = getattr(client, "provider", "") or ""
 
         try:
+            persisted_seq = 0
+            if persist_turn:
+                from core.conversation_store import ConversationStore
+                persisted_seq = ConversationStore.instance().peek_persisted_max_seq(sub_conv_id)
             iteration = 0
             while max_iter <= 0 or iteration < max_iter:
                 iteration += 1
@@ -514,18 +466,52 @@ class _SubAgentExecutorLoopMixin:
                 # active-agents panel counter moves just like the main
                 # agent's does (one increment per CC output message).
                 _cc_turn_count = [0]
+                native_final = ("", "")
+                native_steps = []
+                agent_source = {"type": "agent", "name": task.agent_name}
+                if task.llm_service:
+                    agent_source["llm_service"] = task.llm_service
 
-                def _turn_cb(_text, _tool_calls, _turn_thinking=""):
+                def _turn_cb(text, tool_calls, thinking=""):
+                    nonlocal native_final
                     _cc_turn_count[0] += 1
                     if _active_inst and _active_ctx_key:
                         try:
                             _active_ctx["_iteration"] = _cc_turn_count[0]
                         except Exception:
                             logger.debug("exception suppressed", exc_info=True)
+                    if text and not tool_calls:
+                        native_final = (text, thinking)
+                    if not persist_turn:
+                        return
+                    # CLI tools already ran inside the provider. Keep their
+                    # completed exchanges for cold resume without running them again.
+                    completed = [call for call in tool_calls
+                                 if call.get("id") and call.get("name")
+                                 and isinstance(call.get("result"), str)]
+                    if not completed:
+                        return
+                    native_steps.append(LLMMessage(
+                        role="assistant", content="", source=agent_source,
+                        tool_calls=[LLMToolCall(
+                            id=call["id"], name=call["name"],
+                            arguments=call.get("arguments") or {})
+                            for call in completed],
+                        conversation_id=sub_conv_id))
+                    from tasks.ai.agent_core import AgentCoreMixin
+                    native_steps.extend(
+                        LLMMessage(
+                            role="tool", tool_call_id=call["id"],
+                            content=AgentCoreMixin._wrap_tool_output(
+                                call["name"], call["result"]),
+                            conversation_id=sub_conv_id)
+                        for call in completed)
 
                 _compact_attempts = 0
                 while True:
                     try:
+                        native_steps.clear()
+                        native_final = ("", "")
                         _append_inbox_notice()
                         response = self._call_subagent_llm(client, stream=True,
                             cancel_check=lambda: _is_cancelled(task.id),
@@ -606,12 +592,7 @@ class _SubAgentExecutorLoopMixin:
                                 logger.debug("exception suppressed", exc_info=True)
                         client._pawflow_context_is_delta = False
 
-                result.tokens_in += response.tokens_in
-                result.tokens_out += response.tokens_out
-                if response.model:
-                    result.model = response.model
-                if not result.provider and client:
-                    result.provider = getattr(client, 'provider', '') or ''
+                account_response(response)
 
                 # Emit thinking if present
                 if response.thinking and task.delegate_tc_id:
@@ -625,12 +606,14 @@ class _SubAgentExecutorLoopMixin:
 
                 # No tool calls → final response
                 if not response.tool_calls:
+                    messages.extend(native_steps)
+                    answer = response.content or native_final[0]
                     if _uses_inbox:
                         from core.agent_inbox import end_of_turn, MAX_UNREAD_TURNS
                         unread_turns = end_of_turn(_delegate_conv_id, task.agent_name)
                         if unread_turns:
                             messages.append(LLMMessage(
-                                role="assistant", content=response.content,
+                                role="assistant", content=answer,
                                 source={"type": "agent", "name": task.agent_name},
                                 conversation_id=_delegate_conv_id))
                             if unread_turns >= MAX_UNREAD_TURNS:
@@ -641,7 +624,7 @@ class _SubAgentExecutorLoopMixin:
                                 break
                             _append_inbox_notice(only_new=False)
                             continue
-                    result.response = response.content
+                    result.response = answer
                     result.status = "completed"
                     break
 
@@ -656,26 +639,24 @@ class _SubAgentExecutorLoopMixin:
                     })
 
                 # Process tool calls
-                agent_source = {"type": "agent", "name": task.agent_name}
-                if task.llm_service:
-                    agent_source["llm_service"] = task.llm_service
                 messages.append(LLMMessage(
                     role="assistant",
                     content=response.content,
                     tool_calls=response.tool_calls,
                     thinking=response.thinking or "",
                     thinking_signature=getattr(response, "thinking_signature", "") or "",
+                    reasoning_item=getattr(response, "reasoning_item", "") or "",
                     source=agent_source,
                     conversation_id=sub_conv_id or task.parent_conversation_id,
                 ))
                 # Same image lifecycle as the main agent loop
                 # (_alc_iteration): the LLM has now SEEN this turn's native
-                # vision parts; deflate every older image message to
+                # vision parts; deflate the seen images to
                 # FileStore refs so later calls do not re-send megabytes of
                 # base64 as user-image parts.
                 from tasks.ai._agent_msg_proc import _AgentMsgProcMixin
                 _AgentMsgProcMixin._deflate_image_messages(
-                    messages, keep_last=True, user_id=task.user_id,
+                    messages, user_id=task.user_id,
                     conversation_id=_delegate_conv_id)
 
                 for tc in response.tool_calls:
@@ -741,18 +722,14 @@ class _SubAgentExecutorLoopMixin:
                     from tasks.ai.agent_core import AgentCoreMixin
                     if _disp_name == "read_inbox":
                         from tasks.ai._inbox_notice_consumed import (
-                            neutralize_notices_in_messages)
-                        neutralize_notices_in_messages(messages)
+                            neutralize_after_inbox_read)
+                        neutralize_after_inbox_read(messages, tool_result)
                     messages.append(LLMMessage(
                         role="tool",
                         content=AgentCoreMixin._wrap_tool_output(_disp_name, tool_result),
                         tool_call_id=tc.id,
                         conversation_id=sub_conv_id or task.parent_conversation_id,
                     ))
-
-                # Persist sub-conversation after each iteration (coalesced,
-                # off the critical path — see _schedule_sub_persist above).
-                _schedule_sub_persist()
 
                 if result.status in ("timeout", "cancelled", "needs_input"):
                     break
@@ -762,10 +739,14 @@ class _SubAgentExecutorLoopMixin:
                 if _uses_inbox and unread_count(_delegate_conv_id, task.agent_name):
                     _unread_error("Delegate reached its iteration limit with unread inbox items.")
                 else:
-                    result.response = self._force_synthesis(
+                    response = self._force_synthesis(
                         messages, task.model, _delegate_call_kwargs, client=client,
                         cancel_check=lambda: _is_cancelled(task.id),
                     )
+                    if response.finish_reason != "error":
+                        account_response(response)
+                    native_final = ("", "")
+                    result.response = response.content
                     if _uses_inbox and unread_count(_delegate_conv_id, task.agent_name):
                         _unread_error("Delegate finished synthesis with unread inbox items.")
                     else:
@@ -783,10 +764,24 @@ class _SubAgentExecutorLoopMixin:
                 result.error = _err
                 result.status = "error"
         finally:
-            # Final synchronous flush — the background persister may not
-            # have written the last iteration's state yet.
-            if sub_conv_id and not task.ephemeral:
-                _sub_persist_save(_sub_rows_snapshot())
+            if persist_turn and result.status == "completed":
+                try:
+                    messages.append(LLMMessage(
+                        role="assistant", content=result.response, source=agent_source,
+                        thinking=response.thinking or native_final[1],
+                        thinking_signature=getattr(response, "thinking_signature", "") or "",
+                        reasoning_item=getattr(response, "reasoning_item", "") or "",
+                        conversation_id=sub_conv_id))
+                    from tasks.ai._agent_msg_proc import _AgentMsgProcMixin
+                    _AgentMsgProcMixin._deflate_image_messages(
+                        messages, user_id=task.user_id, conversation_id=sub_conv_id)
+                    self._save_delegate_turn(
+                        task, sub_conv_id, messages, history, submitted_items, persisted_seq)
+                except Exception:
+                    logger.exception("Could not save persistent delegate task %s", task.id)
+                    result.status = "error"
+                    result.error = "Could not save the persistent delegate turn."
+                    result.response = ""
             # Release capacity slot
             if resolved_svc and hasattr(resolved_svc, 'release'):
                 resolved_svc.release()
@@ -850,7 +845,7 @@ class _SubAgentExecutorLoopMixin:
         # calls go straight through client.complete and would otherwise be
         # invisible in usage/cost tracking. Rates come from the sub-agent's
         # own llm_service config, frozen at record time.
-        if result.tokens_in or result.tokens_out:
+        if responses:
             try:
                 from core.usage_ledger import UsageLedger
                 from core import safe_float
@@ -884,6 +879,9 @@ class _SubAgentExecutorLoopMixin:
                     model=result.model or "",
                     provider=result.provider or "",
                     tokens_in=result.tokens_in, tokens_out=result.tokens_out,
+                    cache_read=cache_read, cache_write=cache_write,
+                    cache_read_reported=cache_reported,
+                    task_id=task.id,
                     duration_ms=int(result.duration_ms),
                     cost_per_1m_input=_ci, cost_per_1m_output=_co,
                     cost_per_1m_cache_read=_ccr,

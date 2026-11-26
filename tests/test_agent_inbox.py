@@ -21,11 +21,13 @@ AGENT = "GameDev3"
 def inbox_read_empty_answer_is_terminal(cid, agent):
     """The handler's answer for an already-delivered box: must be the calm
     uniform terminal message — identical on every repeat, never an Error."""
-    from core.handlers.inbox import ReadInboxHandler, _EMPTY_READ_MESSAGE
+    from core.handlers.inbox import ReadInboxHandler
     handler = ReadInboxHandler()
     handler._conversation_id = cid
     handler._agent_name = agent
-    return handler.execute({}) == _EMPTY_READ_MESSAGE
+    answer = handler.execute({})
+    assert answer == agent_inbox.EMPTY_READ_MESSAGE
+    return answer == agent_inbox.EMPTY_READ_MESSAGE
 
 
 @pytest.fixture
@@ -159,6 +161,22 @@ def test_a_large_item_is_paged_and_read_once_complete(inbox):
     assert len(second) <= 2000
     third = agent_inbox.read_inbox(CID, AGENT, item="big", offset=second_end)
     assert text[second_end:] in third
+    assert agent_inbox.unread_items(CID, AGENT) == []
+
+
+def test_stale_page_returns_cursor_without_resending_data(inbox):
+    _put("big", "first page only " * 100 + "z" * 3500)
+    first = agent_inbox.read_inbox(CID, AGENT, max_chars=2000)
+    saved = inbox.read_offset(CID, AGENT, "big")
+    assert "first page only" in first
+    for offset in (0, saved - 1):
+        retry = agent_inbox.read_inbox(
+            CID, AGENT, item="big", offset=offset, max_chars=2000)
+        assert retry == (
+            f'That page was already delivered. Continue with read_inbox(item="big", offset={saved}).')
+        assert inbox.read_offset(CID, AGENT, "big") == saved
+    next_page = agent_inbox.read_inbox(CID, AGENT, item="big", offset=saved)
+    assert "z" * 3000 in next_page
     assert agent_inbox.unread_items(CID, AGENT) == []
 
 
@@ -556,7 +574,7 @@ def test_concurrent_reads_do_not_return_the_same_item_twice(inbox):
     with ThreadPoolExecutor(max_workers=2) as executor:
         outputs = [future.result() for future in [executor.submit(read), executor.submit(read)]]
     assert sum("ONCE ONLY" in output for output in outputs) == 1
-    assert any(out.startswith("No unread items.") for out in outputs)
+    assert outputs.count(agent_inbox.EMPTY_READ_MESSAGE) == 1
 
 
 def test_notice_length_is_bounded_when_many_items_are_unread(inbox):

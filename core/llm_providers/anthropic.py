@@ -208,6 +208,7 @@ class LLMAnthropicMixin:
             tokens_out = 0
             cache_creation_tokens = 0
             cache_read_tokens = 0
+            cache_read_reported = False
             input_usage_native = False
             thinking_text = ""
             thinking_signature = ""
@@ -264,6 +265,7 @@ class LLMAnthropicMixin:
                                 tokens_in = usage.get("input_tokens", 0)
                                 cache_creation_tokens = usage.get("cache_creation_input_tokens", 0) or 0
                                 cache_read_tokens = usage.get("cache_read_input_tokens", 0) or 0
+                                cache_read_reported = usage.get("cache_read_input_tokens") is not None
 
                             elif evt_type == "content_block_start":
                                 idx = int(data.get("index", 0) or 0)
@@ -349,8 +351,9 @@ class LLMAnthropicMixin:
                                 tokens_out = usage.get("output_tokens", tokens_out)
                                 if usage.get("cache_creation_input_tokens"):
                                     cache_creation_tokens = usage["cache_creation_input_tokens"]
-                                if usage.get("cache_read_input_tokens"):
+                                if usage.get("cache_read_input_tokens") is not None:
                                     cache_read_tokens = usage["cache_read_input_tokens"]
+                                    cache_read_reported = True
 
                             elif evt_type == "message_stop":
                                 pass
@@ -378,6 +381,7 @@ class LLMAnthropicMixin:
                 tool_calls=tool_calls,
                 cache_creation_tokens=cache_creation_tokens,
                 cache_read_tokens=cache_read_tokens,
+                cache_read_reported=cache_read_reported,
                 input_usage_native=input_usage_native,
                 thinking=thinking_text,
                 thinking_signature=thinking_signature,
@@ -814,6 +818,7 @@ class LLMAnthropicMixin:
             raw=data,
             cache_creation_tokens=cache_creation_tokens,
             cache_read_tokens=cache_read_tokens,
+            cache_read_reported=usage.get("cache_read_input_tokens") is not None,
             input_usage_native="input_tokens" in usage,
             thinking=thinking_text,
             thinking_signature=thinking_signature,

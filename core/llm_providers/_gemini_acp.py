@@ -512,7 +512,22 @@ class _GeminiAcpProtocolMixin:
         return update.get("status") or ""
 
     @staticmethod
-    def _gemini_acp_prompt_tokens(meta: dict) -> int:
+    def _gemini_acp_reported_tokens(meta: dict, *keys: str) -> int | None:
+        quota = (meta or {}).get("quota") or {}
+        token_count = quota.get("token_count") or quota.get("tokenCount") or {}
+        if not isinstance(token_count, dict):
+            return None
+        for key in keys:
+            value = token_count.get(key)
+            if value is not None:
+                try:
+                    return max(0, int(value))
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    @classmethod
+    def _gemini_acp_prompt_tokens(cls, meta: dict) -> int:
         """Return Gemini's own prompt size for this turn, or 0.
 
         The ACP quota block carries the same ``usageMetadata`` counters the
@@ -525,40 +540,23 @@ class _GeminiAcpProtocolMixin:
         When only totals are published, the prompt is the total minus the
         answer: ``totalTokenCount`` counts both.
         """
-        quota = (meta or {}).get("quota") or {}
-        token_count = quota.get("token_count") or quota.get("tokenCount") or {}
-        for key in ("promptTokenCount", "prompt_token_count",
-                    "inputTokens", "input_tokens"):
-            try:
-                value = int(token_count.get(key, 0) or 0)
-            except (TypeError, ValueError, AttributeError):
-                value = 0
-            if value > 0:
-                return value
-        try:
-            total = int(token_count.get("totalTokenCount", 0)
-                        or token_count.get("total_token_count", 0) or 0)
-            answer = int(token_count.get("candidatesTokenCount", 0)
-                         or token_count.get("candidates_token_count", 0) or 0)
-        except (TypeError, ValueError, AttributeError):
-            return 0
-        return max(0, total - answer)
+        observed = cls._gemini_acp_reported_tokens(
+            meta, "promptTokenCount", "prompt_token_count", "inputTokens", "input_tokens")
+        if observed is not None:
+            return observed
+        total = cls._gemini_acp_reported_tokens(meta, "totalTokenCount", "total_token_count")
+        output = cls._gemini_acp_output_tokens(meta, "")
+        tool_input = cls._gemini_acp_reported_tokens(
+            meta, "toolUsePromptTokenCount", "tool_use_prompt_token_count")
+        return max(0, (total or 0) - output - (tool_input or 0))
 
-    @staticmethod
-    def _gemini_acp_output_tokens(meta: dict, content: str) -> int:
-        quota = (meta or {}).get("quota") or {}
-        token_count = quota.get("token_count") or quota.get("tokenCount") or {}
-        for key in ("candidatesTokenCount", "candidates_token_count", "outputTokens", "output_tokens"):
-            try:
-                value = int(token_count.get(key, 0) or 0)
-            except (TypeError, ValueError, AttributeError):
-                value = 0
-            if value > 0:
-                return value
-        try:
-            total = int(token_count.get("totalTokenCount", 0) or token_count.get("total_token_count", 0) or 0)
-        except (TypeError, ValueError, AttributeError):
-            total = 0
-        if total > 0:
-            return total
-        return len(content or "") // 4
+    @classmethod
+    def _gemini_acp_output_tokens(cls, meta: dict, content: str) -> int:
+        candidates = cls._gemini_acp_reported_tokens(
+            meta, "candidatesTokenCount", "candidates_token_count")
+        if candidates is not None:
+            thoughts = cls._gemini_acp_reported_tokens(
+                meta, "thoughtsTokenCount", "thoughts_token_count")
+            return candidates + (thoughts or 0)
+        output = cls._gemini_acp_reported_tokens(meta, "outputTokens", "output_tokens")
+        return output if output is not None else len(content or "") // 4

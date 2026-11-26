@@ -166,6 +166,8 @@ class _ManagedMcpTurnCoordinator(_CCITurnCoordinator):
             content=self.final_text,
             tool_calls=[],
             tokens_in=0, tokens_out=0, total_tokens=0,
+            input_usage_native=False,
+            cache_read_reported=False,
             thinking="",
             model=self.effective_model,
             raw={

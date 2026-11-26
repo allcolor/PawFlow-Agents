@@ -779,7 +779,7 @@ class LLMClient(
         ):
             return
         # Estimate if provider didn't return counts
-        if not tokens_in and messages:
+        if not response.has_input_usage() and messages:
             tokens_in = count_messages_tokens(messages)
         if not tokens_out and response.content:
             tokens_out = len(response.content) // 4

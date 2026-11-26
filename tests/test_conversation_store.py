@@ -1424,7 +1424,7 @@ class TestAppendMessage:
             "resumed" in str(msg.get("content", ""))
             for msg in bot_ctx)
 
-    def test_delegate_request_keeps_sender_shared_and_no_recipient_inline_copy(self, conv):
+    def test_delegate_request_keeps_sender_and_excludes_shared_and_recipient_contexts(self, conv):
         store, cid, uid = conv
         store.set_extra(cid, "conv_agents", {
             "alice": {"definition": "alice", "llm_service": "llm"},
@@ -1447,10 +1447,9 @@ class TestAppendMessage:
             for msg in alice_ctx)
         # The delivery ingress owns Bob's inbox; append must not copy it inline.
         assert not bob_ctx
-        # shared visible with [alice to agent bob]: prefix
-        assert shared and any(
-            "[alice to agent bob]" in str(msg.get("content", ""))
-            for msg in shared)
+        assert not shared
+        assert not any("do X" in str(row.get("content", ""))
+                       for row in store.load_shared_tail(cid, user_id=uid) or [])
 
     def test_delegate_reply_stays_private_no_shared(self, conv):
         store, cid, uid = conv
@@ -1595,9 +1594,7 @@ class TestAppendMessage:
             ("assistant", "[delegate bob → alice]:\nthinking aloud"),
             ("assistant", "[delegate bob → alice]:\nanswer"),
         ]
-        assert _view("carol") == [
-            ("user", "[alice to agent bob]:\ndo X"),
-        ]
+        assert _view("carol") == []
 
     def test_delegate_responder_turn_stays_the_responders_own(self, conv):
         # A delegate-mode turn is the responder's ordinary work, stamped

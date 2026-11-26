@@ -319,10 +319,10 @@ class _CsCtxIoMixin:
         """
         out = []
         for m in messages:
-            if m.get("role") in ("tool", "tool_call", "thinking"):
+            if m.get("display_only") or m.get("role") in ("tool", "tool_call", "thinking"):
                 continue
             _src = m.get("source") or {}
-            if (_src.get("type") == "context"
+            if (_src.get("type") in {"context", "agent_delegate"}
                     or _src.get("visibility") == "target_only"):
                 continue
             if m.get("role") == "assistant" and not str(m.get("content", "")).strip():

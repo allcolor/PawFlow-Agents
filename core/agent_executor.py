@@ -10,16 +10,19 @@ Each sub-agent runs its own tool-use loop with:
 - Result aggregation for parallel execution
 """
 
+import copy
 import json
 import logging
+import re
 import uuid
 from dataclasses import asdict
 from concurrent.futures import ThreadPoolExecutor, Future
+from sys import maxsize
 from threading import Lock
 from typing import Any, Callable, Dict, List, Optional
 
 from core.llm_client import (
-    LLMClient, LLMMessage, LLMToolDefinition, LLMToolCall,
+    LLMClient, LLMMessage, LLMResponse, LLMToolDefinition, LLMToolCall, unwrap_mcp_tool,
 )
 from core.tool_registry import ToolRegistry
 from core._agent_executor_base import (  # noqa: F401 -- re-exported (invariant 1)
@@ -46,6 +49,14 @@ from core._agent_executor_base import (  # noqa: F401 -- re-exported (invariant 
 from core._agent_executor_loop import _SubAgentExecutorLoopMixin
 
 logger = logging.getLogger(__name__)
+
+_active_sub_conversations: set[str] = set()
+_active_sub_conversations_lock = Lock()
+_inbox_receipt_ids = re.compile(
+    r"^--- #\d+ [^\r\n]*? msg_id=([^\s,]+)(?:, chars [^\r\n]*)? ---\r?$",
+    re.MULTILINE,
+)
+
 
 class SubAgentExecutor(_SubAgentExecutorLoopMixin):
     """Execute sub-agent loops with tool use, parallel spawning, and depth control.
@@ -164,12 +175,142 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
             self._finish_display_trace(task, result)
             return result
 
-        # Increase depth for this thread
+        child_id = (
+            f"{task.parent_conversation_id}::task::{task.id}"
+            if task.parent_conversation_id and not task.ephemeral
+            and task.context_mode != "full" else "")
+        storage_key = ""
+        if child_id:
+            from core.conversation_store import ConversationStore
+            storage_key = ConversationStore._safe_name(child_id)
+            with _active_sub_conversations_lock:
+                if storage_key in _active_sub_conversations:
+                    return AgentResult(
+                        task_id=task.id, agent_name=task.agent_name, status="error",
+                        error="This delegate task ID already has an active turn.")
+                _active_sub_conversations.add(storage_key)
+
         _set_depth(current_depth + 1)
         try:
-            return self._run_agent_loop(task)
+            try:
+                history = self._load_delegate_history(task, child_id) if child_id else None
+            except (PermissionError, ValueError) as exc:
+                result = AgentResult(
+                    task_id=task.id, agent_name=task.agent_name, status="error",
+                    error=str(exc))
+                self._finish_display_trace(task, result)
+                return result
+            return self._run_agent_loop(task, child_id, history)
         finally:
             _set_depth(current_depth)
+            if storage_key:
+                with _active_sub_conversations_lock:
+                    _active_sub_conversations.discard(storage_key)
+
+    @staticmethod
+    def _load_delegate_history(task: AgentTask, cid: str) -> list[LLMMessage] | None:
+        """Bind a reusable child to the user, caller and target before loading."""
+        from core.conversation_store import ConversationStore
+        from tasks.ai.agent_serialization import AgentSerializationMixin
+
+        store = ConversationStore.instance()
+        route = {"parent": task.parent_conversation_id, "task": task.id,
+                 "caller": store._canon_agent(task.source_agent),
+                 "target": store._canon_agent(task.agent_name)}
+        with store._get_conv_lock(cid):
+            exists = store.exists(cid)
+            if exists and store.resolve_owner(cid) != task.user_id:
+                raise PermissionError("This delegate task ID belongs to another user.")
+            saved_route = store.get_extra(cid, "delegate_context_owner") if exists else None
+            if saved_route is not None and (saved_route != route or not task.persist):
+                raise PermissionError(
+                    "This task ID is reserved for its persistent delegate caller and target.")
+            if not task.persist:
+                return None
+            if saved_route is None:
+                if exists and store.message_count(cid):
+                    raise PermissionError(
+                        "This task ID already has unbound conversation history. Use a new task ID.")
+                if not exists:
+                    store.save(cid, [], user_id=task.user_id)
+                if not store.set_extra(cid, "delegate_context_owner", route):
+                    raise ValueError("Could not initialize the persistent delegate conversation.")
+                return None
+            rows = store.load(cid, user_id=task.user_id) or []
+
+        return AgentSerializationMixin()._deserialize_messages(
+            rows, conversation_id=cid)
+
+    @staticmethod
+    def _save_delegate_turn(task: AgentTask, cid: str, messages, history,
+                            submitted_items: list[dict], persisted_seq: int) -> None:
+        """Append only this turn's real messages, leaving session extras intact."""
+        from core.conversation_store import ConversationStore
+        from tasks.ai.agent_serialization import AgentSerializationMixin
+
+        store = ConversationStore.instance()
+        # Reverse iteration flushes buffered writes before reading the suffix.
+        saved = store.load_transcript_seq_range(cid, persisted_seq + 1, maxsize)
+        saved_final = next((row for row in reversed(saved)
+                            if row.get("role") in {"user", "assistant", "tool"}), {})
+        if (saved_final.get("role") == "assistant"
+                and saved_final.get("content") == messages[-1].content):
+            messages = messages[:-1]
+        saved_calls = {row["tool_call_id"]: unwrap_mcp_tool(
+                           row.get("tool_name") or row.get("name") or "",
+                           row.get("arguments") or {})[0]
+                       for row in saved if row.get("role") == "tool_call"
+                       and row.get("tool_call_id")}
+        saved_results = [row for row in saved if row.get("role") == "tool"]
+        saved_result_ids = {row.get("tool_call_id") for row in saved_results}
+        inbox_calls = {call_id for call_id, name in saved_calls.items() if name == "read_inbox"}
+        previous_ids = {msg.msg_id for msg in history or ()}
+        new_messages = []
+        for msg in messages:
+            source = msg.source or {}
+            if (msg.msg_id in previous_ids or msg.role == "system"
+                    or source.get("type") in {"context", "ephemeral"}
+                    or (source.get("type"), source.get("name")) == ("system", "inbox")):
+                continue
+            if msg.tool_calls:
+                inbox_calls.update(
+                    call.id for call in msg.tool_calls
+                    if unwrap_mcp_tool(call.name, call.arguments or {})[0] == "read_inbox")
+                tool_calls = [call for call in msg.tool_calls if call.id not in saved_calls]
+                if len(tool_calls) != len(msg.tool_calls):
+                    if not tool_calls and not (msg.content or msg.thinking):
+                        continue
+                    msg = copy.copy(msg)
+                    msg.tool_calls = tool_calls
+            if msg.role == "tool" and msg.tool_call_id in saved_result_ids:
+                continue
+            new_messages.append(msg)
+        if submitted_items:
+            # A CLI may consume the inbox through its own tools. Reuse any
+            # native receipt in the transcript and preserve the submitted text
+            # once when the provider exposed only a terminal answer.
+            payloads = [msg.text_content for msg in new_messages if msg.role == "tool"
+                        and msg.tool_call_id in inbox_calls]
+            payloads.extend(str(row.get("content") or "") for row in saved_results
+                            if row.get("tool_call_id") in inbox_calls)
+            delivered = {msg_id for text in payloads for msg_id in _inbox_receipt_ids.findall(text)}
+            new_messages[:0] = [
+                LLMMessage(
+                    role="user", content=item["content"], msg_id=item["msg_id"],
+                    timestamp=item["ts"], conversation_id=cid,
+                    source={**(item.get("source") or {}), "visibility": "target_only"})
+                for item in submitted_items if item["msg_id"] not in delivered
+            ]
+        rows = AgentSerializationMixin()._serialize_messages(new_messages)
+        items = []
+        for row in rows:
+            if row["role"] == "user":
+                row["source"] = {**(row.get("source") or {}),
+                                 "target_agent": task.agent_name}
+            items.append({"msg": row, "agent_name": task.agent_name,
+                          "user_id": task.user_id})
+        if items:
+            store.append_messages_if_absent(cid, items)
 
     def _emit(self, event_type: str, data: Dict[str, Any]):
         """Emit an event via the on_event callback if set."""
@@ -180,7 +321,8 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
                 logger.debug("on_event callback failed for %s", event_type)
 
     def _build_initial_context(self, task, sys_prompt, user_source,
-                                sub_conv_id: str = ""):
+                                sub_conv_id: str = "", *,
+                                submitted_items: list[dict] | None = None):
         """Build initial messages for a sub-agent based on context_mode."""
         _cid = sub_conv_id or task.parent_conversation_id
         if not _cid:
@@ -207,15 +349,21 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
                 if not agent_inbox.enqueue_item(
                         _cid, task.agent_name, payload, kind, task.source_agent):
                     raise RuntimeError("Delegate inbox rejected the task delivery")
+                if submitted_items is not None:
+                    submitted_items.append(payload)
             notice = agent_inbox.take_notice(_cid, task.agent_name)
-            messages.append(LLMMessage(role="user", content=notice,
-                                       conversation_id=_cid))
+            if notice:
+                messages.append(LLMMessage(
+                    role="user", content=notice,
+                    source={"type": "system", "name": "inbox",
+                            "target_agent": task.agent_name, "visibility": "target_only"},
+                    conversation_id=_cid))
             return messages
         # Inject context messages if provided
         if task.context_messages:
             for cm in task.context_messages:
                 if isinstance(cm, LLMMessage):
-                    messages.append(cm)
+                    messages.append(copy.copy(cm))
                 elif isinstance(cm, dict):
                     messages.append(LLMMessage(
                         role=cm.get("role", "user"),
@@ -227,38 +375,6 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
                                    source=user_source,
                                    conversation_id=_cid))
         return messages
-
-    @staticmethod
-    def _deserialize_sub_messages(raw_messages, sub_conv_id: str = ""):
-        """Convert stored dicts back to LLMMessage (preserving tool_calls)."""
-        result = []
-        for m in raw_messages:
-            if isinstance(m, dict):
-                msg = LLMMessage(
-                    role=m.get("role", "user"),
-                    content=m.get("content", ""),
-                    conversation_id=(m.get("conversation_id") or sub_conv_id),
-                    msg_id=m.get("msg_id", ""),
-                    timestamp=m.get("ts") or m.get("timestamp") or 0.0,
-                    seq=m.get("seq") or 0,
-                    thinking=m.get("thinking", ""),
-                    thinking_signature=m.get("thinking_signature", ""),
-                )
-                if m.get("tool_calls"):
-                    msg.tool_calls = [
-                        LLMToolCall(
-                            id=tc.get("id", ""),
-                            name=tc.get("name", ""),
-                            arguments=tc.get("arguments", {}),
-                        )
-                        for tc in m["tool_calls"]
-                    ]
-                if m.get("tool_call_id"):
-                    msg.tool_call_id = m["tool_call_id"]
-                result.append(msg)
-            elif isinstance(m, LLMMessage):
-                result.append(m)
-        return result
 
     def _build_tools(
         self, whitelist: Optional[List[str]],
@@ -426,7 +542,7 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
         self, messages: List[LLMMessage], model: str,
         call_kwargs: Optional[Dict[str, Any]] = None,
         *, client=None, cancel_check=None,
-    ) -> str:
+    ) -> LLMResponse:
         """Force a final response when max iterations reached."""
         # Inherit conv_id from the last message (all must share it).
         _cid = next(
@@ -442,7 +558,7 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
             conversation_id=_cid,
         ))
         try:
-            resp = self._call_subagent_llm(client if client is not None else self._client,
+            return self._call_subagent_llm(client if client is not None else self._client,
                 cancel_check=cancel_check,
                 messages=messages,
                 model=model or None,
@@ -451,12 +567,11 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
                 tools=None,
                 **(call_kwargs or {}),
             )
-            return resp.content
         except Exception as e:
             if cancel_check is not None and cancel_check():
                 raise
             logger.error("Sub-agent synthesis failed: %s", e)
-            return f"[Synthesis failed: {e}]"
+            return LLMResponse(content=f"[Synthesis failed: {e}]", finish_reason="error")
 
     # ── Parallel spawning ─────────────────────────────────────────────
 

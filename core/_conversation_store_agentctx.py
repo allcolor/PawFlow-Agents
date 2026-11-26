@@ -375,8 +375,7 @@ class _CsAgentCtxMixin:
 
         Mirrors ``_route_delegate_message``, which wrote the live copies: the
         sender keeps its own row tagged ``[delegate <from> → <to>]:``, the
-        receiver gets it as a user turn with an explicit attribution, other
-        agents see only requests, as ``[<from> to agent <to>]:``. A rebuilt
+        receiver gets it as a user turn with an explicit attribution. A rebuilt
         context must never replay another agent's reply as the receiver's
         own assistant turn. None when the row does not reach ``canon``.
         """
@@ -412,11 +411,7 @@ class _CsAgentCtxMixin:
                 _attr = f"Here is a message from agent '{_from}':"
             mm["content"] = self._prefix_content(mm.get("content", ""), _attr)
             return mm
-        if _kind == "reply" or _external_transport:
-            return None
-        mm["content"] = self._prefix_content(
-            mm.get("content", ""), f"[{_from} to agent {_to}]:")
-        return mm
+        return None
 
     def load_shared_for_agent(self, cid: str, agent_name: str) -> Optional[List[Dict]]:
         """Load shared context personalized for a specific agent.
@@ -430,7 +425,8 @@ class _CsAgentCtxMixin:
             raw = self._read_ctx_file(self._shared_ctx_path(cid), cid=cid)
         if not raw:
             return None
-        return [self._personalize_from_shared(m, agent_name) for m in raw]
+        return [self._personalize_from_shared(m, agent_name)
+                for m in self.filter_for_shared(raw)]
 
     def load_compacted_shared_for_agent(self, cid: str, agent_name: str
                                         ) -> Optional[List[Dict]]:
@@ -460,7 +456,8 @@ class _CsAgentCtxMixin:
                     break
                 tail.append(row)
         tail.reverse()
-        rows = [self._personalize_from_shared(m, agent_name) for m in tail]
+        rows = [self._personalize_from_shared(m, agent_name)
+                for m in self.filter_for_shared(tail)]
         header = buckets.assemble_summary_header() if covered else ""
         if header:
             first_ts = min((float(m.get("ts") or 0) for m in rows

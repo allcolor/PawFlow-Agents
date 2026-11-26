@@ -279,7 +279,7 @@ class _BgBucketBuildMixin:
         out.sort(key=lambda m: (
             float(m.get("ts") or m.get("timestamp") or 0.0),
             int(m.get("seq") or 0)))
-        return out
+        return ConversationStore.filter_for_shared(out)
 
     def _extract_trace(self, cid: str, first_seq: int, last_seq: int
                        ) -> Dict[str, Any]:
@@ -287,7 +287,13 @@ class _BgBucketBuildMixin:
         from core.conversation_store import ConversationStore
         cs = ConversationStore.instance()
         transcript = cs.load_transcript_seq_range(cid, first_seq, last_seq)
-        return extract_tool_activity(transcript, first_seq, last_seq)
+        public_rows = (
+            row for row in transcript
+            if not row.get("display_only")
+            and (row.get("source") or {}).get("type") != "agent_delegate"
+            and (row.get("source") or {}).get("visibility") != "target_only"
+        )
+        return extract_tool_activity(public_rows, first_seq, last_seq)
 
     def _pick_chunk(self, shared_msgs: List[Dict],
                      current_object_count: int,

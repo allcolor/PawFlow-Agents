@@ -216,6 +216,8 @@ class _CCITurnCoordinator:
         self.emitted_tool_result_ids: set[str] = (
             emitted_tool_result_ids if emitted_tool_result_ids is not None else set())
         self.usage = {}
+        self._message_usages: dict[object, dict] = {}
+        self._latest_usage_key: object = None
         # Effective model resolved by Anthropic for the configured alias
         # (e.g. "best" -> "claude-opus-4-5-..."), observed on the wire via
         # the message_start SSE event. Empty until a message_start is seen.
@@ -279,7 +281,7 @@ class _CCITurnCoordinator:
     def _publish_usage_observation(self) -> None:
         """Hand the current prompt size to the gauge, mid-stream.
 
-        Passes the ACCUMULATED ``self.usage``, not the event's dict: a
+        Passes the latest API message's usage, not the event's dict: a
         message_start carries the input/cache fields and a later message_delta
         carries only output, so the accumulated view is the only one that
         always holds a complete prompt occupancy. Never raises -- a gauge
@@ -291,6 +293,17 @@ class _CCITurnCoordinator:
             self.usage_callback(dict(self.usage))
         except Exception:
             logger.debug("cci usage observation callback failed", exc_info=True)
+
+    def _update_message_usage(self, request_id: str, usage: dict, *,
+                              new_message: bool = False) -> None:
+        if new_message:
+            self._latest_usage_key = request_id or object()
+        key = request_id or self._latest_usage_key
+        snapshot = self._message_usages.setdefault(key, {})
+        if isinstance(usage, dict):
+            snapshot.update(usage)
+        if key == self._latest_usage_key:
+            self.usage = snapshot
 
     def _probe_compact_request(self) -> None:
         """Serve a delivery's pending compaction request while the CLI is idle.
@@ -774,8 +787,8 @@ class _CCITurnCoordinator:
                     # carries the model actually used for the response.
                     self.effective_model = str(model)
                 usage = msg.get("usage") or {}
+                self._update_message_usage(request_id, usage, new_message=True)
                 if usage:
-                    self.usage.update(usage)
                     self._publish_usage_observation()
             elif ptype == "content_block_start":
                 self._saw_model_content = True
@@ -869,7 +882,7 @@ class _CCITurnCoordinator:
                     self._awaiting_followup = (str(stop_reason) == "tool_use")
                 usage = payload.get("usage") or {}
                 if usage:
-                    self.usage.update(usage)
+                    self._update_message_usage(request_id, usage)
             elif ptype == "message_stop":
                 self._open_messages_requests.discard(
                     event.get("request_id", "") or "")
@@ -914,18 +927,30 @@ class _CCITurnCoordinator:
             self.session_token[:8], total_ms, first_event_ms, first_model_ms,
             self._max_event_gap * 1000.0, len(text),
             len("".join(self.thinking_parts)), len(self.turn_tool_calls))
+        samples = self._message_usages.values()
+        totals = {
+            name: sum(int(sample.get(name, 0) or 0) for sample in samples)
+            for name in ("input_tokens", "output_tokens",
+                         "cache_read_input_tokens", "cache_creation_input_tokens")
+        }
         return LLMResponse(
             content=text,
             tool_calls=[],
-            tokens_in=int(self.usage.get("input_tokens", 0) or 0),
-            tokens_out=int(self.usage.get("output_tokens", 0) or 0),
-            total_tokens=(int(self.usage.get("input_tokens", 0) or 0)
-                          + int(self.usage.get("output_tokens", 0) or 0)),
+            tokens_in=totals["input_tokens"],
+            tokens_out=totals["output_tokens"],
+            cache_read_tokens=totals["cache_read_input_tokens"],
+            cache_creation_tokens=totals["cache_creation_input_tokens"],
+            total_tokens=sum(totals.values()),
+            input_usage_native=bool(samples) and all(
+                sample.get("input_tokens") is not None for sample in samples),
+            cache_read_reported=bool(samples) and all(
+                sample.get("cache_read_input_tokens") is not None for sample in samples),
             thinking="".join(self.thinking_parts),
             model=self.effective_model,
             raw={
                 "provider": "claude-code-interactive",
                 "usage": self.usage,
+                "turn_usage": totals,
                 "effective_model": self.effective_model,
                 "lifecycle_events": self.lifecycle_events,
             },

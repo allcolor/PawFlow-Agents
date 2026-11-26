@@ -108,7 +108,7 @@ def extract_tool_activity(
           "reads":   {path: count},
           "deletes": [path, ...],
           "commands": [{"cmd": str, "result": str}, ...],
-          "delegations": [{"agent": str, "brief": str}, ...],
+          "delegations": [{"agent": str}, ...],
         }
     """
     edits: Counter = Counter()
@@ -182,14 +182,7 @@ def extract_tool_activity(
                         })
                 elif name in _DELEGATION_TOOLS:
                     agent = args.get("agent") or args.get("name") or "?"
-                    brief = (args.get("message") or args.get("task")
-                              or args.get("prompt") or "")
-                    if isinstance(brief, str):
-                        brief = brief[:120]
-                    delegations.append({
-                        "agent": str(agent),
-                        "brief": brief or "",
-                    })
+                    delegations.append({"agent": str(agent)})
 
         elif role == "tool":
             tc_id = m.get("tool_call_id") or ""
@@ -272,8 +265,7 @@ def format_activity_digest(trace: Dict[str, Any],
     if delegations:
         lines.append("Delegations:")
         for d in delegations[-max_paths_per_section:]:
-            brief = d.get("brief") or ""
-            lines.append(f"  - {d.get('agent', '?')}: {brief}")
+            lines.append(f"  - {d.get('agent', '?')}")
 
     if not lines:
         return ""

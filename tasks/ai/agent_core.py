@@ -453,6 +453,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
             )
             if (not st.response_content and not st._fatal_error
                     and not st._is_cli_provider
+                    and not getattr(st, "_empty_poll_reply", False)
                     and st.outcome != "client_tool_pending"):
                 logger.warning(f"[agent:{st.conversation_id[:8]}] empty response — forcing synthesis")
                 st._pre = len(st.messages)
@@ -562,8 +563,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
 
             # Post-loop: ALWAYS publish done, even if cleanup fails
             try:
-                # NO_PENDING_WORK handling (streaming/poller only via emitter)
-                st._processed = st.emitter.on_no_pending_work(st.response_content or "", st.ctx)
+                st._processed = st.emitter.on_scheduled_recheck(st.response_content or "")
                 if st._processed is None:
                     st.new_messages.clear()
                     if hasattr(st.client, "finalize_route"):

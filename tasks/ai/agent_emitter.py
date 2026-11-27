@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from core.llm_client import LLMMessage
+from tasks.ai._alc_base import _RETIRED_POLL_REPLY
 from tasks.ai.agent_exceptions import AgentCancelled
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class AgentEmitter:
     def check_cancelled(self): pass
     def check_interrupt(self) -> bool: return False
     def drain_pending(self, messages, append_fn, iteration, final=False): pass
-    def on_no_pending_work(self, content, ctx): return content
+    def on_scheduled_recheck(self, content): return content
     def on_fatal_error(self, error_msg): pass
     def on_overflow_retry(self, iteration): pass
     def on_status(self, message: str) -> None:
@@ -528,11 +529,19 @@ class StreamEmitter(AgentEmitter):
         generation = self.generation
         agent = self.agent
         _emitter = self
+        poll_prefix = "" if self.ctx.get("is_poll") and not poll_silent else None
 
         def on_token(text: str):
+            nonlocal poll_prefix
             if not agent._is_current_generation(gen_key, generation):
                 raise AgentCancelled()
             _emitter._last_token_time = time.time()
+            if poll_prefix is not None and text:
+                # Hold a possible retired reply until the text diverges.
+                poll_prefix += text
+                if _RETIRED_POLL_REPLY.startswith(poll_prefix.strip()):
+                    return
+                text, poll_prefix = poll_prefix, None
             _emitter._publish_token_preview(text, poll_silent)
         return on_token
 
@@ -549,11 +558,10 @@ class StreamEmitter(AgentEmitter):
         different messages and the reader sees the same answer twice, which
         is why the bus refuses a token event with no id.
 
-        A silent poll stays silent on purpose: a check-in ending in
-        NO_PENDING_WORK never persists its text, and previewing it would put
-        an answer on screen that belongs to nothing.
+        The first iteration of a silent poll omits previews.
         """
-        if poll_silent or not text or not self._current_msg_id:
+        if (poll_silent or not text or not self._current_msg_id
+                or text.strip() == _RETIRED_POLL_REPLY):
             return
         try:
             self._emit("token", {
@@ -881,26 +889,15 @@ class StreamEmitter(AgentEmitter):
     # via ConversationWriter.enqueue_message → ConversationStore.append_message.
 
 
-    def on_no_pending_work(self, content: str, ctx: dict) -> Optional[str]:
-        """Handle [NO_PENDING_WORK] / [RECHECK_IN:N] tags from poller responses."""
+    def on_scheduled_recheck(self, content: str) -> Optional[str]:
+        """Handle an explicit [RECHECK_IN:N] tag."""
         if not content or not isinstance(content, str):
             return content
-        _stripped = content.strip()
-        if "[NO_PENDING_WORK]" not in _stripped and "[RECHECK_IN:" not in _stripped:
+        if "[RECHECK_IN:" not in content:
             return content
 
-        # Random thought that produced no work
-        if ctx.get("is_random_thought") and "[NO_PENDING_WORK]" in _stripped:
-            logger.info(f"[agent:{self.conversation_id[:8]}] random thought → no pending work, discarding")
-            self._emit("discard", {
-                "reason": "random_thought_no_work",
-                "agent_name": self._agent_name or "",
-            })
-            return None
-
-        # Schedule recheck
         import re as _re
-        _m = _re.search(r'\[RECHECK_IN:(\d+)\]', _stripped)
+        _m = _re.search(r'\[RECHECK_IN:(\d+)\]', content)
         if _m:
             _delay = int(_m.group(1))
             try:
@@ -913,13 +910,7 @@ class StreamEmitter(AgentEmitter):
                 )
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
-
-        # If the entire response is just tags, discard
-        _clean = _stripped.replace("[NO_PENDING_WORK]", "").strip()
-        _clean = _re.sub(r'\[RECHECK_IN:\d+\]', '', _clean).strip()
-        if not _clean:
-            return None
-        return _clean
+        return _re.sub(r'\[RECHECK_IN:\d+\]', '', content).strip() or None
 
     # ── Internal helpers ──────────────────────────────────────────────
 

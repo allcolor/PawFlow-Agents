@@ -1,6 +1,7 @@
 """Tests for context-fill fields on StreamEmitter `done` event."""
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from tasks.ai.agent_emitter import AgentResult, StreamEmitter
@@ -170,12 +171,50 @@ class TestTokenPreview(unittest.TestCase):
             self.assertEqual(len(self._tokens(bus)), 1, provider)
 
     def test_a_silent_poll_previews_nothing(self):
-        """Its text may end in NO_PENDING_WORK and never be persisted."""
         em, bus = self._emitter()
 
         em.get_token_callback(True)("quiet")
 
         self.assertEqual(self._tokens(bus), [])
+
+    def test_cli_poll_drops_the_retired_reply_before_preview_or_persistence(self):
+        from tasks.ai._alc_closures2 import _ALCClosures2Mixin
+
+        em, bus = self._emitter("codex-interactive")
+        state = SimpleNamespace(
+            emitter=em, ctx={"is_poll": True}, conversation_id="cid1",
+            _cc_turn_count=[0], client=SimpleNamespace(),
+            _agent_source=MagicMock(return_value={"name": "test"}),
+            _append=MagicMock(), _release_active_after_terminal_visible_answer=MagicMock(),
+        )
+        callback = _ALCClosures2Mixin()._alc_claude_code_turn_callback
+
+        em.get_token_callback(False)(" [NO_PENDING_WORK] ")
+        callback(state, " [NO_PENDING_WORK] ", [])
+
+        self.assertEqual(self._tokens(bus), [])
+        state._append.assert_not_called()
+        _, event, payload = bus.publish_event.call_args.args
+        self.assertEqual(event, "turn_complete")
+        self.assertTrue(payload["suppress"])
+
+        reply = "The wake no longer uses [NO_PENDING_WORK]."
+        callback(state, reply, [])
+        self.assertEqual(state._append.call_args.args[0].content, reply)
+
+    def test_poll_preview_holds_a_split_retired_reply(self):
+        em, bus = self._emitter()
+        em.ctx["is_poll"] = True
+        callback = em.get_token_callback(False)
+
+        callback("[NO_PENDING")
+        callback("_WORK]")
+        self.assertEqual(self._tokens(bus), [])
+
+        callback(" was the retired reply.")
+        self.assertEqual(
+            self._tokens(bus)[0]["text"], "[NO_PENDING_WORK] was the retired reply.",
+        )
 
     def test_no_id_means_no_preview(self):
         """The bus refuses an unpaired token; asking would raise mid-turn."""

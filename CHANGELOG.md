@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Scheduled wake-ups ask agents to report findings, completed work, or blockers.
+  PawFlow skips wakes without a reason and drops standalone echoes of the retired
+  idle status before they appear in chat.
+
 ## [1.0.0-beta.340] — 2026-11-26
 
 ### Added

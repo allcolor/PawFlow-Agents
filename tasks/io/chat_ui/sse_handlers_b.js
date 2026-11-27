@@ -176,7 +176,7 @@ function _sseWireB() {
     if (data.task_id) {
       finalizeThinking(doneAgent, 'done');
       // Show agent's final message inside the task block before closing it
-      let taskResp = (data.response || '').replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
+      let taskResp = (data.response || '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
       taskResp = taskResp.replace(/^\[[^\]]+\]:\s*/, '');
       const block = _getTaskBlock(data.task_id, data.task_iteration, doneAgent);
       if (taskResp) {
@@ -241,7 +241,7 @@ function _sseWireB() {
     const s = streams[doneAgent.toLowerCase()] || { el: null, text: '', chunks: [] };
     // Strip internal tags that may leak into the response
     let resp = data.response || '';
-    resp = resp.replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
+    resp = resp.replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
     resp = resp.replace(/^\[[^\]]+\]:\s*/, '');
     // Strip context-ack echoes from done response too
     if (_CONTEXT_ACKS.has(resp.trim())) resp = '';

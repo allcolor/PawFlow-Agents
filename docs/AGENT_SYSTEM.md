@@ -1393,9 +1393,12 @@ persisted block, so one turn can carry several: the client starts a new bubble
 when the id changes, or the blocks would merge live and split apart again on
 reload.
 
-A silent poll (`poll_silent`) publishes nothing. Its text may end in
-`NO_PENDING_WORK` and never be persisted, and a preview of that is an answer
-on screen belonging to nothing.
+The first iteration of a silent poll (`poll_silent`) omits token previews.
+The scheduler starts a turn for a due reminder or queued work. A poll without
+a wake reason returns before preparing an agent context. Due reminders ask the
+agent to act and report new findings, completed work, or blockers. A standalone
+echo of the retired check-in response is dropped before assistant text is
+written to history.
 
 #### `message_meta` is an update, not an announcement
 

@@ -8,6 +8,8 @@ logger = logging.getLogger(__name__)
 _ALC_BREAK = object()
 _ALC_CONTINUE = object()
 
+_RETIRED_POLL_REPLY = "[NO_PENDING_WORK]"
+
 _CONTEXT_ACK_PATTERNS = (
     "Understood. I'll continue from where I left off.",
     "Understood. I have the summary and will continue from the recent messages.",
@@ -19,17 +21,19 @@ _CONTEXT_ACK_PATTERNS = (
 )
 
 def _strip_context_ack(text: str) -> str:
-    """Remove known context-ack prefixes that the LLM may echo."""
+    """Remove context acknowledgments and standalone echoes of the old poll reply."""
     if not text:
         return text
     stripped = text.strip()
+    if stripped == _RETIRED_POLL_REPLY:
+        return ""
     for pat in _CONTEXT_ACK_PATTERNS:
         if stripped == pat:
             return ""
         if stripped.startswith(pat):
             after = stripped[len(pat):].lstrip()
             if after:
-                return after
+                return "" if after == _RETIRED_POLL_REPLY else after
     return text
 
 

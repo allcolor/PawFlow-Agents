@@ -210,10 +210,6 @@ def test_poll_context_persists_boundary_before_reusing_its_id(monkeypatch):
         def _prepare_agent_context(*_args, **_kwargs):
             return {"messages": [], "active_agent_name": "assistant"}
 
-        @staticmethod
-        def _build_poll_checkin(*_args, **_kwargs):
-            return "[System: Scheduled wake-up. finish validation]"
-
     monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: _Store()))
     monkeypatch.setattr("core.conversation_writer.ConversationWriter", _Writer)
 
@@ -224,6 +220,8 @@ def test_poll_context_persists_boundary_before_reusing_its_id(monkeypatch):
     message, kwargs = writes[0]
     assert message["source"]["type"] == "scheduled_wakeup"
     assert message["source"]["target_agent"] == "assistant"
+    assert "finish validation" in message["content"]
+    assert "[NO_PENDING_WORK]" not in message["content"]
     assert message["turn_id"] == message["msg_id"]
     assert ctx["request_msg_id"] == message["msg_id"]
     from core import agent_inbox

@@ -696,6 +696,24 @@ class TestAgentLoopTask(unittest.TestCase):
         assert results[0].get_attribute("agent.model") == "gpt-4o"
         assert mock_complete.call_args.kwargs["max_tokens"] == 123
 
+    @patch.object(LLMClient, "complete")
+    def test_retired_poll_reply_does_not_trigger_a_second_provider_call(self, mock_complete):
+        from tasks.ai.agent_emitter import AgentEmitter
+
+        mock_complete.return_value = LLMResponse(
+            content="[NO_PENDING_WORK]", model="gpt-4o", finish_reason="stop",
+        )
+        task = AgentLoopTask({"api_key": "test-key", "provider": "openai"})
+        ff = FlowFile(content=b"Check the scheduled work")
+        ff.set_attribute("http.auth.principal", "testuser")
+        ctx = task._prepare_agent_context(ff)
+        ctx["is_poll"] = True
+        result = task._run_agent_loop(ctx, AgentEmitter())
+
+        mock_complete.assert_called_once()
+        assert result.response_content == ""
+        assert not any(msg.role == "assistant" for msg in result.new_messages)
+
     @patch.object(LLMClient, 'complete')
     def test_tool_call_loop(self, mock_complete):
         """Each LLM call is recorded before the outer agent turn finishes."""

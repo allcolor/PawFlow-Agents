@@ -133,6 +133,9 @@ class _AgentPollCheckinMixin:
         Delegates to _prepare_agent_context via a synthetic FlowFile,
         then injects poll-specific fields (check-in prompt, flags).
         """
+        if not scheduled_reasons:
+            return None
+
         from core.conversation_store import ConversationStore as _CS2
         _meta = _CS2.instance().get_metadata(conversation_id)
         _poll_uid = _meta["user_id"] if _meta else ""
@@ -345,8 +348,7 @@ class _AgentPollCheckinMixin:
                     f"When the criteria are fully met BY YOUR OWN WORK in this instance:\n"
                     f"  complete_task(task_id=\"{_tid}\", done=true, progress=\"summary\")\n\n"
                     "Do NOT call done=true unless YOU actually did the work in THIS session.\n"
-                    "Do NOT count work from previous conversations or task instances.\n"
-                    "Do NOT respond with [NO_PENDING_WORK]."
+                    "Do NOT count work from previous conversations or task instances."
                 )
             # Multiple tasks
             lines = []
@@ -363,8 +365,7 @@ class _AgentPollCheckinMixin:
                 f"[System: {len(_my_tasks)} active tasks]\n\n"
                 + "\n".join(lines) + "\n\n"
                 "Work on your tasks. Call complete_task(task_id=\"...\", done=true/false, progress=\"...\") for each.\n"
-                "Do NOT repeat information from previous iterations. Focus on NEW progress only.\n"
-                "Do NOT respond with [NO_PENDING_WORK]."
+                "Do NOT repeat information from previous iterations. Focus on NEW progress only."
             )
 
         if is_task_verify:
@@ -396,15 +397,14 @@ class _AgentPollCheckinMixin:
                 "Respond as if you're still in the conversation, not arriving from somewhere else. "
                 "No preamble like 'a thought occurred to me' or 'while thinking about it'. "
                 "Just say what you have to say, naturally.\n"
-                "You can also engage other agents via delegate if you want their perspective.\n"
-                "Do NOT respond with [NO_PENDING_WORK] — always contribute something."
+                "You can also engage other agents via delegate if you want their perspective."
             )
 
         if any(r.startswith("[compact_resume:") for r in scheduled_reasons):
             return (
                 "[System: Context compaction completed. Continue the interrupted "
                 "work immediately from the compacted context. Do not wait for a "
-                "new user message, and do not respond with [NO_PENDING_WORK].]"
+                "new user message.]"
             )
 
         if scheduled_reasons:
@@ -419,20 +419,11 @@ class _AgentPollCheckinMixin:
                 "active. Use the current work state to address its plan; being active "
                 "does not by itself satisfy this wake-up. Do not announce this "
                 "expired deadline as a future continuation.\n\n"
-                "Act on these scheduled reasons using your tools.\n"
-                "Do NOT respond with [NO_PENDING_WORK] unless you have fully "
-                "addressed all scheduled reasons above IN THIS SESSION."
+                "Act on these scheduled reasons using your tools. "
+                "Report new findings, completed work, or blockers."
             )
 
-        return (
-            "[System: Autonomous check-in]\n"
-            "Review the conversation above. Is there pending research or work "
-            "that you started but didn't finish? If yes, continue working on it "
-            "using your available tools.\n"
-            "If everything is complete, respond with [NO_PENDING_WORK].\n"
-            "You can also use the ScheduleWakeup tool to schedule a future check-in "
-            "at a specific time or after a delay."
-        )
+        return ""
 
 
     def _build_plan_step_checkin(self, conversation_id: str,

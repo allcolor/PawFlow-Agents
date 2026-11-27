@@ -10,7 +10,7 @@ from tasks.ai._alc_base import (  # noqa: F401
     _ALCState, _ALC_BREAK, _ALC_CONTINUE, _strip_context_ack,
     _preempt_rescue_requires_retrigger, _apply_bg_results, _svc_rates,
     _record_response_usage, _usage_cost_usd, _check_budget,
-    _CONTEXT_ACK_PATTERNS)
+    _CONTEXT_ACK_PATTERNS, _RETIRED_POLL_REPLY)
 
 logger = logging.getLogger(__name__)
 
@@ -419,7 +419,8 @@ class _ALCIterationMixin:
                 _apply_bg_results(st.messages, st.conversation_id)
                 return _ALC_CONTINUE
 
-            st._resp_text = _strip_context_ack(st.response.content or "")
+            response_text = st.response.content or ""
+            st._resp_text = _strip_context_ack(response_text)
             # Claude-code: turn_callback persisted all content.
             # response.content is "" — don't persist an empty msg.
             # response_content stays "" — done event uses last turn text.
@@ -445,6 +446,11 @@ class _ALCIterationMixin:
                 )
                 st._release_active_after_terminal_visible_answer(force=True)
                 self._alc_stop_iteration_heartbeat(st)
+                return _ALC_BREAK
+            if not st._resp_text and (
+                    st.poll_silent or response_text.strip() == _RETIRED_POLL_REPLY):
+                st.response_content = ""
+                st._empty_poll_reply = True
                 return _ALC_BREAK
             st._has_thinking = bool(getattr(st.response, 'thinking', ''))
             # Empty response with thinking = surface the thinking

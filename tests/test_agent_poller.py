@@ -10,6 +10,14 @@ from tasks.ai.agent_loop import AgentLoopTask
 from tasks.ai.agent_poller import AgentPollerMixin
 
 
+def test_poll_without_a_wake_reason_does_not_prepare_context():
+    poller = AgentPollerMixin()
+    poller._prepare_agent_context = MagicMock()
+
+    assert poller._build_poll_context("conv", [], scheduled_reasons=[]) is None
+    poller._prepare_agent_context.assert_not_called()
+
+
 def test_checkpoint_cleanup_runs_in_background(monkeypatch):
     started = threading.Event()
     release = threading.Event()
